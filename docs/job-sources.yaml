@@ -32,3 +32,23 @@ boards:
   - { type: ashby, slug: openai, company: OpenAI }
   - { type: ashby, slug: linear, company: Linear }
   - { type: ashby, slug: ramp, company: Ramp }
+  - { type: greenhouse, slug: pinterest, company: Pinterest }
+  - { type: greenhouse, slug: twilio, company: Twilio }
+  - { type: greenhouse, slug: coinbase, company: Coinbase }
+  - { type: greenhouse, slug: grafanalabs, company: Grafana Labs }
+  - { type: greenhouse, slug: affirm, company: Affirm }
+  - { type: greenhouse, slug: samsara, company: Samsara }
+  - { type: greenhouse, slug: stripe, company: Stripe }
+  - { type: greenhouse, slug: cribl, company: Cribl }
+  - { type: greenhouse, slug: dropbox, company: Dropbox }
+  - { type: greenhouse, slug: vercel, company: Vercel }
+  - { type: greenhouse, slug: chainguard, company: Chainguard }
+  - { type: greenhouse, slug: doximity, company: Doximity }
+  - { type: greenhouse, slug: instacart, company: Instacart }
+  - { type: greenhouse, slug: discord, company: Discord }
+  - { type: greenhouse, slug: gusto, company: Gusto }
+  - { type: greenhouse, slug: airtable, company: Airtable }
+  - { type: ashby, slug: render, company: Render }
+  - { type: ashby, slug: cursor, company: Cursor }
+  - { type: ashby, slug: watershed, company: Watershed }
+  - { type: ashby, slug: vanta, company: Vanta }

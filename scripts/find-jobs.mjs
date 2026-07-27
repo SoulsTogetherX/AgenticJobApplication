@@ -386,8 +386,10 @@ export function normalizeAdzunaJob(j) {
 // feed) and usually includes salary data. Two passes: near the user's base,
 // and remote.
 async function fetchAdzuna(query, limits, env = loadEnv()) {
-  const appId = env.ADZUNA_APP_ID
-  const appKey = env.ADZUNA_APP_KEY
+  // Adzuna's own docs call these "Application ID/Key", so accept that spelling
+  // as an alias for the shorter names in .env.example.
+  const appId = env.ADZUNA_APP_ID || env.ADZUNA_APPLICATION_ID
+  const appKey = env.ADZUNA_APP_KEY || env.ADZUNA_APPLICATION_KEY
   if (!appId || !appKey || appId === "your_app_id_here") {
     throw new Error(
       "not configured — copy .env.example to .env and set ADZUNA_APP_ID / ADZUNA_APP_KEY",

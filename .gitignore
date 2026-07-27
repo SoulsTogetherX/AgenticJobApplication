@@ -1,5 +1,7 @@
 # Personal data — never commit (contains contact info, work history, Q&A answers)
-profile/
+# NOTE: must be profile/* (not profile/) — git never descends into a fully
+# ignored directory, which would make the example-file negation dead.
+profile/*
 !profile/profile.example.yaml
 jobs/
 

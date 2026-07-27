@@ -1,0 +1,5 @@
+# Force LF in working trees on every platform. Tests compare multiline JS
+# template literals (always LF — the spec normalizes CRLF in literals) against
+# file contents read raw from disk; CRLF checkouts silently break those
+# comparisons on Windows.
+* text=auto eol=lf

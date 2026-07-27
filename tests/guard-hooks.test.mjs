@@ -44,10 +44,12 @@ const bash = (command) =>
 // ---------- guard-files: outside-project boundary ----------
 
 test("guard-files denies edits outside the project directory", () => {
+  // Platform-portable outside paths: the filesystem root of THIS machine and
+  // the home dir. (A sibling of ROOT is wrong here — when the repo is cloned
+  // into the temp dir, its sibling falls under the tmp exception.)
   const outside = [
-    "C:/Windows/System32/drivers/etc/hosts",
+    path.join(path.parse(ROOT).root, "guard-files-test-outside", "hosts.txt"),
     path.join(os.homedir(), "Documents", "other-project", "index.js"),
-    path.resolve(ROOT, "..", "sibling-project", "file.txt"),
   ];
   for (const p of outside) {
     const { status, decision } = runHook(GUARD_FILES, edit(p));

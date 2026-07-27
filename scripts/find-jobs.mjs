@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// Deterministic job-lead finder (no LLM calls). Searches public, integration-
-// friendly job APIs, filters every hit through docs/application-limits.yaml,
+// Deterministic job-lead finder (no LLM calls). Sweeps the public,
+// integration-friendly job APIs listed in docs/job-sources.yaml (Greenhouse,
+// Lever, Ashby, SmartRecruiters, Workable, Recruitee, Workday CXS) plus
+// Hacker News, filters every hit through docs/application-limits.yaml,
 // dedupes against stored leads and application history, and maintains the
 // lead store at jobs/leads.json.
 //
@@ -16,27 +18,24 @@ import yaml from "js-yaml";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LIMITS_PATH = path.join(ROOT, "docs", "application-limits.yaml");
+const SOURCES_PATH = path.join(ROOT, "docs", "job-sources.yaml");
 const LEADS_PATH = path.join(ROOT, "jobs", "leads.json");
 const APPLICATIONS_PATH = path.join(ROOT, "profile", "applications.yaml");
 
 const STATUSES = ["new", "recommended", "dismissed", "applied"];
 
-// Public JSON job boards intended for integration (Greenhouse/Lever/Ashby all
-// document these endpoints). Most Fortune 500 companies run Workday or Taleo,
-// which have no public feed — reach those via the find-jobs skill's
-// URL-capture flow (Playwright/WebFetch + `import`) instead.
+// Fallback if docs/job-sources.yaml is missing — the YAML is the real,
+// user-editable list.
 export const DEFAULT_BOARDS = [
   { type: "greenhouse", slug: "anthropic", company: "Anthropic" },
-  { type: "greenhouse", slug: "cloudflare", company: "Cloudflare" },
-  { type: "greenhouse", slug: "datadog", company: "Datadog" },
-  { type: "greenhouse", slug: "gitlab", company: "GitLab" },
-  { type: "greenhouse", slug: "mongodb", company: "MongoDB" },
-  { type: "greenhouse", slug: "reddit", company: "Reddit" },
-  { type: "lever", slug: "palantir", company: "Palantir" },
   { type: "ashby", slug: "openai", company: "OpenAI" },
-  { type: "ashby", slug: "linear", company: "Linear" },
-  { type: "ashby", slug: "ramp", company: "Ramp" },
 ];
+
+export function loadSources(file = SOURCES_PATH) {
+  if (!fs.existsSync(file)) return DEFAULT_BOARDS;
+  const doc = yaml.load(fs.readFileSync(file, "utf8"));
+  return doc?.boards?.length ? doc.boards : DEFAULT_BOARDS;
+}
 
 // ---------------------------------------------------------------------------
 // Pure logic (exported for tests)
@@ -99,7 +98,57 @@ export function passesLimits(job, limits, now = new Date()) {
     flags.push("unknown_age");
   }
 
+  // Salary gate — active only when the user sets compensation.min_salary.
+  const minSalary = limits.compensation?.min_salary;
+  if (minSalary != null) {
+    if (job.salary_max != null) {
+      if (job.salary_max < minSalary) {
+        reasons.push(
+          `salary: tops out at ${job.salary_max} (min ${minSalary})`,
+        );
+      }
+    } else if (limits.compensation?.flag_missing !== false) {
+      flags.push("no_salary");
+    }
+  }
+
   return { ok: reasons.length === 0, reasons, flags };
+}
+
+// Best-effort max-salary parse from strings like "$150K – $220K • 0.15%".
+// Returns annual USD or null; amounts under 1000 are treated as $K shorthand.
+export function parseSalaryMax(text) {
+  const matches = [
+    ...String(text ?? "").matchAll(/\$\s*([\d,.]+)\s*(k)?/gi),
+  ].map(([, num, k]) => {
+    let n = Number(num.replace(/,/g, ""));
+    if (k || n < 1000) n *= 1000;
+    return n;
+  });
+  const valid = matches.filter((n) => Number.isFinite(n) && n >= 10000);
+  return valid.length ? Math.max(...valid) : null;
+}
+
+// Workday reports relative dates ("Posted 3 Days Ago", "Posted 30+ Days Ago").
+// "30+" maps past the default freshness gate on purpose — a month-old posting
+// is stale AND a repost/ghost signal.
+export function parseWorkdayPostedOn(text, now = new Date()) {
+  const t = String(text ?? "").toLowerCase();
+  let days = null;
+  if (/today/.test(t)) days = 0;
+  else if (/yesterday/.test(t)) days = 1;
+  else {
+    const m = /(\d+)\s*\+?\s*days?\s+ago/.exec(t);
+    if (m) days = Number(m[1]) + (t.includes("+") ? 15 : 0);
+  }
+  if (days == null) return null;
+  return new Date(now.getTime() - days * 86400000).toISOString();
+}
+
+// "/job/US-CA-Santa-Clara/Senior-Engineer_JR123" → "US CA Santa Clara"
+export function workdayLocationFromPath(externalPath) {
+  const m = /\/job\/([^/]+)\//.exec(String(externalPath ?? ""));
+  return m ? m[1].replace(/-/g, " ") : "";
 }
 
 export function normUrl(u) {
@@ -166,11 +215,14 @@ function loadApplied() {
 // { id, source, company, title, location, url, posted_at }
 // ---------------------------------------------------------------------------
 
-async function fetchJson(url) {
+async function fetchJson(url, body = null) {
   const res = await fetch(url, {
+    method: body ? "POST" : "GET",
     headers: {
       "user-agent": "agentic-job-application/0.1 (personal job search tool)",
+      ...(body ? { "content-type": "application/json" } : {}),
     },
+    body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   return res.json();
@@ -204,12 +256,13 @@ async function fetchLever(board) {
     remote: j.workplaceType === "remote",
     url: j.hostedUrl,
     posted_at: j.createdAt ? new Date(j.createdAt).toISOString() : null,
+    salary_max: j.salaryRange?.max ?? null,
   }));
 }
 
 async function fetchAshby(board) {
   const data = await fetchJson(
-    `https://api.ashbyhq.com/posting-api/job-board/${board.slug}`,
+    `https://api.ashbyhq.com/posting-api/job-board/${board.slug}?includeCompensation=true`,
   );
   return (data.jobs ?? [])
     .filter((j) => j.isListed !== false)
@@ -227,7 +280,76 @@ async function fetchAshby(board) {
       remote: j.isRemote === true,
       url: j.jobUrl || j.applyUrl,
       posted_at: j.publishedAt ?? null,
+      salary_max: parseSalaryMax(j.compensation?.compensationTierSummary),
     }));
+}
+
+async function fetchSmartRecruiters(board) {
+  const data = await fetchJson(
+    `https://api.smartrecruiters.com/v1/companies/${board.slug}/postings?limit=100`,
+  );
+  return (data.content ?? []).map((j) => ({
+    id: `smartrecruiters:${board.slug}:${j.id}`,
+    source: `smartrecruiters:${board.slug}`,
+    company: j.company?.name || board.company,
+    title: j.name ?? "",
+    location: [j.location?.city, j.location?.region, j.location?.country]
+      .filter(Boolean)
+      .join(", "),
+    remote: j.location?.remote === true,
+    url: `https://jobs.smartrecruiters.com/${board.slug}/${j.id}`,
+    posted_at: j.releasedDate ?? null,
+  }));
+}
+
+async function fetchWorkable(board) {
+  const data = await fetchJson(
+    `https://apply.workable.com/api/v1/widget/accounts/${board.slug}?details=false`,
+  );
+  return (data.jobs ?? []).map((j) => ({
+    id: `workable:${board.slug}:${j.shortcode ?? j.code ?? j.id}`,
+    source: `workable:${board.slug}`,
+    company: data.name || board.company,
+    title: j.title ?? "",
+    location: [j.city, j.state, j.country].filter(Boolean).join(", "),
+    remote: j.telecommuting === true,
+    url: j.url || `https://apply.workable.com/${board.slug}/j/${j.shortcode}`,
+    posted_at: j.published_on ?? null,
+  }));
+}
+
+async function fetchRecruitee(board) {
+  const data = await fetchJson(
+    `https://${board.slug}.recruitee.com/api/offers/`,
+  );
+  return (data.offers ?? []).map((j) => ({
+    id: `recruitee:${board.slug}:${j.id}`,
+    source: `recruitee:${board.slug}`,
+    company: board.company,
+    title: j.title ?? "",
+    location: [j.city, j.country].filter(Boolean).join(", "),
+    remote: j.remote === true,
+    url: j.careers_url,
+    posted_at: j.published_at ?? j.created_at ?? null,
+  }));
+}
+
+// Workday's semi-public CXS endpoint (same JSON the careers site itself uses).
+// Passes the search query server-side; most Fortune 500 companies live here.
+async function fetchWorkday(board, query) {
+  const data = await fetchJson(
+    `https://${board.host}/wday/cxs/${board.tenant}/${board.site}/jobs`,
+    { appliedFacets: {}, limit: 20, offset: 0, searchText: query ?? "" },
+  );
+  return (data.jobPostings ?? []).map((j) => ({
+    id: `workday:${board.tenant}:${j.bulletFields?.[0] ?? j.externalPath}`,
+    source: `workday:${board.tenant}`,
+    company: board.company,
+    title: j.title ?? "",
+    location: workdayLocationFromPath(j.externalPath) || j.locationsText || "",
+    url: `https://${board.host}/en-US/${board.site}${j.externalPath}`,
+    posted_at: parseWorkdayPostedOn(j.postedOn),
+  }));
 }
 
 async function fetchHackerNews(query) {
@@ -324,13 +446,23 @@ async function cmdSearch(args) {
     greenhouse: fetchGreenhouse,
     lever: fetchLever,
     ashby: fetchAshby,
+    smartrecruiters: fetchSmartRecruiters,
+    workable: fetchWorkable,
+    recruitee: fetchRecruitee,
+    workday: (b) => fetchWorkday(b, query),
   };
   if (source === "all" || source === "boards") {
-    for (const board of DEFAULT_BOARDS) {
+    for (const board of loadSources()) {
+      const fetcher = jobsFor[board.type];
+      const label = `${board.type}:${board.slug ?? board.tenant}`;
+      if (!fetcher) {
+        failures.push(`${label} — unknown board type`);
+        continue;
+      }
       try {
-        candidates.push(...(await jobsFor[board.type](board)));
+        candidates.push(...(await fetcher(board)));
       } catch (e) {
-        failures.push(`${board.type}:${board.slug} — ${e.message}`);
+        failures.push(`${label} — ${e.message}`);
       }
     }
   }

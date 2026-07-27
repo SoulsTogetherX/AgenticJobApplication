@@ -26,6 +26,20 @@ freshness:
   # Postings with no discoverable date are kept but flagged "unknown_age" so
   # screening can double-check before any effort is spent on them.
 
+compensation:
+  # Set to a number (annual USD, e.g. 90000) to reject any lead whose stated
+  # salary tops out below it. Leave null to disable the gate.
+  min_salary: null
+  # When the gate is active, leads with NO discoverable salary are kept but
+  # flagged "no_salary" — missing pay info is also a mild ghost-job signal.
+  flag_missing: true
+
+ghost_signals:
+  # A posting live/reposted this long reads as a ghost job (industry guidance:
+  # 45+ days). Screening treats it as a strong reject signal; the freshness
+  # gate above usually catches these first.
+  repost_age_days: 45
+
 roles:
   # Full-Stack Developer roles only (CLAUDE.md). A job title must contain one
   # of these keywords to be stored. Generic "software engineer" titles pass

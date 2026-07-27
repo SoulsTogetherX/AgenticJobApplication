@@ -27,7 +27,13 @@ returns a compact verdict, never a transcript.
 Ask which leads to process if not specified; default is
 `node scripts/find-jobs.mjs list --status recommended` (falling back to
 `new`). Confirm with the user which stages to run: screen only, screen+tailor,
-or screen+tailor+apply, and whether a cover letter is wanted.
+or screen+tailor+apply.
+
+**Cover letters are automatic, not asked about.** Per job, the subagent
+inspects the application form (or posting) and tailors a cover letter ONLY if
+the job requests one, or the form has a cover-letter field, or it accepts
+attachments beyond the resume. Otherwise the CL is skipped and reported as
+`"skipped (no slot)"`. The user never has to decide this per job.
 
 ## Per-job subagent contract
 
@@ -57,10 +63,13 @@ No posting text, no document contents, no browsing logs in the reply.
 
 WebFetch the posting (Playwright only if JS-required). Check:
 
-- **Ghost job**: posted/reposted for months (compare `posted_at`, look for
-  "reposted" or old dates in page), vague responsibilities, no team or product
-  specifics, hiring freeze news for the company, evergreen "always hiring"
-  phrasing.
+- **Ghost job**: live/reposted ≥ `ghost_signals.repost_age_days` (45; industry
+  guidance says 45+ days unfilled is the strongest ghost signal), vague
+  responsibilities, no team or product specifics, no salary range, hiring
+  freeze news for the company, evergreen "always hiring" phrasing.
+  **Cross-reference**: if the lead came from an aggregator (HN, LinkedIn
+  paste), confirm the job still exists on the company's own careers page —
+  a posting missing there is likely filled or pulled.
 - **Scam**: pay-to-apply, requests for financial/identity info up front,
   free-mail contact addresses, salary far above market for vague work,
   interview via chat app only, urgency pressure, typo-ridden copy, company has
@@ -80,10 +89,11 @@ dismissed --notes "<reason>"` and stops.
 
 Workspace via `node scripts/new-job.mjs`, fill `job.json` from the captured
 posting, then follow `docs/tailoring-rules.md` + the tailor-resume /
-tailor-cover-letter skill rules: draft `resume.md` (and `cover-letter.md` if
-requested) with `<!-- fact:ID -->` annotations, run
-`node scripts/verify-claims.mjs` until it passes. Do NOT render PDFs — that
-needs the user's approval in the main session.
+tailor-cover-letter skill rules: draft `resume.md` (and `cover-letter.md` per
+the automatic cover-letter rule above) with `<!-- fact:ID -->` annotations,
+run `node scripts/verify-claims.mjs` until it passes. Do NOT render PDFs —
+that needs the user's approval in the main session. Subagents write ONLY
+inside `jobs/<slug>/` (CLAUDE.md rule 9).
 
 ### Stage C — apply prep
 

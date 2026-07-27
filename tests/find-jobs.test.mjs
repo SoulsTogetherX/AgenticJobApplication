@@ -7,6 +7,10 @@ import {
   dedupeLeads,
   normUrl,
   loadLimits,
+  loadSources,
+  parseSalaryMax,
+  parseWorkdayPostedOn,
+  workdayLocationFromPath,
 } from "../scripts/find-jobs.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -180,4 +184,78 @@ test("the real application-limits.yaml loads and matches the documented policy",
   assert.ok(limits.location.onsite_allowed.includes("north las vegas"));
   assert.ok(limits.freshness.max_age_days >= 1);
   assert.ok(limits.roles.title_keywords.length > 0);
+});
+
+// ---------- salary gate ----------
+
+const SALARY_LIMITS = { ...LIMITS, compensation: { min_salary: 100000, flag_missing: true } };
+
+test("salary gate rejects below-minimum, passes at/above, inactive when unset", () => {
+  const low = passesLimits(job({ salary_max: 90000 }), SALARY_LIMITS, NOW);
+  assert.equal(low.ok, false);
+  assert.match(low.reasons.join(" "), /salary/);
+
+  const ok = passesLimits(job({ salary_max: 150000 }), SALARY_LIMITS, NOW);
+  assert.equal(ok.ok, true);
+
+  const inactive = passesLimits(job({ salary_max: 90000 }), LIMITS, NOW);
+  assert.equal(inactive.ok, true, "gate must be inactive when min_salary is null");
+});
+
+test("salary gate flags missing salary info instead of rejecting", () => {
+  const v = passesLimits(job({}), SALARY_LIMITS, NOW);
+  assert.equal(v.ok, true);
+  assert.ok(v.flags.includes("no_salary"));
+});
+
+test("parseSalaryMax reads $K shorthand, ranges, and full amounts", () => {
+  assert.equal(parseSalaryMax("$150K – $220K • 0.15% – 0.2%"), 220000);
+  assert.equal(parseSalaryMax("$95,000 - $120,000 per year"), 120000);
+  assert.equal(parseSalaryMax("competitive salary"), null);
+  assert.equal(parseSalaryMax(null), null);
+});
+
+// ---------- workday helpers ----------
+
+test("parseWorkdayPostedOn maps relative dates; 30+ lands past the freshness gate", () => {
+  const today = parseWorkdayPostedOn("Posted Today", NOW);
+  assert.equal(new Date(today).toISOString().slice(0, 10), "2026-07-27");
+
+  const three = parseWorkdayPostedOn("Posted 3 Days Ago", NOW);
+  assert.equal(new Date(three).toISOString().slice(0, 10), "2026-07-24");
+
+  const old = parseWorkdayPostedOn("Posted 30+ Days Ago", NOW);
+  const v = passesLimits(job({ posted_at: old }), LIMITS, NOW);
+  assert.equal(v.ok, false, "30+ days must fail the default freshness gate");
+
+  assert.equal(parseWorkdayPostedOn("gibberish", NOW), null);
+});
+
+test("workdayLocationFromPath extracts the location segment", () => {
+  assert.equal(
+    workdayLocationFromPath("/job/US-CA-Santa-Clara/Senior-Engineer_JR123"),
+    "US CA Santa Clara",
+  );
+  assert.equal(workdayLocationFromPath("no-job-segment"), "");
+});
+
+// ---------- sources ----------
+
+test("loadSources reads the real job-sources.yaml with valid board entries", () => {
+  const boards = loadSources();
+  assert.ok(boards.length >= 10);
+  for (const b of boards) {
+    assert.ok(b.type && b.company, `board missing type/company: ${JSON.stringify(b)}`);
+    if (b.type === "workday") {
+      assert.ok(b.host && b.tenant && b.site, "workday boards need host/tenant/site");
+    } else {
+      assert.ok(b.slug, `${b.type} board needs slug`);
+    }
+  }
+});
+
+test("loadSources falls back to defaults when the file is missing", () => {
+  const boards = loadSources(path.join(ROOT, "docs", "no-such-sources.yaml"));
+  assert.ok(boards.length >= 1);
+  assert.equal(boards[0].type, "greenhouse");
 });

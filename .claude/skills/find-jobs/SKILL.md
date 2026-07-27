@@ -37,9 +37,11 @@ stale postings (default > 30 days), Full-Stack roles only.
 node scripts/find-jobs.mjs search --source all --query "full stack"
 ```
 
-Covers the default boards (Anthropic, Cloudflare, Datadog, GitLab, MongoDB,
-Reddit, Palantir, OpenAI, Linear, Ramp) plus Hacker News job posts. Add
-`--max-age N` to tighten freshness.
+Covers every board in `docs/job-sources.yaml` (Greenhouse/Lever/Ashby tech
+boards incl. Anthropic, plus Fortune 500 via SmartRecruiters and Workday:
+Visa, McDonald's, NVIDIA, Salesforce, Adobe, CVS Health) and Hacker News job
+posts. Add `--max-age N` to tighten freshness. To add a company permanently,
+append it to `docs/job-sources.yaml` — no code change needed.
 
 **2. User-given place or URL** — when the user names a site, company, or URL:
 
@@ -56,7 +58,21 @@ Reddit, Palantir, OpenAI, Linear, Ramp) plus Hacker News job posts. Add
   public careers-site search page via this capture flow, or WebSearch
   `site:<company careers domain> full stack`.
 
-**3. HN "Who is hiring"** — for the monthly thread, fetch it via Algolia
+**3. LinkedIn URL (paste-and-go)** — when the user pastes a
+`linkedin.com/jobs/...` link, NEVER fetch or scrape it (LinkedIn's ToS forbid
+automated access). Instead:
+
+1. Pull whatever the URL itself reveals (company/title often appear in the
+   slug).
+2. WebSearch for the same posting on the employer's own site or ATS board
+   (`"<company>" "<title>" careers`, `site:boards.greenhouse.io <company>`,
+   etc.) — most LinkedIn ads are syndicated from one of these.
+3. Capture from that canonical source and `import` it, storing the pasted
+   LinkedIn URL in the lead's `notes` for provenance/dedupe.
+4. If no public canonical source exists, ask the user to paste the posting
+   text from their browser and import that (`source: "linkedin:manual"`).
+
+**4. HN "Who is hiring"** — for the monthly thread, fetch it via Algolia
 (`search?tags=story,author_whoishiring`), read top-level comments matching the
 limits, and import the same way.
 

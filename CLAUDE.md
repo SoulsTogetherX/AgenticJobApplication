@@ -56,7 +56,8 @@ helps apply via Playwright MCP. The user is applying to **Full-Stack Developer r
   sources, store leads), pipeline-jobs (batch screen/tailor/prep with one
   subagent per job)
 - `docs/application-limits.yaml` — user-owned hard filters (location/freshness/
-  roles) every job must pass; `jobs/leads.json` — stored leads (gitignored)
+  roles/salary) every job must pass; `docs/job-sources.yaml` — user-editable
+  board list for the sweep; `jobs/leads.json` — stored leads (gitignored)
 - `docs/tailoring-rules.md` — shared rules both skills load
 - `profile/` — fact base (gitignored; user-owned)
 - `jobs/<slug>/` — per-job workspace: `job.json`, `context.json` (SHARED between

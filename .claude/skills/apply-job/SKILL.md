@@ -11,6 +11,7 @@ Drive one job application end-to-end using the Playwright MCP browser tools
 `browser_fill_form`, `browser_file_upload`, ...).
 
 ## Hard boundaries (never cross these)
+
 - **NEVER click the final Submit/Apply/Send button.** The user always submits.
 - Never create accounts, log in, enter passwords, or handle payment/identity
   data — if a login wall appears, pause and ask the user to log in in the
@@ -36,11 +37,14 @@ Drive one job application end-to-end using the Playwright MCP browser tools
    user's go-ahead before continuing.
 
 4. **Workspace**: `node scripts/new-job.mjs <slug> --company ... --title ...
-   --url ...`, then fill `job.json` with the captured description/requirements.
+--url ...`, then fill `job.json` with the captured description/requirements.
 
-5. **Tailor documents**: run the tailor-resume flow, then tailor-cover-letter
-   (they share `jobs/<slug>/context.json`). Both include their own verify +
-   user-approval + render steps. Skip either if the form doesn't accept it.
+5. **Tailor documents**: run the tailor-resume flow, then — automatically, no
+   need to ask — tailor-cover-letter IF the job requests one, the form has a
+   cover-letter field, or the form accepts attachments beyond the resume;
+   otherwise skip the cover letter and say so. (Both flows share
+   `jobs/<slug>/context.json` and include their own verify + user-approval +
+   render steps.)
 
 6. **Fill the application form**:
    - Work field by field from a `browser_snapshot`. Fill contact fields from

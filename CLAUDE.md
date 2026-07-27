@@ -19,6 +19,10 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   (filters through `docs/application-limits.yaml`, stores in `jobs/leads.json`)
 - Manage swept boards: `node scripts/manage-sources.mjs add|remove|verify|list`
   (prescreens on add, refuses duplicates; edits `docs/job-sources.yaml`)
+- Follow-ups due: `node scripts/follow-ups.mjs [--days N] [--json]`
+- Record an outcome/follow-up the user reported:
+  `node scripts/update-application.mjs <slug-or-company> [--status s] [--followed-up]`
+- Profile-gap report: `node scripts/profile-gaps.mjs [--json] [--min-demand N]`
 
 ## Hard rules (guardrails — never bend these)
 
@@ -58,7 +62,9 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   update-profile (merge new source docs into the profile), apply-job (Playwright
   MCP application flow; user always clicks Submit), find-jobs (search public
   sources, store leads), pipeline-jobs (batch screen/tailor/prep with one
-  subagent per job)
+  subagent per job), manage-sources (add/remove swept boards), follow-up
+  (nudge cadence + outcome recording via update-application.mjs), profile-gaps
+  (demand-vs-profile analysis; honest recommendations only)
 - `docs/application-limits.yaml` — user-owned hard filters (location/freshness/
   roles/salary) every job must pass; `docs/job-sources.yaml` — board list for
   the sweep (managed via manage-sources); `jobs/leads.json` — stored leads

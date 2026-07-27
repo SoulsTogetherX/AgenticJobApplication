@@ -27,11 +27,14 @@ function deny(reason) {
 }
 
 function currentBranch(cwd) {
-  const res = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+  // --show-current works even on a freshly-initialized (unborn) branch and
+  // prints empty on detached HEAD; both rev-parse variants error there.
+  const res = spawnSync("git", ["branch", "--show-current"], {
     cwd,
     encoding: "utf8",
   });
-  return res.status === 0 ? res.stdout.trim() : null;
+  const name = res.status === 0 ? res.stdout.trim() : "";
+  return name || null; // null = branch unknown (detached/not a repo) → allow
 }
 
 let raw = "";

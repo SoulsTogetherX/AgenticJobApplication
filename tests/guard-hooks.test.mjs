@@ -106,11 +106,57 @@ test("guard-bash no longer blocks file management commands", () => {
     "node scripts/new-job.mjs acme --company Acme --title Dev",
     "git status",
     "git log --oneline -5",
-    'git commit -m "PRs target main eventually" ; git push origin dev', // "main" in message is not a push ref
   ];
   for (const c of allowed) {
     const { decision } = runHook(GUARD_BASH, bash(c));
     assert.equal(decision, null, `expected allow for: ${c}`);
+  }
+});
+
+test('guard-bash: "main" in a commit message is not a push ref (checked on a dev-branch repo)', () => {
+  // CI checkouts are detached-HEAD, so build a throwaway repo pinned to dev
+  // instead of relying on this repo's current branch.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-git-"));
+  try {
+    const init = spawnSync("git", ["init", "-b", "dev", dir], {
+      encoding: "utf8",
+    });
+    assert.equal(init.status, 0, init.stderr);
+    const payload = JSON.stringify({
+      tool_name: "Bash",
+      cwd: dir,
+      tool_input: {
+        command:
+          'git commit -m "PRs target main eventually" ; git push origin dev',
+      },
+    });
+    const { decision } = runHook(GUARD_BASH, payload);
+    assert.equal(
+      decision,
+      null,
+      "commit-message text must not trip the push-ref check",
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("guard-bash denies state-changing git when HEAD is not on dev", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-git-"));
+  try {
+    const init = spawnSync("git", ["init", "-b", "trunk", dir], {
+      encoding: "utf8",
+    });
+    assert.equal(init.status, 0, init.stderr);
+    const payload = JSON.stringify({
+      tool_name: "Bash",
+      cwd: dir,
+      tool_input: { command: "git commit -m msg" },
+    });
+    const { decision } = runHook(GUARD_BASH, payload);
+    assert.equal(decision, "deny");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

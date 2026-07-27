@@ -1,0 +1,16 @@
+# Personal data — never commit (contains contact info, work history, Q&A answers)
+profile/
+!profile/profile.example.yaml
+jobs/
+
+# Dependencies / build
+node_modules/
+*.log
+
+# Playwright MCP browser artifacts (snapshots/console logs from apply sessions)
+.playwright-mcp/
+
+# Rendered artifacts outside jobs/
+*.pdf
+*.html
+!templates/*.html

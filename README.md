@@ -1,0 +1,69 @@
+# Agentic Job Application
+
+A Claude Code-driven pipeline that tailors a resume and cover letter to a specific
+job posting — **using only pre-approved facts** — then verifies every claim
+deterministically and renders ATS-friendly PDFs.
+
+## Design principles
+
+- **One job = one folder** (`jobs/<slug>/`) with its own captured posting, shared
+  tailoring context, drafts, and rendered PDFs. No rolling conversation state.
+- **Single source of truth**: `profile/profile.yaml` is the only place facts may
+  come from. It is distilled from the owner's real resumes and cover letter and
+  is user-approved. `profile/answers.yaml` grows over time as the agent asks the
+  user questions it can't answer; the user can edit it freely.
+- **Shared context**: both tailoring skills read/write `jobs/<slug>/context.json`
+  so the resume and cover letter never contradict each other.
+- **Truthfulness guardrails** (layered):
+  1. Skills may only rephrase/reorder facts, never invent (see `docs/tailoring-rules.md`).
+  2. Every resume bullet carries a `<!-- fact:ID -->` annotation tying it to a profile fact.
+  3. `scripts/verify-claims.mjs` deterministically fails any output containing
+     numbers, dates, or tech keywords not present in the referenced facts / profile.
+  4. A PreToolUse hook blocks the agent from editing the profile fact base directly.
+- **Privacy**: `profile/` (except the example) and `jobs/` are gitignored — real
+  personal data never leaves this machine via git.
+
+## Layout
+
+```
+.claude/skills/tailor-resume/       skill: tailor resume to a job
+.claude/skills/tailor-cover-letter/ skill: tailor cover letter to a job
+.claude/skills/check-applied/       skill: application history (already applied? how long ago?)
+.claude/skills/update-profile/      skill: merge replaced/updated source docs into the profile (add-only)
+.claude/skills/apply-job/           skill: apply in the browser via Playwright MCP (user clicks Submit)
+.claude/hooks/protect-profile.js    hook: deny agent edits to the fact base
+docs/tailoring-rules.md             shared rules both skills must follow
+profile/profile.yaml                approved master fact profile (gitignored)
+profile/answers.yaml                growing Q&A bank (gitignored, user-editable)
+profile/applications.yaml           log of submitted applications (gitignored, user-editable)
+profile/profile.example.yaml        sanitized template (committed)
+jobs/<slug>/                        per-job workspace (gitignored)
+schemas/                            JSON shape docs for job.json / context.json
+scripts/                            deterministic helpers (no LLM)
+tests/                              node --test suite incl. guardrail failure cases
+templates/document.css              print stylesheet for PDF rendering
+```
+
+## Setup
+
+```bash
+npm install
+npm test
+```
+
+PDF rendering uses a locally installed Edge or Chrome in headless mode
+(no extra download). Override the browser with the `PDF_BROWSER` env var.
+
+## Usage (inside Claude Code)
+
+- `/tailor-resume <job>` — tailor the resume for a job posting
+- `/tailor-cover-letter <job>` — tailor the cover letter (reuses the same context)
+- `/check-applied <company>` — has this job/company been applied to, and when?
+- `/update-profile` — after replacing/editing a PDF in `profile/source/`, merge new facts in
+- `/apply-job <url>` — full browser application flow (requires the Playwright MCP
+  server from `.mcp.json`, so start Claude Code in THIS folder and approve it)
+
+The Playwright MCP server (`.mcp.json`) loads when a Claude Code session starts
+in this folder; the apply-job skill fills applications with it. The human is
+always on the submit button — the agent never submits, logs in, or handles
+credentials.

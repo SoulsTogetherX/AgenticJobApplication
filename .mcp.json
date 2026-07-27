@@ -1,0 +1,10 @@
+{
+  "$comment": "Milestone 2: Playwright MCP lets the agent read the job posting on screen and fill application forms. The human always performs the final submit.",
+  "mcpServers": {
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    }
+  }
+}

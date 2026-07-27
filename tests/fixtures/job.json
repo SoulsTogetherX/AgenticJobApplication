@@ -1,0 +1,10 @@
+{
+  "slug": "widgetco-fullstack",
+  "company": "WidgetCo",
+  "title": "Full-Stack Engineer",
+  "source_url": "https://example.com/jobs/123",
+  "captured_at": "2026-07-27",
+  "description": "WidgetCo seeks a Full-Stack Engineer with React and Node.js experience. 3+ years preferred. We use Kubernetes internally.",
+  "requirements": ["React", "Node.js", "3+ years experience"],
+  "questions": []
+}

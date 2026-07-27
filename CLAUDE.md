@@ -1,7 +1,9 @@
 # Project: Agentic Job Application Pipeline
 
 Tailors the user's resume and cover letter to specific job postings and (Milestone 2)
-helps apply via Playwright MCP. The user is applying to **Full-Stack Developer roles only**.
+helps apply via Playwright MCP. The user is applying to **Full-Stack Developer
+roles, and (user decision 2026-07-27) Back-End roles as well** — the title
+keywords in `docs/application-limits.yaml` are the authoritative list.
 
 ## Commands
 
@@ -15,6 +17,8 @@ helps apply via Playwright MCP. The user is applying to **Full-Stack Developer r
 - Render PDF: `node scripts/render-pdf.mjs <input.md> <output.pdf> [--letter]`
 - Find job leads: `node scripts/find-jobs.mjs search|import|list|mark ...`
   (filters through `docs/application-limits.yaml`, stores in `jobs/leads.json`)
+- Manage swept boards: `node scripts/manage-sources.mjs add|remove|verify|list`
+  (prescreens on add, refuses duplicates; edits `docs/job-sources.yaml`)
 
 ## Hard rules (guardrails — never bend these)
 
@@ -56,8 +60,11 @@ helps apply via Playwright MCP. The user is applying to **Full-Stack Developer r
   sources, store leads), pipeline-jobs (batch screen/tailor/prep with one
   subagent per job)
 - `docs/application-limits.yaml` — user-owned hard filters (location/freshness/
-  roles/salary) every job must pass; `docs/job-sources.yaml` — user-editable
-  board list for the sweep; `jobs/leads.json` — stored leads (gitignored)
+  roles/salary) every job must pass; `docs/job-sources.yaml` — board list for
+  the sweep (managed via manage-sources); `jobs/leads.json` — stored leads
+  (gitignored)
+- `.env` — secrets (gitignored; Adzuna API keys); `.env.example` is the
+  committed template. Never print `.env` contents into chat, docs, or commits.
 - `docs/tailoring-rules.md` — shared rules both skills load
 - `profile/` — fact base (gitignored; user-owned)
 - `jobs/<slug>/` — per-job workspace: `job.json`, `context.json` (SHARED between

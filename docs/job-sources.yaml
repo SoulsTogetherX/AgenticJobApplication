@@ -1,63 +1,34 @@
 # =============================================================================
 # JOB SOURCES — the boards swept by `node scripts/find-jobs.mjs search`.
-# User-editable: add a company without touching code.
+#
+# Manage this list with the manage-sources skill (or by hand):
+#   node scripts/manage-sources.mjs add --type <ats> --slug <slug> --company "Name"
+#   node scripts/manage-sources.mjs remove "<company or slug>"
+#   node scripts/manage-sources.mjs verify
+# `add` prescreens the board (live API check) and refuses duplicates.
+#
+# FORMAT RULE: one entry per line, flow style ({ ... }) — the add/remove
+# tooling edits this file line-by-line to preserve these comments.
 #
 # Types and required fields:
 #   greenhouse | lever | ashby | workable | recruitee | smartrecruiters:
-#     { type, slug, company }   (slug = the company's board identifier)
+#     { type, slug, company }
 #   workday:
 #     { type, company, host, tenant, site }
-#     Find these in the careers URL: https://<tenant>.wdN.myworkdayjobs.com/<site>
+#     (from the careers URL: https://<tenant>.wdN.myworkdayjobs.com/<site>)
 #
-# All endpoints used are public, no-auth JSON APIs intended for integration.
-# Every entry below was verified working on 2026-07-27.
+# The Adzuna aggregator is separate — it is credential-based (.env) and always
+# included in `search --source all` when configured.
 # =============================================================================
 
 boards:
-  # --- Tech (Greenhouse) ---
   - { type: greenhouse, slug: anthropic, company: Anthropic }
   - { type: greenhouse, slug: cloudflare, company: Cloudflare }
   - { type: greenhouse, slug: datadog, company: Datadog }
   - { type: greenhouse, slug: gitlab, company: GitLab }
   - { type: greenhouse, slug: mongodb, company: MongoDB }
   - { type: greenhouse, slug: reddit, company: Reddit }
-
-  # --- Tech (Lever / Ashby) ---
   - { type: lever, slug: palantir, company: Palantir }
   - { type: ashby, slug: openai, company: OpenAI }
   - { type: ashby, slug: linear, company: Linear }
   - { type: ashby, slug: ramp, company: Ramp }
-
-  # --- Fortune 500 (SmartRecruiters) ---
-  - { type: smartrecruiters, slug: Visa, company: Visa }
-  - { type: smartrecruiters, slug: McDonaldsCorporation, company: "McDonald's" }
-
-  # --- Fortune 500 (Workday) ---
-  - {
-      type: workday,
-      company: NVIDIA,
-      host: nvidia.wd5.myworkdayjobs.com,
-      tenant: nvidia,
-      site: NVIDIAExternalCareerSite,
-    }
-  - {
-      type: workday,
-      company: Salesforce,
-      host: salesforce.wd12.myworkdayjobs.com,
-      tenant: salesforce,
-      site: External_Career_Site,
-    }
-  - {
-      type: workday,
-      company: Adobe,
-      host: adobe.wd5.myworkdayjobs.com,
-      tenant: adobe,
-      site: external_experienced,
-    }
-  - {
-      type: workday,
-      company: CVS Health,
-      host: cvshealth.wd1.myworkdayjobs.com,
-      tenant: cvshealth,
-      site: CVS_Health_Careers,
-    }

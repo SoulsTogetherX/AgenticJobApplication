@@ -10,8 +10,8 @@
 //
 // NOTE: no process.exit() after writing — on Windows, exiting immediately after
 // console.log drops buffered pipe output (same caveat as protect-profile.js).
-import os from "node:os";
-import path from "node:path";
+import os from "node:os"
+import path from "node:path"
 
 function deny(reason) {
   console.log(
@@ -22,36 +22,36 @@ function deny(reason) {
         permissionDecisionReason: reason,
       },
     }),
-  );
+  )
 }
 
-let raw = "";
-process.stdin.on("data", (d) => (raw += d));
+let raw = ""
+process.stdin.on("data", (d) => (raw += d))
 process.stdin.on("end", () => {
-  let input = {};
+  let input = {}
   try {
-    input = JSON.parse(raw.replace(/^﻿/, ""));
+    input = JSON.parse(raw.replace(/^﻿/, ""))
   } catch {
-    return;
+    return
   }
   const file = String(
     input.tool_input?.file_path ?? input.tool_input?.notebook_path ?? "",
-  );
-  if (!file) return;
+  )
+  if (!file) return
 
-  const root = path.resolve(input.cwd || process.cwd());
-  const abs = path.resolve(root, file);
-  const rel = path.relative(root, abs);
-  const outside = rel.startsWith("..") || path.isAbsolute(rel);
-  if (!outside) return;
+  const root = path.resolve(input.cwd || process.cwd())
+  const abs = path.resolve(root, file)
+  const rel = path.relative(root, abs)
+  const outside = rel.startsWith("..") || path.isAbsolute(rel)
+  if (!outside) return
 
-  const tmp = path.relative(os.tmpdir(), abs);
-  const inTmp = !tmp.startsWith("..") && !path.isAbsolute(tmp);
+  const tmp = path.relative(os.tmpdir(), abs)
+  const inTmp = !tmp.startsWith("..") && !path.isAbsolute(tmp)
   const inMemory =
-    /[\\/]\.claude[\\/]projects[\\/][^\\/]+[\\/]memory[\\/]/.test(abs);
+    /[\\/]\.claude[\\/]projects[\\/][^\\/]+[\\/]memory[\\/]/.test(abs)
   if (!inTmp && !inMemory) {
     deny(
       `"${file}" is outside the project directory. This project only edits its own files.`,
-    );
+    )
   }
-});
+})

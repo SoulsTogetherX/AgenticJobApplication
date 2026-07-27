@@ -12,7 +12,7 @@
 //
 // NOTE: no process.exit() after writing — on Windows, exiting immediately after
 // console.log drops buffered pipe output (same caveat as protect-profile.js).
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process"
 
 function deny(reason) {
   console.log(
@@ -23,7 +23,7 @@ function deny(reason) {
         permissionDecisionReason: reason,
       },
     }),
-  );
+  )
 }
 
 function currentBranch(cwd) {
@@ -32,39 +32,39 @@ function currentBranch(cwd) {
   const res = spawnSync("git", ["branch", "--show-current"], {
     cwd,
     encoding: "utf8",
-  });
-  const name = res.status === 0 ? res.stdout.trim() : "";
-  return name || null; // null = branch unknown (detached/not a repo) → allow
+  })
+  const name = res.status === 0 ? res.stdout.trim() : ""
+  return name || null // null = branch unknown (detached/not a repo) → allow
 }
 
-let raw = "";
-process.stdin.on("data", (d) => (raw += d));
+let raw = ""
+process.stdin.on("data", (d) => (raw += d))
 process.stdin.on("end", () => {
-  let input = {};
+  let input = {}
   try {
-    input = JSON.parse(raw.replace(/^﻿/, ""));
+    input = JSON.parse(raw.replace(/^﻿/, ""))
   } catch {
-    return;
+    return
   }
-  const cmd = String(input.tool_input?.command ?? "");
-  if (!cmd) return;
+  const cmd = String(input.tool_input?.command ?? "")
+  if (!cmd) return
 
-  if (!/(^|[\s;&|(])git($|\s)/.test(cmd)) return;
+  if (!/(^|[\s;&|(])git($|\s)/.test(cmd)) return
 
   const SWITCH_TO_DEV =
-    /git\s+(checkout|switch)\s+(-b\s+|-c\s+|--create\s+)?dev(\s|;|&|\||$)/;
+    /git\s+(checkout|switch)\s+(-b\s+|-c\s+|--create\s+)?dev(\s|;|&|\||$)/
   // Matches branch switches/creations ("checkout X", "checkout -b X") but not
   // path restores ("checkout -- file"), which are plain file operations.
-  const SWITCH = /git\s+(checkout|switch)\s+(-b\s+|-c\s+|--create\s+)?[^-\s]/;
-  const BRANCH_MUTATION = /git\s+branch\s+(-|[^\s])/;
+  const SWITCH = /git\s+(checkout|switch)\s+(-b\s+|-c\s+|--create\s+)?[^-\s]/
+  const BRANCH_MUTATION = /git\s+branch\s+(-|[^\s])/
   const STATE_CHANGING =
-    /git\s+(commit|merge|rebase|cherry-pick|revert|reset|am\s|apply|tag\s|push)/;
+    /git\s+(commit|merge|rebase|cherry-pick|revert|reset|am\s|apply|tag\s|push)/
 
   if (SWITCH.test(cmd) && !SWITCH_TO_DEV.test(cmd)) {
     deny(
       "Only the `dev` branch may be used. Switch with `git checkout dev` (or `git checkout -b dev`).",
-    );
-    return;
+    )
+    return
   }
   if (
     BRANCH_MUTATION.test(cmd) &&
@@ -72,23 +72,23 @@ process.stdin.on("end", () => {
   ) {
     deny(
       "Branch create/delete/rename is blocked; only the `dev` branch may exist for agent work.",
-    );
-    return;
+    )
+    return
   }
   // Scope the ref check to the push clause itself ([^;&|]* stops at command
   // separators) so "main" in a commit message doesn't false-positive.
   if (/git\s+push[^;&|]*\b(main|master)\b/.test(cmd)) {
     deny(
       "Pushing to main/master is blocked. Only `git push origin dev` is allowed.",
-    );
-    return;
+    )
+    return
   }
   if (STATE_CHANGING.test(cmd) && !SWITCH_TO_DEV.test(cmd)) {
-    const branch = currentBranch(input.cwd || process.cwd());
+    const branch = currentBranch(input.cwd || process.cwd())
     if (branch && branch !== "dev") {
       deny(
         `HEAD is on "${branch}" but only the \`dev\` branch may be modified. Run \`git checkout dev\` first.`,
-      );
+      )
     }
   }
-});
+})

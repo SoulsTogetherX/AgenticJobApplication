@@ -4,82 +4,114 @@
 //
 // Usage: node scripts/render-pdf.mjs <input.md> <output.pdf> [--letter] [--css templates/document.css]
 // Env:   PDF_BROWSER=<path to msedge.exe/chrome.exe> overrides browser discovery.
-import fs from 'node:fs';
-import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { marked } from 'marked';
+import fs from "node:fs"
+import path from "node:path"
+import { spawnSync } from "node:child_process"
+import { marked } from "marked"
 
-const args = process.argv.slice(2);
+const args = process.argv.slice(2)
 function flagBool(name) {
-  const i = args.indexOf(name);
-  if (i !== -1) { args.splice(i, 1); return true; }
-  return false;
+  const i = args.indexOf(name)
+  if (i !== -1) {
+    args.splice(i, 1)
+    return true
+  }
+  return false
 }
 function flag(name, dflt) {
-  const i = args.indexOf(name);
-  if (i !== -1) { const v = args[i + 1]; args.splice(i, 2); return v; }
-  return dflt;
+  const i = args.indexOf(name)
+  if (i !== -1) {
+    const v = args[i + 1]
+    args.splice(i, 2)
+    return v
+  }
+  return dflt
 }
-const isLetter = flagBool('--letter');
-const cssPath = flag('--css', 'templates/document.css');
-const [input, output] = args;
+const isLetter = flagBool("--letter")
+const cssPath = flag("--css", "templates/document.css")
+const [input, output] = args
 
 if (!input || !output) {
-  console.error('Usage: render-pdf.mjs <input.md> <output.pdf> [--letter] [--css file.css]');
-  process.exit(2);
+  console.error(
+    "Usage: render-pdf.mjs <input.md> <output.pdf> [--letter] [--css file.css]",
+  )
+  process.exit(2)
 }
-if (!fs.existsSync(input)) { console.error(`No such file: ${input}`); process.exit(2); }
+if (!fs.existsSync(input)) {
+  console.error(`No such file: ${input}`)
+  process.exit(2)
+}
 
 export function findBrowser() {
   const candidates = [
     process.env.PDF_BROWSER,
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/microsoft-edge',
-  ].filter(Boolean);
-  return candidates.find((p) => fs.existsSync(p)) ?? null;
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/microsoft-edge",
+  ].filter(Boolean)
+  return candidates.find((p) => fs.existsSync(p)) ?? null
 }
 
-const browser = findBrowser();
+const browser = findBrowser()
 if (!browser) {
-  console.error('No Edge/Chrome found. Set PDF_BROWSER to a browser executable path.');
-  process.exit(3);
+  console.error(
+    "No Edge/Chrome found. Set PDF_BROWSER to a browser executable path.",
+  )
+  process.exit(3)
 }
 
-const raw = fs.readFileSync(input, 'utf8');
-const stripped = raw.replace(/<!--\s*fact:[^>]*-->/g, '');
-const body = marked.parse(stripped);
-const css = fs.existsSync(cssPath) ? fs.readFileSync(cssPath, 'utf8') : '';
+const raw = fs.readFileSync(input, "utf8")
+const stripped = raw.replace(/<!--\s*fact:[^>]*-->/g, "")
+const body = marked.parse(stripped)
+const css = fs.existsSync(cssPath) ? fs.readFileSync(cssPath, "utf8") : ""
 
 const html = `<!doctype html>
 <html><head><meta charset="utf-8"><style>${css}</style></head>
-<body class="${isLetter ? 'letter' : 'resume'}">${body}</body></html>`;
+<body class="${isLetter ? "letter" : "resume"}">${body}</body></html>`
 
-const htmlPath = path.join(path.dirname(output), path.basename(output, '.pdf') + '.render.html');
-fs.writeFileSync(htmlPath, html, 'utf8');
+const htmlPath = path.join(
+  path.dirname(output),
+  path.basename(output, ".pdf") + ".render.html",
+)
+fs.writeFileSync(htmlPath, html, "utf8")
 
-const outAbs = path.resolve(output);
-const htmlUrl = 'file:///' + path.resolve(htmlPath).replace(/\\/g, '/');
+const outAbs = path.resolve(output)
+const htmlUrl = "file:///" + path.resolve(htmlPath).replace(/\\/g, "/")
 
 function tryRender(headlessFlag) {
-  return spawnSync(browser, [
-    headlessFlag, '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-    '--no-pdf-header-footer', `--print-to-pdf=${outAbs}`, htmlUrl,
-  ], { timeout: 60_000 });
+  return spawnSync(
+    browser,
+    [
+      headlessFlag,
+      "--disable-gpu",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--no-pdf-header-footer",
+      `--print-to-pdf=${outAbs}`,
+      htmlUrl,
+    ],
+    { timeout: 60_000 },
+  )
 }
 
-let res = tryRender('--headless=new');
-if (!fs.existsSync(outAbs)) res = tryRender('--headless');
+let res = tryRender("--headless=new")
+if (!fs.existsSync(outAbs)) res = tryRender("--headless")
 
 if (!fs.existsSync(outAbs)) {
-  console.error(`PDF was not produced (browser exit ${res.status}). stderr:\n${res.stderr?.toString().slice(0, 500)}`);
-  process.exit(1);
+  console.error(
+    `PDF was not produced (browser exit ${res.status}). stderr:\n${res.stderr?.toString().slice(0, 500)}`,
+  )
+  process.exit(1)
 }
-const head = fs.readFileSync(outAbs).subarray(0, 5).toString('latin1');
-if (!head.startsWith('%PDF')) {
-  console.error('Output exists but is not a valid PDF.');
-  process.exit(1);
+const head = fs.readFileSync(outAbs).subarray(0, 5).toString("latin1")
+if (!head.startsWith("%PDF")) {
+  console.error("Output exists but is not a valid PDF.")
+  process.exit(1)
 }
-console.log(`Rendered ${outAbs} (${fs.statSync(outAbs).size} bytes). Intermediate HTML kept at ${htmlPath}`);
+console.log(
+  `Rendered ${outAbs} (${fs.statSync(outAbs).size} bytes). Intermediate HTML kept at ${htmlPath}`,
+)

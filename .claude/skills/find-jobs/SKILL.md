@@ -37,11 +37,17 @@ stale postings (default > 30 days), Full-Stack roles only.
 node scripts/find-jobs.mjs search --source all --query "full stack"
 ```
 
-Covers every board in `docs/job-sources.yaml` (Greenhouse/Lever/Ashby tech
-boards incl. Anthropic, plus Fortune 500 via SmartRecruiters and Workday:
-Visa, McDonald's, NVIDIA, Salesforce, Adobe, CVS Health) and Hacker News job
-posts. Add `--max-age N` to tighten freshness. To add a company permanently,
-append it to `docs/job-sources.yaml` — no code change needed.
+Covers every board in `docs/job-sources.yaml`, Hacker News job posts, and —
+when `.env` is configured — the Adzuna aggregator. Add `--max-age N` to
+tighten freshness. To track or untrack a company, use the manage-sources
+skill (prescreens the board, refuses duplicates); never hand-edit the YAML.
+
+**Adzuna** (`--source adzuna`, auto-included in `all`): a job aggregator with
+salary data covering thousands of employers, including Fortune 500 companies
+whose Workday/Taleo portals have no public feed. Needs credentials: the user
+copies `.env.example` to `.env` and fills `ADZUNA_APP_ID` / `ADZUNA_APP_KEY`
+(free at https://developer.adzuna.com/). Never read the `.env` values aloud or
+into a document; if unconfigured, `all` skips it with a warning.
 
 **2. User-given place or URL** — when the user names a site, company, or URL:
 

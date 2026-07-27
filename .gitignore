@@ -5,6 +5,9 @@ profile/*
 !profile/profile.example.yaml
 jobs/
 
+# Secrets — never commit; use .env.example as the template
+.env
+
 # Dependencies / build
 node_modules/
 *.log

@@ -7,7 +7,7 @@
 // lead store at jobs/leads.json.
 //
 // Usage:
-//   node scripts/find-jobs.mjs search [--source all|hn|boards] [--query "full stack"] [--max-age N]
+//   node scripts/find-jobs.mjs search [--source all|hn|boards|adzuna] [--query "full stack"] [--max-age N]
 //   node scripts/find-jobs.mjs import <file.json>   # leads captured in-session (Playwright/WebFetch)
 //   node scripts/find-jobs.mjs list [--status new|recommended|dismissed|applied|all]
 //   node scripts/find-jobs.mjs mark <id-or-url> --status <status> [--notes "..."]
@@ -352,6 +352,72 @@ async function fetchWorkday(board, query) {
   }));
 }
 
+// Minimal .env parser (no dependency): KEY=value lines, #-comments, optional
+// quotes. Real environment variables win over .env values.
+export function loadEnv(file = path.join(ROOT, ".env")) {
+  const out = {};
+  if (fs.existsSync(file)) {
+    for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+      if (line.trim().startsWith("#")) continue;
+      const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
+      if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, "");
+    }
+  }
+  for (const k of Object.keys(out)) {
+    if (process.env[k] !== undefined) out[k] = process.env[k];
+  }
+  return { ...out };
+}
+
+export function normalizeAdzunaJob(j) {
+  return {
+    id: `adzuna:${j.id}`,
+    source: "adzuna",
+    company: j.company?.display_name ?? "unknown",
+    title: j.title ?? "",
+    location: j.location?.display_name ?? "",
+    url: j.redirect_url,
+    posted_at: j.created ?? null,
+    salary_max: j.salary_max ?? null,
+  };
+}
+
+// Adzuna aggregator (https://developer.adzuna.com/) — credentialed via .env,
+// covers thousands of employers (incl. Workday/Taleo companies with no public
+// feed) and usually includes salary data. Two passes: near the user's base,
+// and remote.
+async function fetchAdzuna(query, limits, env = loadEnv()) {
+  const appId = env.ADZUNA_APP_ID;
+  const appKey = env.ADZUNA_APP_KEY;
+  if (!appId || !appKey || appId === "your_app_id_here") {
+    throw new Error(
+      "not configured — copy .env.example to .env and set ADZUNA_APP_ID / ADZUNA_APP_KEY",
+    );
+  }
+  const country = env.ADZUNA_COUNTRY || "us";
+  const maxDays = limits.freshness?.max_age_days ?? 30;
+  const base = limits.location?.base || "Las Vegas";
+  const mk = (params) =>
+    `https://api.adzuna.com/v1/api/jobs/${country}/search/1?` +
+    new URLSearchParams({
+      app_id: appId,
+      app_key: appKey,
+      results_per_page: "50",
+      max_days_old: String(maxDays),
+      ...params,
+    });
+  const queries = [
+    { what: query, where: base, distance: "50" },
+    { what: `${query} remote` },
+  ];
+  const out = [];
+  for (const q of queries) {
+    const data = await fetchJson(mk(q));
+    out.push(...(data.results ?? []).map(normalizeAdzunaJob));
+  }
+  return out; // cross-query duplicates fall out in dedupeLeads
+}
+
 async function fetchHackerNews(query) {
   const q = encodeURIComponent(query || "full stack");
   const data = await fetchJson(
@@ -375,6 +441,26 @@ async function fetchHackerNews(query) {
       posted_at: h.created_at ?? null,
     };
   });
+}
+
+const BOARD_FETCHERS = {
+  greenhouse: fetchGreenhouse,
+  lever: fetchLever,
+  ashby: fetchAshby,
+  smartrecruiters: fetchSmartRecruiters,
+  workable: fetchWorkable,
+  recruitee: fetchRecruitee,
+  workday: fetchWorkday,
+};
+
+export const BOARD_TYPES = Object.keys(BOARD_FETCHERS);
+
+// One entry point per board — used by cmdSearch and by manage-sources.mjs to
+// prescreen a board before it is added to docs/job-sources.yaml.
+export async function fetchBoard(board, query = "software engineer") {
+  const fetcher = BOARD_FETCHERS[board.type];
+  if (!fetcher) throw new Error(`unknown board type "${board.type}"`);
+  return fetcher(board, query);
 }
 
 // ---------------------------------------------------------------------------
@@ -442,25 +528,11 @@ async function cmdSearch(args) {
 
   const candidates = [];
   const failures = [];
-  const jobsFor = {
-    greenhouse: fetchGreenhouse,
-    lever: fetchLever,
-    ashby: fetchAshby,
-    smartrecruiters: fetchSmartRecruiters,
-    workable: fetchWorkable,
-    recruitee: fetchRecruitee,
-    workday: (b) => fetchWorkday(b, query),
-  };
   if (source === "all" || source === "boards") {
     for (const board of loadSources()) {
-      const fetcher = jobsFor[board.type];
       const label = `${board.type}:${board.slug ?? board.tenant}`;
-      if (!fetcher) {
-        failures.push(`${label} — unknown board type`);
-        continue;
-      }
       try {
-        candidates.push(...(await fetcher(board)));
+        candidates.push(...(await fetchBoard(board, query)));
       } catch (e) {
         failures.push(`${label} — ${e.message}`);
       }
@@ -471,6 +543,16 @@ async function cmdSearch(args) {
       candidates.push(...(await fetchHackerNews(query)));
     } catch (e) {
       failures.push(`hn — ${e.message}`);
+    }
+  }
+  if (source === "all" || source === "adzuna") {
+    try {
+      candidates.push(...(await fetchAdzuna(query, limits)));
+    } catch (e) {
+      // On --source all, an unconfigured .env is a soft skip; asking for
+      // adzuna explicitly makes it a hard failure worth surfacing.
+      if (source === "adzuna") throw new Error(`adzuna — ${e.message}`);
+      failures.push(`adzuna — ${e.message} (skipped)`);
     }
   }
   ingest(candidates, limits);

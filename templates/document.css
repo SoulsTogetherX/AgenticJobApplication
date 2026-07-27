@@ -1,9 +1,14 @@
 /* Print stylesheet for tailored resume / cover letter PDFs. */
-@page { size: Letter; margin: 0.5in; }
+@page {
+  size: Letter;
+  margin: 0.5in;
+}
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 body {
-  font-family: Calibri, Carlito, 'Segoe UI', Arial, sans-serif;
+  font-family: Calibri, Carlito, "Segoe UI", Arial, sans-serif;
   font-size: 10.5pt;
   line-height: 1.25;
   color: #111;
@@ -17,7 +22,11 @@ h1 {
   margin: 0 0 2pt 0;
 }
 /* Contact line: first paragraph after the name */
-h1 + p { text-align: center; font-size: 9.5pt; margin: 0 0 8pt 0; }
+h1 + p {
+  text-align: center;
+  font-size: 9.5pt;
+  margin: 0 0 8pt 0;
+}
 
 /* Section headers */
 h2 {
@@ -29,15 +38,41 @@ h2 {
 }
 
 /* Role / project heading rows: use "**Title — Company** | Right-side dates" via h3 + em */
-h3 { font-size: 10.5pt; margin: 6pt 0 2pt 0; }
-h3 .dates, .dates { float: right; font-weight: bold; }
+h3 {
+  font-size: 10.5pt;
+  margin: 6pt 0 2pt 0;
+}
+h3 .dates,
+.dates {
+  float: right;
+  font-weight: bold;
+}
 
-p { margin: 3pt 0; }
-ul { margin: 2pt 0 6pt 0; padding-left: 16pt; }
-li { margin: 1.5pt 0; }
-a { color: #0b57d0; text-decoration: none; }
-hr { border: none; border-top: 0.75pt solid #999; margin: 8pt 0; }
+p {
+  margin: 3pt 0;
+}
+ul {
+  margin: 2pt 0 6pt 0;
+  padding-left: 16pt;
+}
+li {
+  margin: 1.5pt 0;
+}
+a {
+  color: #0b57d0;
+  text-decoration: none;
+}
+hr {
+  border: none;
+  border-top: 0.75pt solid #999;
+  margin: 8pt 0;
+}
 
 /* Cover letter mode */
-body.letter { font-size: 11pt; line-height: 1.4; }
-body.letter p { margin: 8pt 0; }
+body.letter {
+  font-size: 11pt;
+  line-height: 1.4;
+}
+body.letter p {
+  margin: 8pt 0;
+}

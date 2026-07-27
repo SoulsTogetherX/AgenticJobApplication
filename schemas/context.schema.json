@@ -10,8 +10,16 @@
       "properties": {
         "key_requirements": { "type": "array", "items": { "type": "string" } },
         "matched_fact_ids": { "type": "array", "items": { "type": "string" } },
-        "gaps": { "type": "array", "items": { "type": "string" }, "description": "requirements the profile cannot truthfully cover" },
-        "keywords": { "type": "array", "items": { "type": "string" }, "description": "posting vocabulary to mirror where truthful" },
+        "gaps": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "requirements the profile cannot truthfully cover"
+        },
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "posting vocabulary to mirror where truthful"
+        },
         "tone": { "type": ["string", "null"] }
       }
     },
@@ -19,7 +27,10 @@
       "type": "object",
       "properties": {
         "emphasized_skills": { "type": "array", "items": { "type": "string" } },
-        "lead_experience": { "type": ["string", "null"], "description": "fact id of the experience both documents lead with" },
+        "lead_experience": {
+          "type": ["string", "null"],
+          "description": "fact id of the experience both documents lead with"
+        },
         "notes": { "type": ["string", "null"] }
       }
     },
@@ -27,16 +38,24 @@
       "type": "object",
       "required": ["status"],
       "properties": {
-        "status": { "enum": ["pending", "drafted", "verified", "approved", "rendered"] },
+        "status": {
+          "enum": ["pending", "drafted", "verified", "approved", "rendered"]
+        },
         "facts_used": { "type": "array", "items": { "type": "string" } },
-        "dropped": { "type": "array", "items": { "type": "string" }, "description": "fact ids intentionally omitted + why" }
+        "dropped": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "fact ids intentionally omitted + why"
+        }
       }
     },
     "cover_letter": {
       "type": "object",
       "required": ["status"],
       "properties": {
-        "status": { "enum": ["pending", "drafted", "verified", "approved", "rendered"] },
+        "status": {
+          "enum": ["pending", "drafted", "verified", "approved", "rendered"]
+        },
         "facts_used": { "type": "array", "items": { "type": "string" } },
         "key_points": { "type": "array", "items": { "type": "string" } }
       }

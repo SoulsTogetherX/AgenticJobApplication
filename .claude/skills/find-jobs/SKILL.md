@@ -86,8 +86,15 @@ limits, and import the same way.
 
 When asked "what did you find" / "recommend jobs":
 
-1. `node scripts/find-jobs.mjs list --status new`
-2. Rank against `profile/profile.yaml` strengths (stack overlap, seniority).
+1. **Rank deterministically first — do not read the lead store by hand:**
+   ```bash
+   node scripts/recommend.mjs --top 10
+   ```
+   It scores every lead on tech overlap with the profile, role-title fit,
+   freshness, salary signal, and risk flags, and prints one compact line per
+   lead with matched/missing tech.
+2. Add judgment only on top of that ranking (why a top hit fits, whether a
+   score is misleading). Do not re-derive the ranking.
 3. Present a short table: company, title, location, age, URL, one-line fit
    rationale. Mention any `unknown_location` / `unknown_age` flags.
 4. `node scripts/find-jobs.mjs mark <id> --status recommended` for the ones

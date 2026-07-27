@@ -40,14 +40,17 @@ exactly — it is the contract; violations of it are bugs.
 
 6. **Unknowns** (e.g. "why do you want to work here?" needs a real motivation):
    ask the user in chat, then persist:
+
    ```bash
    node scripts/save-answer.mjs "<question>" "<answer>"
    ```
 
 7. **Verify** (must pass):
+
    ```bash
    node scripts/verify-claims.mjs cover-letter jobs/<slug>/cover-letter.md --job jobs/<slug>/job.json
    ```
+
    Fix violations in the draft, never in the verifier. Set
    `cover_letter.status: "verified"`.
 

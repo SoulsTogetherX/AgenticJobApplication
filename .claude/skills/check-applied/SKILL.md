@@ -28,9 +28,11 @@ Application-history skill. The log lives in `profile/applications.yaml`
 ## Recording an application
 
 Only after the user confirms an application was actually submitted:
+
 ```bash
 node scripts/log-application.mjs <slug> --company "<Company>" --title "<Title>" [--url <posting url>] [--date YYYY-MM-DD]
 ```
+
 - Date defaults to today; pass `--date` if the user says they applied earlier.
 - Duplicate slugs are rejected — if the log disagrees with the user, show them
   the existing entry and let them edit `profile/applications.yaml` by hand.

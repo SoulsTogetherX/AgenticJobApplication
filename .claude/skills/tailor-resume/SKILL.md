@@ -1,6 +1,7 @@
 ---
 name: tailor-resume
-description: Tailor Xavier's resume to a specific job posting using only approved
+description:
+  Tailor Xavier's resume to a specific job posting using only approved
   facts from profile/profile.yaml. Use when the user asks to tailor, customize,
   or generate a resume for a job, posting, or application. Arguments may be a
   job slug, URL, or pasted posting text.
@@ -17,17 +18,21 @@ it is the contract; violations of it are bugs.
 
 2. **Application history**: before creating anything, check for prior
    applications (see the check-applied skill):
+
    ```bash
    node scripts/check-applied.mjs "<Company>"
    ```
+
    If this job or company was already applied to, report what/when and get the
    user's go-ahead before continuing.
 
 3. **Job workspace**: determine the job slug (`<company>-<short-title>`,
    kebab-case). If `jobs/<slug>/` doesn't exist:
+
    ```bash
    node scripts/new-job.mjs <slug> --company "<Company>" --title "<Title>" [--url <url>]
    ```
+
    Then fill `jobs/<slug>/job.json` `description` with the verbatim posting text
    (from $ARGUMENTS, a pasted posting, or the browser) and list its explicit
    `requirements`.
@@ -46,14 +51,17 @@ it is the contract; violations of it are bugs.
 
 6. **Unknowns**: if anything needed is not in the fact sources, ask the user in
    chat, then persist EVERY new answer:
+
    ```bash
    node scripts/save-answer.mjs "<question>" "<answer>"
    ```
 
 7. **Verify** (must pass before showing the draft as final):
+
    ```bash
    node scripts/verify-claims.mjs resume jobs/<slug>/resume.md --job jobs/<slug>/job.json
    ```
+
    Fix violations by correcting the draft — never by weakening the verifier.
    Set `resume.status: "verified"` and record `facts_used`.
 

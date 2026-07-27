@@ -37,8 +37,11 @@ attachments beyond the resume. Otherwise the CL is skipped and reported as
 
 ## Per-job subagent contract
 
-Spawn one `general-purpose` agent per lead (Agent tool). Give it: the lead
-JSON, the requested stages, and this contract. It must return ONLY:
+Spawn one **`job-worker`** agent per lead (Agent tool,
+`subagent_type: "job-worker"`). It is pinned to Sonnet — this work does not
+need a larger model, and per-job cost is the whole point of the pipeline.
+Give it: the lead JSON, the requested stages, and this contract. It returns
+ONLY:
 
 ```json
 {
@@ -61,7 +64,16 @@ No posting text, no document contents, no browsing logs in the reply.
 
 ### Stage A — screen (optional)
 
-WebFetch the posting (Playwright only if JS-required). Check:
+**Run the mechanical pass first — it is free:**
+
+```bash
+node scripts/screen.mjs --status new
+```
+
+It flags scam wording, stale/repost age, culture-red-flag clusters, thin
+descriptions, and unresolved location/salary from stored data. Anything it
+marks `reject` needs no model time at all. Only for `caution`/`pass` rows,
+WebFetch the posting (Playwright only if JS-required) and judge:
 
 - **Ghost job**: live/reposted ≥ `ghost_signals.repost_age_days` (45; industry
   guidance says 45+ days unfilled is the strongest ghost signal), vague

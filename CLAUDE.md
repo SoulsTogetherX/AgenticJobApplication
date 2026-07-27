@@ -7,7 +7,7 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 
 ## Commands
 
-- Tests: `npm test` (node --test; run after every change)
+- Tests: `npm test` (node --test; see the testing rule in Workflow below)
 - Verify a tailored doc: `node scripts/verify-claims.mjs <resume|cover-letter> <file> [--job jobs/<slug>/job.json]`
 - New job workspace: `node scripts/new-job.mjs <slug> --company "X" --title "Y" [--url Z]`
 - Save a user answer: `node scripts/save-answer.mjs "<question>" "<answer>"`
@@ -23,6 +23,11 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 - Record an outcome/follow-up the user reported:
   `node scripts/update-application.mjs <slug-or-company> [--status s] [--followed-up]`
 - Profile-gap report: `node scripts/profile-gaps.mjs [--json] [--min-demand N]`
+- Rank leads against the profile: `node scripts/recommend.mjs [--top N]`
+- Mechanical ghost/scam screen: `node scripts/screen.mjs [--status new]`
+- Whole-pipeline digest: `node scripts/status.mjs`
+- All scripts print compact output to agents (non-TTY) and prose to humans;
+  `--verbose` / `--quiet` override, `--json` where supported.
 
 ## Hard rules (guardrails — never bend these)
 
@@ -83,9 +88,42 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 
 ## Workflow for any code change
 
-1. Plan → implement → `npm test` → fix until green.
-2. New features need tests covering success AND failure/boundary cases.
-3. Do not commit unless the user asks.
+1. Plan → implement **completely** → test → fix until green.
+2. **Test only when there is finished code that needs testing.** Tests cost
+   tokens and wall-clock, so do not run them mid-implementation, after a
+   comment/doc tweak, or "just to check". Finish the unit of work, then:
+   run the single relevant test file while iterating
+   (`node --test tests/<file>.test.mjs`), and `npm test` once before
+   committing. Never re-run a suite that just passed on unchanged code.
+3. New features need tests covering success AND failure/boundary cases.
+4. Do not commit unless the user asks.
+
+## Token discipline (applies to every session)
+
+1. **Script first, model second.** If a deterministic script can answer it,
+   run the script and reason only about its output. Never hand-read the lead
+   store, re-rank leads, or re-derive status — `recommend.mjs`, `screen.mjs`,
+   `status.mjs`, `follow-ups.mjs`, and `profile-gaps.mjs` already do it.
+   The model is for: tailoring documents, judging a posting a script flagged,
+   filling application forms, and talking to the user.
+2. **Scripts are terse for agents automatically.** They detect a non-TTY
+   stdout and print compact records; a human at a terminal gets prose. Never
+   pass `--verbose` from a tool call.
+3. **Targeted reads.** `Read` with `offset`/`limit` over the region you need;
+   don't pull a whole file to see one function. Never re-read a file straight
+   after writing it — the write already told you the content.
+4. **Delegate breadth.** Codebase-wide searches and multi-file exploration go
+   to a subagent (`Explore`), so the file dumps land in its context, not this
+   one. Per-job work goes to the Sonnet-pinned `job-worker` agent.
+5. **Model tiering.** Job searching, screening, applying, and recording
+   outcomes do not need a frontier model — Sonnet is the default for that
+   work (`job-worker` pins it). Reserve larger models for architecture and
+   debugging.
+6. **Context hygiene.** One task per session; suggest `/clear` when the user
+   switches to an unrelated task (finished a feature, moving from building to
+   applying), because every later turn re-reads the whole history. Long
+   sessions are the single biggest cost driver.
+7. **Batch tool calls** that don't depend on each other into one message.
 
 ## Gotchas
 

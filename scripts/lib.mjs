@@ -4,6 +4,17 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import yaml from "js-yaml"
 
+// Output mode. A human at a terminal gets readable prose; an agent (whose
+// stdout is a pipe, never a TTY) gets compact records — same information,
+// far fewer tokens. --verbose / --quiet override the detection.
+export function outputMode(argv = process.argv) {
+  if (argv.includes("--verbose")) return "human"
+  if (argv.includes("--quiet")) return "terse"
+  return process.stdout.isTTY ? "human" : "terse"
+}
+
+export const isTerse = (argv = process.argv) => outputMode(argv) === "terse"
+
 export function loadYamlFile(file) {
   return yaml.load(fs.readFileSync(file, "utf8"))
 }

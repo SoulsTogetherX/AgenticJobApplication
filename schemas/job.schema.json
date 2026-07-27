@@ -3,13 +3,19 @@
   "type": "object",
   "required": ["slug", "company", "title"],
   "properties": {
-    "slug": { "type": "string", "description": "kebab-case folder name, e.g. acme-senior-fullstack" },
+    "slug": {
+      "type": "string",
+      "description": "kebab-case folder name, e.g. acme-senior-fullstack"
+    },
     "company": { "type": "string" },
     "title": { "type": "string" },
     "source_url": { "type": ["string", "null"] },
     "location": { "type": ["string", "null"] },
     "captured_at": { "type": ["string", "null"], "description": "YYYY-MM-DD" },
-    "description": { "type": ["string", "null"], "description": "full posting text, verbatim" },
+    "description": {
+      "type": ["string", "null"],
+      "description": "full posting text, verbatim"
+    },
     "requirements": { "type": "array", "items": { "type": "string" } },
     "questions": {
       "type": "array",

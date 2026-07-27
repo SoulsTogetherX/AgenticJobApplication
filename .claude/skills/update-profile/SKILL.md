@@ -32,9 +32,11 @@ rewritten.** The apply script enforces that deterministically.
    and open questions. Wait for approval.
 
 5. **Apply**:
+
    ```bash
    node scripts/apply-profile.mjs
    ```
+
    Add `--allow-edits` / `--allow-removals` ONLY for changes the user explicitly
    approved in step 4. The script backs up the old profile to
    `profile/profile.backup.yaml`, so a bad merge is always recoverable.
@@ -43,8 +45,9 @@ rewritten.** The apply script enforces that deterministically.
    structural breakage). Report what was added.
 
 Notes:
+
 - If the user replaced a source PDF wholesale, that is fine — `profile/source/`
-  only ever holds the *current* documents; history lives in the profile itself.
+  only ever holds the _current_ documents; history lives in the profile itself.
 - If a contradiction means the old fact is wrong (e.g. corrected metric), get
   explicit approval, put the corrected text in the proposal, and apply with
   `--allow-edits`.

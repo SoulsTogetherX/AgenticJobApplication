@@ -13,6 +13,8 @@ helps apply via Playwright MCP. The user is applying to **Full-Stack Developer r
 - Log a submitted application: `node scripts/log-application.mjs <slug> --company "X" --title "Y"`
 - Apply a reviewed profile update: `node scripts/apply-profile.mjs [--allow-edits] [--allow-removals]`
 - Render PDF: `node scripts/render-pdf.mjs <input.md> <output.pdf> [--letter]`
+- Find job leads: `node scripts/find-jobs.mjs search|import|list|mark ...`
+  (filters through `docs/application-limits.yaml`, stores in `jobs/leads.json`)
 
 ## Hard rules (guardrails — never bend these)
 
@@ -41,12 +43,20 @@ helps apply via Playwright MCP. The user is applying to **Full-Stack Developer r
    sanctioned new files are per-job documents under `jobs/<slug>/` and files
    created by the deterministic scripts (`new-job.mjs`, `save-answer.mjs`, ...).
    Shell delete/create commands (`rm`, `del`, `mkdir`, `touch`, ...) are blocked.
+10. **Application limits**: every lead, tailoring job, and application must pass
+    `docs/application-limits.yaml` — no roles requiring relocation away from
+    North Las Vegas (remote or Las Vegas metro on-site OK, occasional travel
+    OK), no stale postings. The user owns that file; ask before changing it.
 
 ## Structure
 
 - `.claude/skills/` — skills: tailor-resume, tailor-cover-letter, check-applied,
   update-profile (merge new source docs into the profile), apply-job (Playwright
-  MCP application flow; user always clicks Submit)
+  MCP application flow; user always clicks Submit), find-jobs (search public
+  sources, store leads), pipeline-jobs (batch screen/tailor/prep with one
+  subagent per job)
+- `docs/application-limits.yaml` — user-owned hard filters (location/freshness/
+  roles) every job must pass; `jobs/leads.json` — stored leads (gitignored)
 - `docs/tailoring-rules.md` — shared rules both skills load
 - `profile/` — fact base (gitignored; user-owned)
 - `jobs/<slug>/` — per-job workspace: `job.json`, `context.json` (SHARED between

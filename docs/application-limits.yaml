@@ -1,0 +1,39 @@
+# =============================================================================
+# APPLICATION LIMITS — the user's hard filters for which jobs are worth pursuing.
+#
+# Read by the find-jobs and pipeline-jobs skills; enforced mechanically by
+# scripts/find-jobs.mjs. The user owns this policy: the agent reads it but asks
+# before changing it.
+# =============================================================================
+
+location:
+  base: "North Las Vegas, NV"
+  relocation: false # never pursue roles that require relocating away from base
+  remote_ok: true # fully remote roles are always in scope
+  travel_ok: occasional # occasional business travel is fine; constant travel is not
+  # On-site / hybrid is only acceptable within commuting distance of base.
+  # A stated job location must contain one of these (case-insensitive) or the
+  # word "remote", otherwise the lead is filtered out. Leads with NO stated
+  # location are kept but flagged "unknown_location" for screening to resolve.
+  onsite_allowed:
+    - north las vegas
+    - las vegas
+    - henderson
+
+freshness:
+  # Postings older than this are stale and unlikely to be useful.
+  max_age_days: 30
+  # Postings with no discoverable date are kept but flagged "unknown_age" so
+  # screening can double-check before any effort is spent on them.
+
+roles:
+  # Full-Stack Developer roles only (CLAUDE.md). A job title must contain one
+  # of these keywords to be stored. Generic "software engineer" titles pass
+  # this gate because many are full-stack in practice; screening confirms
+  # actual full-stack fit from the description.
+  title_keywords:
+    - full-stack
+    - full stack
+    - fullstack
+    - software engineer
+    - web developer

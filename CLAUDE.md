@@ -38,11 +38,11 @@ helps apply via Playwright MCP. The user is applying to **Full-Stack Developer r
    (`scripts/hooks/prettify.mjs`) runs prettier on each file the agent
    edits/writes; do not fight its formatting.
 9. **Filesystem boundary** (`scripts/hooks/guard-files.mjs`): never edit files
-   outside this project directory, and never create or delete files — this
-   project applies to jobs, it does not generate other content. The only
-   sanctioned new files are per-job documents under `jobs/<slug>/` and files
-   created by the deterministic scripts (`new-job.mjs`, `save-answer.mjs`, ...).
-   Shell delete/create commands (`rm`, `del`, `mkdir`, `touch`, ...) are blocked.
+   outside this project directory (hook-enforced). Inside the project,
+   interactive development work may create/remove files freely, but the
+   job-application flows (find-jobs, pipeline-jobs, apply-job, and any subagent
+   they spawn) may only write inside `jobs/<slug>/` and via the deterministic
+   scripts — applying to jobs must not generate other content.
 10. **Application limits**: every lead, tailoring job, and application must pass
     `docs/application-limits.yaml` — no roles requiring relocation away from
     North Las Vegas (remote or Las Vegas metro on-site OK, occasional travel

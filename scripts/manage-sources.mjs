@@ -32,29 +32,46 @@ const norm = (s) =>
     .trim()
     .toLowerCase()
 
-// A duplicate is the same company name, or the same type+slug (or workday
-// tenant) — one entry per employer per board.
+// A duplicate is the same company name, or the same type + board identity —
+// one entry per employer per board. The identity field varies by ATS: slug for
+// most, tenant for workday, site for oracle_cloud.
+const identity = (b) => norm(b.slug ?? b.tenant ?? b.site)
+
 export function findDuplicate(boards, entry) {
   return (
     boards.find(
       (b) =>
         norm(b.company) === norm(entry.company) ||
-        (b.type === entry.type &&
-          norm(b.slug ?? b.tenant) === norm(entry.slug ?? entry.tenant)),
+        (b.type === entry.type && identity(b) === identity(entry)),
     ) ?? null
   )
 }
 
+// Field order per ATS. Host-based boards carry no slug, and a missing field
+// must be omitted rather than written as the string "undefined" — that is what
+// silently produced two dead entries that still prescreened OK.
+const ENTRY_FIELDS = {
+  workday: ["type", "company", "host", "tenant", "site"],
+  oracle_cloud: ["type", "company", "host", "site"],
+}
+const DEFAULT_ENTRY_FIELDS = ["type", "slug", "company"]
+
 export function formatEntry(entry) {
   const q = (v) =>
     /[:#'"{}\[\],&*?|>%@`]|^\s|\s$/.test(v) ? JSON.stringify(v) : v
-  const fields =
-    entry.type === "workday"
-      ? ["type", "company", "host", "tenant", "site"]
-      : ["type", "slug", "company"]
-  const body = fields.map((f) => `${f}: ${q(String(entry[f]))}`).join(", ")
+  const fields = ENTRY_FIELDS[entry.type] ?? DEFAULT_ENTRY_FIELDS
+  const body = fields
+    .filter(
+      (f) => entry[f] !== undefined && entry[f] !== null && entry[f] !== "",
+    )
+    .map((f) => `${f}: ${q(String(entry[f]))}`)
+    .join(", ")
   return `  - { ${body} }`
 }
+
+// How a board is named in output: the identity field varies by ATS.
+export const boardLabel = (b) =>
+  `${b.type}:${b.slug ?? b.tenant ?? b.site ?? b.company}`
 
 // Delete the single line whose flow map matches company or slug/tenant.
 export function removeEntryFromText(text, key) {
@@ -70,7 +87,7 @@ export function removeEntryFromText(text, key) {
       if (
         entry &&
         (norm(entry.company) === norm(key) ||
-          norm(entry.slug ?? entry.tenant) === norm(key))
+          identity(entry) === norm(key))
       ) {
         removed++
         continue
@@ -128,17 +145,24 @@ async function cmdAdd(args) {
       `unknown type "${entry.type}" (known: ${BOARD_TYPES.join(", ")})`,
     )
   }
+  if (entry.type === "oracle_cloud" && !(entry.host && entry.site)) {
+    throw new Error(
+      "oracle_cloud boards need --host (e.g. edmn.fa.us2.oraclecloud.com) and --site (e.g. CX_1)",
+    )
+  }
   if (entry.type === "workday" && !(entry.host && entry.tenant && entry.site)) {
     throw new Error("workday boards need --host, --tenant, and --site")
   }
-  if (entry.type !== "workday" && !entry.slug) {
+  // Host-based ATSs identify a board by host+site rather than a slug.
+  const HOST_BASED = new Set(["workday", "oracle_cloud"])
+  if (!HOST_BASED.has(entry.type) && !entry.slug) {
     throw new Error(`${entry.type} boards need --slug`)
   }
 
   const dup = findDuplicate(loadSources(), entry)
   if (dup) {
     throw new Error(
-      `duplicate: "${dup.company}" (${dup.type}:${dup.slug ?? dup.tenant}) is already tracked`,
+      `duplicate: "${dup.company}" (${boardLabel(dup)}) is already tracked`,
     )
   }
 
@@ -149,7 +173,7 @@ async function cmdAdd(args) {
 
   writeSourcesText(addEntryToText(readSourcesText(), entry))
   console.log(
-    `Added ${entry.company} (${entry.type}:${entry.slug ?? entry.tenant}) — prescreen OK, ${jobs.length} posting(s) visible right now.`,
+    `Added ${entry.company} (${boardLabel(entry)}) — prescreen OK, ${jobs.length} posting(s) visible right now.`,
   )
   if (jobs.length === 0) {
     console.log(
@@ -171,7 +195,7 @@ async function cmdVerify() {
   let ok = 0
   let broken = 0
   for (const b of loadSources()) {
-    const label = `${b.type}:${b.slug ?? b.tenant}`
+    const label = boardLabel(b)
     try {
       const jobs = await fetchBoard(b, "software engineer")
       // Terse mode reports only what needs action; ok boards are just a count.
@@ -188,7 +212,7 @@ async function cmdVerify() {
 
 function cmdList() {
   for (const b of loadSources()) {
-    console.log(`${b.company}  (${b.type}:${b.slug ?? b.tenant})`)
+    console.log(`${b.company}  (${boardLabel(b)})`)
   }
 }
 

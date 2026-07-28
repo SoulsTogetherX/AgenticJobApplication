@@ -36,9 +36,9 @@ compensation:
 
 ghost_signals:
   # A posting live/reposted this long reads as a ghost job (industry guidance:
-  # 45+ days). Screening treats it as a strong reject signal; the freshness
+  # 30+ days). Screening treats it as a strong reject signal; the freshness
   # gate above usually catches these first.
-  repost_age_days: 45
+  repost_age_days: 30
 
 roles:
   # Full-Stack Developer roles only (CLAUDE.md). A job title must contain one

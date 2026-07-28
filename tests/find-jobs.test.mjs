@@ -127,6 +127,63 @@ test("missing location passes but is flagged unknown_location", () => {
   assert.ok(v.flags.includes("unknown_location"))
 })
 
+test("a commutable posting gets a looser title test, flagged for screening", () => {
+  // Caesars' "Staff Engineer - Booking Engine" is a real Las Vegas software
+  // job that matches none of the title keywords. Local postings are rare
+  // enough to be worth a look; remote ones are not.
+  const v = passesLimits(
+    job({
+      title: "Staff Engineer - Booking Engine",
+      location: "Las Vegas, NV",
+    }),
+    LIMITS,
+    NOW,
+  )
+  assert.equal(v.ok, true)
+  assert.ok(v.flags.includes("title_loose"))
+})
+
+test("the loose title test does NOT apply to remote postings", () => {
+  // There are thousands of remote postings; the keyword gate is what keeps
+  // them manageable.
+  const v = passesLimits(
+    job({ title: "Staff Engineer - Booking Engine", location: "Remote - US" }),
+    LIMITS,
+    NOW,
+  )
+  assert.equal(v.ok, false)
+  assert.match(v.reasons.join(" "), /title/)
+})
+
+test("local trades roles are still rejected", () => {
+  // A casino's "engineers" are overwhelmingly facilities staff, and the stems
+  // must match inflections: /\bplumb\b/ does not match "Plumber".
+  for (const title of [
+    "Maintenance Engineer - Facilities and Engineering",
+    "General Engineer Plumber - Red Rock",
+    "Engineer III- Day-Painter-Silver Legacy",
+    "Stationary Engineer- Full Time",
+    "Table Games Floor Supervisor",
+  ]) {
+    const v = passesLimits(
+      job({ title, location: "Las Vegas, NV" }),
+      LIMITS,
+      NOW,
+    )
+    assert.equal(v.ok, false, `expected reject for ${title}`)
+  }
+})
+
+test("an exact keyword hit passes without the loose flag", () => {
+  const v = passesLimits(
+    job({ title: "Senior Software Engineer", location: "Las Vegas, NV" }),
+    LIMITS,
+    NOW,
+  )
+  assert.equal(v.ok, true)
+  assert.ok(!v.flags.includes("title_loose"))
+})
+
 test("an opaque 'N Locations' string is flagged, not rejected", () => {
   // Workday collapses multi-site postings this way. Rejecting them dropped
   // exactly the roles most likely to include Las Vegas among their sites.
@@ -279,11 +336,14 @@ test("loadSources reads the real job-sources.yaml with valid board entries", () 
       b.type && b.company,
       `board missing type/company: ${JSON.stringify(b)}`,
     )
+    // Host-based ATSs identify a board by host+site; the rest use a slug.
     if (b.type === "workday") {
       assert.ok(
         b.host && b.tenant && b.site,
         "workday boards need host/tenant/site",
       )
+    } else if (b.type === "oracle_cloud") {
+      assert.ok(b.host && b.site, "oracle_cloud boards need host/site")
     } else {
       assert.ok(b.slug, `${b.type} board needs slug`)
     }

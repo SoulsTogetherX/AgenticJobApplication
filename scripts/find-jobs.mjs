@@ -42,15 +42,26 @@ export function loadSources(file = SOURCES_PATH) {
 // Pure logic (exported for tests)
 // ---------------------------------------------------------------------------
 
+// Widened title test, applied ONLY to locally-commutable postings (see below).
+const LOOSE_TECH_TITLE =
+  /\b(software|developer|programmer|engineer|architect|analyst|application|web|data|technical|systems?)\b/i
+// ...minus the trades. A casino's "engineers" are overwhelmingly facilities
+// staff: painters, electricians, plumbers, stationary engineers.
+// Stems, not whole words: "\bplumb\b" does not match "Plumber". "General
+// Engineer" is a casino facilities title, not a software one. The second group
+// exists because "analyst" is broad enough to drag in procurement and finance.
+const TRADES_TITLE =
+  /\b(maintenance|facilit\w*|paint\w*|electric\w*|plumb\w*|stationary|hvac|refrigerat\w*|custodial|grounds|kitchen|landscap\w*|carpenter|locksmith|janitor\w*|general engineer|slot technician)\b|\b(procurement|financial|finance|accounting|payroll|human resources|media operations|revenue management|benefits|tax|audit|credit|collections|supply chain|logistics)\b/i
+
 export function passesLimits(job, limits, now = new Date()) {
   const reasons = []
   const flags = []
+  let local = false
 
   const title = String(job.title ?? "").toLowerCase()
   const kws = limits.roles?.title_keywords ?? []
-  if (kws.length && !kws.some((k) => title.includes(String(k).toLowerCase()))) {
-    reasons.push("title: not a targeted role")
-  }
+  const titleHit =
+    !kws.length || kws.some((k) => title.includes(String(k).toLowerCase()))
 
   const loc = String(job.location ?? "")
     .trim()
@@ -85,6 +96,23 @@ export function passesLimits(job, limits, now = new Date()) {
     } else if (remoteOk && !remoteText && !onsiteOk) {
       flags.push("remote_unverified")
     }
+    local = onsiteOk
+  }
+
+  // A commutable posting is rare enough to be worth a look even when its title
+  // misses the keyword list — Caesars' "Staff Engineer - Booking Engine" is a
+  // real Las Vegas software job that matched none of them. Remote postings are
+  // NOT given this latitude: there are thousands and the gate is what keeps
+  // them manageable. Flagged so screening knows it arrived on a loose match.
+  if (
+    !titleHit &&
+    local &&
+    LOOSE_TECH_TITLE.test(title) &&
+    !TRADES_TITLE.test(title)
+  ) {
+    flags.push("title_loose")
+  } else if (!titleHit) {
+    reasons.push("title: not a targeted role")
   }
 
   const maxAge = limits.freshness?.max_age_days ?? 30
@@ -254,6 +282,7 @@ function loadApplied() {
 const MAX_PAGES = 50
 const WORKDAY_PAGE = 20
 const ADZUNA_PAGE = 50
+const ORACLE_PAGE = 200 // Oracle silently clamps anything above this
 
 async function fetchJson(url, body = null) {
   const res = await fetch(url, {
@@ -440,6 +469,62 @@ async function fetchWorkday(board, query) {
   return out
 }
 
+// Oracle Cloud Recruiting (Fusion) — the candidate-experience REST endpoint the
+// careers site itself calls. Public, no key. Two large Las Vegas employers
+// (Caesars, Station Casinos) live here and were invisible to the sweep.
+//
+// `expand=requisitionList` is MANDATORY: without it the response still carries
+// an accurate TotalJobsCount but an empty list, so the board reads as "found,
+// but empty" rather than as a broken query.
+async function fetchOracleCloud(board) {
+  const out = []
+  let offset = 0
+  let total = Infinity
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await fetchJson(
+      `https://${board.host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions` +
+        `?onlyData=true&expand=requisitionList.secondaryLocations` +
+        `&finder=findReqs;siteNumber=${encodeURIComponent(board.site)}` +
+        `,limit=${ORACLE_PAGE},offset=${offset},sortBy=POSTING_DATES_DESC`,
+    )
+    const item = data.items?.[0]
+    if (
+      page === 0 &&
+      typeof item?.TotalJobsCount === "number" &&
+      item.TotalJobsCount > 0
+    ) {
+      total = item.TotalJobsCount
+    }
+    const reqs = item?.requisitionList ?? []
+    if (!reqs.length) break
+    out.push(
+      ...reqs.map((j) => ({
+        id: `oracle_cloud:${board.site}:${j.Id}`,
+        source: `oracle_cloud:${board.site}`,
+        company: board.company,
+        title: j.Title ?? "",
+        location: [
+          j.PrimaryLocation,
+          ...(j.secondaryLocations ?? []).map((s) => s.Name),
+        ]
+          .filter(Boolean)
+          .join(" / "),
+        remote: /remote/i.test(j.WorkplaceType ?? j.WorkplaceTypeCode ?? ""),
+        url: `https://${board.host}/hcmUI/CandidateExperience/en/sites/${board.site}/job/${j.Id}`,
+        posted_at: j.PostedDate ?? null,
+        description: textSnippet(
+          j.ShortDescriptionStr,
+          j.ExternalResponsibilitiesStr,
+          j.ExternalQualificationsStr,
+        ),
+      })),
+    )
+    offset += reqs.length
+    if (offset >= total || reqs.length < ORACLE_PAGE) break
+  }
+  return out
+}
+
 // Minimal .env parser (no dependency): KEY=value lines, #-comments, optional
 // quotes. Real environment variables win over .env values.
 export function loadEnv(file = path.join(ROOT, ".env")) {
@@ -550,6 +635,7 @@ const BOARD_FETCHERS = {
   workable: fetchWorkable,
   recruitee: fetchRecruitee,
   workday: fetchWorkday,
+  oracle_cloud: fetchOracleCloud,
 }
 
 export const BOARD_TYPES = Object.keys(BOARD_FETCHERS)

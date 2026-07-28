@@ -59,3 +59,5 @@ boards:
   - { type: lever, slug: allegiantair, company: Allegiant Travel }
   - { type: greenhouse, slug: fanaticsfbg, company: "Fanatics Betting & Gaming" }
   - { type: greenhouse, slug: fanaticsinc, company: Fanatics }
+  - { type: oracle_cloud, company: Caesars Entertainment, host: edmn.fa.us2.oraclecloud.com, site: CX_1 }
+  - { type: oracle_cloud, company: Station Casinos, host: ejfh.fa.us6.oraclecloud.com, site: StationCasinos }

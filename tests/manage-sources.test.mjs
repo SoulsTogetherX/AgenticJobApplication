@@ -101,6 +101,57 @@ test("formatEntry quotes values that need it and round-trips through yaml", () =
   assert.ok(wd.includes("host:") && wd.includes("site:"))
 })
 
+test("formatEntry omits absent fields instead of writing the string 'undefined'", () => {
+  // An oracle_cloud board has no slug. Writing `slug: undefined` produced
+  // entries that prescreened OK on add and then failed every later fetch,
+  // because the identifying fields were never persisted.
+  const line = formatEntry({
+    type: "oracle_cloud",
+    company: "Caesars Entertainment",
+    host: "edmn.fa.us2.oraclecloud.com",
+    site: "CX_1",
+    slug: undefined,
+  })
+  assert.ok(!/undefined/.test(line), line)
+  const parsed = yaml.load(line.replace(/^\s*-\s*/, ""))
+  assert.deepEqual(parsed, {
+    type: "oracle_cloud",
+    company: "Caesars Entertainment",
+    host: "edmn.fa.us2.oraclecloud.com",
+    site: "CX_1",
+  })
+})
+
+test("findDuplicate matches host-based boards on their own identity field", () => {
+  const boards = [
+    {
+      type: "oracle_cloud",
+      company: "Caesars Entertainment",
+      host: "edmn.fa.us2.oraclecloud.com",
+      site: "CX_1",
+    },
+  ]
+  // Same site, different company name -> still the same board.
+  assert.ok(
+    findDuplicate(boards, {
+      type: "oracle_cloud",
+      company: "Caesars",
+      host: "edmn.fa.us2.oraclecloud.com",
+      site: "CX_1",
+    }),
+  )
+  // A different site on the same host is a genuinely different board.
+  assert.equal(
+    findDuplicate(boards, {
+      type: "oracle_cloud",
+      company: "Someone Else",
+      host: "edmn.fa.us2.oraclecloud.com",
+      site: "CX_2",
+    }),
+    null,
+  )
+})
+
 // ---------- .env parsing ----------
 
 test("loadEnv parses KEY=value, quotes, comments; real env wins", () => {

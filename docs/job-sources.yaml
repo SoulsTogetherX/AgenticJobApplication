@@ -61,3 +61,5 @@ boards:
   - { type: greenhouse, slug: fanaticsinc, company: Fanatics }
   - { type: oracle_cloud, company: Caesars Entertainment, host: edmn.fa.us2.oraclecloud.com, site: CX_1 }
   - { type: oracle_cloud, company: Station Casinos, host: ejfh.fa.us6.oraclecloud.com, site: StationCasinos }
+  - { type: jobvite, slug: agscareer, company: AGS }
+  - { type: successfactors, company: IGT, host: jobs.igt.com }

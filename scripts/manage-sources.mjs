@@ -53,6 +53,10 @@ export function findDuplicate(boards, entry) {
 const ENTRY_FIELDS = {
   workday: ["type", "company", "host", "tenant", "site"],
   oracle_cloud: ["type", "company", "host", "site"],
+  successfactors: ["type", "company", "host"],
+  // eid is optional: the fetcher bootstraps it from the careers page, but
+  // pinning it saves a request and survives a careers-page redesign.
+  jobvite: ["type", "slug", "company", "eid"],
 }
 const DEFAULT_ENTRY_FIELDS = ["type", "slug", "company"]
 
@@ -86,8 +90,7 @@ export function removeEntryFromText(text, key) {
       } catch {}
       if (
         entry &&
-        (norm(entry.company) === norm(key) ||
-          identity(entry) === norm(key))
+        (norm(entry.company) === norm(key) || identity(entry) === norm(key))
       ) {
         removed++
         continue
@@ -131,6 +134,7 @@ async function cmdAdd(args) {
     type: getFlag(args, "--type"),
     company: getFlag(args, "--company"),
     slug: getFlag(args, "--slug") ?? undefined,
+    eid: getFlag(args, "--eid") ?? undefined,
     host: getFlag(args, "--host") ?? undefined,
     tenant: getFlag(args, "--tenant") ?? undefined,
     site: getFlag(args, "--site") ?? undefined,
@@ -153,8 +157,13 @@ async function cmdAdd(args) {
   if (entry.type === "workday" && !(entry.host && entry.tenant && entry.site)) {
     throw new Error("workday boards need --host, --tenant, and --site")
   }
+  if (entry.type === "successfactors" && !entry.host) {
+    throw new Error(
+      "successfactors boards need --host (e.g. jobs.igt.com), the career-site hostname",
+    )
+  }
   // Host-based ATSs identify a board by host+site rather than a slug.
-  const HOST_BASED = new Set(["workday", "oracle_cloud"])
+  const HOST_BASED = new Set(["workday", "oracle_cloud", "successfactors"])
   if (!HOST_BASED.has(entry.type) && !entry.slug) {
     throw new Error(`${entry.type} boards need --slug`)
   }

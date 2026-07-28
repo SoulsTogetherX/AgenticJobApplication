@@ -525,6 +525,153 @@ async function fetchOracleCloud(board) {
   return out
 }
 
+async function fetchText(url) {
+  const res = await fetch(url, {
+    headers: {
+      "user-agent": "agentic-job-application/0.1 (personal job search tool)",
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
+  return res.text()
+}
+
+const cdata = (s) =>
+  decodeEntities(
+    String(s ?? "")
+      .replace(/^\s*<!\[CDATA\[/, "")
+      .replace(/\]\]>\s*$/, ""),
+  ).trim()
+
+// "11/26/2025" -> ISO. Returns null rather than guessing on anything else.
+function parseUsDate(s) {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(s ?? "").trim())
+  if (!m) return null
+  const d = new Date(Date.UTC(+m[3], +m[1] - 1, +m[2]))
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
+}
+
+// Jobvite exposes no JSON job list at all — the only public surface is an XML
+// feed, but it is unauthenticated, unpaginated, and carries full descriptions
+// and absolute apply URLs. The feed key is NOT the URL slug, so it is read
+// once from the careers page. Cloudflare throttles the feed to roughly one
+// request per 30s, which a daily sweep never notices.
+async function fetchJobvite(board) {
+  let eid = board.eid
+  if (!eid) {
+    const html = await fetchText(
+      `https://jobs.jobvite.com/${board.slug}/search`,
+    )
+    eid = /companyEId:\s*['"]([A-Za-z0-9]+)['"]/.exec(html)?.[1]
+    if (!eid) {
+      throw new Error(
+        `could not read companyEId for jobvite slug "${board.slug}"`,
+      )
+    }
+  }
+  const xml = await fetchText(
+    `https://app.jobvite.com/CompanyJobs/Xml.aspx?c=${encodeURIComponent(eid)}`,
+  )
+  return parseJobviteFeed(xml, board)
+}
+
+// Exported so the brittle bit is unit-testable against a fixture: a feed
+// format change should fail a test, not silently return an empty board.
+export function parseJobviteFeed(xml, board) {
+  const out = []
+  for (const m of String(xml).matchAll(/<job>([\s\S]*?)<\/job>/g)) {
+    const body = m[1]
+    const tag = (name) =>
+      cdata(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(body)?.[1] ?? "")
+    const id = tag("id") || tag("requisitionid")
+    if (!id) continue
+    out.push({
+      id: `jobvite:${board.slug}:${id}`,
+      source: `jobvite:${board.slug}`,
+      company: board.company,
+      title: tag("title"),
+      location: tag("location"),
+      url: tag("detail-url") || tag("apply-url"),
+      posted_at: parseUsDate(tag("date")),
+      description: textSnippet(tag("briefdescription"), tag("description")),
+    })
+  }
+  return out
+}
+
+// SAP SuccessFactors career sites (RMK) render results server-side and expose
+// no JSON — verified by network capture, not assumed. The search page is
+// honest offset pagination though, and prints the total on every page.
+const SF_PAGE = 25
+
+async function fetchSuccessFactors(board) {
+  const out = []
+  let total = Infinity
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const start = page * SF_PAGE
+    if (start >= total) break
+    const html = await fetchText(
+      `https://${board.host}/search/?q=&sortColumn=referencedate&sortDirection=desc&startrow=${start}`,
+    )
+    if (page === 0) total = parseSuccessFactorsTotal(html)
+    const rows = parseSuccessFactorsPage(html, board)
+    if (!rows.length) break
+    out.push(...rows)
+  }
+  return out
+}
+
+// The result count is printed on every page ("Results 1 - 25 of 142").
+export function parseSuccessFactorsTotal(html) {
+  const m = /of\s*<b>\s*([\d,]+)\s*<\/b>/i.exec(String(html))
+  return m ? Number(m[1].replace(/,/g, "")) || Infinity : Infinity
+}
+
+// Exported so the brittle bit is unit-testable: a career-site redesign should
+// fail a test rather than silently yield an empty board. Each result is a
+// title anchor followed by its location and date spans, so slice from one
+// anchor to the next and the fields cannot bleed across rows.
+export function parseSuccessFactorsPage(html, board) {
+  const out = []
+  const rowRe =
+    /<a[^>]+class="[^"]*jobTitle-link[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)(?=<a[^>]+class="[^"]*jobTitle-link|$)/g
+  const strip = (s) => decodeEntities(String(s).replace(/<[^>]+>/g, "")).trim()
+  for (const m of String(html).matchAll(rowRe)) {
+    const href = m[1]
+    const title = strip(m[2])
+    if (!title) continue
+    const rest = m[3] ?? ""
+    const loc =
+      /<span[^>]*class="[^"]*jobLocation[^"]*"[^>]*>([\s\S]*?)<\/span>/i.exec(
+        rest,
+      )
+    const date =
+      /<span[^>]*class="[^"]*jobDate[^"]*"[^>]*>([\s\S]*?)<\/span>/i.exec(rest)
+    const posted = date ? new Date(strip(date[1])) : null
+    out.push({
+      id: `successfactors:${board.slug ?? board.host}:${/\/(\d+)\/?$/.exec(href)?.[1] ?? href}`,
+      source: `successfactors:${board.slug ?? board.host}`,
+      company: board.company,
+      title,
+      // The location cell carries a multi-site suffix ("Las Vegas, NV, US,
+      // 89113 +1 more…") that would otherwise land in the stored location.
+      location: loc
+        ? strip(loc[1])
+            .replace(/\s+/g, " ")
+            .replace(
+              /\s*\+\s*\d+\s*more\s*(?:…|\.\.\.|&hellip;|&#8230;)?\s*$/i,
+              "",
+            )
+            .trim()
+        : "",
+      url: href.startsWith("http") ? href : `https://${board.host}${href}`,
+      posted_at:
+        posted && !Number.isNaN(posted.getTime()) ? posted.toISOString() : null,
+    })
+  }
+  return out
+}
+
 // Minimal .env parser (no dependency): KEY=value lines, #-comments, optional
 // quotes. Real environment variables win over .env values.
 export function loadEnv(file = path.join(ROOT, ".env")) {
@@ -636,6 +783,8 @@ const BOARD_FETCHERS = {
   recruitee: fetchRecruitee,
   workday: fetchWorkday,
   oracle_cloud: fetchOracleCloud,
+  jobvite: fetchJobvite,
+  successfactors: fetchSuccessFactors,
 }
 
 export const BOARD_TYPES = Object.keys(BOARD_FETCHERS)

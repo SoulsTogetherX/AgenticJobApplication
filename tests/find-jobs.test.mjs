@@ -344,6 +344,8 @@ test("loadSources reads the real job-sources.yaml with valid board entries", () 
       )
     } else if (b.type === "oracle_cloud") {
       assert.ok(b.host && b.site, "oracle_cloud boards need host/site")
+    } else if (b.type === "successfactors") {
+      assert.ok(b.host, "successfactors boards need host")
     } else {
       assert.ok(b.slug, `${b.type} board needs slug`)
     }

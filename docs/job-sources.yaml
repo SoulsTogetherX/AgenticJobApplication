@@ -52,3 +52,10 @@ boards:
   - { type: ashby, slug: cursor, company: Cursor }
   - { type: ashby, slug: watershed, company: Watershed }
   - { type: ashby, slug: vanta, company: Vanta }
+  - { type: smartrecruiters, slug: BoydGaming, company: Boyd Gaming }
+  - { type: workday, company: "Light & Wonder", host: lnw.wd5.myworkdayjobs.com, tenant: lnw, site: LightWonderExternalCareers }
+  - { type: workday, company: Aristocrat, host: aristocrat.wd3.myworkdayjobs.com, tenant: aristocrat, site: AristocratExternalCareersSite }
+  - { type: workday, company: MGM Resorts International, host: mgmresorts.wd5.myworkdayjobs.com, tenant: mgmresorts, site: MGMCareers }
+  - { type: lever, slug: allegiantair, company: Allegiant Travel }
+  - { type: greenhouse, slug: fanaticsfbg, company: "Fanatics Betting & Gaming" }
+  - { type: greenhouse, slug: fanaticsinc, company: Fanatics }

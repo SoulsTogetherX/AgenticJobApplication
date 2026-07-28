@@ -55,7 +55,12 @@ export function passesLimits(job, limits, now = new Date()) {
   const loc = String(job.location ?? "")
     .trim()
     .toLowerCase()
-  if (!loc) {
+  // Workday collapses a multi-site posting to the literal string "2 Locations",
+  // which carries no geography at all. Treating that as a location rejected it
+  // as a relocation — and multi-site postings skew towards exactly the roles
+  // worth seeing. Flag for screening to resolve instead of discarding.
+  const OPAQUE_LOC = /^\d+\s*locations?$/i
+  if (!loc || OPAQUE_LOC.test(loc)) {
     flags.push("unknown_location")
   } else {
     // "Remote" restricted to a non-US region is still a relocation for a
@@ -242,6 +247,14 @@ function loadApplied() {
 // { id, source, company, title, location, url, posted_at }
 // ---------------------------------------------------------------------------
 
+// Paging guards. Every paged fetcher stops at the reported total; MAX_PAGES is
+// only a runaway backstop for a board that never reports one.
+// 50 pages is ~1000 postings per board — well clear of the largest board seen
+// (MGM, 505) while still bounding a board that never reports a total.
+const MAX_PAGES = 50
+const WORKDAY_PAGE = 20
+const ADZUNA_PAGE = 50
+
 async function fetchJson(url, body = null) {
   const res = await fetch(url, {
     method: body ? "POST" : "GET",
@@ -318,21 +331,33 @@ async function fetchAshby(board) {
 }
 
 async function fetchSmartRecruiters(board) {
-  const data = await fetchJson(
-    `https://api.smartrecruiters.com/v1/companies/${board.slug}/postings?limit=100`,
-  )
-  return (data.content ?? []).map((j) => ({
-    id: `smartrecruiters:${board.slug}:${j.id}`,
-    source: `smartrecruiters:${board.slug}`,
-    company: j.company?.name || board.company,
-    title: j.name ?? "",
-    location: [j.location?.city, j.location?.region, j.location?.country]
-      .filter(Boolean)
-      .join(", "),
-    remote: j.location?.remote === true,
-    url: `https://jobs.smartrecruiters.com/${board.slug}/${j.id}`,
-    posted_at: j.releasedDate ?? null,
-  }))
+  const out = []
+  let offset = 0
+  let total = Infinity
+  for (let page = 0; page < MAX_PAGES && offset < total; page++) {
+    const data = await fetchJson(
+      `https://api.smartrecruiters.com/v1/companies/${board.slug}/postings?limit=100&offset=${offset}`,
+    )
+    if (typeof data.totalFound === "number") total = data.totalFound
+    const content = data.content ?? []
+    if (!content.length) break
+    out.push(
+      ...content.map((j) => ({
+        id: `smartrecruiters:${board.slug}:${j.id}`,
+        source: `smartrecruiters:${board.slug}`,
+        company: j.company?.name || board.company,
+        title: j.name ?? "",
+        location: [j.location?.city, j.location?.region, j.location?.country]
+          .filter(Boolean)
+          .join(", "),
+        remote: j.location?.remote === true,
+        url: `https://jobs.smartrecruiters.com/${board.slug}/${j.id}`,
+        posted_at: j.releasedDate ?? null,
+      })),
+    )
+    offset += content.length
+  }
+  return out
 }
 
 async function fetchWorkable(board) {
@@ -370,20 +395,49 @@ async function fetchRecruitee(board) {
 
 // Workday's semi-public CXS endpoint (same JSON the careers site itself uses).
 // Passes the search query server-side; most Fortune 500 companies live here.
+//
+// Workday caps a response at 20 postings and reports the real count in `total`,
+// so a single request silently returns the first page only. Left unpaged this
+// saw 20 of Light & Wonder's 90 and 20 of Aristocrat's 170 — the boards looked
+// alive while most of their jobs were invisible.
 async function fetchWorkday(board, query) {
-  const data = await fetchJson(
-    `https://${board.host}/wday/cxs/${board.tenant}/${board.site}/jobs`,
-    { appliedFacets: {}, limit: 20, offset: 0, searchText: query ?? "" },
-  )
-  return (data.jobPostings ?? []).map((j) => ({
-    id: `workday:${board.tenant}:${j.bulletFields?.[0] ?? j.externalPath}`,
-    source: `workday:${board.tenant}`,
-    company: board.company,
-    title: j.title ?? "",
-    location: workdayLocationFromPath(j.externalPath) || j.locationsText || "",
-    url: `https://${board.host}/en-US/${board.site}${j.externalPath}`,
-    posted_at: parseWorkdayPostedOn(j.postedOn),
-  }))
+  const out = []
+  let offset = 0
+  let total = Infinity
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await fetchJson(
+      `https://${board.host}/wday/cxs/${board.tenant}/${board.site}/jobs`,
+      {
+        appliedFacets: {},
+        limit: WORKDAY_PAGE,
+        offset,
+        searchText: query ?? "",
+      },
+    )
+    // Workday reports `total` on the FIRST page only; every later page reports
+    // 0. Trusting it each time set total=0 on page two and ended the loop at 40
+    // of 90 — a partial fix that looked like a working one.
+    if (page === 0 && typeof data.total === "number" && data.total > 0) {
+      total = data.total
+    }
+    const posts = data.jobPostings ?? []
+    if (!posts.length) break
+    out.push(
+      ...posts.map((j) => ({
+        id: `workday:${board.tenant}:${j.bulletFields?.[0] ?? j.externalPath}`,
+        source: `workday:${board.tenant}`,
+        company: board.company,
+        title: j.title ?? "",
+        location:
+          workdayLocationFromPath(j.externalPath) || j.locationsText || "",
+        url: `https://${board.host}/en-US/${board.site}${j.externalPath}`,
+        posted_at: parseWorkdayPostedOn(j.postedOn),
+      })),
+    )
+    offset += posts.length
+    if (offset >= total || posts.length < WORKDAY_PAGE) break
+  }
+  return out
 }
 
 // Minimal .env parser (no dependency): KEY=value lines, #-comments, optional
@@ -436,12 +490,14 @@ async function fetchAdzuna(query, limits, env = loadEnv()) {
   const country = env.ADZUNA_COUNTRY || "us"
   const maxDays = limits.freshness?.max_age_days ?? 30
   const base = limits.location?.base || "Las Vegas"
-  const mk = (params) =>
-    `https://api.adzuna.com/v1/api/jobs/${country}/search/1?` +
+  // The page number is a path segment, so "search/1" is literally page one and
+  // nothing else — the local Las Vegas results were being cut off at 50.
+  const mk = (page, params) =>
+    `https://api.adzuna.com/v1/api/jobs/${country}/search/${page}?` +
     new URLSearchParams({
       app_id: appId,
       app_key: appKey,
-      results_per_page: "50",
+      results_per_page: String(ADZUNA_PAGE),
       max_days_old: String(maxDays),
       ...params,
     })
@@ -451,8 +507,12 @@ async function fetchAdzuna(query, limits, env = loadEnv()) {
   ]
   const out = []
   for (const q of queries) {
-    const data = await fetchJson(mk(q))
-    out.push(...(data.results ?? []).map(normalizeAdzunaJob))
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const data = await fetchJson(mk(page, q))
+      const results = data.results ?? []
+      out.push(...results.map(normalizeAdzunaJob))
+      if (results.length < ADZUNA_PAGE) break
+    }
   }
   return out // cross-query duplicates fall out in dedupeLeads
 }
@@ -511,7 +571,37 @@ function getFlag(args, name, fallback = null) {
   return i !== -1 && args[i + 1] !== undefined ? args[i + 1] : fallback
 }
 
-function summarize(kept, rejected) {
+// Titles rejected purely for not matching roles.title_keywords, ranked by how
+// often they appear and filtered to software-ish work. Tuning the keyword list
+// by guesswork is what let "Game Mathematician" sit unseen on a board for
+// weeks; this makes the question answerable from data.
+const TECHY =
+  /engineer|developer|programmer|mathematic|software|architect|analyst|scientist|sre|devops|qa|data|web|game|technical/i
+const NOT_TECHY =
+  /field service|sales|account (manager|executive)|recruit|marketing|counsel|finance|payroll|technician|installer|driver|attendant|dealer|housekeep|cook|server|host/i
+
+function explainTitles(rejected, top = 30) {
+  const counts = new Map()
+  for (const r of rejected) {
+    if (!/^title:/.test(r.reasons[0] ?? "")) continue
+    const t = String(r.title ?? "").trim()
+    if (!t || !TECHY.test(t) || NOT_TECHY.test(t)) continue
+    counts.set(t, (counts.get(t) ?? 0) + 1)
+  }
+  const ranked = [...counts.entries()].sort(
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+  )
+  console.log(
+    `\nTop ${Math.min(top, ranked.length)} software-ish titles rejected by roles.title_keywords ` +
+      `(of ${ranked.length} distinct):`,
+  )
+  for (const [title, n] of ranked.slice(0, top)) {
+    console.log(`  ${String(n).padStart(4)}  ${title}`)
+  }
+}
+
+function summarize(kept, rejected, opts = {}) {
+  if (opts.explain) explainTitles(rejected, opts.explainTop ?? 30)
   if (isTerse()) {
     for (const l of kept) {
       const f = l.flags?.length ? `|${l.flags.join(",")}` : ""
@@ -585,7 +675,12 @@ function ingest(candidates, limits) {
   }
   store.leads.push(...kept)
   saveLeads(store)
-  summarize(kept, rejected)
+  const ei = process.argv.indexOf("--explain")
+  const eN = Number(process.argv[ei + 1])
+  summarize(kept, rejected, {
+    explain: ei !== -1,
+    explainTop: Number.isFinite(eN) && eN > 0 ? eN : 30,
+  })
   if (backfilled) {
     console.log(
       `Backfilled description snippets onto ${backfilled} existing lead(s).`,

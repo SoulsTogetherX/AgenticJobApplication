@@ -127,6 +127,29 @@ test("missing location passes but is flagged unknown_location", () => {
   assert.ok(v.flags.includes("unknown_location"))
 })
 
+test("an opaque 'N Locations' string is flagged, not rejected", () => {
+  // Workday collapses multi-site postings this way. Rejecting them dropped
+  // exactly the roles most likely to include Las Vegas among their sites.
+  for (const location of ["2 Locations", "3 locations", "10 Locations"]) {
+    const v = passesLimits(job({ location }), LIMITS, NOW)
+    assert.equal(v.ok, true, `expected pass for ${location}`)
+    assert.ok(
+      v.flags.includes("unknown_location"),
+      `expected unknown_location for ${location}`,
+    )
+  }
+})
+
+test("a real location that merely contains a digit is still gated", () => {
+  const v = passesLimits(
+    job({ location: "1 Infinite Loop, Cupertino" }),
+    LIMITS,
+    NOW,
+  )
+  assert.equal(v.ok, false)
+  assert.match(v.reasons.join(" "), /location/)
+})
+
 test("non-targeted titles are rejected", () => {
   for (const title of ["Accountant", "DevOps Engineer", "Product Manager"]) {
     const v = passesLimits(job({ title }), LIMITS, NOW)

@@ -199,6 +199,19 @@ export function buildPlan({ scan, resolved, adapter, files = {}, url }) {
     }
 
     if (NEEDS_HUMAN.has(r.status) || !r.status) {
+      // An OPTIONAL field the fact base cannot answer is left blank, not turned
+      // into a question. Asking the user for a Twitter handle they do not have
+      // is noise, and noise is what makes an approval message get skimmed.
+      // Still counted and listed, so nothing disappears silently.
+      if (!f.req) {
+        items.push({
+          k: f.k,
+          how: "skip",
+          label,
+          why: `optional and not in the fact base (${(r.status ?? "unresolved").toLowerCase()})`,
+        })
+        continue
+      }
       defer.push({
         k: f.k,
         label,
@@ -380,12 +393,17 @@ function main() {
     return
   }
   if (isTerse()) {
+    const skipped = plan.items.filter((i) => i.how === "skip")
     console.log(
-      `ats=${plan.ats} items=${plan.items.filter((i) => i.how !== "skip").length}` +
-        ` defer=${plan.defer.length} cache=${cacheStats.hits}/${cacheStats.hits + cacheStats.probed} fp=${fp}`,
+      `ats=${plan.ats} items=${plan.items.length - skipped.length}` +
+        ` defer=${plan.defer.length} skip=${skipped.length}` +
+        ` cache=${cacheStats.hits}/${cacheStats.hits + cacheStats.probed} fp=${fp}`,
     )
     for (const d of plan.defer) {
       console.log(`defer\t${d.k}\t${d.why}\t${d.label}`)
+    }
+    for (const s of skipped) {
+      console.log(`skip\t${s.k}\t${s.why}\t${s.label}`)
     }
     console.log(`plan=${relJs}`)
     console.log(`bootstrap:\n${bootstrap}`)

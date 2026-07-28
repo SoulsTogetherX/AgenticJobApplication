@@ -187,12 +187,12 @@ test("checkbox groups target the option element, not the group", () => {
   assert.equal(plan.items[0].how, "check")
 })
 
-test("unresolved statuses are deferred, never guessed", () => {
+test("unresolved REQUIRED fields are deferred, never guessed", () => {
   const scan = scanOf([
-    { k: "f1", t: "text", l: "A" },
-    { k: "f2", t: "text", l: "B" },
-    { k: "f3", t: "combo", l: "C", opts: ["x", "y"] },
-    { k: "f4", t: "text", l: "D" },
+    { k: "f1", t: "text", l: "A", req: true },
+    { k: "f2", t: "text", l: "B", req: true },
+    { k: "f3", t: "combo", l: "C", req: true, opts: ["x", "y"] },
+    { k: "f4", t: "text", l: "D", req: true },
   ])
   const plan = buildPlan({
     scan,
@@ -208,6 +208,37 @@ test("unresolved statuses are deferred, never guessed", () => {
   assert.equal(plan.items.length, 0)
   assert.equal(plan.defer.length, 4)
   assert.deepEqual(plan.defer.find((d) => d.k === "f3").options, ["x", "y"])
+})
+
+test("unresolved OPTIONAL fields are left blank, not turned into questions", () => {
+  // Asking for a Twitter handle the user does not have is noise, and noise is
+  // what makes an approval message get skimmed. Still visible as a skip item.
+  const scan = scanOf([
+    { k: "f1", t: "text", l: "Twitter" },
+    { k: "f2", t: "textarea", l: "Other Links" },
+    { k: "f3", t: "text", l: "Preferred Name", req: true },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [
+      { k: "f1", status: "UNKNOWN", value: "" },
+      { k: "f2", status: "UNKNOWN", value: "" },
+      { k: "f3", status: "UNKNOWN", value: "" },
+    ],
+    adapter: greenhouse,
+    files,
+  })
+  assert.deepEqual(
+    plan.defer.map((d) => d.k),
+    ["f3"],
+    "only the required field is worth the user's attention",
+  )
+  const skipped = plan.items.filter((i) => i.how === "skip")
+  assert.deepEqual(
+    skipped.map((i) => i.k),
+    ["f1", "f2"],
+  )
+  assert.match(skipped[0].why, /optional/)
 })
 
 // --- attachments ----------------------------------------------------------

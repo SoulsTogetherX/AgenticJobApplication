@@ -87,6 +87,88 @@ const locParts = String(contact.location ?? "")
   .map((s) => s.trim())
   .filter(Boolean)
 
+// Option lists overwhelmingly spell states out ("Nevada") while a profile
+// address abbreviates them ("NV"), so offer both and let the form pick.
+const US_STATES = {
+  AL: "Alabama",
+  AK: "Alaska",
+  AZ: "Arizona",
+  AR: "Arkansas",
+  CA: "California",
+  CO: "Colorado",
+  CT: "Connecticut",
+  DE: "Delaware",
+  DC: "District of Columbia",
+  FL: "Florida",
+  GA: "Georgia",
+  HI: "Hawaii",
+  ID: "Idaho",
+  IL: "Illinois",
+  IN: "Indiana",
+  IA: "Iowa",
+  KS: "Kansas",
+  KY: "Kentucky",
+  LA: "Louisiana",
+  ME: "Maine",
+  MD: "Maryland",
+  MA: "Massachusetts",
+  MI: "Michigan",
+  MN: "Minnesota",
+  MS: "Mississippi",
+  MO: "Missouri",
+  MT: "Montana",
+  NE: "Nebraska",
+  NV: "Nevada",
+  NH: "New Hampshire",
+  NJ: "New Jersey",
+  NM: "New Mexico",
+  NY: "New York",
+  NC: "North Carolina",
+  ND: "North Dakota",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  OR: "Oregon",
+  PA: "Pennsylvania",
+  RI: "Rhode Island",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  TN: "Tennessee",
+  TX: "Texas",
+  UT: "Utah",
+  VT: "Vermont",
+  VA: "Virginia",
+  WA: "Washington",
+  WV: "West Virginia",
+  WI: "Wisconsin",
+  WY: "Wyoming",
+}
+const stateCandidates = (raw) => {
+  const s = String(raw ?? "").trim()
+  if (!s) return ""
+  const upper = s.toUpperCase()
+  if (US_STATES[upper]) return [US_STATES[upper], upper]
+  const abbrev = Object.keys(US_STATES).find(
+    (k) => US_STATES[k].toLowerCase() === s.toLowerCase(),
+  )
+  return abbrev ? [s, abbrev] : s
+}
+
+// Whether this same form already has its own field for something, so a
+// catch-all "Other links" box does not duplicate what is captured elsewhere
+// (user decision 2026-07-28).
+const hasFieldFor = (re) => fields.some((f) => re.test(String(f.l ?? "")))
+const otherLinksValue = () => {
+  const parts = []
+  if (contact.github && !hasFieldFor(/git-?hub/i)) parts.push(contact.github)
+  if (
+    contact.website &&
+    !hasFieldFor(/\b(portfolio|personal (web)?site|website)\b/i)
+  ) {
+    parts.push(contact.website)
+  }
+  return parts.join("  ")
+}
+
 const CONTACT_RULES = [
   [/\b(first|given)\s*name\b/i, "contact.name", nameParts[0]],
   [
@@ -113,7 +195,16 @@ const CONTACT_RULES = [
     contact.website ?? "",
   ],
   [/\b(city|town)\b/i, "contact.location", locParts[0] ?? ""],
-  [/\b(state|province|region)\b/i, "contact.location", locParts[1] ?? ""],
+  [
+    /\b(state|province|region)\b/i,
+    "contact.location",
+    stateCandidates(locParts[1]),
+  ],
+  [
+    /\bother links\b|\badditional links\b|\bother profiles\b/i,
+    "contact",
+    otherLinksValue(),
+  ],
   [
     /\b(current )?(location|address)\b|\bwhere are you (currently )?(located|based)\b/i,
     "contact.location",
@@ -248,10 +339,73 @@ const PROFILE_RULES = [
   [/\bdiscipline\b|\bmajor\b|\bfield of study\b/i, "education", discipline],
 ]
 
+// ---------------------------------------------------------------------------
+// question-shaped rules
+//
+// PROFILE_RULES are skipped for anything phrased as a question (so "were you
+// referred to this position" is not answered with a job title). These run for
+// questions instead, and they cover the ones that appear on nearly every US
+// application — which is why they pay off on every future form, not just this
+// one. A rule's value may be a function of the label.
+// ---------------------------------------------------------------------------
+const employers = (profile.experience ?? [])
+  .map((e) =>
+    String(e.company ?? "")
+      .toLowerCase()
+      .trim(),
+  )
+  .filter(Boolean)
+
+// "Have you previously been employed at Affirm?" Only the negative is answered
+// here: the profile can prove someone is ABSENT from a complete employment
+// history, but not in what capacity they were employed if they are present.
+const priorEmployment = (label) => {
+  const m = String(label).match(
+    /previously\s+(?:been\s+)?(?:employed|worked)\s+(?:at|by|for)\s+([A-Za-z0-9&.'\- ]{2,40})/i,
+  )
+  if (!m) return ""
+  const co = m[1]
+    .replace(/\s+(for|in|at|during)\b.*$/i, "")
+    .replace(/[?*.,].*$/, "")
+    .trim()
+    .toLowerCase()
+  if (!co) return ""
+  const worked = employers.some((e) => e.includes(co) || co.includes(e))
+  return worked ? "" : "No"
+}
+
+// User decision 2026-07-28: prefer the banked answer, fall back to "Other"
+// (with "found it online" as the written explanation), then LinkedIn.
+const heardAbout = () => {
+  const banked = bank.find((a) =>
+    /how did you (hear|first learn|find out|come to know)/i.test(a.question),
+  )
+  const chain = []
+  if (banked?.answer) chain.push(banked.answer)
+  chain.push("Other", "LinkedIn")
+  return chain
+}
+
+const QUESTION_RULES = [
+  [
+    /previously\s+(been\s+)?(employed|worked)\s+(at|by|for)\b/i,
+    "experience",
+    priorEmployment,
+  ],
+  [
+    /how did you (hear|first learn|find out|come to know)\b/i,
+    "answers",
+    heardAbout,
+  ],
+]
+
 const EEO_RE =
   /\bgender\b|\brace\b|ethnic|hispanic|latino|veteran|disab|self-?identif|pronoun/i
+// "I do not want to answer" (Affirm's disability option) was one word away from
+// matching, so that field alone went to the user while the other three EEO
+// questions resolved.
 const DECLINE_RE =
-  /decline|prefer not|don'?t wish|do not wish|not to (answer|say|disclose)|choose not/i
+  /decline|prefer not|don'?t wish|do not wish|don'?t want|do not want|rather not|not to (answer|say|disclose)|choose not|opt out/i
 
 // ---------------------------------------------------------------------------
 // answers-bank fuzzy match
@@ -282,9 +436,43 @@ function similarity(a, b) {
   return Math.max(jaccard, containment * 0.9)
 }
 
+// Some questions are near-identical in wording but OPPOSITE in meaning.
+// "Do you require sponsorship?" and "Are you legally authorized to work?" share
+// almost every token, so token similarity ranked the authorization answer
+// ("Yes") against the sponsorship question — which would have claimed the user
+// needs a visa. Concepts are matched before, and constrain, the fuzzy pass.
+//
+// Order matters: a label naming both ("...sponsorship... to maintain
+// authorization to work...") is about sponsorship.
+const CONCEPTS = [
+  ["sponsorship", /\bsponsor(ship|ed|s)?\b|\bvisa\b/i],
+  [
+    "work_authorization",
+    /\b(legally\s+)?authoriz(ed|ation)\s+to\s+work\b|\bwork\s+authoriz(ation|ed)\b|\bright to work\b|\beligible to work\b/i,
+  ],
+]
+const conceptOf = (text) =>
+  CONCEPTS.find(([, re]) => re.test(String(text ?? "")))?.[0] ?? null
+
 function bestAnswer(label) {
+  const want = conceptOf(label)
+  if (want) {
+    const onConcept = bank.filter((a) => conceptOf(a.question) === want)
+    if (onConcept.length) {
+      let best = null
+      for (const a of onConcept) {
+        const score = Math.max(similarity(label, a.question), 0.75)
+        if (!best || score > best.score) best = { ...a, score }
+      }
+      return best
+    }
+  }
+
   let best = null
   for (const a of bank) {
+    // Never let a question about one concept be answered from another.
+    if (want && conceptOf(a.question) && conceptOf(a.question) !== want)
+      continue
     const score = similarity(label, a.question)
     if (!best || score > best.score) best = { ...a, score }
   }
@@ -296,24 +484,40 @@ function bestAnswer(label) {
 // ---------------------------------------------------------------------------
 const YES = /^(y|yes|true|1)$/i
 const NO = /^(n|no|false|0)$/i
+
+// Forms rarely offer a bare "Yes"/"No". Affirm's prior-employment question
+// offers "I have not previously been employed at Affirm"; without these a
+// resolved "No" came back NEEDS-CHOICE and went to the user for nothing.
+const YES_LONG = /^(yes\b|y\b|true\b|i (do|have|am|was|would)\b(?!\s+not))/i
+const NO_LONG =
+  /^(no\b|n\b|false\b|i (do|have|am|was|would) not\b|i haven'?t\b|i'?m not\b|never\b|none\b|not applicable)/i
+
+// Accepts a single value or an ordered list of acceptable answers; the first
+// one the form actually offers wins.
 function matchOption(value, opts) {
-  if (!Array.isArray(opts) || !opts.length) return { value }
+  const candidates = (Array.isArray(value) ? value : [value])
+    .map((v) => String(v ?? "").trim())
+    .filter(Boolean)
+  const first = candidates[0] ?? ""
+  if (!Array.isArray(opts) || !opts.length) return { value: first }
   const real = opts.filter((o) => o && !/^(select|choose|--|\s*)$/i.test(o))
-  const v = String(value).trim()
-  const exact = real.find((o) => o.trim().toLowerCase() === v.toLowerCase())
-  if (exact) return { value: exact }
-  const starts = real.find(
-    (o) =>
-      o.trim().toLowerCase().startsWith(v.toLowerCase()) ||
-      v.toLowerCase().startsWith(o.trim().toLowerCase()),
-  )
-  if (starts) return { value: starts }
-  if (YES.test(v) || NO.test(v)) {
-    const want = YES.test(v) ? YES : NO
-    const hit = real.find((o) => want.test(o.trim()))
-    if (hit) return { value: hit }
+
+  for (const v of candidates) {
+    const exact = real.find((o) => o.trim().toLowerCase() === v.toLowerCase())
+    if (exact) return { value: exact }
+    const starts = real.find(
+      (o) =>
+        o.trim().toLowerCase().startsWith(v.toLowerCase()) ||
+        v.toLowerCase().startsWith(o.trim().toLowerCase()),
+    )
+    if (starts) return { value: starts }
+    if (YES.test(v) || NO.test(v)) {
+      const want = YES.test(v) ? YES_LONG : NO_LONG
+      const hit = real.find((o) => want.test(o.trim()))
+      if (hit) return { value: hit }
+    }
   }
-  return { value, needsChoice: true }
+  return { value: first, needsChoice: true }
 }
 
 // ---------------------------------------------------------------------------
@@ -378,17 +582,27 @@ for (const f of fields) {
   }
 
   let hit = null
+  // QUESTION_RULES run for both shapes and take precedence; PROFILE_RULES are
+  // field-label rules and must not fire on a question.
   const rules = IS_QUESTION.test(label)
-    ? CONTACT_RULES
-    : [...CONTACT_RULES, ...PROFILE_RULES]
+    ? [...QUESTION_RULES, ...CONTACT_RULES]
+    : [...QUESTION_RULES, ...CONTACT_RULES, ...PROFILE_RULES]
   for (const [re, source, value] of rules) {
     if (re.test(label)) {
-      hit = { source, value }
+      hit = {
+        source,
+        value: typeof value === "function" ? value(label) : value,
+      }
       break
     }
   }
   if (hit) {
-    if (!hit.source || !hit.value) {
+    // A rule may return a list of acceptable answers; an empty list is still
+    // "no answer", and an empty array is truthy.
+    const empty = Array.isArray(hit.value)
+      ? !hit.value.filter(Boolean).length
+      : !hit.value
+    if (!hit.source || empty) {
       push(
         "UNKNOWN",
         hit.source ?? "-",

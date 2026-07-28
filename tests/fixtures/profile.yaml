@@ -6,9 +6,11 @@ meta:
 
 contact:
   name: Jane Test
-  location: Springfield, USA
+  location: "Springfield, IL"
   phone: "(555) 123-4567"
   email: jane@test.example
+  github: https://github.com/janetest
+  website: https://janetest.example
 
 summary:
   - id: summary-fs

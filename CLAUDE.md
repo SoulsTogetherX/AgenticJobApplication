@@ -11,6 +11,14 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 - Verify a tailored doc: `node scripts/verify-claims.mjs <resume|cover-letter> <file> [--job jobs/<slug>/job.json]`
 - New job workspace: `node scripts/new-job.mjs <slug> --company "X" --title "Y" [--url Z]`
 - Save a user answer: `node scripts/save-answer.mjs "<question>" "<answer>"`
+- Build a deterministic fill plan for a scanned application form (runs
+  answer-bank internally, picks the ATS adapter, writes `jobs/<slug>/fill-plan.js`,
+  prints the browser bootstrap): `node scripts/fill-plan.mjs <slug>`
+- Resolve scanned application-form fields against the fact base (batch):
+  `node scripts/answer-bank.mjs < jobs/<slug>/scan-p1.json` (fields come from
+  `.claude/skills/apply-job/scan-page.js`; never invents an answer)
+- Can an existing tailored resume be reused for a new posting?
+  `node scripts/reuse-check.mjs <slug>` (recommends only; user approves reuse)
 - Check application history: `node scripts/check-applied.mjs "<company, title, or slug>"`
 - Log a submitted application: `node scripts/log-application.mjs <slug> --company "X" --title "Y"`
 - Apply a reviewed profile update: `node scripts/apply-profile.mjs [--allow-edits] [--allow-removals]`
@@ -24,6 +32,8 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   `node scripts/update-application.mjs <slug-or-company> [--status s] [--followed-up]`
 - Profile-gap report: `node scripts/profile-gaps.mjs [--json] [--min-demand N]`
 - Rank leads against the profile: `node scripts/recommend.mjs [--top N]`
+- Which leads to tailor ahead of time (keeps tailoring off the apply path):
+  `node scripts/prep-queue.mjs [--top N] [--json]`
 - Mechanical ghost/scam screen: `node scripts/screen.mjs [--status new]`
 - Whole-pipeline digest: `node scripts/status.mjs`
 - All scripts print compact output to agents (non-TTY) and prose to humans;
@@ -133,3 +143,11 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   fixtures in `tests/fixtures/`, never the real profile.
 - profile.yaml `meta.approved_by_user` must be `true` before tailoring for real
   applications; if false, warn the user first.
+- Playwright MCP runs with a persistent browser profile
+  (`--user-data-dir .playwright-mcp/profile` in `.mcp.json`) so ATS logins
+  survive between sessions. It holds real session cookies — gitignored, never
+  commit it. Changing `.mcp.json` needs a session restart to take effect.
+- `.claude/skills/apply-job/scan-page.js` and `scan.driver.mjs` are eval'd as
+  bare function expressions, not modules — they are in `.prettierignore`
+  because prettier's leading-semicolon guard would make them unparseable.
+  `scan-page.js` is the single source of truth; the driver loads it off disk.

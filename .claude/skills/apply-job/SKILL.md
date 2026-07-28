@@ -6,61 +6,262 @@ description: Apply to a job in the browser via Playwright MCP - capture the
   user gives a job posting URL to apply to, or asks to apply for a job.
 ---
 
-Drive one job application end-to-end using the Playwright MCP browser tools
-(`browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`,
-`browser_fill_form`, `browser_file_upload`, ...).
+Drive one job application end-to-end using the Playwright MCP browser tools.
+
+Two design rules explain every step below:
+
+1. **Batch by phase, not by field.** Scan the whole page in one call, resolve
+   every answer in one call, decide in one pass, fill in one call, verify once.
+   Never inspect-then-fill field by field.
+2. **Spend human attention once.** The user is asked exactly twice per
+   application: one approval message (tailoring + unknown questions + reuse
+   offer, together), and the final Submit click. Everything that can be learned
+   before that message — including what the form actually asks — is learned
+   first, so it can ride along in it.
 
 ## Hard boundaries (never cross these)
 
-- **NEVER click the final Submit/Apply/Send button.** The user always submits.
-- Never create accounts, log in, enter passwords, or handle payment/identity
-  data — if a login wall appears, pause and ask the user to log in in the
-  Playwright browser window, then continue.
+- **NEVER click a button the scan classifies `r: "submit"`.** The user submits.
+- **Never click `r: "start"` on a page that already has fields** — on most ATSs
+  the final button is worded "Apply"/"Submit Application" and the scanner cannot
+  tell the difference by text alone.
+- Never click `r: "auth"`, create accounts, log in, enter passwords, or handle
+  payment/identity data. Login wall → pause, ask the user to log in in the
+  Playwright window, then re-scan and continue.
 - Never solve CAPTCHAs — hand off to the user.
-- Every form answer must come from `profile/profile.yaml` or
-  `profile/answers.yaml`. Unknown → ask the user, save with
-  `node scripts/save-answer.mjs`, then fill it in.
+- Every answer must come from `profile/profile.yaml` or `profile/answers.yaml`.
+  Unknown → ask the user, `node scripts/save-answer.mjs`, then fill.
+  Rephrasing a fact is fine; deriving a number that is not in the profile
+  (years of experience, salary, notice period) is inventing — ask instead.
 
-## Flow
+## Model
 
-1. **Preconditions**: Playwright MCP tools must be available (this session must
-   be started in this project folder with the `.mcp.json` playwright server
-   approved — check with `/mcp`). If they are not, say so and stop.
-   `profile/profile.yaml` must have `meta.approved_by_user: true`.
+This flow is mechanical — Sonnet-appropriate throughout. Delegate the tailoring
+step to the Sonnet-pinned `job-worker` agent (step 5). If you are running on a
+larger model, say so once and suggest the user switch the session model; do not
+silently burn a frontier model on form-filling.
 
-2. **Capture the posting**: `browser_navigate` to the URL the user gave (or
-   snapshot the already-open page). Extract company, title, location, full
-   description, and explicit requirements.
+## Phase 1 — Set up (no browser)
 
-3. **History check**: `node scripts/check-applied.mjs "<Company>"` — if this
-   job/company already has an application, report what and when, and get the
-   user's go-ahead before continuing.
-
+1. **Preconditions**: Playwright MCP tools available (check `/mcp`) and
+   `profile/profile.yaml` has `meta.approved_by_user: true`. Otherwise stop.
+2. **Capture the posting**: `browser_navigate` to the URL, then
+   `browser_evaluate` with `() => document.body.innerText.slice(0, 6000)` —
+   cheaper and more complete than a snapshot for reading an ad. Extract company,
+   title, location, requirements.
+3. **History check**: `node scripts/check-applied.mjs "<Company>"`. Already
+   applied → report it and get the user's go-ahead first.
 4. **Workspace**: `node scripts/new-job.mjs <slug> --company ... --title ...
---url ...`, then fill `job.json` with the captured description/requirements.
+--url ...`, then fill `job.json` with the description/requirements.
 
-5. **Tailor documents**: run the tailor-resume flow, then — automatically, no
-   need to ask — tailor-cover-letter IF the job requests one, the form has a
-   cover-letter field, or the form accepts attachments beyond the resume;
-   otherwise skip the cover letter and say so. (Both flows share
-   `jobs/<slug>/context.json` and include their own verify + user-approval +
-   render steps.)
+## Phase 2 — Open the form and read it BEFORE tailoring
 
-6. **Fill the application form**:
-   - Work field by field from a `browser_snapshot`. Fill contact fields from
-     `contact:` in the profile (email = the job-application email).
-   - Screening questions: answer from profile/answers only. Record every
-     question encountered into `job.json` `questions`. For anything unknown,
-     ask the user in chat first, save the answer, then fill it.
-   - Upload the rendered PDFs with `browser_file_upload`.
-   - Do not fabricate anything (years-of-experience numbers included).
+Do not tailor yet. The form decides whether a cover letter is needed, whether
+PDFs are needed at all, and what unknown questions exist — all of which belong
+in the single approval message.
 
-7. **Hand-off**: take a final `browser_snapshot`, summarize exactly what was
-   filled in (field → value), point out anything left blank, and tell the user
-   the form is ready — **they review the browser window and click Submit**.
+### A0. Which ATS is this? (0 calls)
 
-8. **After the user confirms they submitted**:
-   ```bash
-   node scripts/log-application.mjs <slug> --company "<Company>" --title "<Title>" --url "<posting url>"
-   ```
-   Update `context.json` statuses and confirm the log entry to the user.
+`node scripts/ats/index.mjs` is not a CLI — detection happens inside
+`fill-plan.mjs`. What matters here is what it will decide:
+
+- **greenhouse / lever / ashby** → the deterministic path below. The model fills
+  nothing by hand.
+- **workday** → `fill-plan.mjs` exits **3** with a hand-off message. Workday
+  requires creating an account, which you are not permitted to do. Tell the user
+  and stop; their answers are in `profile/answers.yaml`.
+- **anything else** → `generic`. Same mechanism, same scripts; only the number
+  of deferred fields goes up. This is the ONLY path where you reason about
+  individual fields, and even then only about the deferred ones.
+
+### A. Scan (1 call)
+
+```
+mcp__playwright__browser_run_code_unsafe
+  { filename: ".claude/skills/apply-job/scan.driver.mjs" }
+```
+
+That installs the scanner (`scan-page.js`) as `window.__ajScan` for the whole
+session and returns the page inventory: fields with labels, required flags and
+**all dropdown options — native and custom, opened for you**; classified
+buttons; and signals. Every element is stamped `data-aj="<key>"`, so
+`[data-aj="f7"]` is a valid `target` for every Playwright tool.
+
+After the first run, re-scan with the ~30-token call
+`browser_evaluate () => window.__ajScan(false)` (`false` skips re-opening
+dropdowns). It survives navigation. Only if that throws — or if
+`browser_run_code_unsafe` is unavailable — paste the function from
+`scan-page.js` into `browser_evaluate` instead.
+
+**On a board you have applied to before, skip the probe.** Opening every
+dropdown is the slow half of a scan, and `fill-plan.mjs` remembers each form's
+shape in `jobs/.field-cache.json`, keyed by its required fields. So scan with
+`__ajScan(false)` and let the planner supply the options; it prints
+`cache=<hits>/<dropdowns>`. If that shows `0/N` with N above zero, the form is
+new or changed — re-scan with the probe and continue.
+
+Act on `kind` before anything else:
+
+| `kind`    | do                                                                |
+| --------- | ----------------------------------------------------------------- |
+| `ad`      | click the `r: "start"` button, then re-scan                       |
+| `form`    | continue to B                                                     |
+| `login`   | stop; ask the user to log in, then re-scan                        |
+| `confirm` | the application is in — skip to **After submission**              |
+| `unknown` | read `heading` + `btns`; if genuinely nothing to do, ask the user |
+
+Signals override: a CAPTCHA signal means hand off; an iframe signal means
+`browser_navigate` to that embedded URL (Greenhouse/Lever/Ashby embeds cannot be
+scanned or filled through the parent frame) and scan again.
+
+### B. Resolve every field at once (1 call)
+
+Write the scan JSON to `jobs/<slug>/scan-p<N>.json`, then build the plan:
+
+```bash
+node scripts/fill-plan.mjs <slug>
+```
+
+This runs `answer-bank.mjs` internally (profile + answer bank only, never a
+guess) and writes `jobs/<slug>/fill-plan.js` + `.json`. It prints:
+
+- `items=<n>` — fields that will be filled with no model involvement,
+- one `defer` line per field a human must answer, each with a reason:
+  `consent` (an agreement — always yours to accept, never mine), `unknown`,
+  `needs-choice`, `maybe`,
+- the exact **bootstrap** to run in step D.
+
+Only the `defer` lines need your attention. Do not read the plan file, and do
+not re-derive answers the planner already resolved.
+
+If PDFs are not rendered yet the attachment rows defer with `no rendered
+resume` — that is expected before approval; re-run this after rendering.
+
+### C. Decide what work is actually needed (0 calls)
+
+From the scan, settle three things:
+
+- **Cover letter?** Only if the form has a cover-letter field or accepts
+  attachments beyond the resume, or the posting explicitly asks. Otherwise skip
+  it and say so.
+- **PDFs?** Only if the scan has a `t: "file"` field. A form with no file input
+  (some Workday and in-house forms) needs no render at all — that saves ~6s and
+  a browser launch. If there is a rich-text/textarea resume box instead, the
+  markdown text goes there.
+- **Reuse?** `node scripts/reuse-check.mjs <slug>` — if it returns
+  `verdict=REUSE`, an existing tailored resume is close enough that re-tailoring
+  is wasted work. Offer it in the approval message with the score; the user
+  decides. Never reuse silently.
+
+Then work the non-`OK` rows from B in one pass: pick options for
+`NEEDS-CHOICE`/`MAYBE` from profile facts, and collect every remaining `UNKNOWN`
+into a numbered list for the approval message. Record every question into
+`job.json` `questions`.
+
+## Phase 3 — Tailor (delegated)
+
+**First check whether this is already done.** If `jobs/<slug>/context.json` has
+`resume.status` of `verified` (or `approved`/`rendered`), the pipeline
+pre-tailored it — skip this phase entirely and carry `tailor.summary` from
+`context.json` into the approval message. Re-tailoring verified work is pure
+latency with the user watching. `node scripts/prep-queue.mjs` is what keeps
+that state populated ahead of time.
+
+Otherwise, unless the user accepted a reuse, hand the tailoring to `job-worker` (Sonnet):
+give it the slug and whether a cover letter is needed. It drafts `resume.md`
+(+ `cover-letter.md`), runs `verify-claims`, and returns compact JSON including
+`tailor.summary`. It does not render PDFs — that waits for approval.
+
+## Phase 4 — The one approval message
+
+Send a single message containing:
+
+1. the tailoring summary (emphasized / dropped / rephrased vs. the general
+   resume) — hard rule 5,
+2. the numbered unknown questions, each with its available options,
+3. the reuse offer, if `reuse-check` flagged one,
+4. what will be filled and what will be left blank.
+
+Then wait. On the reply, in one batch:
+
+```bash
+node scripts/save-answer.mjs "Q1" "A1" && node scripts/save-answer.mjs "Q2" "A2"
+```
+
+and render the PDFs — only now, only if the form needs files:
+
+```bash
+node scripts/render-pdf.mjs jobs/<slug>/resume.md jobs/<slug>/resume.pdf
+```
+
+Later pages of the same application resolve those saved answers automatically in
+B, so this message does not repeat unless a later page asks something new.
+
+## Phase 5 — Fill, verify, advance
+
+### D+E. Fill and verify (ONE call)
+
+Re-run `node scripts/fill-plan.mjs <slug>` after rendering PDFs and saving any
+new answers, then run the bootstrap it printed:
+
+```
+mcp__playwright__browser_run_code_unsafe
+  { code: "<the bootstrap from fill-plan.mjs>" }
+```
+
+`addScriptTag` loads the engine and the plan off disk, so nothing but those six
+lines enters your context regardless of how big the form is. The engine does
+uploads first (they remount the form and invalidate every `data-aj`), then
+fills, then verifies — and returns only what is not right:
+
+```json
+{ "ok": 24, "failed": 0, "deferred": 12, "ms": 5100,
+  "failures": [], "verify": { "mismatch": [], "errors": [], "requiredEmpty": [] },
+  "defer": [...], "next": { "btn": "b34", "label": "Submit application", "role": "submit" } }
+```
+
+**Do not follow this with a verification scan** — the verify already ran inside
+that call, including a sweep of the page's own rendered error text (element
+state alone lies on React forms).
+
+If `failed` or `verify.mismatch` is non-empty, fix the cause in the fact base or
+the plan and re-run the same bootstrap; the engine is idempotent, so a repeat is
+safe. Two automatic retries, then take it to the user.
+
+**Never hand-fill fields the plan already covers.** If you find yourself issuing
+`browser_fill_form` or clicking dropdown options one at a time, you have left
+this flow — go back to B.
+
+### F. Advance or hand off
+
+- A `r: "next"` button exists → `browser_click` it, then go back to A for the
+  next page (the scanner is already installed — just re-scan). New unknowns on a
+  later page get their own batched question round.
+- Only a `r: "submit"` button is left → **stop**. Summarize field → value for
+  the whole application, name anything left blank and why, and tell the user the
+  form is ready for them to review and submit.
+
+The engine reports `next` but has no verb that can click it — advancing is
+always an explicit `browser_click` you make, and submitting is always the user.
+
+## After submission
+
+Once the user confirms they submitted:
+
+```bash
+node scripts/log-application.mjs <slug> --company "<Company>" --title "<Title>" --url "<posting url>"
+```
+
+Update `context.json` statuses and confirm the log entry.
+
+## Cost expectations
+
+Per page, on a recognised ATS: **2 browser calls** — one scan, one
+fill-and-verify — plus one click to advance. Everything between them is Bash.
+Two human touchpoints per application, total.
+
+Baseline before this existed: ~30 browser calls and roughly 8 minutes for a
+single Greenhouse form. If you are making per-field calls, taking accessibility
+snapshots, pasting the scanner repeatedly, verifying after the engine already
+verified, or asking the user questions one at a time, you have left the flow —
+go back to A.

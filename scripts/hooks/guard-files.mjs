@@ -49,7 +49,10 @@ process.stdin.on("end", () => {
   const inTmp = !tmp.startsWith("..") && !path.isAbsolute(tmp)
   const inMemory =
     /[\\/]\.claude[\\/]projects[\\/][^\\/]+[\\/]memory[\\/]/.test(abs)
-  if (!inTmp && !inMemory) {
+  // Plan-mode writes its plan file to ~/.claude/plans/; without this the
+  // approval dialog renders empty (user decision, 2026-07-27).
+  const inPlans = /[\\/]\.claude[\\/]plans[\\/]/.test(abs)
+  if (!inTmp && !inMemory && !inPlans) {
     deny(
       `"${file}" is outside the project directory. This project only edits its own files.`,
     )

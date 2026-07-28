@@ -150,6 +150,34 @@ export function workdayLocationFromPath(externalPath) {
   return m ? m[1].replace(/-/g, " ") : ""
 }
 
+// Boards return postings as HTML (Greenhouse double-encodes it). The screen
+// only needs enough text to spot blockers — a clearance demand or a seniority
+// bar — so store a stripped, capped snippet rather than the whole ad; the lead
+// store holds dozens of these.
+export const SNIPPET_MAX = 4000
+
+const decodeEntities = (s) =>
+  String(s)
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#0?39;|&rsquo;|&apos;/gi, "'")
+    .replace(/&quot;|&ldquo;|&rdquo;/gi, '"')
+    .replace(/&amp;/gi, "&")
+
+export function textSnippet(...parts) {
+  const raw = parts.filter(Boolean).join("\n")
+  if (!raw) return null
+  const txt = decodeEntities(
+    decodeEntities(raw)
+      .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<[^>]+>/g, " "),
+  )
+    .replace(/\s+/g, " ")
+    .trim()
+  return txt ? txt.slice(0, SNIPPET_MAX) : null
+}
+
 export function normUrl(u) {
   try {
     const p = new URL(u)
@@ -229,7 +257,7 @@ async function fetchJson(url, body = null) {
 
 async function fetchGreenhouse(board) {
   const data = await fetchJson(
-    `https://boards-api.greenhouse.io/v1/boards/${board.slug}/jobs`,
+    `https://boards-api.greenhouse.io/v1/boards/${board.slug}/jobs?content=true`,
   )
   return (data.jobs ?? []).map((j) => ({
     id: `greenhouse:${board.slug}:${j.id}`,
@@ -239,6 +267,7 @@ async function fetchGreenhouse(board) {
     location: j.location?.name ?? "",
     url: j.absolute_url,
     posted_at: j.first_published || j.updated_at || null,
+    description: textSnippet(j.content),
   }))
 }
 
@@ -256,6 +285,10 @@ async function fetchLever(board) {
     url: j.hostedUrl,
     posted_at: j.createdAt ? new Date(j.createdAt).toISOString() : null,
     salary_max: j.salaryRange?.max ?? null,
+    description: textSnippet(
+      j.descriptionPlain ?? j.description,
+      (j.lists ?? []).map((l) => `${l.text}: ${l.content}`).join("\n"),
+    ),
   }))
 }
 
@@ -280,6 +313,7 @@ async function fetchAshby(board) {
       url: j.jobUrl || j.applyUrl,
       posted_at: j.publishedAt ?? null,
       salary_max: parseSalaryMax(j.compensation?.compensationTierSummary),
+      description: textSnippet(j.descriptionPlain ?? j.descriptionHtml),
     }))
 }
 
@@ -330,6 +364,7 @@ async function fetchRecruitee(board) {
     remote: j.remote === true,
     url: j.careers_url,
     posted_at: j.published_at ?? j.created_at ?? null,
+    description: textSnippet(j.description, j.requirements),
   }))
 }
 
@@ -378,6 +413,9 @@ export function normalizeAdzunaJob(j) {
     url: j.redirect_url,
     posted_at: j.created ?? null,
     salary_max: j.salary_max ?? null,
+    // Adzuna only returns a teaser, so this is deliberately partial — see the
+    // partial_description handling in screen.mjs.
+    description: textSnippet(j.description),
   }
 }
 
@@ -503,12 +541,34 @@ function summarize(kept, rejected) {
   )
 }
 
+// Adds description snippets to leads stored before the sweep captured them.
+// Without this the blocker screen would only ever apply to newly found leads,
+// leaving the existing store permanently unscreenable. Mutates store.leads.
+export function backfillDescriptions(candidates, leads) {
+  const byKey = new Map()
+  for (const l of leads) {
+    if (l.id) byKey.set(l.id, l)
+    if (l.url) byKey.set(normUrl(l.url), l)
+  }
+  let n = 0
+  for (const c of candidates) {
+    if (!c.description) continue
+    const hit = byKey.get(c.id) ?? (c.url ? byKey.get(normUrl(c.url)) : null)
+    if (hit && !hit.description) {
+      hit.description = c.description
+      n++
+    }
+  }
+  return n
+}
+
 function ingest(candidates, limits) {
   const store = loadLeads()
   const applied = loadApplied()
   const now = new Date()
   const kept = []
   const rejected = []
+  const backfilled = backfillDescriptions(candidates, store.leads)
   for (const c of dedupeLeads(candidates, store.leads, applied)) {
     const verdict = passesLimits(c, limits, now)
     if (!verdict.ok) {
@@ -526,6 +586,11 @@ function ingest(candidates, limits) {
   store.leads.push(...kept)
   saveLeads(store)
   summarize(kept, rejected)
+  if (backfilled) {
+    console.log(
+      `Backfilled description snippets onto ${backfilled} existing lead(s).`,
+    )
+  }
 }
 
 async function cmdSearch(args) {

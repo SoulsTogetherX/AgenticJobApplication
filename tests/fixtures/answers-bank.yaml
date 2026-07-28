@@ -1,0 +1,18 @@
+# Fake answers bank used ONLY by answer-bank tests (the real one is gitignored).
+answers:
+  - id: a-001
+    question: Are you authorized to work in the US?
+    answer: Yes, US citizen, no sponsorship needed.
+    added: 2026-07-27
+  - id: a-002
+    question: Are you legally authorized to work in the United States?
+    answer: "Yes"
+    added: 2026-07-27
+  - id: a-003
+    question: Will you now or in the future require sponsorship for employment visa status?
+    answer: "No"
+    added: 2026-07-27
+  - id: a-004
+    question: What is your highest level of education?
+    answer: Bachelor's degree
+    added: 2026-07-27

@@ -22,6 +22,31 @@ returns a compact verdict, never a transcript.
 - Default cap: 5 jobs per run (ask before exceeding). Run subagents in
   parallel batches of no more than 3.
 
+## Pre-tailoring (run this ahead of time, not while the user waits)
+
+Tailoring costs a subagent several minutes. Doing it at apply time puts that on
+the critical path with the user watching a blank screen; doing it in advance
+turns applying into fill-and-review. So when the user asks to pipeline, prep, or
+"get things ready", pick the targets mechanically:
+
+```bash
+node scripts/prep-queue.mjs --top 5 --json
+```
+
+It returns only leads that rank well, have not been applied to, and have **no
+verified tailored resume yet** — so nothing is ever tailored twice. Each row
+carries a `reason`:
+
+| `reason`          | what the subagent does                                    |
+| ----------------- | --------------------------------------------------------- |
+| `no_workspace`    | `new-job.mjs` first, then Stage B                         |
+| `no_resume`       | workspace exists; go straight to Stage B                  |
+| `resume_<status>` | a draft exists but never passed verify-claims — finish it |
+
+Fan these out to `job-worker` (Stage B only) in batches of no more than 3. An
+empty queue means the top leads are already prepped — say so and stop; do not
+re-tailor to look busy.
+
 ## Input
 
 Ask which leads to process if not specified; default is

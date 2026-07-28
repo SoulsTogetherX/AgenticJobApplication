@@ -1,10 +1,17 @@
 {
-  "$comment": "Milestone 2: Playwright MCP lets the agent read the job posting on screen and fill application forms. The human always performs the final submit.",
+  "$comment": "Milestone 2: Playwright MCP lets the agent read the job posting on screen and fill application forms. The human always performs the final submit. --user-data-dir keeps a persistent browser profile so ATS logins (Workday, Greenhouse, Lever) survive between sessions instead of stalling the flow on a login wall. It lives under .playwright-mcp/, which is gitignored — it holds real session cookies, so never commit it. --codegen none suppresses the 'Ran Playwright code' echo in every browser tool result; the executed source is echoed into agent context whether passed inline or by filename, and it is pure cost. Changing this file needs a session restart.",
   "mcpServers": {
     "playwright": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest"]
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--user-data-dir",
+        ".playwright-mcp/profile",
+        "--codegen",
+        "none"
+      ]
     }
   }
 }

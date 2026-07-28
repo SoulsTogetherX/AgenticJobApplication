@@ -3,3 +3,7 @@ package-lock.json
 profile/
 jobs/*/*.pdf
 .playwright-mcp/
+# Loaded and eval'd as bare function expressions, not modules — prettier's
+# leading-semicolon guard would make them unparseable.
+.claude/skills/apply-job/scan.driver.mjs
+.claude/skills/apply-job/scan-page.js

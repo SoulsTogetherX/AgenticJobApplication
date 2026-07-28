@@ -50,7 +50,8 @@ Return ONLY this JSON — no preamble, no summary prose:
   "tailor": {
     "resume": "done|skipped|failed",
     "cover_letter": "done|skipped (no slot)|failed",
-    "verify_claims": "pass|fail"
+    "verify_claims": "pass|fail",
+    "summary": "<= 60 words: what was emphasized / dropped / rephrased vs. the general resume — the orchestrator shows this to the user for approval, so it must stand alone"
   },
   "next_step": "<= 25 words"
 }

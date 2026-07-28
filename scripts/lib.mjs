@@ -84,6 +84,81 @@ export function extractMonthYears(text) {
   return out
 }
 
+// ---------------------------------------------------------------------------
+// Professional tenure (used by the seniority gate in screen.mjs)
+// ---------------------------------------------------------------------------
+const MONTH_INDEX = {
+  jan: 0,
+  feb: 1,
+  mar: 2,
+  apr: 3,
+  may: 4,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  sep: 8,
+  oct: 9,
+  nov: 10,
+  dec: 11,
+}
+
+// Training roles, not professional tenure — a posting asking for "5 years"
+// does not mean five years of tutoring.
+const NON_PROFESSIONAL_TITLE =
+  /\b(intern|internship|teacher assistant|teaching assistant|tutor|volunteer)\b/i
+
+// "Jan 2024 – Present" / "Jul 2024 - Mar 2025" -> {start, end}. Returns null
+// when no month-year can be read, so callers can skip the entry rather than
+// guess at a duration.
+export function parseDateRange(dates, now = new Date()) {
+  const s = String(dates ?? "")
+  const re =
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})\b/gi
+  const points = [...s.matchAll(re)].map(
+    (m) => new Date(Date.UTC(Number(m[2]), MONTH_INDEX[m[1].toLowerCase()], 1)),
+  )
+  if (!points.length) return null
+  const start = points[0]
+  const end = /\b(present|current|now|ongoing)\b/i.test(s)
+    ? now
+    : (points[1] ?? points[0])
+  return end < start ? null : { start, end }
+}
+
+function monthsBetween(a, b) {
+  return Math.max(
+    0,
+    (b.getUTCFullYear() - a.getUTCFullYear()) * 12 +
+      (b.getUTCMonth() - a.getUTCMonth()),
+  )
+}
+
+// Total professional years from profile.experience, unioning overlapping
+// ranges so concurrent roles are not double-counted.
+export function yearsOfExperience(profile, now = new Date()) {
+  const ranges = []
+  for (const ex of profile?.experience ?? []) {
+    if (NON_PROFESSIONAL_TITLE.test(String(ex.title ?? ""))) continue
+    const r = parseDateRange(ex.dates, now)
+    if (r) ranges.push(r)
+  }
+  if (!ranges.length) return 0
+
+  ranges.sort((a, b) => a.start - b.start)
+  let months = 0
+  let cur = { ...ranges[0] }
+  for (const r of ranges.slice(1)) {
+    if (r.start <= cur.end) {
+      if (r.end > cur.end) cur.end = r.end
+    } else {
+      months += monthsBetween(cur.start, cur.end)
+      cur = { ...r }
+    }
+  }
+  months += monthsBetween(cur.start, cur.end)
+  return Math.round((months / 12) * 10) / 10
+}
+
 // Dictionary of tech terms the verifier watches for. Includes both terms the
 // user knows AND common terms they do NOT — so invented experience is caught.
 export const TECH_TERMS = [

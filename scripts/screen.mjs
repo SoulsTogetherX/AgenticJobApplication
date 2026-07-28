@@ -7,11 +7,11 @@
 // Verdicts: reject (a hard signal), caution (worth a closer look), pass.
 //
 // Usage: node scripts/screen.mjs [--status new] [--json]
-//        [--leads <path>] [--jobs-dir <path>] [--limits <path>]
+//        [--leads <path>] [--jobs-dir <path>] [--limits <path>] [--profile <path>]
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { isTerse } from "./lib.mjs"
+import { isTerse, loadYamlFile, yearsOfExperience } from "./lib.mjs"
 import { loadLimits } from "./find-jobs.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -55,8 +55,52 @@ const CULTURE_PATTERNS = [
   [/\bfast[- ]paced\b/i, "fast_paced"],
 ]
 
-// Pure core (exported for tests).
-export function screenJob(job, limits = {}, now = new Date()) {
+// Requirements that applying cannot satisfy. A clearance is sponsored by an
+// employer you already work for — you cannot obtain one to get the job — so
+// these are hard rejects rather than judgment calls.
+const BLOCKER_PATTERNS = [
+  [/\b(TS\/SCI|top secret)\b/i, "clearance_required"],
+  [
+    /\bactive\s+(security\s+|government\s+|dod\s+)?clearance\b/i,
+    "clearance_required",
+  ],
+  [/\bmust (have|possess|hold)\b.{0,30}\bclearance\b/i, "clearance_required"],
+  [
+    /\b(secret|public trust)\s+clearance\s+(is\s+)?required\b/i,
+    "clearance_required",
+  ],
+  [/\b(ci|full scope|lifestyle)\s+polygraph\b/i, "polygraph_required"],
+]
+
+// How far above the candidate's own tenure a posting may reach before it stops
+// being a stretch and starts being a waste. Overridable per-user in
+// docs/application-limits.yaml (experience.stretch_years).
+const DEFAULT_STRETCH_YEARS = 3
+
+// Highest years-of-experience demand in the posting. Deliberately narrow:
+// requires an experience-ish word nearby, and skips "18 years of age", so a
+// legal-minimum question is never read as a seniority bar.
+export function extractYearsRequired(text) {
+  let max = 0
+  const re = /\b(\d{1,2})\s*\)?\s*\+?\s*years?\b([^.\n]{0,60})/gi
+  for (const m of String(text).matchAll(re)) {
+    const n = Number(m[1])
+    const tail = m[2] ?? ""
+    if (/\bof age\b|\bold\b/i.test(tail)) continue
+    if (!/experien|background|track record/i.test(tail)) continue
+    if (n > 0 && n <= 30 && n > max) max = n
+  }
+  return max
+}
+
+// Pure core (exported for tests). profileYears is the candidate's own tenure
+// (see yearsOfExperience in lib.mjs); null disables the seniority gate.
+export function screenJob(
+  job,
+  limits = {},
+  now = new Date(),
+  profileYears = null,
+) {
   const signals = []
   let verdict = "pass"
   const text = [job.title, job.description, ...(job.requirements ?? [])]
@@ -67,6 +111,26 @@ export function screenJob(job, limits = {}, now = new Date()) {
     if (re.test(text)) {
       signals.push(name)
       verdict = "reject"
+    }
+  }
+
+  for (const [re, name] of BLOCKER_PATTERNS) {
+    if (re.test(text)) {
+      if (!signals.includes(name)) signals.push(name)
+      verdict = "reject"
+    }
+  }
+
+  // Seniority bar. A stretch is fine and often worth applying to, so this only
+  // fires well above the candidate's own tenure, and only ever cautions.
+  const demanded = extractYearsRequired(text)
+  if (demanded && profileYears != null) {
+    const ceiling =
+      limits.experience?.max_years_required ??
+      profileYears + (limits.experience?.stretch_years ?? DEFAULT_STRETCH_YEARS)
+    if (demanded > ceiling) {
+      signals.push(`over_bar_${demanded}y`)
+      if (verdict === "pass") verdict = "caution"
     }
   }
 
@@ -102,7 +166,13 @@ export function screenJob(job, limits = {}, now = new Date()) {
   }
 
   // A description this thin can't be evaluated and is a mild ghost signal.
-  if (job.description && job.description.length < 200) {
+  // Skipped when the text is a known-truncated aggregator teaser, which is
+  // short because of the source, not because the posting is empty.
+  if (
+    !job.partial_description &&
+    job.description &&
+    job.description.length < 200
+  ) {
     signals.push("thin_description")
     if (verdict === "pass") verdict = "caution"
   }
@@ -133,12 +203,21 @@ function main() {
   const limitsPath =
     flag(args, "--limits") || path.join(ROOT, "docs", "application-limits.yaml")
   const status = flag(args, "--status") || "new"
+  const profilePath =
+    flag(args, "--profile") || path.join(ROOT, "profile", "profile.yaml")
 
   if (!fs.existsSync(leadsPath)) {
     console.error(`no lead store at ${leadsPath} — run a search first`)
     process.exit(2)
   }
   const limits = fs.existsSync(limitsPath) ? loadLimits(limitsPath) : {}
+
+  // The seniority gate needs the candidate's own tenure; without a profile it
+  // stays off rather than guessing a bar.
+  const profile = fs.existsSync(profilePath)
+    ? (loadYamlFile(profilePath) ?? {})
+    : {}
+  const profileYears = profile.experience ? yearsOfExperience(profile) : null
 
   // Fold in captured posting text where a workspace exists.
   const byUrl = new Map()
@@ -158,13 +237,18 @@ function main() {
   ).filter((l) => status === "all" || l.status === status)
   const results = leads.map((l) => {
     const captured = byUrl.get(l.url)
+    // Prefer a full captured posting; fall back to the snippet the sweep
+    // stored, so blockers are caught before a workspace ever exists.
     return screenJob(
       {
         ...l,
-        description: captured?.description,
+        description: captured?.description ?? l.description,
         requirements: captured?.requirements,
+        partial_description: !captured?.description,
       },
       limits,
+      new Date(),
+      profileYears,
     )
   })
 

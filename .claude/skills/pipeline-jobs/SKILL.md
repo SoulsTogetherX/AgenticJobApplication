@@ -89,16 +89,24 @@ No posting text, no document contents, no browsing logs in the reply.
 
 ### Stage A — screen (optional)
 
-**Run the mechanical pass first — it is free:**
+**Run the mechanical pass first — it is free (~125 ms for the whole store):**
 
 ```bash
-node scripts/leads/screen.mjs --status new
+node scripts/leads/screen.mjs --status new --skip-screened
 ```
 
 It flags scam wording, stale/repost age, culture-red-flag clusters, thin
 descriptions, and unresolved location/salary from stored data. Anything it
-marks `reject` needs no model time at all. Only for `caution`/`pass` rows,
-WebFetch the posting (Playwright only if JS-required) and judge:
+marks `reject` needs no model time at all.
+
+`--skip-screened` drops leads you have **already judged** in a previous run.
+Your Stage A verdict is the expensive part of this whole flow — it fetches the
+live posting — and it is cached in the `screens` table, so paying for it twice
+on the same lead is pure waste. The output reports `model-screened=<n>` either
+way. Re-judge a lead only if the posting has changed.
+
+Only for `caution`/`pass` rows, WebFetch the posting (Playwright only if
+JS-required) and judge:
 
 - **Ghost job**: live/reposted ≥ `ghost_signals.repost_age_days` (45; industry
   guidance says 45+ days unfilled is the strongest ghost signal), vague
@@ -119,8 +127,18 @@ WebFetch the posting (Playwright only if JS-required) and judge:
   Vegas metro (docs/application-limits.yaml) even if the location field looked
   fine → reject with reason.
 
-`reject` → subagent runs `node scripts/leads/find-jobs.mjs mark <id> --status
-dismissed --notes "<reason>"` and stops.
+**Write the verdict down — every time, whatever it is.** This is what makes
+`--skip-screened` work on the next run:
+
+```bash
+node scripts/leads/screen.mjs record <lead-id> --verdict pass|caution|reject \
+  --reason "<why, one line>" --signals "evergreen,no_salary"
+```
+
+`reject` → the subagent ALSO runs `node scripts/leads/find-jobs.mjs mark <id>
+--status dismissed --notes "<reason>"` and stops. Recording the verdict and
+dismissing the lead are separate: the verdict says what was judged and why, the
+status says what to do about it.
 
 ### Stage B — tailor (optional)
 

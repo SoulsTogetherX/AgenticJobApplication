@@ -16,7 +16,11 @@ import { screenJob, extractYearsRequired } from "../../scripts/leads/screen.mjs"
 import { buildStatus } from "../../scripts/status.mjs"
 import { extractTech } from "../../scripts/profile/profile-gaps.mjs"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 const NOW = new Date("2026-07-27T12:00:00Z")
 
 // ---------- output mode ----------
@@ -346,7 +350,7 @@ test("recommend and screen CLIs run against a temp lead store", () => {
 
     const scr = run("leads/screen.mjs", ["--json"])
     assert.equal(scr.status, 0, scr.stderr)
-    assert.equal(JSON.parse(scr.stdout)[0].verdict, "pass")
+    assert.equal(JSON.parse(scr.stdout).results[0].verdict, "pass")
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

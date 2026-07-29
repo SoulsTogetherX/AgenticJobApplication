@@ -6,16 +6,36 @@
 //
 // Verdicts: reject (a hard signal), caution (worth a closer look), pass.
 //
-// Usage: node scripts/leads/screen.mjs [--status new] [--json]
-//        [--leads <path>] [--jobs-dir <path>] [--limits <path>] [--profile <path>]
+// Verdicts are cached in the `screens` table, keyed by who produced them. This
+// pass is cheap (~125 ms for the whole store) so its own cache saves nothing —
+// it is recorded for history. What the cache is FOR is the model's judgment
+// pass in the pipeline-jobs skill, which fetches the live posting and used to be
+// re-paid on every re-screen. Record one with the `record` subcommand, and skip
+// leads that already have one with --skip-screened.
+//
+// Usage: node scripts/leads/screen.mjs [--status new] [--json] [--skip-screened]
+//        [--no-record] [--leads <path>] [--jobs-dir <path>] [--limits <path>]
+//        [--profile <path>]
+//        node scripts/leads/screen.mjs record <lead-id> --verdict pass|caution|reject
+//          [--reason "..."] [--signals a,b] [--source model]
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { isTerse, loadYamlFile, yearsOfExperience } from "../lib/lib.mjs"
 import { loadLimits } from "./find-jobs.mjs"
-import { readLeadStore, resolveLeadSource } from "../lib/db.mjs"
+import {
+  readLeadStore,
+  resolveLeadSource,
+  openDb,
+  recordScreens,
+  screenIndex,
+} from "../lib/db.mjs"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 
 // Phrases that reliably indicate a scam or an ad that isn't a real job.
 const SCAM_PATTERNS = [
@@ -203,6 +223,10 @@ export function screenJob(
     title: job.title,
     verdict,
     signals,
+    // Surfaced rather than kept internal: tailoring and the gap report both
+    // want the bar a posting states, and re-parsing the description to get it
+    // back is work this pass already did.
+    years_required: demanded || null,
   }
 }
 
@@ -211,8 +235,58 @@ function flag(args, name) {
   return i !== -1 ? (args[i + 1] ?? true) : null
 }
 
+// `screen.mjs record <lead-id> --verdict ...` — how the model's judgment pass
+// gets written down. It is a separate verb because that verdict is not
+// something this script can compute; it comes back from a read of the live
+// posting, and the whole point of storing it is to not have to pay for it
+// again.
+function recordVerdict(args) {
+  // Positional, not "the first bare word": scanning for one picked up the
+  // VALUE of --verdict when the id was left off, and cheerfully recorded a
+  // screen against a lead called "pass".
+  const leadId = args[1]?.startsWith("--") ? null : args[1]
+  const verdict = flag(args, "--verdict")
+  const source = flag(args, "--source") || "model"
+  const reason = flag(args, "--reason")
+  const signals = flag(args, "--signals")
+  const leadsPath = flag(args, "--leads") || resolveLeadSource().file
+
+  if (!leadId || !["pass", "caution", "reject"].includes(verdict)) {
+    console.error(
+      'usage: screen.mjs record <lead-id> --verdict pass|caution|reject [--reason "..."] [--signals a,b]',
+    )
+    process.exit(2)
+  }
+  if (!String(leadsPath).endsWith(".db")) {
+    console.error("recording a verdict needs the database, not a JSON store")
+    process.exit(2)
+  }
+  const db = openDb(leadsPath)
+  try {
+    recordScreens(db, [
+      {
+        lead_id: leadId,
+        source,
+        verdict,
+        reason: reason === true ? null : (reason ?? null),
+        signals:
+          typeof signals === "string"
+            ? signals
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean)
+            : [],
+      },
+    ])
+    console.log(`recorded ${source} verdict for ${leadId}: ${verdict}`)
+  } finally {
+    db.close()
+  }
+}
+
 function main() {
   const args = process.argv.slice(2)
+  if (args[0] === "record") return recordVerdict(args)
   // Defaults to jobs/leads.db when it exists, else the legacy JSON store.
   const leadsPath = flag(args, "--leads") || resolveLeadSource().file
   const jobsDir = flag(args, "--jobs-dir") || path.join(ROOT, "jobs")
@@ -248,9 +322,29 @@ function main() {
     }
   }
 
-  const leads = (readLeadStore(leadsPath).leads ?? []).filter(
+  const isDb = String(leadsPath).endsWith(".db")
+  const skipScreened = args.includes("--skip-screened")
+  const noRecord = args.includes("--no-record")
+
+  // The already-model-screened set. Consulted whether or not --skip-screened is
+  // passed, so the count can be reported either way: knowing that 40 of 99
+  // leads have already been judged is the whole saving on offer.
+  let modelScreened = new Map()
+  if (isDb && fs.existsSync(leadsPath)) {
+    const db = openDb(leadsPath)
+    try {
+      modelScreened = screenIndex(db, "model")
+    } finally {
+      db.close()
+    }
+  }
+
+  const all = (readLeadStore(leadsPath).leads ?? []).filter(
     (l) => status === "all" || l.status === status,
   )
+  const alreadyJudged = all.filter((l) => modelScreened.has(l.id)).length
+  const leads = skipScreened ? all.filter((l) => !modelScreened.has(l.id)) : all
+
   const results = leads.map((l) => {
     const captured = byUrl.get(l.url)
     // Prefer a full captured posting; fall back to the snippet the sweep
@@ -268,21 +362,51 @@ function main() {
     )
   })
 
+  // Recorded for history, not for speed — see the header. Never on a JSON
+  // store, which is what the tests point at, so a test run cannot write here.
+  if (isDb && !noRecord && results.length) {
+    const db = openDb(leadsPath)
+    try {
+      recordScreens(
+        db,
+        results.map((r) => ({
+          lead_id: r.id,
+          source: "mechanical",
+          verdict: r.verdict,
+          signals: r.signals,
+          years_required: r.years_required,
+        })),
+      )
+    } finally {
+      db.close()
+    }
+  }
+
   if (args.includes("--json")) {
-    console.log(JSON.stringify(results, null, 2))
+    console.log(
+      JSON.stringify(
+        { results, model_screened: alreadyJudged, skipped: skipScreened },
+        null,
+        2,
+      ),
+    )
     return
   }
   const counts = results.reduce(
     (a, r) => ((a[r.verdict] = (a[r.verdict] ?? 0) + 1), a),
     {},
   )
+  // What a caller needs to decide whether to spend the model on Stage A.
+  const judged = alreadyJudged
+    ? ` model-screened=${alreadyJudged}${skipScreened ? " (skipped)" : ""}`
+    : ""
   if (isTerse()) {
     // Only non-passing rows need attention; passes are just a count.
     for (const r of results.filter((r) => r.verdict !== "pass")) {
       console.log(`${r.verdict}|${r.id}|${r.company}|${r.signals.join(",")}`)
     }
     console.log(
-      `pass=${counts.pass ?? 0} caution=${counts.caution ?? 0} reject=${counts.reject ?? 0}`,
+      `pass=${counts.pass ?? 0} caution=${counts.caution ?? 0} reject=${counts.reject ?? 0}${judged}`,
     )
     return
   }
@@ -294,6 +418,11 @@ function main() {
   console.log(
     `\n${counts.pass ?? 0} pass, ${counts.caution ?? 0} caution, ${counts.reject ?? 0} reject.`,
   )
+  if (alreadyJudged) {
+    console.log(
+      `${alreadyJudged} already have a model verdict${skipScreened ? " and were skipped" : " — re-run with --skip-screened to leave them out"}.`,
+    )
+  }
 }
 
 const isMain =

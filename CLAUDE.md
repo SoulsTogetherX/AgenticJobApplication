@@ -64,7 +64,11 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 - Rank leads against the profile: `node scripts/leads/recommend.mjs [--top N]`
 - Which leads to tailor ahead of time (keeps tailoring off the apply path):
   `node scripts/leads/prep-queue.mjs [--top N] [--json]`
-- Mechanical ghost/scam screen: `node scripts/leads/screen.mjs [--status new]`
+- Mechanical ghost/scam screen: `node scripts/leads/screen.mjs [--status new] [--skip-screened] [--no-record]`
+  — records its verdicts to the `screens` table as `source: mechanical`.
+  `--skip-screened` leaves out leads that already carry a **model** verdict.
+- Record a model screening verdict (the expensive judgment pass, so it is never
+  paid for twice): `node scripts/leads/screen.mjs record <lead-id> --verdict pass|caution|reject [--reason "..."] [--signals a,b]`
 - Whole-pipeline digest: `node scripts/status.mjs`
 - All scripts print compact output to agents (non-TTY) and prose to humans;
   `--verbose` / `--quiet` override, `--json` where supported.
@@ -126,7 +130,9 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   the sweep (managed via manage-sources)
 - `jobs/leads.db` — the SQLite store of record (gitignored): `leads`,
   `lead_keywords` (tech terms per lead, for demand analysis), `applications`,
-  `documents` (archived workspaces — see below), `screens`, `board_stats`.
+  `documents` (archived workspaces — see below), `screens` (verdicts keyed by
+  `source`: `mechanical` is cheap and kept for history, `model` is the
+  expensive Stage A judgment and exists so it is never re-paid), `board_stats`.
   Schema is declared once in `scripts/lib/db.mjs` with
   `CREATE TABLE IF NOT EXISTS` — **flat, not versioned**; there is no migration
   chain. `profile/applications.yaml` is a generated export and the recovery

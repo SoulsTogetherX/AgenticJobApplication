@@ -94,15 +94,35 @@ CREATE TABLE IF NOT EXISTS applications (
 CREATE INDEX IF NOT EXISTS idx_apps_company ON applications(company);
 CREATE INDEX IF NOT EXISTS idx_apps_applied ON applications(applied_at);
 
--- Per-lead screening verdicts. Before this, the 47 verdicts produced on
--- 2026-07-28 had nowhere to live except free-text notes.
+-- Per-lead screening verdicts, keyed by WHO produced them.
+--
+-- The source column is the whole point. The mechanical screen
+-- (scripts/leads/screen.mjs) is regex over stored text and costs ~125 ms for
+-- the entire store, so caching it saves nothing; it is kept because a verdict
+-- with no history cannot be audited. The expensive source is "model" — the
+-- pipeline-jobs Stage A read, which fetches the live posting and judges
+-- ghost/scam/culture signals. That verdict used to be discarded, so
+-- re-screening a lead paid for it again. Now it is looked up.
+--
+-- Latest verdict per (lead, source), not an append-only log: nothing reads
+-- screening history, and a row per re-run grows without bound. A mechanical
+-- verdict must never satisfy a caller looking for a model one, which is exactly
+-- what a single-verdict-per-lead table would have allowed.
+--
+-- doc holds the verdict verbatim (signals, reason, years_required, whatever a
+-- later screen learns to emit) for the same reason leads.doc does: columns
+-- mapped by hand lose the difference between "no signals" and "not recorded".
+-- The stack/keywords half of a screen is NOT duplicated here — lead_keywords
+-- already extracts that at ingest.
 CREATE TABLE IF NOT EXISTS screens (
   lead_id     TEXT NOT NULL,
+  source      TEXT NOT NULL,   -- 'mechanical' | 'model'
   verdict     TEXT NOT NULL,
-  reason      TEXT,
   screened_at TEXT NOT NULL,
-  PRIMARY KEY (lead_id, screened_at)
+  doc         TEXT NOT NULL,
+  PRIMARY KEY (lead_id, source)
 );
+CREATE INDEX IF NOT EXISTS idx_screens_source ON screens(source, verdict);
 
 -- Archived job workspaces. jobs/<slug>/ is the live form while an application
 -- is open — editable, diffable, and what verify-claims and render-pdf already
@@ -161,8 +181,42 @@ export function openDb(file = DB_PATH) {
   // still crash-safe, and it only risks losing the last commits on an OS-level
   // crash, which for a re-derivable lead store is an acceptable trade.
   db.exec("PRAGMA synchronous = NORMAL")
-  db.exec(SCHEMA)
+  try {
+    // Before SCHEMA, not after: SCHEMA creates an index on screens(source),
+    // and that statement is itself what fails against the old shape.
+    healScreens(db)
+    db.exec(SCHEMA)
+  } catch (e) {
+    // An open that throws must not leave the handle behind. On Windows a
+    // leaked one keeps a lock on the file, so the next thing to touch it fails
+    // with EPERM and the real error is two layers down.
+    db.close()
+    throw e
+  }
   return db
+}
+
+// The flat CREATE TABLE IF NOT EXISTS schema has exactly one blind spot: a
+// table whose SHAPE changes is left alone, because it already exists. `screens`
+// gained a `source` column after being built and never written to, so every
+// database in existence has the old four-column version with zero rows in it.
+//
+// Rebuilding an empty table is not a migration — there is nothing to migrate.
+// If it somehow has rows, this refuses rather than dropping them, because
+// silently discarding recorded verdicts to fix a schema is the kind of repair
+// that loses data. Kept deliberately narrow: it heals this one known case and
+// nothing else, so it never becomes an ad-hoc migration chain.
+function healScreens(db) {
+  const cols = db.prepare("PRAGMA table_info(screens)").all()
+  if (!cols.length) return // fresh database — SCHEMA is about to create it
+  if (cols.some((c) => c.name === "source")) return
+  const { c } = db.prepare("SELECT COUNT(*) c FROM screens").get()
+  if (c > 0) {
+    throw new Error(
+      `screens holds ${c} row(s) in the pre-source schema; back up jobs/leads.db and drop the table to rebuild`,
+    )
+  }
+  db.exec("DROP TABLE screens")
 }
 
 // --- row <-> lead object -----------------------------------------------------
@@ -478,10 +532,59 @@ export function deleteDocuments(db, slug) {
   return db.prepare("DELETE FROM documents WHERE slug = ?").run(slug).changes
 }
 
-export function recordScreen(db, leadId, verdict, reason, at = null) {
-  db.prepare(
-    "INSERT OR REPLACE INTO screens (lead_id, verdict, reason, screened_at) VALUES (?, ?, ?, ?)",
-  ).run(leadId, verdict, reason ?? null, at ?? new Date().toISOString())
+// --- screens ----------------------------------------------------------------
+
+export const SCREEN_SOURCES = new Set(["mechanical", "model"])
+
+// One screen = { lead_id, source, verdict, ...anything else the screen emits }.
+// The extra fields ride along in doc untouched.
+export function recordScreens(db, screens) {
+  const stmt = db.prepare(
+    `INSERT INTO screens (lead_id, source, verdict, screened_at, doc)
+     VALUES ($lead_id, $source, $verdict, $screened_at, $doc)
+     ON CONFLICT(lead_id, source) DO UPDATE SET
+       verdict = excluded.verdict,
+       screened_at = excluded.screened_at,
+       doc = excluded.doc`,
+  )
+  db.exec("BEGIN")
+  try {
+    for (const s of screens) {
+      if (!SCREEN_SOURCES.has(s.source))
+        throw new Error(`unknown screen source: ${s.source}`)
+      const screened_at = s.screened_at ?? new Date().toISOString()
+      stmt.run({
+        lead_id: s.lead_id,
+        source: s.source,
+        verdict: s.verdict,
+        screened_at,
+        doc: JSON.stringify({ ...s, screened_at }),
+      })
+    }
+    db.exec("COMMIT")
+  } catch (e) {
+    db.exec("ROLLBACK")
+    throw e
+  }
+  return screens.length
+}
+
+export function recordScreen(db, screen) {
+  return recordScreens(db, [screen])
+}
+
+export function readScreens(db, { source = null } = {}) {
+  const rows = source
+    ? db.prepare("SELECT doc FROM screens WHERE source = ?").all(source)
+    : db.prepare("SELECT doc FROM screens").all()
+  return rows.map((r) => JSON.parse(r.doc))
+}
+
+// lead_id -> verdict document, for the "have we already paid for this?" check.
+export function screenIndex(db, source) {
+  const map = new Map()
+  for (const s of readScreens(db, { source })) map.set(s.lead_id, s)
+  return map
 }
 
 export function recordBoardStats(db, row) {

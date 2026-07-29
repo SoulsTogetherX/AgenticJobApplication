@@ -8,6 +8,8 @@ import {
   upsertLeads,
   setLeadStatus,
   recordScreen,
+  readScreens,
+  screenIndex,
   recordBoardStats,
   readLeadStore,
   resolveLeadSource,
@@ -222,16 +224,67 @@ test("a hand-edited applications.yaml wins over a stale index", (t) => {
   assert.deepEqual(readApplications(yamlFile), [{ slug: "hand-edited" }])
 })
 
-test("screens and board_stats accumulate history", (t) => {
+test("a screen is the latest verdict per source, not a log", (t) => {
   const db = openDb(tmpDb(t))
-  recordScreen(db, "a", "reject", "over_bar_8y", "2026-07-28T00:00:00Z")
-  recordScreen(db, "a", "pass", "recheck", "2026-07-29T00:00:00Z")
+  recordScreen(db, {
+    lead_id: "a",
+    source: "mechanical",
+    verdict: "reject",
+    signals: ["over_bar_8y"],
+    screened_at: "2026-07-28T00:00:00Z",
+  })
+  recordScreen(db, {
+    lead_id: "a",
+    source: "mechanical",
+    verdict: "pass",
+    signals: [],
+    screened_at: "2026-07-29T00:00:00Z",
+  })
+  assert.equal(
+    db.prepare("SELECT COUNT(*) c FROM screens WHERE lead_id='a'").get().c,
+    1,
+    "re-screening replaces, it does not append",
+  )
+  assert.equal(readScreens(db, { source: "mechanical" })[0].verdict, "pass")
+
+  // A model verdict is a separate row: the cheap pass must never satisfy a
+  // caller asking whether the expensive one has been paid for.
+  recordScreen(db, {
+    lead_id: "a",
+    source: "model",
+    verdict: "caution",
+    reason: "reposted twice",
+  })
   assert.equal(
     db.prepare("SELECT COUNT(*) c FROM screens WHERE lead_id='a'").get().c,
     2,
-    "history is kept, not overwritten",
+  )
+  const byModel = screenIndex(db, "model")
+  assert.equal(byModel.get("a").verdict, "caution")
+  assert.equal(byModel.get("a").reason, "reposted twice")
+  assert.equal(screenIndex(db, "mechanical").get("a").verdict, "pass")
+
+  // Extra fields ride along in doc rather than needing a column each.
+  assert.deepEqual(
+    readScreens(db, { source: "mechanical" })[0].signals,
+    [],
+    "an empty signal list must survive as empty, not become absent",
   )
 
+  assert.throws(
+    () => recordScreen(db, { lead_id: "b", source: "vibes", verdict: "pass" }),
+    /unknown screen source/,
+  )
+  assert.equal(
+    db.prepare("SELECT COUNT(*) c FROM screens WHERE lead_id='b'").get().c,
+    0,
+    "a rejected source must not leave a partial row",
+  )
+  db.close()
+})
+
+test("board_stats accumulates history", (t) => {
+  const db = openDb(tmpDb(t))
   const base = {
     board_id: "greenhouse:acme",
     company: "Acme",

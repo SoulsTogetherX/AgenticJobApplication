@@ -104,6 +104,37 @@ CREATE TABLE IF NOT EXISTS screens (
   PRIMARY KEY (lead_id, screened_at)
 );
 
+-- Archived job workspaces. jobs/<slug>/ is the live form while an application
+-- is open — editable, diffable, and what verify-claims and render-pdf already
+-- read. Once an application closes the directory is folded in here and removed,
+-- so a listing of jobs/ shows live work only. (It reached ~100 folders, at
+-- which point nobody could see which application was actually in flight.)
+--
+-- One row per FILE, holding the exact bytes. Same reasoning as leads.doc: a
+-- schema that re-maps a file's contents into fields cannot round-trip it, and
+-- an archive that cannot round-trip is not an archive. The bytes and sha256
+-- columns are derived from content, not a second-hand copy of it, and exist so
+-- that a restore can prove itself.
+--
+-- content IS NULL means "regenerable, deliberately not stored": PDFs are
+-- deterministic output of render-pdf.mjs, so the markdown is the artifact worth
+-- keeping and the PDF is rebuilt on demand. The row survives so a restore can
+-- still say what was there.
+--
+-- Nothing rebuilds this table. Unlike leads (re-derivable from a sweep) and
+-- applications (exported to YAML), an archived workspace has no other on-disk
+-- source once the directory is gone — migrate.mjs must never touch it.
+CREATE TABLE IF NOT EXISTS documents (
+  slug        TEXT NOT NULL,
+  name        TEXT NOT NULL,   -- file name within jobs/<slug>/
+  content     BLOB,            -- exact bytes, or NULL when regenerable
+  bytes       INTEGER NOT NULL,
+  sha256      TEXT NOT NULL,
+  archived_at TEXT NOT NULL,
+  PRIMARY KEY (slug, name)
+);
+CREATE INDEX IF NOT EXISTS idx_docs_slug ON documents(slug);
+
 -- Board productivity over time. A single audit is a snapshot; pruning a board
 -- should be driven by history, so every sweep appends its counts here.
 CREATE TABLE IF NOT EXISTS board_stats (
@@ -385,6 +416,66 @@ export function updateApplication(db, slug, patch) {
   const merged = { ...JSON.parse(row.doc), ...patch }
   upsertApplications(db, [merged])
   return 1
+}
+
+// --- archived workspaces --------------------------------------------------
+
+// Replaces the whole archive for a slug in one transaction, so a re-archive
+// after a restore-and-edit cannot leave rows for files that no longer exist.
+// Callers pass { name, content: Uint8Array|null, bytes, sha256 }.
+export function writeDocuments(db, slug, files, at = null) {
+  const archived_at = at ?? new Date().toISOString()
+  const del = db.prepare("DELETE FROM documents WHERE slug = ?")
+  const ins = db.prepare(
+    `INSERT INTO documents (slug, name, content, bytes, sha256, archived_at)
+     VALUES ($slug, $name, $content, $bytes, $sha256, $archived_at)`,
+  )
+  db.exec("BEGIN")
+  try {
+    del.run(slug)
+    for (const f of files) {
+      ins.run({
+        slug,
+        name: f.name,
+        content: f.content ?? null,
+        bytes: f.bytes,
+        sha256: f.sha256,
+        archived_at,
+      })
+    }
+    db.exec("COMMIT")
+  } catch (e) {
+    db.exec("ROLLBACK")
+    throw e
+  }
+  return files.length
+}
+
+export function readDocuments(db, slug) {
+  return db
+    .prepare(
+      "SELECT name, content, bytes, sha256, archived_at FROM documents WHERE slug = ? ORDER BY name",
+    )
+    .all(slug)
+}
+
+// Summary only — deliberately does not select `content`, so listing an archive
+// never pulls a megabyte of PDFs and markdown into memory to count them.
+export function listDocuments(db) {
+  return db
+    .prepare(
+      `SELECT slug,
+              COUNT(*) files,
+              SUM(bytes) bytes,
+              SUM(content IS NULL) regenerable,
+              MAX(archived_at) archived_at
+         FROM documents GROUP BY slug ORDER BY archived_at DESC, slug`,
+    )
+    .all()
+}
+
+export function deleteDocuments(db, slug) {
+  return db.prepare("DELETE FROM documents WHERE slug = ?").run(slug).changes
 }
 
 export function recordScreen(db, leadId, verdict, reason, at = null) {

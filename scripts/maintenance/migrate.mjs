@@ -21,6 +21,11 @@
 // that asymmetry is why applications keep a durable export and leads do not.
 // Use `--export <file>` to take a point-in-time snapshot when you want one.
 //
+// The `documents` table is the exception to all of this and is never touched
+// here. An archived workspace has no on-disk source once its directory is gone,
+// so there is nothing to rebuild it FROM — re-running this must not be able to
+// clear it. Back it up by copying jobs/leads.db itself.
+//
 // Usage: node scripts/maintenance/migrate.mjs [--dry-run] [--db <path>]
 //        [--leads-json <path>] [--applications <path>]
 //        node scripts/maintenance/migrate.mjs --export <file>   # snapshot leads
@@ -79,7 +84,9 @@ const applications = fs.existsSync(appsYaml)
   ? (loadYamlFile(appsYaml)?.applications ?? [])
   : []
 
-console.log(`leads:        ${leads.length}${leadsJson ? ` from ${leadsJson}` : " (no snapshot given)"}`)
+console.log(
+  `leads:        ${leads.length}${leadsJson ? ` from ${leadsJson}` : " (no snapshot given)"}`,
+)
 console.log(`applications: ${applications.length} from ${appsYaml}`)
 
 if (dryRun) {

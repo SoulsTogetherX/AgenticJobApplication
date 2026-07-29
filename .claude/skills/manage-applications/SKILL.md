@@ -70,13 +70,63 @@ node scripts/applications/applications.mjs export                   # rewrite th
 `remove` without `--confirm` prints the entry and exits non-zero. Show that
 output to the user before passing `--confirm`.
 
+## Closing an application: archive its workspace
+
+`jobs/` reached ~100 directories once and stopped being readable — nobody could
+tell which application was actually in flight. So workspaces are **hybrid**:
+files while the application is live, rows in the `documents` table once it
+closes.
+
+When you record a closing outcome (`rejected`, `withdrawn`, `no_response`,
+`closed`), offer to fold the workspace away:
+
+```bash
+node scripts/maintenance/archive.mjs archive --closed --dry-run   # what would go
+node scripts/maintenance/archive.mjs archive --closed             # do it
+```
+
+`--closed` only ever touches applications with a **recorded** closed outcome.
+No record and no outcome both mean "not known to be closed" — it refuses both,
+and it refuses `applied` and `interviewing` outright. Never talk it into
+archiving something still in motion.
+
+For a workspace that was prepped but never submitted, the manual path is fine:
+
+```bash
+node scripts/maintenance/archive.mjs archive <slug>
+```
+
+It refuses a slug whose application is still live unless `--force`.
+
+Archiving is **reversible and verified**: every file is read back and checksummed
+before the directory is removed, and a mismatch aborts with the directory left
+in place. Restore is byte-identical:
+
+```bash
+node scripts/maintenance/archive.mjs list
+node scripts/maintenance/archive.mjs show <slug>
+node scripts/maintenance/archive.mjs restore <slug>            # back to jobs/<slug>/
+node scripts/maintenance/archive.mjs restore <slug> --to <dir> # somewhere else
+```
+
+`--to <dir>` is how `verify-claims.mjs` runs against an archived document —
+restore to a temp directory and point it there.
+
+PDFs are **not** stored: `render-pdf.mjs` is deterministic, so the markdown is
+the artifact worth keeping and restore reports the PDF as regenerable. Rebuild
+one only if it is actually needed again.
+
 ## Maintenance
 
 - `node scripts/maintenance/migrate.mjs` rebuilds `jobs/leads.db` from the on-disk sources.
   It is flat and idempotent — safe to re-run. It imports applications **only**
   when the table is empty, so it can never undo recorded outcomes.
 - If `jobs/leads.db` is lost, the YAML export is the recovery path: migrate
-  bootstraps the table straight back from it.
+  bootstraps the table straight back from it. **Archived documents are the
+  exception** — once a directory is folded away, the database is the only copy,
+  so nothing can rebuild them. Backing them up means copying `jobs/leads.db`.
+- `node scripts/maintenance/prune-jobs.mjs` now only removes `.render.html`
+  intermediates. Closed-application cleanup belongs to `archive.mjs`.
 
 ## Token discipline
 

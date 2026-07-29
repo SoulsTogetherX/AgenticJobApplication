@@ -1,85 +1,62 @@
 #!/usr/bin/env node
 // Retention for jobs/<slug>/ workspaces. Deterministic, no LLM.
 //
-// The question this answers: "am I meant to delete these when I no longer
-// need them?" No — but not all of it is worth keeping either.
+// This used to also drop PDFs once an application was closed and old.
+// scripts/maintenance/archive.mjs supersedes that: a closed application's whole
+// workspace is folded into the `documents` table, and PDFs are deterministic
+// output of render-pdf.mjs, so the markdown is archived and a PDF is rebuilt
+// only if one is ever needed again. Two rules competing to delete the same
+// files, on different triggers, is how a workspace loses a PDF that its
+// archive row then records as regenerable-but-never-stored.
 //
-//   KEEP FOREVER   resume.md, cover-letter.md, job.json, context.json
-//                  (~40 KB per job). This is the audit trail of what was
-//                  actually claimed on each application. If an employer asks
-//                  about a bullet in an interview, this is the record — and
-//                  it is the only part that cannot be regenerated.
+// So what is left here is the one thing that is pure waste at every moment of
+// a workspace's life:
 //
 //   ALWAYS DROP    *.render.html — an intermediate render-pdf.mjs leaves
-//                  behind. Pure waste, regenerated on every render.
+//                  behind. Regenerated on every render, useful to nobody.
 //
-//   DROP WHEN OLD  *.pdf (~124 KB per job). render-pdf.mjs is deterministic,
-//                  so these rebuild from the markdown in ~2 s. Only dropped
-//                  once the application has an outcome AND is older than the
-//                  age cutoff, so nothing in flight is touched.
+//   EVERYTHING ELSE stays until the workspace is archived. resume.md,
+//                  cover-letter.md, job.json and context.json are the record
+//                  of what was actually claimed on an application; if an
+//                  employer asks about a bullet in an interview, this is it.
 //
 // Dry run by default: it prints what it would remove and removes nothing
 // unless --apply is passed.
 //
-// Usage: node scripts/maintenance/prune-jobs.mjs [--older-than 90] [--apply]
-//        [--jobs-dir <path>] [--applications <path>] [--json]
+// Usage: node scripts/maintenance/prune-jobs.mjs [--apply] [--jobs-dir <path>] [--json]
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { isTerse } from "../lib/lib.mjs"
-import { readApplications } from "../lib/db.mjs"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
-
-// Outcomes that mean the application is finished. "applied" is deliberately
-// NOT here: a submitted application with no reply yet may still need its PDF.
-const CLOSED = new Set(["rejected", "closed", "withdrawn", "no_response"])
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 
 function flag(args, name, fallback = null) {
   const i = args.indexOf(name)
   return i !== -1 && args[i + 1] !== undefined ? args[i + 1] : fallback
 }
 
-const KEEP = /\.(md|json)$/i
 const ALWAYS_DROP = /\.render\.html$/i
-const AGED_DROP = /\.pdf$/i
 
 // Pure core (exported for tests).
-export function planPrune(
-  workspaces,
-  { olderThanDays = 90, now = new Date() } = {},
-) {
+export function planPrune(workspaces) {
   const plan = []
   for (const ws of workspaces) {
-    const ageDays =
-      ws.applied_at != null
-        ? Math.floor(
-            (now.getTime() - new Date(ws.applied_at).getTime()) / 86400000,
-          )
-        : null
-    const closed = ws.status ? CLOSED.has(ws.status) : false
-    const aged = ageDays != null && ageDays >= olderThanDays
-
     for (const file of ws.files) {
       if (ALWAYS_DROP.test(file)) {
         plan.push({ slug: ws.slug, file, reason: "regenerable intermediate" })
-      } else if (AGED_DROP.test(file) && closed && aged) {
-        plan.push({
-          slug: ws.slug,
-          file,
-          reason: `outcome "${ws.status}", ${ageDays}d old — rebuild with render-pdf.mjs`,
-        })
       }
-      // KEEP files are never listed: the audit trail is not negotiable.
-      void KEEP
     }
   }
   return plan
 }
 
-export function readWorkspaces(jobsDir, applications = []) {
+export function readWorkspaces(jobsDir) {
   if (!fs.existsSync(jobsDir)) return []
-  const bySlug = new Map(applications.map((a) => [a.slug, a]))
   const out = []
   for (const slug of fs.readdirSync(jobsDir)) {
     const dir = path.join(jobsDir, slug)
@@ -90,7 +67,6 @@ export function readWorkspaces(jobsDir, applications = []) {
       continue
     }
     if (!st.isDirectory()) continue
-    const app = bySlug.get(slug)
     out.push({
       slug,
       files: fs.readdirSync(dir).filter((f) => {
@@ -100,8 +76,6 @@ export function readWorkspaces(jobsDir, applications = []) {
           return false
         }
       }),
-      status: app?.status ?? null,
-      applied_at: app?.applied_at ?? null,
     })
   }
   return out
@@ -110,18 +84,9 @@ export function readWorkspaces(jobsDir, applications = []) {
 function main() {
   const args = process.argv.slice(2)
   const jobsDir = flag(args, "--jobs-dir") || path.join(ROOT, "jobs")
-  const appsPath =
-    flag(args, "--applications") ||
-    path.join(ROOT, "profile", "applications.yaml")
-  const olderThanDays = Number(flag(args, "--older-than", 90))
   const apply = args.includes("--apply")
 
-  const applications = readApplications(
-    appsPath.endsWith("applications.yaml") ? null : appsPath,
-  )
-
-  const workspaces = readWorkspaces(jobsDir, applications)
-  const plan = planPrune(workspaces, { olderThanDays })
+  const plan = planPrune(readWorkspaces(jobsDir))
 
   let bytes = 0
   for (const p of plan) {
@@ -140,7 +105,7 @@ function main() {
     console.log(
       isTerse()
         ? "prune=0 bytes=0"
-        : "Nothing to prune — no regenerable files found.",
+        : "Nothing to prune — no regenerable intermediates found.",
     )
     return
   }
@@ -160,7 +125,7 @@ function main() {
         `\nDry run — nothing was deleted. Re-run with --apply to remove them.`,
       )
       console.log(
-        `Resumes, cover letters, job.json and context.json are never pruned.\n`,
+        `Documents are never pruned; closed applications go to archive.mjs.\n`,
       )
     }
   }

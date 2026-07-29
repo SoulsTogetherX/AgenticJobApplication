@@ -42,8 +42,14 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   `node scripts/leads/board-yield.mjs [--json]`
 - Propose NEW boards, yield-gated (never edits job-sources.yaml itself):
   `node scripts/leads/discover-boards.mjs --candidates docs/board-candidates.yaml`
-- Prune regenerable job-workspace files (dry run by default):
-  `node scripts/maintenance/prune-jobs.mjs [--older-than 90] [--apply]`
+- Prune `.render.html` intermediates (dry run by default):
+  `node scripts/maintenance/prune-jobs.mjs [--apply]`
+- Archive/restore job workspaces (files while live, rows once closed):
+  `node scripts/maintenance/archive.mjs list|show <slug>|archive <slug>|archive --closed|restore <slug> [--to <dir>]`
+  — `archive --closed` only touches applications with a **recorded** closed
+  outcome; `archive <slug>` is the manual path and refuses a still-live
+  application without `--force`. Restore is byte-identical; PDFs are recorded
+  as regenerable and rebuilt with `render-pdf.mjs`.
 - Apply a reviewed profile update: `node scripts/profile/apply-profile.mjs [--allow-edits] [--allow-removals]`
 - Render PDF: `node scripts/documents/render-pdf.mjs <input.md> <output.pdf> [--letter]`
 - Find job leads: `node scripts/leads/find-jobs.mjs search|import|list|mark ...`
@@ -120,7 +126,8 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   the sweep (managed via manage-sources)
 - `jobs/leads.db` — the SQLite store of record (gitignored): `leads`,
   `lead_keywords` (tech terms per lead, for demand analysis), `applications`,
-  `screens`, `board_stats`. Schema is declared once in `scripts/lib/db.mjs` with
+  `documents` (archived workspaces — see below), `screens`, `board_stats`.
+  Schema is declared once in `scripts/lib/db.mjs` with
   `CREATE TABLE IF NOT EXISTS` — **flat, not versioned**; there is no migration
   chain. `profile/applications.yaml` is a generated export and the recovery
   input for applications; it is never authoritative once the database exists.
@@ -130,6 +137,15 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   Take a point-in-time leads snapshot on demand with
   `node scripts/maintenance/migrate.mjs --export <file>`, and restore one with
   `--leads-json <file>`.
+- **Job workspaces are hybrid**: files while an application is live, rows in
+  `documents` once it closes. `jobs/<slug>/` is what `verify-claims.mjs` and
+  `render-pdf.mjs` read, so a listing of `jobs/` should show only live work
+  (normally one to three folders). Closing an application folds the workspace
+  into the table byte-for-byte and removes the directory; PDFs are recorded as
+  regenerable rather than stored, because `render-pdf.mjs` is deterministic.
+  Unlike every other table, `documents` has **no on-disk source** once the
+  directory is gone — `migrate.mjs` never touches it, and backing it up means
+  copying `jobs/leads.db`.
 - `.env` — secrets (gitignored; Adzuna API keys); `.env.example` is the
   committed template. Never print `.env` contents into chat, docs, or commits.
 - `docs/tailoring-rules.md` — shared rules both skills load
@@ -146,7 +162,7 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   - `documents/` — tailored docs: new-job, render-pdf, verify-claims, reuse-check
   - `apply/` — browser form-filling: answer-bank, fill-plan, field-cache, `ats/`
   - `profile/` — fact-base tools: apply-profile, profile-gaps, save-answer
-  - `maintenance/` — store lifecycle: migrate, prune-jobs
+  - `maintenance/` — store lifecycle: migrate, prune-jobs, archive
   - `hooks/` — guardrail hooks wired in `.claude/settings.json` (guard-files,
     guard-bash, prettify). **Note:** these are NOT agent-protected —
     `.claude/hooks/protect-profile.js` only denies writes under

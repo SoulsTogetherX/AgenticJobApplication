@@ -106,9 +106,14 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   `lead_keywords` (tech terms per lead, for demand analysis), `applications`,
   `screens`, `board_stats`. Schema is declared once in `scripts/lib/db.mjs` with
   `CREATE TABLE IF NOT EXISTS` — **flat, not versioned**; there is no migration
-  chain. `jobs/leads.json` is the frozen bootstrap snapshot and
-  `profile/applications.yaml` the generated export; both are recovery inputs
-  for `migrate.mjs`, never authoritative once the database exists.
+  chain. `profile/applications.yaml` is a generated export and the recovery
+  input for applications; it is never authoritative once the database exists.
+  There is **no standing `jobs/leads.json`** — a second copy of the leads went
+  stale the moment a sweep ran, and leads are re-derivable by re-running the
+  sweep (applications are not, which is why only they keep a durable export).
+  Take a point-in-time leads snapshot on demand with
+  `node scripts/maintenance/migrate.mjs --export <file>`, and restore one with
+  `--leads-json <file>`.
 - `.env` — secrets (gitignored; Adzuna API keys); `.env.example` is the
   committed template. Never print `.env` contents into chat, docs, or commits.
 - `docs/tailoring-rules.md` — shared rules both skills load

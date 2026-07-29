@@ -32,8 +32,16 @@ process.emitWarning = (warning, ...rest) => {
 }
 const { DatabaseSync } = await import("node:sqlite")
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 export const DB_PATH = path.join(ROOT, "jobs", "leads.db")
+// Legacy location only. There is no standing leads.json any more — it was a
+// snapshot that went stale the moment a sweep ran. This remains so a repo that
+// still has one (or a fresh checkout restoring from a snapshot) can be read
+// before `migrate.mjs` builds the database.
 export const JSON_PATH = path.join(ROOT, "jobs", "leads.json")
 export const APPLICATIONS_PATH = path.join(ROOT, "profile", "applications.yaml")
 

@@ -9,13 +9,23 @@
 // inputs are all re-derivable does not need incremental migrations — it needs
 // one idempotent build step that can always be re-run.
 //
-// Sources (never modified, never deleted — they are the rollback):
-//   jobs/leads.json            → leads + lead_keywords
-//   profile/applications.yaml  → applications
+// Bootstrap inputs, imported only to fill an empty table — never authoritative
+// once jobs/leads.db exists:
+//   profile/applications.yaml  → applications (also the generated export)
+//   a leads JSON snapshot      → leads, via --leads-json <file>
+//
+// There is deliberately no standing jobs/leads.json. It was a frozen snapshot
+// that drifted from the database the moment a sweep ran, and a stale duplicate
+// of the store is worse than no duplicate. Leads are also re-derivable — a
+// sweep rebuilds them from public boards — which applications are not, and
+// that asymmetry is why applications keep a durable export and leads do not.
+// Use `--export <file>` to take a point-in-time snapshot when you want one.
 //
 // Usage: node scripts/maintenance/migrate.mjs [--dry-run] [--db <path>]
 //        [--leads-json <path>] [--applications <path>]
+//        node scripts/maintenance/migrate.mjs --export <file>   # snapshot leads
 import fs from "node:fs"
+import path from "node:path"
 import { loadYamlFile } from "../lib/lib.mjs"
 import { extractTech } from "../profile/profile-gaps.mjs"
 import {
@@ -24,8 +34,8 @@ import {
   upsertApplications,
   setLeadKeywords,
   rowToLead,
+  readLeadStore,
   DB_PATH,
-  JSON_PATH,
   APPLICATIONS_PATH,
 } from "../lib/db.mjs"
 
@@ -43,18 +53,33 @@ export function leadKeywords(lead) {
 
 const args = process.argv.slice(2)
 const dbFile = flag(args, "--db", DB_PATH)
-const leadsJson = flag(args, "--leads-json", JSON_PATH)
+// No default: a default would recreate the stale-duplicate problem this
+// removed. A snapshot is only read when you name one.
+const leadsJson = flag(args, "--leads-json", null)
 const appsYaml = flag(args, "--applications", APPLICATIONS_PATH)
 const dryRun = args.includes("--dry-run")
 
-const leads = fs.existsSync(leadsJson)
-  ? (JSON.parse(fs.readFileSync(leadsJson, "utf8")).leads ?? [])
-  : []
+// Point-in-time snapshot of the leads table, on demand. Not written on every
+// change: at ~3 KB per lead that would reintroduce exactly the whole-file
+// rewrite the SQLite migration removed.
+const exportTo = flag(args, "--export", null)
+if (exportTo) {
+  const { leads: rows } = readLeadStore(dbFile)
+  fs.mkdirSync(path.dirname(path.resolve(exportTo)), { recursive: true })
+  fs.writeFileSync(exportTo, JSON.stringify({ leads: rows }, null, 2) + "\n")
+  console.log(`exported ${rows.length} lead(s) to ${exportTo}`)
+  process.exit(0)
+}
+
+const leads =
+  leadsJson && fs.existsSync(leadsJson)
+    ? (JSON.parse(fs.readFileSync(leadsJson, "utf8")).leads ?? [])
+    : []
 const applications = fs.existsSync(appsYaml)
   ? (loadYamlFile(appsYaml)?.applications ?? [])
   : []
 
-console.log(`leads:        ${leads.length} from ${leadsJson}`)
+console.log(`leads:        ${leads.length}${leadsJson ? ` from ${leadsJson}` : " (no snapshot given)"}`)
 console.log(`applications: ${applications.length} from ${appsYaml}`)
 
 if (dryRun) {

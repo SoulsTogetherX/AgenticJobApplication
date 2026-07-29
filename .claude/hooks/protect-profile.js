@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // PreToolUse hook: hard-block agent Edit/Write to the user-owned fact base and
 // to the guardrail machinery itself. The user edits these by hand; the agent's
-// only sanctioned write path into the fact base is scripts/save-answer.mjs.
+// only sanctioned write path into the fact base is scripts/profile/save-answer.mjs.
 //
 // NOTE: no process.exit() after writing — on Windows, exiting immediately after
 // console.log drops buffered pipe output, which silently disables the deny.
@@ -33,7 +33,7 @@ process.stdin.on("end", () => {
           permissionDecision: "deny",
           permissionDecisionReason:
             `"${file}" is part of the user-owned fact base / guardrails. ` +
-            "Ask the user to edit it, or use `node scripts/save-answer.mjs` for new answers.",
+            "Ask the user to edit it, or use `node scripts/profile/save-answer.mjs` for new answers.",
         },
       }),
     )

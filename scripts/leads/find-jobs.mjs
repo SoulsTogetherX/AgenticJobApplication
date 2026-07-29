@@ -31,8 +31,6 @@ import { extractTech } from "../profile/profile-gaps.mjs"
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 const LIMITS_PATH = path.join(ROOT, "docs", "application-limits.yaml")
 const SOURCES_PATH = path.join(ROOT, "docs", "job-sources.yaml")
-const LEADS_PATH = path.join(ROOT, "jobs", "leads.json")
-const APPLICATIONS_PATH = path.join(ROOT, "profile", "applications.yaml")
 
 const STATUSES = ["new", "recommended", "dismissed", "applied"]
 

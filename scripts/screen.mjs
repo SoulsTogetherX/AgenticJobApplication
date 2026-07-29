@@ -13,6 +13,7 @@ import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { isTerse, loadYamlFile, yearsOfExperience } from "./lib.mjs"
 import { loadLimits } from "./find-jobs.mjs"
+import { readLeadStore, resolveLeadSource } from "./db.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
@@ -75,14 +76,25 @@ const BLOCKER_PATTERNS = [
 // How far above the candidate's own tenure a posting may reach before it stops
 // being a stretch and starts being a waste. Overridable per-user in
 // docs/application-limits.yaml (experience.stretch_years).
-const DEFAULT_STRETCH_YEARS = 3
+//
+// Was 3, which put the ceiling at 5.5 years for a 2.5-year profile — so the
+// single most common bar in practice, "5+ years", did not even raise a signal.
+// Of 47 postings read on 2026-07-28 the sweep produced ZERO rejects for
+// seniority while every one of them was in fact out of reach. 2 puts the
+// ceiling at 4.5 and catches the 5+ band, which is where Senior actually sits.
+const DEFAULT_STRETCH_YEARS = 2
 
 // Highest years-of-experience demand in the posting. Deliberately narrow:
 // requires an experience-ish word nearby, and skips "18 years of age", so a
 // legal-minimum question is never read as a seniority bar.
 export function extractYearsRequired(text) {
   let max = 0
-  const re = /\b(\d{1,2})\s*\)?\s*\+?\s*years?\b([^.\n]{0,60})/gi
+  // The number may be fractional, and the lookbehind is load-bearing: with a
+  // plain \b, "1.5+ years" matched the "5" (a decimal point is a word
+  // boundary) and read an entry-level 1.5-year bar as a 5-year one — which
+  // rejected precisely the junior postings this profile is looking for.
+  const re =
+    /(?<![\d.])(\d{1,2}(?:\.\d+)?)\s*\)?\s*\+?\s*years?\b([^.\n]{0,60})/gi
   for (const m of String(text).matchAll(re)) {
     const n = Number(m[1])
     const tail = m[2] ?? ""
@@ -121,8 +133,12 @@ export function screenJob(
     }
   }
 
-  // Seniority bar. A stretch is fine and often worth applying to, so this only
-  // fires well above the candidate's own tenure, and only ever cautions.
+  // Seniority bar. This is the safety net for postings the title filter cannot
+  // catch — Chainguard's "Software Engineer (Libraries Platform)" carried no
+  // seniority word at all yet asked for 5+ years. A posting that states a bar
+  // this far above the candidate's tenure is not a stretch, it is a waste, so
+  // it rejects rather than cautions: cautions were being read and re-rejected
+  // by hand, which is exactly the cost this is meant to remove.
   const demanded = extractYearsRequired(text)
   if (demanded && profileYears != null) {
     const ceiling =
@@ -130,7 +146,7 @@ export function screenJob(
       profileYears + (limits.experience?.stretch_years ?? DEFAULT_STRETCH_YEARS)
     if (demanded > ceiling) {
       signals.push(`over_bar_${demanded}y`)
-      if (verdict === "pass") verdict = "caution"
+      verdict = "reject"
     }
   }
 
@@ -197,8 +213,8 @@ function flag(args, name) {
 
 function main() {
   const args = process.argv.slice(2)
-  const leadsPath =
-    flag(args, "--leads") || path.join(ROOT, "jobs", "leads.json")
+  // Defaults to jobs/leads.db when it exists, else the legacy JSON store.
+  const leadsPath = flag(args, "--leads") || resolveLeadSource().file
   const jobsDir = flag(args, "--jobs-dir") || path.join(ROOT, "jobs")
   const limitsPath =
     flag(args, "--limits") || path.join(ROOT, "docs", "application-limits.yaml")
@@ -232,9 +248,9 @@ function main() {
     }
   }
 
-  const leads = (
-    JSON.parse(fs.readFileSync(leadsPath, "utf8")).leads ?? []
-  ).filter((l) => status === "all" || l.status === status)
+  const leads = (readLeadStore(leadsPath).leads ?? []).filter(
+    (l) => status === "all" || l.status === status,
+  )
   const results = leads.map((l) => {
     const captured = byUrl.get(l.url)
     // Prefer a full captured posting; fall back to the snippet the sweep

@@ -43,6 +43,97 @@ const job = (over = {}) => ({
   ...over,
 })
 
+// ---------- hard / soft title filters ----------
+
+const LEVEL_LIMITS = {
+  ...LIMITS,
+  roles: {
+    ...LIMITS.roles,
+    // Mirrors the real docs/application-limits.yaml, which also targets the
+    // gaming-math titles Xavier applies to.
+    title_keywords: [...LIMITS.roles.title_keywords, "game mathematician"],
+    hard_filter: ["senior", "sr", "staff", "principal", "lead", "specialist"],
+    soft_filter: ["ii", "iii", "platform", "java"],
+  },
+}
+
+test("hard filter rejects titles above the experience bar", () => {
+  // Stated minimums observed on 2026-07-28: Senior 4-10y, Staff 7-12y,
+  // Principal 8-12y — none reachable at ~2.5 years.
+  for (const title of [
+    "Senior Software Engineer",
+    "Sr. Software Engineer",
+    "Staff Software Engineer",
+    "Principal Software Engineer",
+    "Senior Staff Software Engineer, Payments",
+    "Analytics Lead, Full Stack",
+    "Technical Systems Integrations Specialist",
+  ]) {
+    const v = passesLimits(job({ title }), LEVEL_LIMITS, NOW)
+    assert.equal(v.ok, false, `expected reject for "${title}"`)
+    assert.match(v.reasons.join(" "), /hard-filtered/)
+  }
+})
+
+test("hard filter matches whole words only", () => {
+  // "sales" must not fire on "Salesforce"; "sr" must not fire on "usr".
+  for (const title of [
+    "Software Engineer, Salesforce Platform",
+    "Software Engineer, usr tooling",
+  ]) {
+    const v = passesLimits(
+      job({ title }),
+      {
+        ...LEVEL_LIMITS,
+        roles: { ...LEVEL_LIMITS.roles, hard_filter: ["sales", "sr"] },
+      },
+      NOW,
+    )
+    assert.equal(v.ok, true, `"${title}" should survive: ${v.reasons}`)
+  }
+})
+
+test("soft filter flags for review but never rejects", () => {
+  const v = passesLimits(
+    job({ title: "Software Engineer II, Backend" }),
+    LEVEL_LIMITS,
+    NOW,
+  )
+  assert.equal(v.ok, true, v.reasons.join(";"))
+  assert.ok(v.flags.includes("title_watch:ii"))
+})
+
+test("mid-level titles Xavier actually applied to still pass ingest", () => {
+  // Regression guard: these four are real applications. A level filter that
+  // rejects them is too aggressive.
+  for (const title of [
+    "Software Eng (Dev) II",
+    "Game Mathematician III",
+    "Software Engineer II, Backend (Test Infra)",
+    "Software Engineer II, Backend (Unified Data Platform)",
+  ]) {
+    const v = passesLimits(
+      job({ title, location: "Las Vegas, NV" }),
+      LEVEL_LIMITS,
+      NOW,
+    )
+    assert.equal(v.ok, true, `"${title}" must survive: ${v.reasons}`)
+  }
+})
+
+test("a title with no seniority word survives so screening can read the body", () => {
+  // Chainguard's "Software Engineer (Libraries Platform)" carried no seniority
+  // word yet wanted 5+ years. The title filter cannot catch that — it must
+  // pass through flagged rather than be silently dropped or silently trusted.
+  const v = passesLimits(
+    job({ title: "Software Engineer (Libraries Platform)" }),
+    LEVEL_LIMITS,
+    NOW,
+  )
+  assert.equal(v.ok, true)
+  assert.ok(v.flags.includes("title_watch:platform"))
+})
+
 // ---------- passesLimits ----------
 
 test("remote and Las Vegas metro jobs pass", () => {

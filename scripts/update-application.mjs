@@ -10,6 +10,7 @@
 //   (flags combine; --file overrides the store for tests)
 import fs from "node:fs"
 import { loadYamlFile, dumpYaml } from "./lib.mjs"
+import { readApplications, writeApplication } from "./db.mjs"
 
 export const STATUSES = [
   "applied",
@@ -74,7 +75,8 @@ function flag(args, name) {
 
 function main() {
   const args = process.argv.slice(2)
-  const file = flag(args, "--file") || "profile/applications.yaml"
+  // No --file means the real store; an explicit --file is the test path.
+  const file = flag(args, "--file")
   const status = flag(args, "--status")
   const followedUp = args.includes("--followed-up")
   const date = flag(args, "--date") || new Date().toISOString().slice(0, 10)
@@ -97,22 +99,31 @@ function main() {
     )
     process.exit(2)
   }
-  if (!fs.existsSync(file)) {
+  // No --file means the real store (the applications table); an explicit
+  // --file keeps the YAML-only path the tests rely on. Existence is checked
+  // BEFORE loading, or loadYamlFile throws ENOENT instead of the real message.
+  if (file && !fs.existsSync(file)) {
     console.error(`${file} not found — nothing has been logged yet.`)
     process.exit(2)
   }
-  const data = loadYamlFile(file) ?? {}
-  if (!Array.isArray(data.applications)) {
+  const applications = file
+    ? (loadYamlFile(file)?.applications ?? null)
+    : readApplications()
+  if (!Array.isArray(applications)) {
     console.error(`${file} is malformed: "applications" is not a list`)
     process.exit(2)
   }
 
   try {
-    const { entry } = applyUpdate(data.applications, key, {
+    const { entry } = applyUpdate(applications, key, {
       status: typeof status === "string" ? status : null,
       followedUpOn: followedUp ? date : null,
     })
-    fs.writeFileSync(file, dumpYaml(data))
+    if (file) {
+      fs.writeFileSync(file, dumpYaml({ applications }))
+    } else {
+      writeApplication(entry, dumpYaml)
+    }
     const fu = entry.follow_ups?.length
       ? `, follow-ups: ${entry.follow_ups.join(", ")}`
       : ""

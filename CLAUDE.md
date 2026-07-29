@@ -21,10 +21,21 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   `node scripts/reuse-check.mjs <slug>` (recommends only; user approves reuse)
 - Check application history: `node scripts/check-applied.mjs "<company, title, or slug>"`
 - Log a submitted application: `node scripts/log-application.mjs <slug> --company "X" --title "Y"`
+- Read/write the application store (list, find, stats, remove, export):
+  `node scripts/applications.mjs <list|find|stats|remove|export>`
+- Rebuild `jobs/leads.db` from the on-disk sources (flat + idempotent, safe to
+  re-run): `node scripts/migrate.mjs`
+- Board productivity audit (which swept boards actually yield reachable roles):
+  `node scripts/board-yield.mjs [--json]`
+- Propose NEW boards, yield-gated (never edits job-sources.yaml itself):
+  `node scripts/discover-boards.mjs --candidates docs/board-candidates.yaml`
+- Prune regenerable job-workspace files (dry run by default):
+  `node scripts/prune-jobs.mjs [--older-than 90] [--apply]`
 - Apply a reviewed profile update: `node scripts/apply-profile.mjs [--allow-edits] [--allow-removals]`
 - Render PDF: `node scripts/render-pdf.mjs <input.md> <output.pdf> [--letter]`
 - Find job leads: `node scripts/find-jobs.mjs search|import|list|mark ...`
-  (filters through `docs/application-limits.yaml`, stores in `jobs/leads.json`)
+  (filters through `docs/application-limits.yaml`, stores in `jobs/leads.db`;
+  `search` sweeps boards in parallel — `--concurrency N`, default 8)
 - Manage swept boards: `node scripts/manage-sources.mjs add|remove|verify|list`
   (prescreens on add, refuses duplicates; edits `docs/job-sources.yaml`)
 - Follow-ups due: `node scripts/follow-ups.mjs [--days N] [--json]`
@@ -47,7 +58,13 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 2. **The agent never edits the fact base** (`profile/`). A PreToolUse hook blocks
    it. New info goes through `scripts/save-answer.mjs` after asking the user in
    chat; submitted applications through `scripts/log-application.mjs` after the
-   user confirms they applied.
+   user confirms they applied. The application store moved to the
+   `applications` table in `jobs/leads.db` (2026-07-29) and
+   `profile/applications.yaml` is now a generated export — the rule is about
+   **provenance, not the file**: an application is recorded only when the user
+   says they submitted it, and an outcome only when they report it. Removing a
+   record is possible (`scripts/applications.mjs remove <slug> --confirm`) but
+   only to correct a mistake, never to rewrite history.
 3. **Every tailored resume bullet** carries `<!-- fact:ID -->` citing profile fact ids.
 4. **verify-claims must pass** before any document is rendered or shown as final.
 5. **User approval** before rendering final PDFs: show a summary of what was
@@ -79,11 +96,19 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   sources, store leads), pipeline-jobs (batch screen/tailor/prep with one
   subagent per job), manage-sources (add/remove swept boards), follow-up
   (nudge cadence + outcome recording via update-application.mjs), profile-gaps
-  (demand-vs-profile analysis; honest recommendations only)
+  (demand-vs-profile analysis; honest recommendations only),
+  manage-applications (read/write the application store: list, find, stats,
+  remove, export)
 - `docs/application-limits.yaml` — user-owned hard filters (location/freshness/
   roles/salary) every job must pass; `docs/job-sources.yaml` — board list for
-  the sweep (managed via manage-sources); `jobs/leads.json` — stored leads
-  (gitignored)
+  the sweep (managed via manage-sources)
+- `jobs/leads.db` — the SQLite store of record (gitignored): `leads`,
+  `lead_keywords` (tech terms per lead, for demand analysis), `applications`,
+  `screens`, `board_stats`. Schema is declared once in `scripts/db.mjs` with
+  `CREATE TABLE IF NOT EXISTS` — **flat, not versioned**; there is no migration
+  chain. `jobs/leads.json` is the frozen bootstrap snapshot and
+  `profile/applications.yaml` the generated export; both are recovery inputs
+  for `migrate.mjs`, never authoritative once the database exists.
 - `.env` — secrets (gitignored; Adzuna API keys); `.env.example` is the
   committed template. Never print `.env` contents into chat, docs, or commits.
 - `docs/tailoring-rules.md` — shared rules both skills load

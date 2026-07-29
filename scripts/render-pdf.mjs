@@ -64,9 +64,34 @@ if (!browser) {
   process.exit(3)
 }
 
+// An ATS reads the PDF text layer, not the rendered page. Two things never
+// reach that layer on their own:
+//   - CSS ::marker bullets. Chrome draws them without emitting any text, so a
+//     role's title, dates and every bullet extract as ONE merged line.
+//   - Link hrefs. They live only in PDF link annotations, so a resume showing
+//     "LinkedIn | GitHub" hands the parser no URL at all.
+// Both are fixed here by putting real text into the document.
+export function atsPostProcess(html) {
+  return html
+    .replace(/<li>/g, '<li><span class="bullet">• </span>')
+    .replace(
+      /<a href="(https?:\/\/[^"]+)"([^>]*)>([^<]*)<\/a>/g,
+      (whole, href, attrs, text) => {
+        const bare = href
+          .replace(/^https?:\/\//, "")
+          .replace(/^www\./, "")
+          .replace(/\/$/, "")
+        // Idempotent: leave links whose text already shows the address.
+        if (text.toLowerCase().includes(bare.slice(0, 12).toLowerCase()))
+          return whole
+        return `<a href="${href}"${attrs}>${bare}</a>`
+      },
+    )
+}
+
 const raw = fs.readFileSync(input, "utf8")
 const stripped = raw.replace(/<!--\s*fact:[^>]*-->/g, "")
-const body = marked.parse(stripped)
+const body = atsPostProcess(marked.parse(stripped))
 const css = fs.existsSync(cssPath) ? fs.readFileSync(cssPath, "utf8") : ""
 
 const html = `<!doctype html>

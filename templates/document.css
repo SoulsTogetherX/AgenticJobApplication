@@ -1,7 +1,7 @@
 /* Print stylesheet for tailored resume / cover letter PDFs. */
 @page {
   size: Letter;
-  margin: 0.5in;
+  margin: 0.4in;
 }
 
 * {
@@ -10,7 +10,7 @@
 body {
   font-family: Calibri, Carlito, "Segoe UI", Arial, sans-serif;
   font-size: 10.5pt;
-  line-height: 1.25;
+  line-height: 1.18;
   color: #111;
   margin: 0;
 }
@@ -33,14 +33,14 @@ h2 {
   font-size: 11.5pt;
   text-transform: uppercase;
   border-bottom: 1.25pt solid #444;
-  margin: 10pt 0 4pt 0;
+  margin: 7pt 0 3pt 0;
   padding-bottom: 1pt;
 }
 
 /* Role / project heading rows: use "**Title — Company** | Right-side dates" via h3 + em */
 h3 {
   font-size: 10.5pt;
-  margin: 6pt 0 2pt 0;
+  margin: 5pt 0 1pt 0;
 }
 h3 .dates,
 .dates {
@@ -49,14 +49,20 @@ h3 .dates,
 }
 
 p {
-  margin: 3pt 0;
+  margin: 2pt 0;
 }
+/* Bullets are real text nodes injected by atsPostProcess() in render-pdf.mjs,
+   not CSS ::marker discs: Chrome does not emit markers into the PDF text
+   layer, and without them a role's title and every bullet under it extract as
+   one merged line. The negative text-indent restores the hanging-bullet look. */
 ul {
-  margin: 2pt 0 6pt 0;
-  padding-left: 16pt;
+  margin: 2pt 0 5pt 0;
+  padding-left: 11pt;
+  list-style: none;
 }
 li {
-  margin: 1.5pt 0;
+  margin: 1pt 0;
+  text-indent: -11pt;
 }
 a {
   color: #0b57d0;

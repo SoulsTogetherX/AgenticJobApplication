@@ -13,6 +13,7 @@ import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { loadYamlFile, isTerse } from "./lib.mjs"
 import { extractTech, profileText } from "./profile-gaps.mjs"
+import { readLeadStore, resolveLeadSource } from "./db.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
@@ -113,8 +114,9 @@ function withJobText(leads, jobsDir) {
 
 function main() {
   const args = process.argv.slice(2)
-  const leadsPath =
-    flag(args, "--leads") || path.join(ROOT, "jobs", "leads.json")
+  // Defaults to jobs/leads.db when it exists, else the legacy JSON store.
+  // An explicit --leads is honoured verbatim so tests can use fixtures.
+  const leadsPath = flag(args, "--leads") || resolveLeadSource().file
   const profilePath =
     flag(args, "--profile") || path.join(ROOT, "profile", "profile.yaml")
   const jobsDir = flag(args, "--jobs-dir") || path.join(ROOT, "jobs")
@@ -129,7 +131,7 @@ function main() {
     console.error(`no lead store at ${leadsPath} — run a search first`)
     process.exit(2)
   }
-  const all = JSON.parse(fs.readFileSync(leadsPath, "utf8")).leads ?? []
+  const all = readLeadStore(leadsPath).leads ?? []
   const leads = withJobText(
     all.filter((l) => status === "all" || l.status === status),
     jobsDir,

@@ -12,7 +12,7 @@ import {
   freshnessScore,
   rankLeads,
 } from "../scripts/recommend.mjs"
-import { screenJob } from "../scripts/screen.mjs"
+import { screenJob, extractYearsRequired } from "../scripts/screen.mjs"
 import { buildStatus } from "../scripts/status.mjs"
 import { extractTech } from "../scripts/profile-gaps.mjs"
 
@@ -188,6 +188,77 @@ test("screenJob passes a clean, specific posting", () => {
   )
   assert.equal(r.verdict, "pass")
   assert.deepEqual(r.signals, [])
+})
+
+// ---------- seniority bar ----------
+
+const seniorityJob = (description) => ({
+  id: "y",
+  company: "Acme",
+  title: "Software Engineer",
+  posted_at: "2026-07-25",
+  description:
+    description +
+    " You will build and maintain our customer portal with React, Node.js and PostgreSQL alongside a team of six engineers, covering API design, schema work and code review.",
+})
+
+test("extractYearsRequired reads fractional bars, not the digit after the point", () => {
+  // Regression: with a plain \b, "1.5+ years" matched the "5" — a decimal
+  // point is a word boundary — turning an entry-level bar into a 5-year one.
+  assert.equal(extractYearsRequired("a total of 1.5+ years of experience"), 1.5)
+  assert.equal(extractYearsRequired("2.5 years of experience"), 2.5)
+  assert.equal(extractYearsRequired("5+ years of experience"), 5)
+  assert.equal(extractYearsRequired("10+ years of experience"), 10)
+  // Highest demand wins when several are stated.
+  assert.equal(
+    extractYearsRequired("8+ years of experience, 3+ years of track record"),
+    8,
+  )
+  // A legal minimum is not a seniority bar.
+  assert.equal(extractYearsRequired("Must be at least 18 years of age"), 0)
+  assert.equal(extractYearsRequired("no numbers here"), 0)
+})
+
+test("screenJob rejects a posting demanding years beyond the stretch", () => {
+  // 2.5-year profile, stretch 2 → ceiling 4.5.
+  const r = screenJob(
+    seniorityJob("We are looking for 5+ years of experience."),
+    { experience: { stretch_years: 2 } },
+    NOW,
+    2.5,
+  )
+  assert.equal(r.verdict, "reject")
+  assert.ok(r.signals.includes("over_bar_5y"))
+})
+
+test("screenJob leaves a reachable bar alone", () => {
+  for (const [desc, years] of [
+    ["You have a total of 1.5+ years of experience.", 1.5],
+    ["We ask for 3+ years of experience.", 3],
+    ["4 years of experience preferred.", 4],
+  ]) {
+    const r = screenJob(
+      seniorityJob(desc),
+      { experience: { stretch_years: 2 } },
+      NOW,
+      2.5,
+    )
+    assert.equal(
+      r.verdict,
+      "pass",
+      `${years}y should be reachable: ${r.signals}`,
+    )
+  }
+})
+
+test("the seniority gate is off without a profile tenure", () => {
+  const r = screenJob(
+    seniorityJob("We require 12+ years of experience."),
+    { experience: { stretch_years: 2 } },
+    NOW,
+    null,
+  )
+  assert.ok(!r.signals.some((s) => s.startsWith("over_bar")))
 })
 
 test("screenJob flags thin descriptions and unidentified companies", () => {

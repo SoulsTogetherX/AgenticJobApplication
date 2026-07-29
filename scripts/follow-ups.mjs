@@ -14,6 +14,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { loadYamlFile, isTerse } from "./lib.mjs"
+import { readApplications } from "./db.mjs"
 
 export const MAX_FOLLOW_UPS = 2
 const OPEN_STATUSES = new Set(["applied", "followed_up", undefined, null, ""])
@@ -63,8 +64,10 @@ function main() {
     console.error(`invalid --days "${flag(args, "--days")}"`)
     process.exit(2)
   }
-  const data = fs.existsSync(file) ? (loadYamlFile(file) ?? {}) : {}
-  const due = dueFollowUps(data.applications ?? [], new Date(), days)
+  const applications = readApplications(
+    file === "profile/applications.yaml" ? null : file,
+  )
+  const due = dueFollowUps(applications, new Date(), days)
 
   if (args.includes("--json")) {
     console.log(JSON.stringify({ days_threshold: days, due }, null, 2))

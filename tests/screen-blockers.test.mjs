@@ -107,7 +107,7 @@ test("active clearance is a hard reject", () => {
   assert.equal(r2.verdict, "reject")
 })
 
-test("a bar far above tenure cautions, and says how far", () => {
+test("a bar far above tenure rejects, and says how far", () => {
   const r = screenJob(
     job({
       description:
@@ -118,17 +118,26 @@ test("a bar far above tenure cautions, and says how far", () => {
     NOW,
     YEARS,
   )
-  assert.equal(r.verdict, "caution")
+  assert.equal(r.verdict, "reject")
   assert.ok(r.signals.includes("over_bar_12y"))
 })
 
-test("a reachable stretch still passes — the Coinbase case must not regress", () => {
+test("a genuinely reachable bar still passes — the Affirm case must not regress", () => {
+  // Policy change (user, 2026-07-28): Senior roles are never worth pursuing at
+  // this tenure, so the stretch narrowed from 3 years to 2 and the gate now
+  // rejects instead of cautioning. This test previously asserted that a
+  // "Senior ... 5+ years" posting should pass; under the current policy such a
+  // title never even reaches screening — find-jobs hard-filters it at ingest.
+  //
+  // The real regression risk is now the opposite one: rejecting an ENTRY-LEVEL
+  // posting. Affirm's "Software Engineer II" asks for "1.5+ years", which the
+  // extractor once misread as 5 because "." is a word boundary.
   const r = screenJob(
     job({
-      title: "Senior Software Engineer, Full Stack",
+      title: "Software Engineer II, Backend",
       description:
         filler +
-        "5+ years of professional full-stack engineering experience shipping consumer-facing products.",
+        "You have a total of 1.5+ years of experience as a software engineer.",
     }),
     {},
     NOW,
@@ -138,7 +147,7 @@ test("a reachable stretch still passes — the Coinbase case must not regress", 
   assert.equal(
     r.signals.filter((s) => s.startsWith("over_bar")).length,
     0,
-    "5 years against 2.5 is inside the default 3-year stretch",
+    "1.5 years is below a 2.5-year profile and must never be flagged",
   )
 })
 
@@ -172,7 +181,7 @@ test("stretch_years widens the band; max_years_required overrides it entirely", 
     NOW,
     YEARS,
   )
-  assert.equal(strict.verdict, "caution")
+  assert.equal(strict.verdict, "reject")
   assert.ok(strict.signals.includes("over_bar_5y"))
 })
 

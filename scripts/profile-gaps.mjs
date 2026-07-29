@@ -14,6 +14,11 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { loadYamlFile, isTerse } from "./lib.mjs"
+import {
+  readLeadStore,
+  resolveLeadSource,
+  readApplications,
+} from "./db.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
@@ -197,7 +202,7 @@ function gatherJobs(jobsDir, leadsPath, applications) {
   }
   if (fs.existsSync(leadsPath)) {
     try {
-      const { leads } = JSON.parse(fs.readFileSync(leadsPath, "utf8"))
+      const { leads } = readLeadStore(leadsPath)
       for (const l of leads ?? []) {
         if (l.status === "dismissed") continue
         jobs.push({ slug: l.id, text: l.title ?? "", weight: 0.5 }) // titles only: weak signal
@@ -214,8 +219,8 @@ function main() {
   const profilePath =
     flag(args, "--profile") || path.join(ROOT, "profile", "profile.yaml")
   const jobsDir = flag(args, "--jobs-dir") || path.join(ROOT, "jobs")
-  const leadsPath =
-    flag(args, "--leads") || path.join(ROOT, "jobs", "leads.json")
+  // Defaults to jobs/leads.db when it exists, else the legacy JSON store.
+  const leadsPath = flag(args, "--leads") || resolveLeadSource().file
   const applicationsPath =
     flag(args, "--applications") ||
     path.join(ROOT, "profile", "applications.yaml")
@@ -226,9 +231,9 @@ function main() {
     process.exit(2)
   }
   const profile = loadYamlFile(profilePath)
-  const applications = fs.existsSync(applicationsPath)
-    ? (loadYamlFile(applicationsPath)?.applications ?? [])
-    : []
+  const applications = readApplications(
+    applicationsPath.endsWith("applications.yaml") ? null : applicationsPath,
+  )
   const jobs = gatherJobs(jobsDir, leadsPath, applications)
   if (!jobs.length) {
     console.error(

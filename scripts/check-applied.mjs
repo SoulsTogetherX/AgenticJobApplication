@@ -9,6 +9,7 @@
 // Exit codes: 0 = ran fine (match or not), 2 = usage error.
 import fs from "node:fs"
 import { loadYamlFile } from "./lib.mjs"
+import { readApplications } from "./db.mjs"
 
 const args = process.argv.slice(2)
 function flag(name, dflt) {
@@ -36,8 +37,11 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(today) || Number.isNaN(Date.parse(today))) {
 }
 
 const q = query.trim().toLowerCase()
-const data = fs.existsSync(file) ? (loadYamlFile(file) ?? {}) : {}
-const applications = Array.isArray(data.applications) ? data.applications : []
+// Indexed read when the database is current; falls back to the YAML
+// automatically if that file has been edited more recently.
+const applications = readApplications(
+  file === "profile/applications.yaml" ? null : file,
+)
 
 const todayMs = Date.parse(today)
 const matches = applications

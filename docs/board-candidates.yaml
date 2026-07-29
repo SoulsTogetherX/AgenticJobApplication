@@ -1,0 +1,41 @@
+# =============================================================================
+# BOARD CANDIDATES — input to `node scripts/discover-boards.mjs --candidates`.
+#
+# This is a shortlist to TEST, not a list to add. Every entry is fetched, run
+# through docs/application-limits.yaml, and only proposed if it currently has
+# at least one reachable posting. Nothing here is added automatically.
+#
+# GETTING THE SLUG RIGHT is most of the work. A first pass at this file guessed
+# 12 slugs from company names and 8 were 404s — the slug is not the company
+# name. Read it off the real careers URL:
+#   https://boards.greenhouse.io/<slug>          → { type: greenhouse, slug }
+#   https://jobs.lever.co/<slug>                 → { type: lever, slug }
+#   https://jobs.ashbyhq.com/<slug>              → { type: ashby, slug }
+#   https://jobs.smartrecruiters.com/<slug>      → { type: smartrecruiters, slug }
+#   https://<tenant>.wdN.myworkdayjobs.com/<site> → workday: needs host+tenant+site
+# A wrong slug is harmless — it is reported as an error, never added.
+#
+# Pools, in priority order (see discover-boards.mjs):
+#   local     Las Vegas metro — on-site is acceptable, so the whole board
+#             counts, and local employers hire across all levels.
+#   levelled  companies that visibly post Engineer I/II, Associate, Junior.
+#   remote    genuinely remote-US companies.
+# =============================================================================
+
+candidates:
+  # --- verified to resolve (checked 2026-07-29) ------------------------------
+  # Tebra cleared the bar: 25 live, 1 reachable, and it posts below Senior.
+  - { type: greenhouse, slug: tebra, company: Tebra, pool: levelled }
+  # These resolve but currently yield nothing — kept so re-running shows if
+  # that changes, since a 0 today is a snapshot, not a verdict.
+  - { type: ashby, slug: replit, company: Replit, pool: levelled }
+  - { type: ashby, slug: zapier, company: Zapier, pool: remote }
+  - {
+      type: smartrecruiters,
+      slug: Sightline,
+      company: Sightline Payments,
+      pool: local,
+    }
+  # --- to add: paste a careers URL, read the slug off it, drop it here -------
+  # Highest-value pool is `local` — a Las Vegas employer's whole board counts,
+  # where a remote-first company only contributes its remote-US reqs.

@@ -34,6 +34,22 @@ compensation:
   # flagged "no_salary" — missing pay info is also a mild ghost-job signal.
   flag_missing: true
 
+experience:
+  # The seniority gate in scripts/screen.mjs. It reads the highest "N+ years"
+  # demand out of the posting body and compares it to the tenure computed from
+  # profile.yaml (currently 2.5 years).
+  #
+  # A posting demanding more than (your years + stretch_years) is REJECTED, not
+  # cautioned — a caution still costs a human or model read, and on 2026-07-28
+  # every single one of those reads ended in a rejection anyway.
+  #
+  # stretch_years: 2 puts the ceiling at 4.5 years, which catches the "5+ years"
+  # band where Senior roles actually sit. Raise it to see more stretch roles;
+  # lower it to be stricter. Set max_years_required to pin an absolute ceiling
+  # instead of one relative to your tenure.
+  stretch_years: 2
+  # max_years_required: 5
+
 ghost_signals:
   # A posting live/reposted this long reads as a ghost job (industry guidance:
   # 30+ days). Screening treats it as a strong reject signal; the freshness
@@ -63,3 +79,149 @@ roles:
     - game developer
     - gameplay
     - game engineer
+
+  # ===========================================================================
+  # HARD FILTER — a title containing any of these is rejected at ingest.
+  # Matched as WHOLE WORDS, case-insensitive, so "sr" matches "Sr." but not
+  # "usr", and "lead" matches "Lead" but not "leading".
+  #
+  # The seniority terms are not guesswork. They come from the stated minimums
+  # in the 47 postings read on 2026-07-28:
+  #   Senior / Sr.   4-10 yrs   (median 5-6; the LOWEST bar seen all day was 4+)
+  #   Staff          7-12 yrs
+  #   Senior Staff   10-12 yrs
+  #   Principal      8-12 yrs
+  #   Lead / Manager 6-8 yrs + people leadership
+  #   Architect      4+ yrs + certification
+  # Against ~2.5 years of experience, none of these is reachable — which is why
+  # every one of those 47 leads was rejected. Filtering them at ingest is what
+  # stops the pipeline paying to read them again.
+  # ===========================================================================
+  hard_filter:
+    # --- Seniority above reach ---
+    - senior
+    - sr
+    - staff
+    - principal
+    - distinguished
+    - fellow
+    - architect
+    - lead
+    - leader
+    - manager
+    - director
+    - head of
+    - vp
+    - vice president
+    - chief
+    - president
+    - executive
+    - founding
+    # --- Not a software-development role (13 of today's 47 rejects) ---
+    - technician
+    - specialist
+    - recruiter
+    - sales
+    - scrum master
+    - help desk
+    - service desk
+    - field engineer
+    - network engineer
+    - designer
+    - copywriter
+    - technical writer
+    - compliance analyst
+    - chargeback analyst
+    - business analyst
+    - financial analyst
+    - marketing analyst
+    - marketing analytics
+    - digital analytics
+    - security analyst
+    # --- Wrong career stage ---
+    - intern
+    - internship
+    - apprentice
+
+  # ===========================================================================
+  # SOFT FILTER — not disqualifying, but flagged "title_watch" so screening
+  # reads the posting body before any effort is spent. These are the title
+  # patterns that proved MISLEADING today: a clean-looking title whose body
+  # said something different.
+  #
+  # The motivating case: Chainguard's "Software Engineer (Libraries Platform)"
+  # carried no seniority word at all, yet the body said "join as a Senior
+  # Software Engineer" and asked for 5+ years. A title filter alone cannot
+  # catch that — only reading the description can.
+  # ===========================================================================
+  soft_filter:
+    # --- Level markers that mean different things at different companies ---
+    # Samsara's "Software Engineer II" wanted 8+ yrs; IGT's "Software Eng
+    # (Dev) II" was genuinely mid-level. Same numeral, very different bar.
+    - ii
+    - iii
+    - iv
+    - "2"
+    - "3"
+    # --- Adjacent disciplines: real engineering, but not full-stack/back-end ---
+    - analyst
+    - consultant
+    - data engineer
+    - cloud
+    - devops
+    - sre
+    - site reliability
+    - platform
+    - infrastructure
+    - security
+    - ml
+    - machine learning
+    - ai engineer
+    - mobile
+    - ios
+    - android
+    - embedded
+    - firmware
+    - qa
+    - test
+    - automation
+    - support
+    - solutions
+    - systems engineer
+    - integration
+    # --- Stacks outside the profile (TypeScript/JavaScript/Python/React/Node) ---
+    - wordpress
+    - php
+    - .net
+    - c#
+    - java
+    - salesforce
+    - sharepoint
+    - drupal
+    - ruby
+    - rails
+    - golang
+    - rust
+    - scala
+    - kotlin
+    - swift
+    - cobol
+    - sap
+    - unity
+    - unreal
+    # --- Clearance / regulated work that can be a hard blocker in the body ---
+    # NNSS's "Principal Cyber Security Analyst" was federal classified work.
+    - clearance
+    - classified
+    - top secret
+    - ts/sci
+    - polygraph
+    - federal
+    - government
+    - defense
+    # --- Employment shape that may not be full-time permanent ---
+    - contract
+    - contractor
+    - temporary
+    - seasonal
+    - part-time

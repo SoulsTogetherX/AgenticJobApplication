@@ -19,6 +19,26 @@ export function loadYamlFile(file) {
   return yaml.load(fs.readFileSync(file, "utf8"))
 }
 
+// Bounded-concurrency map, preserving input order. Board sweeps are entirely
+// network-bound, so running them one at a time was leaving the wall clock on
+// the table; the cap keeps us from hammering any ATS.
+export async function mapPool(items, limit, fn) {
+  const out = new Array(items.length)
+  let next = 0
+  const workers = Array.from(
+    { length: Math.max(1, Math.min(limit, items.length)) },
+    async () => {
+      for (;;) {
+        const i = next++
+        if (i >= items.length) return
+        out[i] = await fn(items[i], i)
+      }
+    },
+  )
+  await Promise.all(workers)
+  return out
+}
+
 export function dumpYaml(obj) {
   return yaml.dump(obj, { lineWidth: 100 })
 }

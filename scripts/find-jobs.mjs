@@ -15,7 +15,18 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import yaml from "js-yaml"
-import { isTerse } from "./lib.mjs"
+import { isTerse, mapPool } from "./lib.mjs"
+import {
+  readLeadStore,
+  writeLeadStore,
+  openDb,
+  setLeadStatus,
+  resolveLeadSource,
+  setLeadKeywords,
+  readApplications,
+  recordBoardStats,
+} from "./db.mjs"
+import { extractTech } from "./profile-gaps.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const LIMITS_PATH = path.join(ROOT, "docs", "application-limits.yaml")
@@ -53,6 +64,18 @@ const LOOSE_TECH_TITLE =
 const TRADES_TITLE =
   /\b(maintenance|facilit\w*|paint\w*|electric\w*|plumb\w*|stationary|hvac|refrigerat\w*|custodial|grounds|kitchen|landscap\w*|carpenter|locksmith|janitor\w*|general engineer|slot technician)\b|\b(procurement|financial|finance|accounting|payroll|human resources|media operations|revenue management|benefits|tax|audit|credit|collections|supply chain|logistics)\b/i
 
+// Whole-word title matching. Substring matching would make "sr" hit "usr" and
+// "lead" hit "leading", so every hard/soft filter term is anchored on \b.
+// Returns the matched keyword (for the reason string) or undefined.
+export function matchTitleKeyword(title, keywords) {
+  return (keywords ?? []).find((k) => {
+    const esc = String(k)
+      .toLowerCase()
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    return new RegExp(`\\b${esc}\\b`, "i").test(title)
+  })
+}
+
 export function passesLimits(job, limits, now = new Date()) {
   const reasons = []
   const flags = []
@@ -62,6 +85,21 @@ export function passesLimits(job, limits, now = new Date()) {
   const kws = limits.roles?.title_keywords ?? []
   const titleHit =
     !kws.length || kws.some((k) => title.includes(String(k).toLowerCase()))
+
+  // Hard filter runs before everything else: a title above the experience bar
+  // or in the wrong discipline is not worth geocoding, dating, or storing.
+  const hardHit = matchTitleKeyword(title, limits.roles?.hard_filter)
+  if (hardHit) {
+    return {
+      ok: false,
+      reasons: [`title: "${hardHit}" is hard-filtered`],
+      flags: [],
+    }
+  }
+  // Soft filter never rejects — it marks the lead so screening reads the body
+  // before any tailoring effort is spent.
+  const softHit = matchTitleKeyword(title, limits.roles?.soft_filter)
+  if (softHit) flags.push(`title_watch:${softHit}`)
 
   const loc = String(job.location ?? "")
     .trim()
@@ -254,20 +292,18 @@ export function loadLimits(file = LIMITS_PATH) {
   return yaml.load(fs.readFileSync(file, "utf8")) ?? {}
 }
 
+// Backed by jobs/leads.db when it exists, else the legacy jobs/leads.json.
+// See scripts/db.mjs for why SQLite and what it fixes.
 function loadLeads() {
-  if (!fs.existsSync(LEADS_PATH)) return { leads: [] }
-  return JSON.parse(fs.readFileSync(LEADS_PATH, "utf8"))
+  return readLeadStore()
 }
 
 function saveLeads(store) {
-  fs.mkdirSync(path.dirname(LEADS_PATH), { recursive: true })
-  fs.writeFileSync(LEADS_PATH, JSON.stringify(store, null, 2) + "\n")
+  writeLeadStore(store)
 }
 
 function loadApplied() {
-  if (!fs.existsSync(APPLICATIONS_PATH)) return []
-  const doc = yaml.load(fs.readFileSync(APPLICATIONS_PATH, "utf8"))
-  return doc?.applications ?? []
+  return readApplications()
 }
 
 // ---------------------------------------------------------------------------
@@ -887,6 +923,72 @@ export function backfillDescriptions(candidates, leads) {
   return n
 }
 
+// Extract each new lead's tech keywords once, at ingest, so later analysis is
+// a GROUP BY instead of re-parsing every stored description. Best-effort: a
+// keyword-index failure must never lose a lead that was already saved.
+function indexKeywords(leads) {
+  const src = resolveLeadSource()
+  if (src.kind !== "db" || !leads.length) return
+  try {
+    const db = openDb(src.file)
+    try {
+      for (const l of leads) {
+        const text = [l.title, l.description].filter(Boolean).join("\n")
+        setLeadKeywords(db, l.id, [...extractTech(text)])
+      }
+    } finally {
+      db.close()
+    }
+  } catch (e) {
+    console.error(`warn: keywords not indexed (${e.message})`)
+  }
+}
+
+// Append this sweep's productivity to board_stats. A single audit is a
+// snapshot; pruning a board should rest on history, so every sweep contributes
+// one data point and last_qualifying_at only moves when something reachable
+// was actually found.
+function recordSweep(results, limits, now) {
+  const src = resolveLeadSource()
+  if (src.kind !== "db") return
+  try {
+    const db = openDb(src.file)
+    try {
+      for (const r of results) {
+        if (r.error) continue
+        let qualifying = 0
+        let solid = 0
+        for (const p of r.postings) {
+          const v = passesLimits(p, limits, now)
+          if (!v.ok) continue
+          qualifying++
+          if (
+            !(v.flags ?? []).some(
+              (f) => f === "remote_unverified" || f === "unknown_location",
+            )
+          )
+            solid++
+        }
+        recordBoardStats(db, {
+          board_id: r.label,
+          type: r.board.type,
+          slug: r.board.slug ?? r.board.tenant ?? r.board.host ?? null,
+          company: r.board.company ?? r.label,
+          last_swept: now.toISOString(),
+          live_postings: r.postings.length,
+          qualifying,
+          solid,
+          leads_produced: solid,
+        })
+      }
+    } finally {
+      db.close()
+    }
+  } catch (e) {
+    console.error(`warn: board stats not recorded (${e.message})`)
+  }
+}
+
 function ingest(candidates, limits) {
   const store = loadLeads()
   const applied = loadApplied()
@@ -910,6 +1012,7 @@ function ingest(candidates, limits) {
   }
   store.leads.push(...kept)
   saveLeads(store)
+  indexKeywords(kept)
   const ei = process.argv.indexOf("--explain")
   const eN = Number(process.argv[ei + 1])
   summarize(kept, rejected, {
@@ -933,13 +1036,29 @@ async function cmdSearch(args) {
   const candidates = []
   const failures = []
   if (source === "all" || source === "boards") {
-    for (const board of loadSources()) {
-      const label = `${board.type}:${board.slug ?? board.tenant}`
+    // Board fetches are network-bound and independent, so they run pooled
+    // rather than one after another. The cap is deliberate: it is what keeps a
+    // longer board list affordable without hammering any single ATS.
+    const boards = loadSources()
+    const concurrency = Number(getFlag(args, "--concurrency", 8))
+    const t0 = Date.now()
+    const results = await mapPool(boards, concurrency, async (board) => {
+      const label = `${board.type}:${board.slug ?? board.tenant ?? board.host}`
       try {
-        candidates.push(...(await fetchBoard(board, query)))
+        return { board, label, postings: await fetchBoard(board, query) }
       } catch (e) {
-        failures.push(`${label} — ${e.message}`)
+        return { board, label, postings: [], error: e.message }
       }
+    })
+    for (const r of results) {
+      if (r.error) failures.push(`${r.label} — ${r.error}`)
+      else candidates.push(...r.postings)
+    }
+    recordSweep(results, limits, new Date())
+    if (!isTerse()) {
+      console.log(
+        `Swept ${boards.length} board(s) at concurrency ${concurrency} in ${((Date.now() - t0) / 1000).toFixed(1)}s.`,
+      )
     }
   }
   if (source === "all" || source === "hn") {
@@ -1008,9 +1127,23 @@ function cmdMark(args) {
     (l) => l.id === key || normUrl(l.url) === normUrl(key),
   )
   if (!lead) throw new Error(`no lead matches "${key}"`)
-  lead.status = status
-  if (notes) lead.notes = notes
-  saveLeads(store)
+
+  // Single-row UPDATE rather than rewriting the whole store. Marking 57 leads
+  // dismissed on 2026-07-28 meant 57 full-file rewrites of a 321 KB JSON;
+  // this is what makes a batch linear instead of quadratic.
+  const src = resolveLeadSource()
+  if (src.kind === "db") {
+    const db = openDb(src.file)
+    try {
+      setLeadStatus(db, lead.id, status, notes || undefined)
+    } finally {
+      db.close()
+    }
+  } else {
+    lead.status = status
+    if (notes) lead.notes = notes
+    saveLeads(store)
+  }
   console.log(`${lead.id} → ${status}`)
 }
 

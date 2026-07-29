@@ -1,11 +1,17 @@
 #!/usr/bin/env node
-// Record a submitted application in profile/applications.yaml (the ONLY
-// sanctioned way for the agent to write the application log).
+// Record a submitted application — the ONLY sanctioned way for the agent to
+// create an application record, and only after the user confirms they applied.
+//
+// Storage moved (2026-07-29): the `applications` table in jobs/leads.db is the
+// source of truth, and profile/applications.yaml is regenerated from it after
+// every write. The guardrail is unchanged; only the file underneath it is.
 //
 // Usage: node scripts/log-application.mjs <slug> --company "X" --title "Y"
-//        [--url <url>] [--date YYYY-MM-DD] [--notes "..."] [--file profile/applications.yaml]
+//        [--url <url>] [--date YYYY-MM-DD] [--notes "..."] [--file <yaml>]
+// --file forces the legacy YAML-only path, which is what the tests use.
 import fs from "node:fs"
 import { loadYamlFile, dumpYaml } from "./lib.mjs"
+import { readApplications, writeApplication } from "./db.mjs"
 
 const args = process.argv.slice(2)
 function flag(name, dflt) {
@@ -17,7 +23,9 @@ function flag(name, dflt) {
   }
   return dflt
 }
-const file = flag("--file", "profile/applications.yaml")
+// No --file means "use the real store"; an explicit --file keeps the old
+// YAML-only behaviour so tests never touch the production database.
+const file = flag("--file", null)
 const company = flag("--company", null)
 const title = flag("--title", null)
 const url = flag("--url", null)
@@ -36,30 +44,36 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) {
   process.exit(2)
 }
 
-const data = fs.existsSync(file) ? (loadYamlFile(file) ?? {}) : {}
-data.applications ??= []
-if (!Array.isArray(data.applications)) {
-  console.error(`${file} is malformed: "applications" is not a list`)
-  process.exit(2)
-}
-
-const dup = data.applications.find((a) => a.slug === slug.trim())
-if (dup) {
-  console.error(
-    `Already logged: applied to ${dup.company} — ${dup.title} on ${dup.applied_at} (slug ${dup.slug}). Edit ${file} to change it.`,
-  )
-  process.exit(1)
-}
-
-data.applications.push({
+const entry = {
   slug: slug.trim(),
   company: company.trim(),
   title: title.trim(),
   applied_at: date,
   source_url: url,
   notes,
-})
+}
 
-const header = `# APPLICATION LOG — user-editable. Agent adds entries ONLY via scripts/log-application.mjs.\n`
-fs.writeFileSync(file, header + dumpYaml(data), "utf8")
+const existing = file
+  ? fs.existsSync(file)
+    ? (loadYamlFile(file)?.applications ?? [])
+    : []
+  : readApplications()
+
+const dup = existing.find((a) => a.slug === entry.slug)
+if (dup) {
+  console.error(
+    `Already logged: applied to ${dup.company} — ${dup.title} on ${dup.applied_at} (slug ${dup.slug}).\n` +
+      `Change it with update-application.mjs, or remove it with:\n` +
+      `  node scripts/applications.mjs remove ${dup.slug} --confirm`,
+  )
+  process.exit(1)
+}
+
+if (file) {
+  // Legacy YAML-only path (tests, or an explicit alternate store).
+  const data = { applications: [...existing, entry] }
+  fs.writeFileSync(file, dumpYaml(data), "utf8")
+} else {
+  writeApplication(entry, dumpYaml)
+}
 console.log(`Logged application: ${company.trim()} — ${title.trim()} (${date})`)

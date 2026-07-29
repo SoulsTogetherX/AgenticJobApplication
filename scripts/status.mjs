@@ -9,6 +9,7 @@ import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { loadYamlFile, isTerse } from "./lib.mjs"
 import { dueFollowUps } from "./follow-ups.mjs"
+import { readLeadStore, readApplications } from "./db.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
@@ -61,12 +62,8 @@ function readJson(file, fallback) {
 function main() {
   const args = process.argv.slice(2)
   const days = Number(flag(args, "--days") || 10)
-  const leads =
-    readJson(path.join(ROOT, "jobs", "leads.json"), { leads: [] }).leads ?? []
-  const appsFile = path.join(ROOT, "profile", "applications.yaml")
-  const applications = fs.existsSync(appsFile)
-    ? (loadYamlFile(appsFile)?.applications ?? [])
-    : []
+  const leads = readLeadStore().leads ?? []
+  const applications = readApplications()
 
   const s = buildStatus(leads, applications, { days })
 

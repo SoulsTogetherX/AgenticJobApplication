@@ -20,6 +20,8 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { loadYamlFile, isTerse } from "./lib.mjs"
 import { profileText } from "./profile-gaps.mjs"
 import { rankLeads } from "./recommend.mjs"
+import { readLeadStore, resolveLeadSource } from "./db.mjs"
+import { readApplications } from "./db.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
@@ -107,8 +109,8 @@ function flag(args, name) {
 
 function main() {
   const args = process.argv.slice(2)
-  const leadsPath =
-    flag(args, "--leads") || path.join(ROOT, "jobs", "leads.json")
+  // Defaults to jobs/leads.db when it exists, else the legacy JSON store.
+  const leadsPath = flag(args, "--leads") || resolveLeadSource().file
   const profilePath =
     flag(args, "--profile") || path.join(ROOT, "profile", "profile.yaml")
   const jobsDir = flag(args, "--jobs-dir") || path.join(ROOT, "jobs")
@@ -127,7 +129,7 @@ function main() {
     process.exit(2)
   }
 
-  const all = JSON.parse(fs.readFileSync(leadsPath, "utf8")).leads ?? []
+  const all = readLeadStore(leadsPath).leads ?? []
   const leads = all.filter((l) => status === "all" || l.status === status)
   // Rank generously, then filter — the top few by score are often already
   // tailored, and we still want a full queue underneath them.
@@ -135,10 +137,9 @@ function main() {
     top: Math.max(top * 4, 20),
   })
 
-  const appsDoc = fs.existsSync(appsPath) ? (loadYamlFile(appsPath) ?? {}) : {}
-  const applied = Array.isArray(appsDoc.applications)
-    ? appsDoc.applications
-    : []
+  const applied = readApplications(
+    appsPath.endsWith("applications.yaml") ? null : appsPath,
+  )
 
   const queue = buildQueue(ranked, {
     workspaces: indexWorkspaces(jobsDir),

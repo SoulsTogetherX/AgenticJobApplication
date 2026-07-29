@@ -205,12 +205,33 @@ const CONTACT_RULES = [
     "contact",
     otherLinksValue(),
   ],
+  // A street address is NOT the city-level `contact.location`. Greenhouse asks
+  // for "Address Line 1" / "Address Line 2" alongside separate City/State/Postal
+  // fields, and letting the generic location rule below match them put
+  // "North Las Vegas, NV" in the street slot and then repeated it on line 2.
+  // The street address is not a profile fact — it lives in the answer bank, so
+  // these resolve from there by exact question match and nowhere else. An empty
+  // result is UNKNOWN, which is correct: line 2 is optional and stays blank.
+  [
+    /\baddress\s*line\s*2\b|\b(apt|apartment|suite|unit)\b/i,
+    "bank.address2",
+    () => bankedAddress(/address\s*line\s*2|\b(apt|apartment|suite|unit)\b/i),
+  ],
+  [
+    /\baddress\s*line\s*1\b|\bstreet\s*address\b/i,
+    "bank.address1",
+    () => bankedAddress(/address\s*line\s*1|street\s*address/i),
+  ],
   [
     /\b(current )?(location|address)\b|\bwhere are you (currently )?(located|based)\b/i,
     "contact.location",
     contact.location ?? "",
   ],
 ]
+
+// Called only from the address rules above, after `bank` is populated.
+const bankedAddress = (re) =>
+  bank.find((a) => re.test(String(a.question ?? "")))?.answer ?? ""
 
 // Labels phrased as questions are NOT profile fields, however many field-ish
 // words they contain. Without this, "were you referred to this position by a

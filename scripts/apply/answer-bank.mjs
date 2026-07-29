@@ -501,6 +501,38 @@ function bestAnswer(label) {
 }
 
 // ---------------------------------------------------------------------------
+// exact-question lookup
+// ---------------------------------------------------------------------------
+// An answer saved for THIS exact question outranks every rule below.
+//
+// The rules fire first by design — they map a form's wording onto profile
+// facts. But a rule that resolves a value the form does not actually offer
+// returns NEEDS-CHOICE, and it will return NEEDS-CHOICE on that same field for
+// every future application, because a rule hit short-circuits the bank and the
+// pick the user approved last time is never consulted. Checking exact matches
+// ahead of the rules is what makes an approved pick stick.
+//
+// Exact normalized text only. No fuzzy tier here: the 0.45 MAYBE band exists
+// precisely because near-matches are unreliable, and this path skips the
+// concept guard that keeps "require sponsorship" away from "authorized to
+// work". Identical text cannot confuse those.
+function normalizeQuestion(s) {
+  return String(s ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[*:]+$/, "")
+    .trim()
+}
+
+const exactBank = new Map()
+for (const a of bank) {
+  const key = normalizeQuestion(a.question)
+  // First entry wins, so a later duplicate cannot shadow the original.
+  if (key && !exactBank.has(key)) exactBank.set(key, a)
+}
+
+// ---------------------------------------------------------------------------
 // option matching
 // ---------------------------------------------------------------------------
 const YES = /^(y|yes|true|1)$/i
@@ -592,6 +624,20 @@ for (const f of fields) {
   }
   if (!label) {
     push("UNKNOWN", "-", "", "no label found — inspect the page")
+    continue
+  }
+
+  // Ahead of EEO too: if the user actually answered a self-ID question, their
+  // answer is the answer — auto-declining over it would discard it.
+  const exact = exactBank.get(normalizeQuestion(label))
+  if (exact) {
+    const m = matchOption(exact.answer, opts)
+    push(
+      m.needsChoice ? "NEEDS-CHOICE" : "OK",
+      `${exact.id}@exact${(exact.source ?? "user") === "model" ? ":model" : ""}`,
+      m.value,
+      m.needsChoice ? `options: ${opts.join(" | ")}` : undefined,
+    )
     continue
   }
 

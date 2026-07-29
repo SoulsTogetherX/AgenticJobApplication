@@ -10,13 +10,26 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 - Tests: `npm test` (node --test; see the testing rule in Workflow below)
 - Verify a tailored doc: `node scripts/documents/verify-claims.mjs <resume|cover-letter> <file> [--job jobs/<slug>/job.json]`
 - New job workspace: `node scripts/documents/new-job.mjs <slug> --company "X" --title "Y" [--url Z]`
-- Save a user answer: `node scripts/profile/save-answer.mjs "<question>" "<answer>"`
+  — or, preferred when the posting is already a stored lead,
+  `node scripts/documents/new-job.mjs <slug> --from-lead <url|lead-id>`, which
+  fills company/title/location/description from `leads.db` instead of having a
+  model re-read the page. Prints `description=<chars>|missing`; exits **4** when
+  no lead matches, which is the caller's cue to read the page instead.
+- Save an answer: `node scripts/profile/save-answer.mjs "<question>" "<answer>" [--source user|model] [--replace]`
+  — `--source model` records a form pick the agent chose and the user approved
+  (default is `user`). `--replace` corrects such a pick and **refuses** to
+  overwrite anything the user stated themselves.
 - Build a deterministic fill plan for a scanned application form (runs
   answer-bank internally, picks the ATS adapter, writes `jobs/<slug>/fill-plan.js`,
   prints the browser bootstrap): `node scripts/apply/fill-plan.mjs <slug>`
+  — prints `ready=true|false` (plus `reason=` when false): whether any model
+  judgment is still needed before filling. On `ready=true` the path is
+  scan → fill → hand over, with no model step in between.
 - Resolve scanned application-form fields against the fact base (batch):
   `node scripts/apply/answer-bank.mjs < jobs/<slug>/scan-p1.json` (fields come from
-  `.claude/skills/apply-job/scan-page.js`; never invents an answer)
+  `.claude/skills/apply-job/scan-page.js`; never invents an answer). An answer
+  saved for a question's **exact** label outranks the label rules, so a pick the
+  user approved once resolves `OK` on every later application to that ATS.
 - Can an existing tailored resume be reused for a new posting?
   `node scripts/documents/reuse-check.mjs <slug>` (recommends only; user approves reuse)
 - Check application history: `node scripts/applications/check-applied.mjs "<company, title, or slug>"`
@@ -57,7 +70,10 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
    are allowed; inventing skills, employers, dates, metrics, or tech is forbidden.
 2. **The agent never edits the fact base** (`profile/`). A PreToolUse hook blocks
    it. New info goes through `scripts/profile/save-answer.mjs` after asking the user in
-   chat; submitted applications through `scripts/applications/log-application.mjs` after the
+   chat — including a form option the agent picked, which may only be saved
+   (`--source model`) once the user has approved it in the approval message; a
+   silent guess is never written. Submitted applications go through
+   `scripts/applications/log-application.mjs` after the
    user confirms they applied. The application store moved to the
    `applications` table in `jobs/leads.db` (2026-07-29) and
    `profile/applications.yaml` is now a generated export — the rule is about

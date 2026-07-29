@@ -45,14 +45,34 @@ silently burn a frontier model on form-filling.
 
 1. **Preconditions**: Playwright MCP tools available (check `/mcp`) and
    `profile/profile.yaml` has `meta.approved_by_user: true`. Otherwise stop.
-2. **Capture the posting**: `browser_navigate` to the URL, then
-   `browser_evaluate` with `() => document.body.innerText.slice(0, 6000)` —
-   cheaper and more complete than a snapshot for reading an ad. Extract company,
-   title, location, requirements.
+2. **Workspace, from the lead store first**. The sweep already captured
+   company, title, location and description for every stored lead — re-reading
+   the live page to extract the same fields is a model call spent on data
+   sitting in the database. Try:
+
+   ```bash
+   node scripts/documents/new-job.mjs <slug> --from-lead "<posting url>"
+   ```
+
+   It matches on lead id, then url, then url with tracking params and trailing
+   slashes stripped, and prints `description=<chars>` or `description=missing`.
+
+   | result                        | do                                                                              |
+   | ----------------------------- | ------------------------------------------------------------------------------- |
+   | exit 0, `description=<n>`     | done — **no page read at all**                                                  |
+   | exit 0, `description=missing` | read the page (step 2b) for the body only                                       |
+   | exit 4                        | no stored lead — read the page (2b) and scaffold with `--company/--title/--url` |
+
+2b. **Page read, only when the above says so**: `browser_navigate` to the URL,
+then `browser_evaluate` with `() => document.body.innerText.slice(0, 6000)` —
+cheaper and more complete than a snapshot for reading an ad. Extract company,
+title, location, requirements.
+
 3. **History check**: `node scripts/applications/check-applied.mjs "<Company>"`. Already
    applied → report it and get the user's go-ahead first.
-4. **Workspace**: `node scripts/documents/new-job.mjs <slug> --company ... --title ...
---url ...`, then fill `job.json` with the description/requirements.
+4. **Requirements**: fill `job.json`'s `requirements` from the description.
+   `--from-lead` leaves it empty on purpose — that is an extraction, not a
+   stored field.
 
 ## Phase 2 — Open the form and read it BEFORE tailoring
 
@@ -125,6 +145,9 @@ node scripts/apply/fill-plan.mjs <slug>
 This runs `answer-bank.mjs` internally (profile + answer bank only, never a
 guess) and writes `jobs/<slug>/fill-plan.js` + `.json`. It prints:
 
+- **`ready=true|false`** — whether any model judgment is still required. On
+  `ready=true` there is nothing here to think about: go straight to D, fill,
+  and hand the user the submit button. On `ready=false` the `reason=` says why,
 - `items=<n>` — fields that will be filled with no model involvement,
 - one `defer` line per field a human must answer, each with a reason:
   `consent` (an agreement — always yours to accept, never mine), `unknown`,
@@ -139,7 +162,10 @@ resume` — that is expected before approval; re-run this after rendering.
 
 ### C. Decide what work is actually needed (0 calls)
 
-From the scan, settle three things:
+**Skip this whole step when B printed `ready=true` and the documents it needs
+are already rendered.** There is nothing to decide; go to D.
+
+Otherwise, from the scan, settle three things:
 
 - **Cover letter?** Only if the form has a cover-letter field or accepts
   attachments beyond the resume, or the posting explicitly asks. Otherwise skip
@@ -157,6 +183,10 @@ Then work the non-`OK` rows from B in one pass: pick options for
 `NEEDS-CHOICE`/`MAYBE` from profile facts, and collect every remaining `UNKNOWN`
 into a numbered list for the approval message. Record every question into
 `job.json` `questions`.
+
+**Every pick you make here goes into the approval message too** — field, the
+options offered, and which one you chose. That is what makes it saveable in
+Phase 4. A pick the user never saw is not saved.
 
 ## Phase 3 — Tailor (delegated)
 
@@ -179,16 +209,31 @@ Send a single message containing:
 1. the tailoring summary (emphasized / dropped / rephrased vs. the general
    resume) — hard rule 5,
 2. the numbered unknown questions, each with its available options,
-3. the reuse offer, if `reuse-check` flagged one,
-4. what will be filled and what will be left blank.
+3. **the picks you made** for `NEEDS-CHOICE`/`MAYBE` fields — field, options,
+   chosen value — so the user can correct any of them,
+4. the reuse offer, if `reuse-check` flagged one,
+5. what will be filled and what will be left blank.
 
-Then wait. On the reply, in one batch:
+Then wait. On the reply, save **both** the user's answers and the picks they
+just approved, in one batch:
 
 ```bash
-node scripts/profile/save-answer.mjs "Q1" "A1" && node scripts/profile/save-answer.mjs "Q2" "A2"
+node scripts/profile/save-answer.mjs "Q1" "A1" && \
+node scripts/profile/save-answer.mjs "Degree" "Undergraduate (BS/BA)" --source model
 ```
 
-and render the PDFs — only now, only if the form needs files:
+`--source model` marks a pick as derived-and-approved rather than user-stated;
+it is what makes a wrong one findable later (`--replace` corrects it, and it
+refuses to touch anything the user said themselves). Use the form's **exact**
+field label as the question and the **exact** option text as the answer —
+`answer-bank.mjs` matches saved questions exactly, ahead of its label rules, so
+that field comes back `OK` on every future application to this ATS. This is the
+only thing here that compounds: the defer list shrinks as you apply.
+
+**Never save a pick the user did not see in the message above.** Saving what
+they approved is not a new trust assumption; saving a silent guess is.
+
+Then render the PDFs — only now, only if the form needs files:
 
 ```bash
 node scripts/documents/render-pdf.mjs jobs/<slug>/resume.md jobs/<slug>/resume.pdf
@@ -202,7 +247,8 @@ B, so this message does not repeat unless a later page asks something new.
 ### D+E. Fill and verify (ONE call)
 
 Re-run `node scripts/apply/fill-plan.mjs <slug>` after rendering PDFs and saving any
-new answers, then run the bootstrap it printed:
+new answers. It should now print `ready=true`; if it does not, the `reason=`
+names what is still outstanding. Then run the bootstrap it printed:
 
 ```
 mcp__playwright__browser_run_code_unsafe

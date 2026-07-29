@@ -3,7 +3,11 @@
 // never guessed, and a question is never mistaken for a profile field.
 import test from "node:test"
 import assert from "node:assert/strict"
-import { buildPlan, isConsent } from "../../scripts/apply/fill-plan.mjs"
+import {
+  buildPlan,
+  isConsent,
+  readiness,
+} from "../../scripts/apply/fill-plan.mjs"
 import { detectAts, ADAPTERS } from "../../scripts/apply/ats/index.mjs"
 import greenhouse from "../../scripts/apply/ats/greenhouse.mjs"
 
@@ -64,6 +68,69 @@ test("a lookalike hostname does not match", () => {
     detectAts("https://notgreenhouse.io.evil.test/apply").id,
     "generic",
   )
+})
+
+// --- readiness --------------------------------------------------------------
+//
+// The planner already counted the defers, so "does this still need a human?"
+// is its answer to give. Emitting it as a boolean is what lets the caller go
+// scan -> fill -> hand over without reading the plan and forming an opinion.
+
+test("readiness is true only when nothing is deferred and something is fillable", () => {
+  const state = readiness({
+    items: [{ k: "f1", how: "fill", value: "Jane" }],
+    defer: [],
+  })
+  assert.equal(state.ready, true)
+  assert.equal(state.reason, null)
+})
+
+test("any deferred field makes the plan not ready, and says how many", () => {
+  const state = readiness({
+    items: [{ k: "f1", how: "fill", value: "Jane" }],
+    defer: [{ k: "f2", label: "I agree to the Terms", why: "consent" }],
+  })
+  assert.equal(state.ready, false)
+  assert.match(state.reason, /1 deferred/)
+})
+
+test("a plan of nothing but skips is not ready", () => {
+  // Every field optional-and-unresolved is a plan that would fill nothing;
+  // reporting that as ready would send the engine at an empty form.
+  const state = readiness({
+    items: [
+      { k: "f1", how: "skip", why: "optional and not in the fact base" },
+      { k: "f2", how: "skip", why: "picker half of a composite widget" },
+    ],
+    defer: [],
+  })
+  assert.equal(state.ready, false)
+  assert.equal(state.reason, "nothing to fill")
+})
+
+test("readiness survives a plan with no items or defer arrays at all", () => {
+  assert.equal(readiness({}).ready, false)
+})
+
+test("a real built plan carries its readiness", () => {
+  const notReady = buildPlan({
+    scan: scanOf([
+      { k: "f1", t: "text", l: "First Name", req: true },
+      { k: "f2", t: "checkbox", l: "I agree to the Terms and Conditions" },
+    ]),
+    resolved: [ok("f1", "Jane")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(readiness(notReady).ready, false)
+
+  const ready = buildPlan({
+    scan: scanOf([{ k: "f1", t: "text", l: "First Name", req: true }]),
+    resolved: [ok("f1", "Jane")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(readiness(ready).ready, true)
 })
 
 // --- consent --------------------------------------------------------------

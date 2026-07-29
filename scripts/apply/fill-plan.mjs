@@ -36,7 +36,11 @@ import {
   invalidate,
 } from "./field-cache.mjs"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 
 // Agreements. These are always the user's to accept, so they never become plan
 // items no matter how confidently the bank resolves them.
@@ -288,6 +292,26 @@ export function buildPlan({ scan, resolved, adapter, files = {}, url }) {
   }
 }
 
+// "Is any model judgment still required before this form can be filled?"
+//
+// The planner already knows the answer — it counted the defers and it knows
+// whether anything is left to fill. Emitting it as a boolean means the caller
+// branches on a flag instead of reading the plan and forming an opinion, which
+// is the whole point: on ready=true the path is scan -> fill -> hand over.
+export function readiness(plan) {
+  const fillable = (plan.items ?? []).filter((i) => i.how !== "skip")
+  if (plan.defer?.length) {
+    return {
+      ready: false,
+      reason: `${plan.defer.length} deferred field(s) need a human`,
+    }
+  }
+  if (!fillable.length) {
+    return { ready: false, reason: "nothing to fill" }
+  }
+  return { ready: true, reason: null }
+}
+
 function main() {
   const args = process.argv.slice(2)
   const wantJson = args.includes("--json")
@@ -316,7 +340,9 @@ function main() {
 
   const slug = args.find((a) => !a.startsWith("--"))
   if (!slug) {
-    console.error("usage: node scripts/apply/fill-plan.mjs <slug> [--scan <path>]")
+    console.error(
+      "usage: node scripts/apply/fill-plan.mjs <slug> [--scan <path>]",
+    )
     process.exit(2)
   }
   const jobDir = path.join(jobsDir, slug)
@@ -388,14 +414,18 @@ function main() {
     `  return await eval("(" + src + ")")(page, plan)\n` +
     `}`
 
+  const state = readiness(plan)
+
   if (wantJson) {
-    console.log(JSON.stringify({ plan, bootstrap }, null, 2))
+    console.log(JSON.stringify({ plan, bootstrap, ...state }, null, 2))
     return
   }
   if (isTerse()) {
     const skipped = plan.items.filter((i) => i.how === "skip")
     console.log(
-      `ats=${plan.ats} items=${plan.items.length - skipped.length}` +
+      `ats=${plan.ats} ready=${state.ready}` +
+        (state.ready ? "" : ` reason=${JSON.stringify(state.reason)}`) +
+        ` items=${plan.items.length - skipped.length}` +
         ` defer=${plan.defer.length} skip=${skipped.length}` +
         ` cache=${cacheStats.hits}/${cacheStats.hits + cacheStats.probed} fp=${fp}`,
     )
@@ -410,6 +440,11 @@ function main() {
     return
   }
   console.log(`ATS: ${plan.ats}`)
+  console.log(
+    state.ready
+      ? "Ready to fill — nothing needs a decision."
+      : `Not ready — ${state.reason}.`,
+  )
   console.log(`${plan.items.length} field(s) will be filled automatically.`)
   if (plan.defer.length) {
     console.log(`\n${plan.defer.length} left for you:`)

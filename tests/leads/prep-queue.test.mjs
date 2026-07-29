@@ -11,7 +11,11 @@ import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { buildQueue, indexWorkspaces } from "../../scripts/leads/prep-queue.mjs"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 const SCRIPT = path.join(ROOT, "scripts", "leads", "prep-queue.mjs")
 
 const lead = (n, over = {}) => ({
@@ -97,6 +101,52 @@ test("respects --top after filtering, not before", () => {
     q.map((x) => x.company),
     ["Co3", "Co4"],
     "the two verified leads are skipped, not counted against the limit",
+  )
+})
+
+// ---------- clustering ----------
+//
+// A cluster member is a posting that a resume tailored for its leader already
+// serves. Queueing it would pay for the same tailoring run twice.
+
+test("a covered lead rides along on its leader instead of taking a slot", () => {
+  const covered = new Map([["gh:2", "gh:1"]])
+  const q = buildQueue([lead(1), lead(2), lead(3)], { top: 5, covered })
+  assert.deepEqual(
+    q.map((x) => x.id),
+    ["gh:1", "gh:3"],
+  )
+  assert.deepEqual(
+    q[0].covers.map((c) => c.id),
+    ["gh:2"],
+  )
+  assert.deepEqual(q[1].covers, [], "an uncovered lead carries an empty list")
+})
+
+test("the top cut-off does not hide what a queued run already covers", () => {
+  // Cluster members rank below their leader by construction, so a naive
+  // `break` at the limit would drop exactly the postings worth reporting.
+  const covered = new Map([["gh:4", "gh:1"]])
+  const q = buildQueue([lead(1), lead(2), lead(3), lead(4)], {
+    top: 2,
+    covered,
+  })
+  assert.equal(q.length, 2)
+  assert.deepEqual(
+    q[0].covers.map((c) => c.id),
+    ["gh:4"],
+  )
+})
+
+test("a covered lead is not queued even when its leader is not", () => {
+  // The leader was already applied to, so its tailored resume exists — the
+  // member is served, not stranded.
+  const applied = [{ company: "Co1", title: "Full Stack Engineer" }]
+  const covered = new Map([["gh:2", "gh:1"]])
+  const q = buildQueue([lead(1), lead(2)], { top: 5, applied, covered })
+  assert.deepEqual(
+    q.map((x) => x.id),
+    [],
   )
 })
 

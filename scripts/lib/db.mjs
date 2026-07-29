@@ -174,6 +174,19 @@ CREATE TABLE IF NOT EXISTS board_stats (
 export function openDb(file = DB_PATH) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const db = new DatabaseSync(file)
+  // FIRST, before any other statement. WAL lets readers run alongside a writer,
+  // but writers still serialize, and a writer that arrives while another holds
+  // the lock fails IMMEDIATELY unless the connection has been told to wait.
+  // That matters now that pipeline-jobs fans out several job-worker subagents,
+  // each opening its own connection.
+  //
+  // The ordering is not cosmetic: switching the journal mode below takes a
+  // brief exclusive lock, so four processes opening the same store at once used
+  // to have three of them die on `PRAGMA journal_mode = WAL` itself — before
+  // any timeout they set afterwards could apply. Every write here is one short
+  // statement or a small transaction, so waiting is the right answer and 5s is
+  // far beyond what any of them need.
+  db.exec("PRAGMA busy_timeout = 5000")
   db.exec("PRAGMA journal_mode = WAL")
   // Each `mark` is its own process, so per-call fsync cost is what the user
   // feels: at full durability 57 sequential updates cost ~246 ms, almost all
@@ -334,6 +347,21 @@ export function keywordsFor(db, leadId) {
     )
     .all(leadId)
     .map((r) => r.keyword)
+}
+
+// Every lead's keywords in one query. Clustering compares each lead against
+// every other one, so the per-lead keywordsFor() would be N round trips to
+// answer a question the store can hand over in a single pass.
+export function keywordMap(db) {
+  const map = new Map()
+  for (const r of db
+    .prepare("SELECT lead_id, keyword FROM lead_keywords ORDER BY lead_id")
+    .all()) {
+    let set = map.get(r.lead_id)
+    if (!set) map.set(r.lead_id, (set = new Set()))
+    set.add(r.keyword)
+  }
+  return map
 }
 
 // Demand counts across the stored leads, optionally narrowed to one status —

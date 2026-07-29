@@ -3,8 +3,11 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { spawn } from "node:child_process"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import {
   openDb,
+  keywordMap,
   upsertLeads,
   setLeadStatus,
   recordScreen,
@@ -22,6 +25,12 @@ import {
   updateApplication,
   readApplications,
 } from "../../scripts/lib/db.mjs"
+
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 
 function tmpDb(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "leaddb-"))
@@ -125,6 +134,66 @@ test("resolveLeadSource honours an explicit path and infers the kind", () => {
   assert.ok(auto.file && ["db", "json"].includes(auto.kind))
 })
 
+// ---------- concurrency ----------
+//
+// pipeline-jobs fans out several job-worker subagents at once and each opens its
+// own connection. WAL keeps readers out of the way, but writers serialize, and a
+// writer that arrives during another's commit fails IMMEDIATELY unless it is
+// told to wait.
+
+test("every connection is opened willing to wait for a busy writer", (t) => {
+  const db = openDb(tmpDb(t))
+  const { timeout } = db.prepare("PRAGMA busy_timeout").get()
+  assert.ok(timeout >= 1000, `busy_timeout is ${timeout}`)
+  db.close()
+})
+
+test("four processes writing the same store at once all get their rows in", async (t) => {
+  const dbFile = tmpDb(t)
+  const dir = path.dirname(dbFile)
+  const worker = path.join(dir, "worker.mjs")
+  fs.writeFileSync(
+    worker,
+    `import { openDb, upsertLeads, setLeadStatus } from ${JSON.stringify(
+      pathToFileURL(path.join(ROOT, "scripts", "lib", "db.mjs")).href,
+    )}
+const [file, tag] = process.argv.slice(2)
+const db = openDb(file)
+for (let i = 0; i < 25; i++) {
+  upsertLeads(db, [{ id: tag + "-" + i, status: "new" }])
+  setLeadStatus(db, tag + "-" + i, "recommended")
+}
+db.close()
+`,
+  )
+
+  const results = await Promise.all(
+    ["a", "b", "c", "d"].map(
+      (tag) =>
+        new Promise((resolve) => {
+          const p = spawn(process.execPath, [worker, dbFile, tag], {
+            stdio: ["ignore", "ignore", "pipe"],
+          })
+          let err = ""
+          p.stderr.on("data", (d) => (err += d))
+          p.on("close", (code) => resolve({ tag, code, err }))
+        }),
+    ),
+  )
+
+  for (const r of results) {
+    assert.equal(r.code, 0, `worker ${r.tag} failed: ${r.err}`)
+  }
+  const db = openDb(dbFile)
+  const { c } = db.prepare("SELECT COUNT(*) c FROM leads").get()
+  const { n } = db
+    .prepare("SELECT COUNT(*) n FROM leads WHERE status = 'recommended'")
+    .get()
+  db.close()
+  assert.equal(c, 100, "no writer lost its rows to SQLITE_BUSY")
+  assert.equal(n, 100)
+})
+
 // ---------- keywords ----------
 
 test("setLeadKeywords replaces rather than accumulates", (t) => {
@@ -141,6 +210,25 @@ test("setLeadKeywords replaces rather than accumulates", (t) => {
 
   setLeadKeywords(db, "a", [])
   assert.deepEqual(keywordsFor(db, "a"), [])
+  db.close()
+})
+
+test("keywordMap hands over every lead's terms in one pass", (t) => {
+  // Clustering compares every lead against every other one; per-lead lookups
+  // would be N queries for something one query answers.
+  const db = openDb(tmpDb(t))
+  upsertLeads(db, [
+    { id: "a", status: "new" },
+    { id: "b", status: "new" },
+    { id: "c", status: "new" },
+  ])
+  setLeadKeywords(db, "a", ["React", "Node.js"])
+  setLeadKeywords(db, "b", ["React"])
+
+  const map = keywordMap(db)
+  assert.deepEqual([...map.get("a")].sort(), ["Node.js", "React"])
+  assert.deepEqual([...map.get("b")], ["React"])
+  assert.equal(map.has("c"), false, "a lead with no keywords has no entry")
   db.close()
 })
 

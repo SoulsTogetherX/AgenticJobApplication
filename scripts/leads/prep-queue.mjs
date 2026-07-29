@@ -11,7 +11,10 @@
 //
 // Usage: node scripts/leads/prep-queue.mjs [--top N] [--status new|all] [--json]
 //        [--leads <path>] [--profile <path>] [--jobs-dir <path>]
-//        [--applications <path>]
+//        [--applications <path>] [--cluster [--threshold 0.6]]
+//
+// --cluster collapses near-duplicate postings (cluster.mjs) so a group that one
+// tailored resume can serve costs one queue slot, not four.
 //
 // Exit codes: 0 ok, 2 usage / missing store.
 import fs from "node:fs"
@@ -20,10 +23,20 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { loadYamlFile, isTerse } from "../lib/lib.mjs"
 import { profileText } from "../profile/profile-gaps.mjs"
 import { rankLeads } from "./recommend.mjs"
-import { readLeadStore, resolveLeadSource } from "../lib/db.mjs"
+import { clusterLeads, coveredBy } from "./cluster.mjs"
+import {
+  openDb,
+  keywordMap,
+  readLeadStore,
+  resolveLeadSource,
+} from "../lib/db.mjs"
 import { readApplications } from "../lib/db.mjs"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 
 const norm = (s) =>
   String(s ?? "")
@@ -70,26 +83,47 @@ export function indexWorkspaces(jobsDir) {
 const DONE_STATUSES = new Set(["verified", "approved", "rendered"])
 
 // Pure core (exported for tests).
+//
+// `covered` maps a lead id to the id of the cluster leader that stands in for
+// it (scripts/leads/cluster.mjs). A covered lead never earns its own tailoring
+// run — the resume tailored for its leader is the one it would be sent with —
+// so it is attached to the leader's entry as `covers` instead of queued.
 export function buildQueue(
   rankedLeads,
-  { workspaces = new Map(), applied = [], top = 5 } = {},
+  { workspaces = new Map(), applied = [], top = 5, covered = new Map() } = {},
 ) {
   const appliedKeys = new Set(applied.map(companyTitleKey))
   const queue = []
+  const byLeader = new Map()
   for (const lead of rankedLeads) {
-    if (queue.length >= top) break
+    const leader = covered.get(lead.id)
+    if (leader) {
+      // Checked before the `top` cut-off, not after: a cluster's members are
+      // ranked below its leader by construction, so stopping at the cut-off
+      // would hide exactly the postings the queued run already serves.
+      byLeader.get(leader)?.covers.push({
+        id: lead.id,
+        company: lead.company,
+        title: lead.title,
+        url: lead.url,
+      })
+      continue
+    }
+    if (queue.length >= top) continue
     if (appliedKeys.has(companyTitleKey(lead))) continue
 
     const ws = workspaces.get(lead.url)
     if (ws && DONE_STATUSES.has(ws.resume_status)) continue
 
-    queue.push({
+    const entry = {
       id: lead.id,
       company: lead.company,
       title: lead.title,
       url: lead.url,
       score: lead.score,
       slug: ws?.slug ?? null,
+      // Other postings one tailoring run for this lead also covers.
+      covers: [],
       // Why this one needs work — the pipeline uses it to decide whether to
       // create a workspace first or just run the tailoring step.
       reason: !ws
@@ -97,7 +131,9 @@ export function buildQueue(
         : ws.resume_status
           ? `resume_${ws.resume_status}`
           : "no_resume",
-    })
+    }
+    queue.push(entry)
+    byLeader.set(lead.id, entry)
   }
   return queue
 }
@@ -141,11 +177,38 @@ function main() {
     appsPath.endsWith("applications.yaml") ? null : appsPath,
   )
 
+  // Clustering runs over the RANKED list so the best-scoring posting of each
+  // group leads it — that is the one worth tailoring for.
+  let covered = new Map()
+  if (args.includes("--cluster")) {
+    let keywords
+    if (leadsPath.endsWith(".db")) {
+      const db = openDb(leadsPath)
+      try {
+        keywords = keywordMap(db)
+      } finally {
+        db.close()
+      }
+    }
+    covered = coveredBy(
+      clusterLeads(ranked, {
+        threshold: Number(flag(args, "--threshold") || 0.6),
+        keywords,
+      }),
+    )
+  }
+
   const queue = buildQueue(ranked, {
     workspaces: indexWorkspaces(jobsDir),
     applied,
     top,
+    covered,
   })
+  // Cluster members whose leader did not make the queue (already applied to,
+  // already tailored, or below the cut-off) are served by an existing resume
+  // and are not silently gone — they are counted here.
+  const attached = queue.reduce((n, q) => n + q.covers.length, 0)
+  const suppressed = covered.size - attached
 
   if (args.includes("--json")) {
     console.log(JSON.stringify(queue, null, 2))
@@ -154,10 +217,19 @@ function main() {
   if (isTerse()) {
     for (const q of queue) {
       console.log(
-        `${q.score}\t${q.reason}\t${q.slug ?? "-"}\t${q.company}\t${q.title}\t${q.url}`,
+        `${q.score}\t${q.reason}\t${q.slug ?? "-"}\t${q.company}\t${q.title}\t${q.url}` +
+          (q.covers.length ? `\tcovers=${q.covers.length}` : ""),
       )
+      for (const c of q.covers) {
+        console.log(`covers\t${c.id}\t${c.company}\t${c.title}\t${c.url}`)
+      }
     }
-    console.log(`queued=${queue.length} ranked=${ranked.length}`)
+    console.log(
+      `queued=${queue.length} ranked=${ranked.length}` +
+        (covered.size
+          ? ` clustered=${attached} covered_elsewhere=${suppressed}`
+          : ""),
+    )
     return
   }
   if (!queue.length) {
@@ -170,8 +242,19 @@ function main() {
     console.log(
       `[${q.score}] ${q.company} — ${q.title}\n  ${q.reason}${q.slug ? ` (${q.slug})` : ""}\n  ${q.url}`,
     )
+    for (const c of q.covers) {
+      console.log(`  also covers: ${c.company} — ${c.title}`)
+    }
   }
-  console.log(`\n${queue.length} lead(s) ready to pre-tailor.`)
+  console.log(
+    `\n${queue.length} lead(s) ready to pre-tailor` +
+      (attached
+        ? `, covering ${attached} further posting(s) with the same resume.`
+        : ".") +
+      (suppressed > 0
+        ? `\n${suppressed} more are covered by a resume that already exists.`
+        : ""),
+  )
 }
 
 const isMain =

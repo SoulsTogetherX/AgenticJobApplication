@@ -13,7 +13,7 @@
 // Exit codes: 0 = ran fine, 2 = usage error.
 import fs from "node:fs"
 import path from "node:path"
-import { techTermsIn, isTerse } from "../lib/lib.mjs"
+import { techTermsIn, isTerse, titleTokens, jaccard } from "../lib/lib.mjs"
 
 const args = process.argv.slice(2)
 function flag(name, dflt) {
@@ -47,27 +47,6 @@ const readJob = (file) => {
   } catch {
     return null
   }
-}
-
-const STOP = new Set(
-  "a an the of and or for to in at with senior sr junior jr staff lead principal i ii iii remote contract fulltime full time parttime part".split(
-    " ",
-  ),
-)
-const titleTokens = (s) =>
-  new Set(
-    String(s ?? "")
-      .toLowerCase()
-      .replace(/[^a-z0-9+#\s]/g, " ")
-      .split(/\s+/)
-      .filter((t) => t && !STOP.has(t)),
-  )
-
-function jaccard(a, b) {
-  if (!a.size || !b.size) return 0
-  let inter = 0
-  for (const t of a) if (b.has(t)) inter++
-  return inter / (a.size + b.size - inter)
 }
 
 const stackOf = (job) =>

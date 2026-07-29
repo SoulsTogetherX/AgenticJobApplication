@@ -30,6 +30,12 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   `.claude/skills/apply-job/scan-page.js`; never invents an answer). An answer
   saved for a question's **exact** label outranks the label rules, so a pick the
   user approved once resolves `OK` on every later application to that ATS.
+- Every question the fact base cannot answer, across ALL prepped jobs, in one
+  list: `node scripts/apply/pending-questions.mjs [<slug> ...] [--no-predict]`
+  — `answers.yaml` is global, so asking once resolves the same field on every
+  future application. Merges the defers of scanned forms and predicts what an
+  unscanned job's board will ask from the remembered form shape; consent boxes
+  are never listed (those stay the user's to tick in the browser).
 - Can an existing tailored resume be reused for a new posting?
   `node scripts/documents/reuse-check.mjs <slug>` (recommends only; user approves reuse)
 - Check application history: `node scripts/applications/check-applied.mjs "<company, title, or slug>"`
@@ -63,7 +69,14 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 - Profile-gap report: `node scripts/profile/profile-gaps.mjs [--json] [--min-demand N]`
 - Rank leads against the profile: `node scripts/leads/recommend.mjs [--top N]`
 - Which leads to tailor ahead of time (keeps tailoring off the apply path):
-  `node scripts/leads/prep-queue.mjs [--top N] [--json]`
+  `node scripts/leads/prep-queue.mjs [--top N] [--cluster] [--json]`
+- Group near-duplicate postings so one tailored resume serves several:
+  `node scripts/leads/cluster.mjs [--status new|all] [--threshold 0.6] [--json]`
+  — 50/50 title and stack overlap over `lead_keywords`, the same weighting
+  `reuse-check.mjs` uses. Members are compared against the cluster **leader**,
+  never against each other, so a cluster cannot chain its way from full-stack to
+  platform engineering one hop at a time. Recommends only; the user approves
+  reusing a resume across a cluster.
 - Mechanical ghost/scam screen: `node scripts/leads/screen.mjs [--status new] [--skip-screened] [--no-record]`
   — records its verdicts to the `screens` table as `source: mechanical`.
   `--skip-screened` leaves out leads that already carry a **model** verdict.
@@ -162,11 +175,12 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 - `scripts/` — deterministic helpers (no LLM calls), grouped by domain:
   - `lib/` — shared infrastructure: `lib.mjs`, `db.mjs`
   - `leads/` — find, filter, rank: find-jobs, screen, recommend, prep-queue,
-    board-yield, discover-boards, manage-sources
+    cluster, board-yield, discover-boards, manage-sources
   - `applications/` — the application record: applications, log-application,
     update-application, check-applied, follow-ups
   - `documents/` — tailored docs: new-job, render-pdf, verify-claims, reuse-check
-  - `apply/` — browser form-filling: answer-bank, fill-plan, field-cache, `ats/`
+  - `apply/` — browser form-filling: answer-bank, fill-plan, pending-questions,
+    field-cache, `ats/`
   - `profile/` — fact-base tools: apply-profile, profile-gaps, save-answer
   - `maintenance/` — store lifecycle: migrate, prune-jobs, archive
   - `hooks/` — guardrail hooks wired in `.claude/settings.json` (guard-files,
@@ -230,6 +244,12 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   (`--user-data-dir .playwright-mcp/profile` in `.mcp.json`) so ATS logins
   survive between sessions. It holds real session cookies — gitignored, never
   commit it. Changing `.mcp.json` needs a session restart to take effect.
+- `openDb` sets `PRAGMA busy_timeout` **before** `journal_mode = WAL`, and the
+  order is load-bearing: switching the journal mode takes a brief exclusive
+  lock, so with the pragmas the other way round four processes opening the store
+  at once have three die on the WAL statement itself — before the timeout they
+  were about to set could apply. This is what makes the pipeline's subagent
+  fan-out safe.
 - The `SCHEMA` string in `scripts/lib/db.mjs` is a **template literal**, so a
   backtick anywhere in its SQL comments ends the string and the file stops
   parsing. Quote identifiers in those comments with plain words, not backticks.

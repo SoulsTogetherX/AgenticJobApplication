@@ -93,7 +93,13 @@ export function recordCache(cache, { fp, scan, atsId, url, now = new Date() }) {
     if (!norm(f.l)) continue
     const key = fieldKey(f)
     const prev = entry.fields[key] ?? {}
-    const next = { t: f.t ?? prev.t }
+    // `l` and `req` are the label as the form writes it and whether the form
+    // insists on it. They are shape, like the options are, and they are what
+    // pending-questions.mjs needs to say "these four applications will all ask
+    // this, and the fact base cannot answer it" before a browser is opened.
+    const next = { t: f.t ?? prev.t, l: f.l ?? prev.l }
+    const req = f.req ?? prev.req
+    if (req) next.req = true
     const opts = Array.isArray(f.opts) && f.opts.length ? f.opts : prev.opts
     if (opts) next.opts = opts.slice(0, 60)
     const sel = f.sel ?? prev.sel

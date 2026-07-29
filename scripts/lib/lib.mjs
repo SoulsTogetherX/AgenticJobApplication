@@ -306,6 +306,39 @@ export function techTermsIn(text) {
 }
 
 // ---------------------------------------------------------------------------
+// Set similarity — "are these two postings the same job in different clothes?"
+// ---------------------------------------------------------------------------
+
+// Seniority and employment-type words never distinguish one posting from
+// another in this pipeline (the limits file already fixed the seniority band),
+// so they are dropped before comparing: "Senior Full-Stack Engineer II" and
+// "Full Stack Developer" should read as the same title.
+const TITLE_STOP = new Set(
+  "a an the of and or for to in at with senior sr junior jr staff lead principal i ii iii remote contract fulltime full time parttime part".split(
+    " ",
+  ),
+)
+
+export function titleTokens(s) {
+  return new Set(
+    String(s ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9+#\s]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t && !TITLE_STOP.has(t)),
+  )
+}
+
+// Intersection over union. Empty on either side scores 0 rather than 1: two
+// postings we know nothing about are not evidence of a match.
+export function jaccard(a, b) {
+  if (!a.size || !b.size) return 0
+  let inter = 0
+  for (const t of a) if (b.has(t)) inter++
+  return inter / (a.size + b.size - inter)
+}
+
+// ---------------------------------------------------------------------------
 // Lightweight validators (mirror schemas/*.schema.json)
 // ---------------------------------------------------------------------------
 const STATUSES = ["pending", "drafted", "verified", "approved", "rendered"]

@@ -188,6 +188,19 @@ into a numbered list for the approval message. Record every question into
 options offered, and which one you chose. That is what makes it saveable in
 Phase 4. A pick the user never saw is not saved.
 
+**If other jobs are prepped, ask for all of them at once.** `answers.yaml` is
+global, so an answer given here resolves the same question on every future
+application:
+
+```bash
+node scripts/apply/pending-questions.mjs
+```
+
+It merges the defers of every prepped workspace, drops consent boxes (those stay
+in the browser) and anything the fact base can already answer, and predicts what
+the other jobs' boards will ask from the remembered form shapes. Fold its list
+into this one approval message rather than asking again per job.
+
 ## Phase 3 — Tailor (delegated)
 
 **First check whether this is already done.** If `jobs/<slug>/context.json` has

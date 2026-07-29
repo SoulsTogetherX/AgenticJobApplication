@@ -19,8 +19,11 @@ returns a compact verdict, never a transcript.
 - The user is ALWAYS the one who clicks Submit (rule 6), and PDF rendering
   still requires their approval (rule 5) — so the pipeline preps applications;
   it never finishes them alone.
-- Default cap: 5 jobs per run (ask before exceeding). Run subagents in
-  parallel batches of no more than 3.
+- Default cap: 5 jobs per run (ask before exceeding). That cap is what bounds
+  concurrency — fan the run out in ONE wave rather than waves of three. Each
+  `job-worker` owns exactly one `jobs/<slug>/` and nothing else, and the lead
+  store now opens every connection willing to wait on a busy writer, so a
+  barrier between batches buys nothing but wall-clock.
 
 ## Pre-tailoring (run this ahead of time, not while the user waits)
 
@@ -30,7 +33,7 @@ turns applying into fill-and-review. So when the user asks to pipeline, prep, or
 "get things ready", pick the targets mechanically:
 
 ```bash
-node scripts/leads/prep-queue.mjs --top 5 --json
+node scripts/leads/prep-queue.mjs --top 5 --cluster --json
 ```
 
 It returns only leads that rank well, have not been applied to, and have **no
@@ -43,9 +46,16 @@ carries a `reason`:
 | `no_resume`       | workspace exists; go straight to Stage B                  |
 | `resume_<status>` | a draft exists but never passed verify-claims — finish it |
 
-Fan these out to `job-worker` (Stage B only) in batches of no more than 3. An
-empty queue means the top leads are already prepped — say so and stop; do not
-re-tailor to look busy.
+`--cluster` groups near-duplicate postings (`scripts/leads/cluster.mjs`) so four
+React/Node full-stack roles cost ONE tailoring run, not four. Each queued row
+lists what it `covers`; those siblings are not queued. Tailoring is the only
+irreducibly expensive step in this pipeline, so this is the flag that matters —
+report the covered postings, and let the user approve reusing the resume for
+them (`reuse-check.mjs` scores the pairing per job).
+
+Fan the whole queue out to `job-worker` (Stage B only) in one wave — one
+subagent per slug, always. An empty queue means the top leads are already
+prepped — say so and stop; do not re-tailor to look busy.
 
 ## Input
 
@@ -158,6 +168,21 @@ time via the apply-job skill, with the user watching the browser and clicking
 Submit. Never let a subagent drive the application form unattended.
 
 ## Wrap-up (main session)
+
+**Ask the questions once, for the whole batch.** `profile/answers.yaml` is
+global — "Do you require sponsorship?" answered once is answered for every
+application that will ever be filed:
+
+```bash
+node scripts/apply/pending-questions.mjs
+```
+
+It merges what every prepped workspace still cannot answer, drops consent boxes
+(the user ticks those in the browser) and anything the fact base already covers,
+and predicts what these boards will ask from the remembered form shapes. Put the
+whole list in ONE message, then save each answer with
+`scripts/profile/save-answer.mjs`. Asking per job at apply time is N-1 avoidable
+interruptions with the user waiting at a form.
 
 Present one compact table: company | screen verdict | tailor status | next
 step. Ask which prepped jobs to review; then run apply-job per approved job.

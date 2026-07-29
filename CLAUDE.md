@@ -230,6 +230,9 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   (`--user-data-dir .playwright-mcp/profile` in `.mcp.json`) so ATS logins
   survive between sessions. It holds real session cookies — gitignored, never
   commit it. Changing `.mcp.json` needs a session restart to take effect.
+- The `SCHEMA` string in `scripts/lib/db.mjs` is a **template literal**, so a
+  backtick anywhere in its SQL comments ends the string and the file stops
+  parsing. Quote identifiers in those comments with plain words, not backticks.
 - `.claude/skills/apply-job/scan-page.js` and `scan.driver.mjs` are eval'd as
   bare function expressions, not modules — they are in `.prettierignore`
   because prettier's leading-semicolon guard would make them unparseable.

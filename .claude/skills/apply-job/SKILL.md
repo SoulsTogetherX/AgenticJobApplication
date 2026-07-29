@@ -30,7 +30,7 @@ Two design rules explain every step below:
   Playwright window, then re-scan and continue.
 - Never solve CAPTCHAs — hand off to the user.
 - Every answer must come from `profile/profile.yaml` or `profile/answers.yaml`.
-  Unknown → ask the user, `node scripts/save-answer.mjs`, then fill.
+  Unknown → ask the user, `node scripts/profile/save-answer.mjs`, then fill.
   Rephrasing a fact is fine; deriving a number that is not in the profile
   (years of experience, salary, notice period) is inventing — ask instead.
 
@@ -49,9 +49,9 @@ silently burn a frontier model on form-filling.
    `browser_evaluate` with `() => document.body.innerText.slice(0, 6000)` —
    cheaper and more complete than a snapshot for reading an ad. Extract company,
    title, location, requirements.
-3. **History check**: `node scripts/check-applied.mjs "<Company>"`. Already
+3. **History check**: `node scripts/applications/check-applied.mjs "<Company>"`. Already
    applied → report it and get the user's go-ahead first.
-4. **Workspace**: `node scripts/new-job.mjs <slug> --company ... --title ...
+4. **Workspace**: `node scripts/documents/new-job.mjs <slug> --company ... --title ...
 --url ...`, then fill `job.json` with the description/requirements.
 
 ## Phase 2 — Open the form and read it BEFORE tailoring
@@ -119,7 +119,7 @@ scanned or filled through the parent frame) and scan again.
 Write the scan JSON to `jobs/<slug>/scan-p<N>.json`, then build the plan:
 
 ```bash
-node scripts/fill-plan.mjs <slug>
+node scripts/apply/fill-plan.mjs <slug>
 ```
 
 This runs `answer-bank.mjs` internally (profile + answer bank only, never a
@@ -148,7 +148,7 @@ From the scan, settle three things:
   (some Workday and in-house forms) needs no render at all — that saves ~6s and
   a browser launch. If there is a rich-text/textarea resume box instead, the
   markdown text goes there.
-- **Reuse?** `node scripts/reuse-check.mjs <slug>` — if it returns
+- **Reuse?** `node scripts/documents/reuse-check.mjs <slug>` — if it returns
   `verdict=REUSE`, an existing tailored resume is close enough that re-tailoring
   is wasted work. Offer it in the approval message with the score; the user
   decides. Never reuse silently.
@@ -164,7 +164,7 @@ into a numbered list for the approval message. Record every question into
 `resume.status` of `verified` (or `approved`/`rendered`), the pipeline
 pre-tailored it — skip this phase entirely and carry `tailor.summary` from
 `context.json` into the approval message. Re-tailoring verified work is pure
-latency with the user watching. `node scripts/prep-queue.mjs` is what keeps
+latency with the user watching. `node scripts/leads/prep-queue.mjs` is what keeps
 that state populated ahead of time.
 
 Otherwise, unless the user accepted a reuse, hand the tailoring to `job-worker` (Sonnet):
@@ -185,13 +185,13 @@ Send a single message containing:
 Then wait. On the reply, in one batch:
 
 ```bash
-node scripts/save-answer.mjs "Q1" "A1" && node scripts/save-answer.mjs "Q2" "A2"
+node scripts/profile/save-answer.mjs "Q1" "A1" && node scripts/profile/save-answer.mjs "Q2" "A2"
 ```
 
 and render the PDFs — only now, only if the form needs files:
 
 ```bash
-node scripts/render-pdf.mjs jobs/<slug>/resume.md jobs/<slug>/resume.pdf
+node scripts/documents/render-pdf.mjs jobs/<slug>/resume.md jobs/<slug>/resume.pdf
 ```
 
 Later pages of the same application resolve those saved answers automatically in
@@ -201,7 +201,7 @@ B, so this message does not repeat unless a later page asks something new.
 
 ### D+E. Fill and verify (ONE call)
 
-Re-run `node scripts/fill-plan.mjs <slug>` after rendering PDFs and saving any
+Re-run `node scripts/apply/fill-plan.mjs <slug>` after rendering PDFs and saving any
 new answers, then run the bootstrap it printed:
 
 ```
@@ -249,7 +249,7 @@ always an explicit `browser_click` you make, and submitting is always the user.
 Once the user confirms they submitted:
 
 ```bash
-node scripts/log-application.mjs <slug> --company "<Company>" --title "<Title>" --url "<posting url>"
+node scripts/applications/log-application.mjs <slug> --company "<Company>" --title "<Title>" --url "<posting url>"
 ```
 
 Update `context.json` statuses and confirm the log entry.

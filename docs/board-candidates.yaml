@@ -1,5 +1,5 @@
 # =============================================================================
-# BOARD CANDIDATES — input to `node scripts/discover-boards.mjs --candidates`.
+# BOARD CANDIDATES — input to `node scripts/leads/discover-boards.mjs --candidates`.
 #
 # This is a shortlist to TEST, not a list to add. Every entry is fetched, run
 # through docs/application-limits.yaml, and only proposed if it currently has

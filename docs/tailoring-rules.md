@@ -41,14 +41,14 @@ sources — salary expectations, work authorization, relocation, notice period,
 user in chat. Then persist it:
 
 ```bash
-node scripts/save-answer.mjs "<question>" "<the user's answer>"
+node scripts/profile/save-answer.mjs "<question>" "<the user's answer>"
 ```
 
 Never guess. Never leave the answer only in conversation memory.
 
 ## 5. Shared context (`jobs/<slug>/context.json`)
 
-- Whichever skill runs first creates it (via `scripts/new-job.mjs` skeleton) and
+- Whichever skill runs first creates it (via `scripts/documents/new-job.mjs` skeleton) and
   fills `analysis`: key requirements, matched fact ids, gaps, tone, keywords.
 - The second skill MUST read it and stay consistent: same emphasized skills,
   same framing of experience, no contradictions (e.g. resume leads with React
@@ -74,7 +74,7 @@ Never guess. Never leave the answer only in conversation memory.
 
 ## 8. Verification & approval gate
 
-1. Run `node scripts/verify-claims.mjs <mode> <file> --job jobs/<slug>/job.json`.
+1. Run `node scripts/documents/verify-claims.mjs <mode> <file> --job jobs/<slug>/job.json`.
 2. Fix every violation — do not weaken the verifier, ever.
 3. Show the user: what was emphasized, dropped, and rephrased + any gaps
    (requirements the profile can't cover — these are listed, never papered over).

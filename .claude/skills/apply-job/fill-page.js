@@ -1,4 +1,4 @@
-// Deterministic form filler. Executes a plan built by scripts/fill-plan.mjs;
+// Deterministic form filler. Executes a plan built by scripts/apply/fill-plan.mjs;
 // makes no decisions of its own, so the model is not in this loop.
 //
 // It is written as a real function and shipped as SOURCE: the driver loads this

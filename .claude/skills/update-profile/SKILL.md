@@ -34,7 +34,7 @@ rewritten.** The apply script enforces that deterministically.
 5. **Apply**:
 
    ```bash
-   node scripts/apply-profile.mjs
+   node scripts/profile/apply-profile.mjs
    ```
 
    Add `--allow-edits` / `--allow-removals` ONLY for changes the user explicitly

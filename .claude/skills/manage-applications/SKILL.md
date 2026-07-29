@@ -35,14 +35,14 @@ CLAUDE.md rule 2 still holds, and it is about _provenance_, not about a file:
 ## Reading
 
 ```bash
-node scripts/applications.mjs list [--status <s>] [--company "X"] [--json]
-node scripts/applications.mjs find "<company|title|slug>" [--json]
-node scripts/applications.mjs stats [--json]
+node scripts/applications/applications.mjs list [--status <s>] [--company "X"] [--json]
+node scripts/applications/applications.mjs find "<company|title|slug>" [--json]
+node scripts/applications/applications.mjs stats [--json]
 ```
 
 `find` is the fast answer to "did I apply to X?" — it matches slug, company and
 title. For the richer duplicate check that also reasons about how long ago and
-about near-miss company names, `scripts/check-applied.mjs` is still the right
+about near-miss company names, `scripts/applications/check-applied.mjs` is still the right
 tool and the check-applied skill still owns that flow.
 
 ## Writing
@@ -51,9 +51,9 @@ Creating and updating keep their own scripts — they carry the confirmation
 rules above:
 
 ```bash
-node scripts/log-application.mjs <slug> --company "X" --title "Y" \
+node scripts/applications/log-application.mjs <slug> --company "X" --title "Y" \
   [--url <url>] [--date YYYY-MM-DD] [--notes "..."]
-node scripts/update-application.mjs <slug-or-company> --status <status> [--followed-up]
+node scripts/applications/update-application.mjs <slug-or-company> --status <status> [--followed-up]
 ```
 
 Statuses: `applied`, `followed_up`, `interviewing`, `offer`, `rejected`,
@@ -62,9 +62,9 @@ Statuses: `applied`, `followed_up`, `interviewing`, `offer`, `rejected`,
 Removing and re-exporting:
 
 ```bash
-node scripts/applications.mjs remove <slug>            # dry run: prints what would go
-node scripts/applications.mjs remove <slug> --confirm  # actually deletes
-node scripts/applications.mjs export                   # rewrite the YAML export
+node scripts/applications/applications.mjs remove <slug>            # dry run: prints what would go
+node scripts/applications/applications.mjs remove <slug> --confirm  # actually deletes
+node scripts/applications/applications.mjs export                   # rewrite the YAML export
 ```
 
 `remove` without `--confirm` prints the entry and exits non-zero. Show that
@@ -72,7 +72,7 @@ output to the user before passing `--confirm`.
 
 ## Maintenance
 
-- `node scripts/migrate.mjs` rebuilds `jobs/leads.db` from the on-disk sources.
+- `node scripts/maintenance/migrate.mjs` rebuilds `jobs/leads.db` from the on-disk sources.
   It is flat and idempotent — safe to re-run. It imports applications **only**
   when the table is empty, so it can never undo recorded outcomes.
 - If `jobs/leads.db` is lost, the YAML export is the recovery path: migrate

@@ -1,10 +1,10 @@
 # =============================================================================
-# JOB SOURCES — the boards swept by `node scripts/find-jobs.mjs search`.
+# JOB SOURCES — the boards swept by `node scripts/leads/find-jobs.mjs search`.
 #
 # Manage this list with the manage-sources skill (or by hand):
-#   node scripts/manage-sources.mjs add --type <ats> --slug <slug> --company "Name"
-#   node scripts/manage-sources.mjs remove "<company or slug>"
-#   node scripts/manage-sources.mjs verify
+#   node scripts/leads/manage-sources.mjs add --type <ats> --slug <slug> --company "Name"
+#   node scripts/leads/manage-sources.mjs remove "<company or slug>"
+#   node scripts/leads/manage-sources.mjs verify
 # `add` prescreens the board (live API check) and refuses duplicates.
 #
 # FORMAT RULE: one entry per line, flow style ({ ... }) — the add/remove

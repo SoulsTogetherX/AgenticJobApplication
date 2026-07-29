@@ -2,7 +2,7 @@
 # APPLICATION LIMITS — the user's hard filters for which jobs are worth pursuing.
 #
 # Read by the find-jobs and pipeline-jobs skills; enforced mechanically by
-# scripts/find-jobs.mjs. The user owns this policy: the agent reads it but asks
+# scripts/leads/find-jobs.mjs. The user owns this policy: the agent reads it but asks
 # before changing it.
 # =============================================================================
 
@@ -35,7 +35,7 @@ compensation:
   flag_missing: true
 
 experience:
-  # The seniority gate in scripts/screen.mjs. It reads the highest "N+ years"
+  # The seniority gate in scripts/leads/screen.mjs. It reads the highest "N+ years"
   # demand out of the posting body and compares it to the tenure computed from
   # profile.yaml (currently 2.5 years).
   #

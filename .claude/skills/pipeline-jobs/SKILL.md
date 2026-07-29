@@ -30,7 +30,7 @@ turns applying into fill-and-review. So when the user asks to pipeline, prep, or
 "get things ready", pick the targets mechanically:
 
 ```bash
-node scripts/prep-queue.mjs --top 5 --json
+node scripts/leads/prep-queue.mjs --top 5 --json
 ```
 
 It returns only leads that rank well, have not been applied to, and have **no
@@ -50,7 +50,7 @@ re-tailor to look busy.
 ## Input
 
 Ask which leads to process if not specified; default is
-`node scripts/find-jobs.mjs list --status recommended` (falling back to
+`node scripts/leads/find-jobs.mjs list --status recommended` (falling back to
 `new`). Confirm with the user which stages to run: screen only, screen+tailor,
 or screen+tailor+apply.
 
@@ -92,7 +92,7 @@ No posting text, no document contents, no browsing logs in the reply.
 **Run the mechanical pass first — it is free:**
 
 ```bash
-node scripts/screen.mjs --status new
+node scripts/leads/screen.mjs --status new
 ```
 
 It flags scam wording, stale/repost age, culture-red-flag clusters, thin
@@ -119,16 +119,16 @@ WebFetch the posting (Playwright only if JS-required) and judge:
   Vegas metro (docs/application-limits.yaml) even if the location field looked
   fine → reject with reason.
 
-`reject` → subagent runs `node scripts/find-jobs.mjs mark <id> --status
+`reject` → subagent runs `node scripts/leads/find-jobs.mjs mark <id> --status
 dismissed --notes "<reason>"` and stops.
 
 ### Stage B — tailor (optional)
 
-Workspace via `node scripts/new-job.mjs`, fill `job.json` from the captured
+Workspace via `node scripts/documents/new-job.mjs`, fill `job.json` from the captured
 posting, then follow `docs/tailoring-rules.md` + the tailor-resume /
 tailor-cover-letter skill rules: draft `resume.md` (and `cover-letter.md` per
 the automatic cover-letter rule above) with `<!-- fact:ID -->` annotations,
-run `node scripts/verify-claims.mjs` until it passes. Do NOT render PDFs —
+run `node scripts/documents/verify-claims.mjs` until it passes. Do NOT render PDFs —
 that needs the user's approval in the main session. Subagents write ONLY
 inside `jobs/<slug>/` (CLAUDE.md rule 9).
 

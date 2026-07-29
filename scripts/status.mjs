@@ -7,11 +7,11 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { loadYamlFile, isTerse } from "./lib.mjs"
-import { dueFollowUps } from "./follow-ups.mjs"
-import { readLeadStore, readApplications } from "./db.mjs"
+import { loadYamlFile, isTerse } from "./lib/lib.mjs"
+import { dueFollowUps } from "./applications/follow-ups.mjs"
+import { readLeadStore, readApplications } from "./lib/db.mjs"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 
 const tally = (items, key) =>
   items.reduce((a, i) => {

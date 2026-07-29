@@ -12,7 +12,7 @@ recommend only HONEST fixes.
 ## Run the analysis
 
 ```bash
-node scripts/profile-gaps.mjs --json
+node scripts/profile/profile-gaps.mjs --json
 ```
 
 It scans every captured job workspace and stored lead, extracts tech terms,
@@ -28,7 +28,7 @@ signal — if fewer than ~5 jobs were analyzed, say the sample is thin.
 2. For the top 2-3 gaps, decide which case applies — ASK THE USER, don't
    assume:
    - **They actually have it, profile just doesn't say so** → route through
-     `node scripts/save-answer.mjs` or the update-profile skill so it becomes
+     `node scripts/profile/save-answer.mjs` or the update-profile skill so it becomes
      citable fact. This is the cheapest win.
    - **They genuinely don't have it** → suggest the smallest real project
      that would evidence it (e.g. "add a Docker deploy + CI workflow to an

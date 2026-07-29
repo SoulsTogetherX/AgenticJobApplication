@@ -8,13 +8,13 @@ description: Track application outcomes and follow-ups - list applications due
 
 Keep logged applications from going cold. The application log
 (`profile/applications.yaml`) is the fact base: this skill NEVER edits it
-directly — every change goes through `scripts/update-application.mjs`, and
+directly — every change goes through `scripts/applications/update-application.mjs`, and
 only records what the user explicitly reported in chat.
 
 ## What's due
 
 ```bash
-node scripts/follow-ups.mjs [--days N]
+node scripts/applications/follow-ups.mjs [--days N]
 ```
 
 Default cadence: first follow-up 10 days after applying, second (final) one
@@ -35,13 +35,13 @@ appear.
    agent never sends anything). Offer light edits.
 4. Only after the user says they sent it:
    ```bash
-   node scripts/update-application.mjs <slug> --followed-up
+   node scripts/applications/update-application.mjs <slug> --followed-up
    ```
 
 ## Recording responses ("Acme rejected me", "got an interview at X")
 
 ```bash
-node scripts/update-application.mjs <slug-or-company> --status rejected|interviewing|offer|withdrawn
+node scripts/applications/update-application.mjs <slug-or-company> --status rejected|interviewing|offer|withdrawn
 ```
 
 Confirm what was recorded. On a rejection, optionally note it feeds the

@@ -17,11 +17,11 @@ exactly — it is the contract; violations of it are bugs.
    confirmation before continuing.
 
 2. **Application history**: if the tailor-resume skill hasn't already checked
-   this job, run `node scripts/check-applied.mjs "<Company>"` and surface any
+   this job, run `node scripts/applications/check-applied.mjs "<Company>"` and surface any
    prior application (what/when) before continuing.
 
 3. **Job workspace**: resolve the job slug. If `jobs/<slug>/` doesn't exist,
-   create it (`node scripts/new-job.mjs …`) and capture the posting into
+   create it (`node scripts/documents/new-job.mjs …`) and capture the posting into
    `job.json` as described in the tailor-resume skill.
 
 4. **Shared context first** — read `jobs/<slug>/context.json`:
@@ -42,13 +42,13 @@ exactly — it is the contract; violations of it are bugs.
    ask the user in chat, then persist:
 
    ```bash
-   node scripts/save-answer.mjs "<question>" "<answer>"
+   node scripts/profile/save-answer.mjs "<question>" "<answer>"
    ```
 
 7. **Verify** (must pass):
 
    ```bash
-   node scripts/verify-claims.mjs cover-letter jobs/<slug>/cover-letter.md --job jobs/<slug>/job.json
+   node scripts/documents/verify-claims.mjs cover-letter jobs/<slug>/cover-letter.md --job jobs/<slug>/job.json
    ```
 
    Fix violations in the draft, never in the verifier. Set
@@ -59,6 +59,6 @@ exactly — it is the contract; violations of it are bugs.
 
 9. **Render**:
    ```bash
-   node scripts/render-pdf.mjs jobs/<slug>/cover-letter.md "jobs/<slug>/Xavier Alvarez Cover Letter - <Company>.pdf" --letter
+   node scripts/documents/render-pdf.mjs jobs/<slug>/cover-letter.md "jobs/<slug>/Xavier Alvarez Cover Letter - <Company>.pdf" --letter
    ```
    Set `status: "rendered"` and tell the user the path.

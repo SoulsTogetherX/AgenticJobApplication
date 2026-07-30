@@ -32,6 +32,7 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { isTerse } from "../lib/lib.mjs"
 import { techTermsIn } from "../lib/lib.mjs"
+import { checkWrittenForm } from "../lib/keywords.mjs"
 
 function flag(args, name, fallback = null) {
   const i = args.indexOf(name)
@@ -80,7 +81,19 @@ export function lintMarkdown(md) {
   const bullets = md.split(/\r?\n/).filter((l) => /^\s*[-*]\s+/.test(l))
   if (!bullets.length) warnings.push("no bullet lines found")
 
-  return { problems, warnings, bullets: bullets.length }
+  // Written form. These are WARNINGS, never problems: writing "Javascript" is
+  // careless, not untruthful, and this file's problems list is reserved for
+  // things that cost the reader the content entirely.
+  const form = checkWrittenForm(md)
+  for (const f of form) {
+    warnings.push(
+      f.issue === "noncanonical_spelling"
+        ? `"${f.found}" should be written "${f.prefer}" — ${f.note}`
+        : `"${f.found}" appears without its partner form; write "${f.prefer}" once — ${f.note}`,
+    )
+  }
+
+  return { problems, warnings, bullets: bullets.length, written_form: form }
 }
 
 export function lintHtml(html) {

@@ -12,6 +12,8 @@ import {
   extractTech,
   atsFormsFor,
   adjacentTo,
+  checkWrittenForm,
+  preferredForm,
 } from "../../scripts/lib/keywords.mjs"
 import { techTermsIn } from "../../scripts/lib/lib.mjs"
 
@@ -289,4 +291,71 @@ test("adjacentTo suggests neighbours and never something already evidenced", () 
 test("adjacentTo on an empty input suggests nothing", () => {
   assert.equal(adjacentTo([], new Set()).size, 0)
   assert.equal(adjacentTo(["NotASkill"], new Set()).size, 0)
+})
+
+// --- written form: one spelling, and acronyms paired once --------------------
+
+test("common misspellings are caught with the canonical form to use", () => {
+  const issues = checkWrittenForm(
+    "Built with Javascript, NodeJS and Postgres. Ran CICD.",
+  )
+  const found = Object.fromEntries(issues.map((i) => [i.found, i.prefer]))
+  assert.equal(found.Javascript, "JavaScript")
+  assert.equal(found.NodeJS, "Node.js")
+  assert.equal(found.Postgres, "PostgreSQL")
+  assert.equal(found.CICD, "CI/CD")
+})
+
+test("correct spellings raise nothing", () => {
+  const issues = checkWrittenForm(
+    "Built with JavaScript, Node.js and PostgreSQL. Ran CI/CD (continuous integration).",
+  )
+  assert.deepEqual(
+    issues.filter((i) => i.issue === "noncanonical_spelling"),
+    [],
+  )
+})
+
+test("URLs and emails are not read as misspellings", () => {
+  // "github.com/xalva" is correct lowercase. Flagging it trains the reader to
+  // ignore the whole report.
+  const issues = checkWrittenForm(
+    "Contact me@github.com or github.com/xalva — built with JavaScript.",
+  )
+  assert.deepEqual(issues, [])
+})
+
+test("an acronym used without its expansion is flagged once", () => {
+  const issues = checkWrittenForm("Deployed to AWS every day.")
+  const aws = issues.find((i) => i.found === "AWS")
+  assert.equal(aws.issue, "unpaired_acronym")
+  assert.match(aws.prefer, /AWS \(Amazon Web Services\)/)
+})
+
+test("an expansion used without its acronym is flagged too", () => {
+  const issues = checkWrittenForm("Deployed to Amazon Web Services every day.")
+  assert.equal(issues[0].issue, "unpaired_expansion")
+})
+
+test("pairing them satisfies the check", () => {
+  assert.deepEqual(checkWrittenForm("Deployed to AWS (Amazon Web Services)."), [])
+})
+
+test("the pair list stays short enough not to cry wolf", () => {
+  // A first draft flagged API/SQL/UI/UX/ML and produced eight warnings on a
+  // perfectly good resume. Nobody indexes "Structured Query Language".
+  const realistic =
+    "Full-Stack Developer. Built REST APIs in TypeScript with SQL, improved the UI and UX, wrote unit tests."
+  assert.deepEqual(checkWrittenForm(realistic), [])
+})
+
+test("preferredForm returns the single form to use throughout", () => {
+  assert.equal(preferredForm("CI/CD"), "CI/CD")
+  assert.equal(preferredForm("Node.js"), "Node.js")
+  assert.equal(preferredForm("Nonexistent"), "Nonexistent")
+})
+
+test("checkWrittenForm handles empty input", () => {
+  assert.deepEqual(checkWrittenForm(""), [])
+  assert.deepEqual(checkWrittenForm(null), [])
 })

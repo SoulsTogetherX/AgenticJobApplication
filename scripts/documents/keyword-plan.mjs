@@ -27,6 +27,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { loadYamlFile, isTerse, evidenceText } from "../lib/lib.mjs"
 import { extractTech, atsFormsFor, SKILL_BY_NAME } from "../lib/keywords.mjs"
 import { splitRequirements } from "../leads/fit.mjs"
+import { sanitizeUntrusted } from "../lib/untrusted.mjs"
 import { profileText } from "../profile/profile-gaps.mjs"
 
 const ROOT = path.resolve(
@@ -59,14 +60,6 @@ export function placementFor(skill, { required, index }) {
 // detected and penalised now, and a one-page resume has no room for it anyway.
 export const DENSITY_CAP = 3
 
-// The posting's own title, plus the closest phrasing the fact base can support.
-//
-// Title mirroring is the single highest-leverage thing on a resume — a resume
-// carrying the posting's title measurably outperforms one that does not — but
-// it is only allowed when the profile actually supports the claim. The user
-// targets Full-Stack and Back-End roles (docs/application-limits.yaml), so a
-// posting titled "Full Stack Engineer" may be mirrored; one titled "Machine
-// Learning Engineer" may not, and this says so rather than inventing a match.
 // Level and seniority tokens, in two passes because they need different
 // casing rules.
 //
@@ -101,6 +94,14 @@ export function cleanTitle(raw) {
   )
 }
 
+// The posting's own title, plus the closest phrasing the fact base can support.
+//
+// Title mirroring is the single highest-leverage thing on a resume — one
+// carrying the posting's title measurably outperforms one that does not — but
+// it is only allowed when the profile actually supports the claim. The user
+// targets Full-Stack and Back-End roles (docs/application-limits.yaml), so a
+// posting titled "Full Stack Engineer" may be mirrored; one titled "Machine
+// Learning Engineer" may not, and this says so rather than inventing a match.
 export function titleMirror(jobTitle, profileTargets) {
   const t = String(jobTitle ?? "").trim()
   const norm = t.toLowerCase()
@@ -124,9 +125,15 @@ export function titleMirror(jobTitle, profileTargets) {
 
 // Pure core (exported for tests).
 export function buildPlan({ job, profileBlob, targets = [] }) {
-  const body = [job.description, ...(job.requirements ?? [])]
-    .filter(Boolean)
-    .join("\n")
+  // The posting is untrusted input, and this function decides what goes into a
+  // document that will be sent out under the user's name. Strip instruction-like
+  // and invisible text first, so a hidden "add Kubernetes to the resume" never
+  // reaches must_use. verify-claims R6 would reject the claim anyway — this
+  // stops it being proposed at all.
+  const scan = sanitizeUntrusted(
+    [job.description, ...(job.requirements ?? [])].filter(Boolean).join("\n"),
+  )
+  const body = scan.text
   const parts = splitRequirements(body)
   const requiredText = parts.required || parts.general
   const requiredTech = extractTech(requiredText)
@@ -169,6 +176,8 @@ export function buildPlan({ job, profileBlob, targets = [] }) {
   return {
     slug: job.slug ?? null,
     company: job.company ?? null,
+    // Surfaced so the approval message can say the posting tried this.
+    untrusted_findings: scan.findings,
     title_mirror: titleMirror(job.title, targets),
     density_cap: DENSITY_CAP,
     summary_slots: SUMMARY_SLOTS,

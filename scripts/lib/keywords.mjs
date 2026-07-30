@@ -185,6 +185,25 @@ export const SKILLS = [
   // --- AI ------------------------------------------------------------------
   { canonical: "AI/LLM integration", group: "AI", surface: ["Claude", "ChatGPT", "Codex", "MCP", "OpenAI"], aliases: ["llm", "openai api", "anthropic api", "rag", "prompt engineering", "genai", "generative ai", "ai-powered", "ai agent", "ai agents", "agentic", "claude", "chatgpt", "copilot", "mcp"], ats: ["LLM integration", "generative AI"], adjacent: ["Python", "REST APIs"] },
   { canonical: "Machine Learning", group: "AI", surface: ["TensorFlow", "PyTorch", "Keras"], aliases: ["machine learning", "pytorch", "tensorflow", "keras", "scikit-learn", "deep learning", "neural network"], ats: ["Machine learning"], adjacent: ["Python", "NumPy"] },
+  // 2026 posting analysis: deep learning is the single highest-demand AI
+  // competency, and RAG / agents / MLOps / vector search now appear as named
+  // requirements rather than as "nice to have AI exposure".
+  { canonical: "RAG", group: "AI", surface: ["RAG"], aliases: ["retrieval[- ]augmented generation", "\\brag pipeline", "retrieval augmented"], ats: ["RAG (retrieval-augmented generation)"], adjacent: ["AI/LLM integration", "Vector databases"] },
+  { canonical: "Vector databases", group: "AI", surface: ["Pinecone", "Weaviate", "pgvector"], aliases: ["vector database", "vector store", "embeddings", "pinecone", "weaviate", "pgvector", "semantic search"], ats: ["Vector databases"], adjacent: ["RAG", "PostgreSQL"] },
+  { canonical: "MLOps", group: "AI", surface: ["MLOps"], aliases: ["mlops", "model deployment", "model serving", "feature store"], ats: ["MLOps"], adjacent: ["CI/CD", "Machine Learning"] },
+  { canonical: "Prompt engineering", group: "AI", surface: [], aliases: ["prompt engineering", "prompt design", "few[- ]shot", "system prompt"], ats: ["Prompt engineering"], adjacent: ["AI/LLM integration"] },
+  { canonical: "NLP", group: "AI", surface: ["NLP"], aliases: ["natural language processing", "\\bnlp\\b", "named entity recognition", "sentiment analysis"], ats: ["NLP (natural language processing)"], adjacent: ["Machine Learning", "Python"] },
+
+  // --- Backend fundamentals hiring managers name explicitly ------------------
+  // 2026 analysis: backend/infrastructure is the largest hiring category by
+  // volume, and postings ask for evidence of concurrency, caching and
+  // idempotency by name rather than inferring them from a stack list.
+  { canonical: "Concurrency", group: "Backend", surface: [], aliases: ["concurrency", "concurrent programming", "multithread", "async programming", "parallelism", "race condition"], ats: ["Concurrency"], adjacent: ["System design", "Performance"] },
+  { canonical: "Idempotency", group: "Backend", surface: [], aliases: ["idempoten", "exactly[- ]once", "at[- ]least[- ]once delivery", "retry logic"], ats: ["Idempotency"], adjacent: ["REST APIs", "Microservices"] },
+  { canonical: "Event-driven", group: "Backend", surface: [], aliases: ["event[- ]driven", "pub/?sub", "event sourcing", "message broker", "event bus"], ats: ["Event-driven architecture"], adjacent: ["Kafka", "Microservices"] },
+  { canonical: "Rate limiting", group: "Backend", surface: [], aliases: ["rate limit", "throttling", "backpressure", "circuit breaker"], ats: ["Rate limiting"], adjacent: ["REST APIs", "Caching"] },
+  { canonical: "Feature flags", group: "Practices", surface: ["LaunchDarkly"], aliases: ["feature flag", "feature toggle", "launchdarkly", "canary release", "blue[- ]green deploy"], ats: ["Feature flags"], adjacent: ["CI/CD"] },
+  { canonical: "Migrations", group: "Data", surface: [], aliases: ["database migration", "schema migration", "zero[- ]downtime migration", "backfill"], ats: ["Database migrations"], adjacent: ["SQL", "PostgreSQL"] },
 
   // --- Games / math --------------------------------------------------------
   { canonical: "Godot", group: "Games", surface: ["Godot"], aliases: ["godot"], ats: ["Godot"], adjacent: ["GDScript"] },
@@ -250,6 +269,171 @@ export const TECH_LEXICON = SKILLS.map((s) => ({
 // ---------------------------------------------------------------------------
 
 export const SKILL_BY_NAME = new Map(SKILLS.map((s) => [s.canonical, s]))
+
+// ---------------------------------------------------------------------------
+// Written form: one spelling per skill, and the acronym paired with its
+// expansion the first time it appears.
+//
+// Two different failures, both of which cost real screening points:
+//
+//   WRONG SPELLING     "Javascript", "NodeJS", "Github", "Postgres SQL". A
+//                      literal keyword matcher looking for "JavaScript" or
+//                      "Node.js" may not match these, and a human reviewer
+//                      reads them as carelessness.
+//   SPLIT FORM         writing "AWS" in the skills block and "Amazon Web
+//                      Services" in a bullet. Neither is wrong, but a matcher
+//                      indexing only one of the two sees half the evidence,
+//                      and the document reads as though it were assembled by
+//                      two different people.
+//
+// The rule this encodes: pick ONE form and use it everywhere, and pair it with
+// the alternate ONCE — "AWS (Amazon Web Services)" — so a system indexing
+// either form finds it. That is the same reasoning behind ats_forms, applied to
+// the finished document instead of the plan.
+//
+// `wrong` is the misspellings and mis-casings actually seen on resumes.
+// `pair` is the acronym/expansion partner, when a skill has one.
+const WRITTEN_FORM = [
+  {
+    canonical: "JavaScript",
+    wrong: ["Javascript", "javascript", "JavaScipt", "JS"],
+  },
+  { canonical: "TypeScript", wrong: ["Typescript", "typescript", "TS"] },
+  {
+    canonical: "Node.js",
+    wrong: ["NodeJS", "Nodejs", "node js", "NodeJs", "Node JS"],
+  },
+  { canonical: "Next.js", wrong: ["NextJS", "Nextjs", "Next JS"] },
+  { canonical: "React", wrong: ["ReactJS", "React JS", "Reactjs"] },
+  {
+    canonical: "PostgreSQL",
+    wrong: ["Postgresql", "Postgres", "postgres", "Postgres SQL", "PostGres"],
+  },
+  { canonical: "MySQL", wrong: ["MySql", "mySQL", "My SQL"] },
+  { canonical: "MongoDB", wrong: ["Mongodb", "Mongo DB", "mongoDB"] },
+  { canonical: "GitHub", wrong: ["Github", "github", "Git Hub"] },
+  { canonical: "GitHub Actions", wrong: ["Github Actions", "GH Actions"] },
+  { canonical: "GitLab", wrong: ["Gitlab", "Git Lab"] },
+  { canonical: "REST", wrong: ["Rest API", "restful", "RESTFUL"] },
+  { canonical: "GraphQL", wrong: ["Graphql", "GraphQl", "Graph QL"] },
+  { canonical: "CI/CD", wrong: ["CICD", "ci/cd", "CI-CD"] },
+  { canonical: "Kubernetes", wrong: ["kubernetes", "K8s", "k8s"] },
+  { canonical: "Docker", wrong: ["docker"] },
+  { canonical: "Python", wrong: ["python"] },
+  { canonical: "Java", wrong: ["java"] },
+  { canonical: "C#", wrong: ["C sharp", "CSharp", "c#"] },
+  { canonical: "C++", wrong: ["CPP", "C ++", "c++"] },
+  { canonical: "HTML", wrong: ["Html", "html"] },
+  { canonical: "CSS", wrong: ["Css", "css"] },
+  { canonical: "SQL", wrong: ["Sql", "sql"] },
+  { canonical: "JSON", wrong: ["Json", "json"] },
+  { canonical: "Tailwind CSS", wrong: ["TailwindCSS", "tailwind"] },
+  { canonical: "Vue.js", wrong: ["VueJS", "Vuejs", "Vue JS"] },
+  { canonical: "jQuery", wrong: ["JQuery", "Jquery"] },
+  { canonical: "Linux", wrong: ["linux"] },
+  { canonical: "macOS", wrong: ["MacOS", "Mac OS", "OSX"] },
+  { canonical: "iOS", wrong: ["IOS", "ios"] },
+  { canonical: "OAuth", wrong: ["Oauth", "oAuth", "OAUTH"] },
+  {
+    canonical: "WebSockets",
+    wrong: ["Websockets", "Web Sockets", "websockets"],
+  },
+]
+
+// Acronym <-> expansion partners: writing one and never the other means a
+// matcher indexing the other form finds nothing.
+//
+// Deliberately SHORT. A pair earns its place only when both forms are really
+// used in postings and a reader would not blink at seeing them together. The
+// first draft included API/SQL/UI/UX/ML/QA/MVC/CRUD/SDK and produced eight
+// warnings on a perfectly good resume — nobody indexes "Structured Query
+// Language", and "UI (user interface)" reads as padding. A checker that cries
+// wolf gets ignored, which costs more than the pairs it was trying to catch.
+const FORM_PAIRS = [
+  ["AWS", "Amazon Web Services"],
+  ["GCP", "Google Cloud Platform"],
+  ["CI/CD", "continuous integration"],
+  ["JWT", "JSON Web Token"],
+  ["SSO", "single sign-on"],
+  ["RBAC", "role-based access control"],
+  ["TDD", "test-driven development"],
+  ["ETL", "extract, transform, load"],
+  ["LLM", "large language model"],
+  ["RAG", "retrieval-augmented generation"],
+  ["IaC", "infrastructure as code"],
+  ["WCAG", "Web Content Accessibility Guidelines"],
+  ["SLA", "service level agreement"],
+]
+
+// URLs, emails and file paths are stripped before the spelling check: the "g"
+// in "github.com/xalva" is correct lowercase, not a misspelling of "GitHub",
+// and flagging it trains the reader to ignore this whole report.
+const ADDRESSES =
+  /\b(?:https?:\/\/|www\.)\S+|\b[\w.+-]+@[\w-]+\.[\w.]+\b|\b\w+\.(?:com|io|dev|org|net|ai|co)\b\S*/gi
+
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+// Does `text` contain `form` as a standalone token? Tolerates "." "+" "#"
+// inside a term the way techTermsIn does, so "Node.js" and "C++" work.
+function usesForm(text, form) {
+  return new RegExp(`(?<![A-Za-z0-9+#.])${escRe(form)}(?![A-Za-z0-9+#])`).test(
+    text,
+  )
+}
+
+// Check a FINISHED document for written-form problems.
+// Returns [{ issue, found, prefer, note }]; empty means consistent.
+export function checkWrittenForm(text) {
+  const raw = String(text ?? "")
+  const issues = []
+  if (!raw.trim()) return issues
+  const doc = raw.replace(ADDRESSES, " ")
+
+  for (const { canonical, wrong } of WRITTEN_FORM) {
+    for (const w of wrong) {
+      // Case matters here — that is the whole point — so compare exactly, and
+      // skip a "wrong" form that IS the canonical spelling of another skill.
+      if (w === canonical) continue
+      if (!usesForm(doc, w)) continue
+      issues.push({
+        issue: "noncanonical_spelling",
+        found: w,
+        prefer: canonical,
+        note: `write "${canonical}" — a literal keyword matcher may not match "${w}"`,
+      })
+    }
+  }
+
+  for (const [short, long] of FORM_PAIRS) {
+    const hasShort = usesForm(doc, short)
+    const hasLong = new RegExp(escRe(long), "i").test(doc)
+    if (hasShort && !hasLong) {
+      issues.push({
+        issue: "unpaired_acronym",
+        found: short,
+        prefer: `${short} (${long})`,
+        note: `pair it once so a system indexing "${long}" also matches`,
+      })
+    } else if (hasLong && !hasShort) {
+      issues.push({
+        issue: "unpaired_expansion",
+        found: long,
+        prefer: `${short} (${long})`,
+        note: `pair it once so a system indexing "${short}" also matches`,
+      })
+    }
+  }
+
+  return issues
+}
+
+// The single form a skill should be written as throughout a document.
+export function preferredForm(name) {
+  const s = SKILL_BY_NAME.get(name)
+  if (s?.ats?.length) return s.ats[0]
+  const w = WRITTEN_FORM.find((f) => f.canonical === name)
+  return w?.canonical ?? name
+}
 
 // Which canonical skills does this text name? Used for job postings and for the
 // profile alike, which is what makes "demanded vs evidenced" a set operation.

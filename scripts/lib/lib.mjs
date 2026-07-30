@@ -44,6 +44,104 @@ export function dumpYaml(obj) {
 }
 
 // ---------------------------------------------------------------------------
+// HTTP + HTML primitives. These live here rather than in find-jobs.mjs because
+// two modules now fetch postings: the sweep (list endpoints) and enrich.mjs
+// (per-posting detail endpoints). find-jobs.mjs re-exports textSnippet and
+// SNIPPET_MAX so its existing importers keep working.
+// ---------------------------------------------------------------------------
+
+export const UA = "agentic-job-application/0.1 (personal job search tool)"
+
+export async function fetchJson(url, body = null) {
+  const res = await fetch(url, {
+    method: body ? "POST" : "GET",
+    headers: {
+      "user-agent": UA,
+      accept: "application/json",
+      ...(body ? { "content-type": "application/json" } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
+  return res.json()
+}
+
+export async function fetchText(url) {
+  const res = await fetch(url, {
+    headers: {
+      "user-agent": UA,
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
+  return res.text()
+}
+
+// Out-of-range numeric entities are left as written rather than crashing the
+// sweep: a malformed ad is a bad snippet, not a lost lead.
+const codePoint = (n, original) => {
+  if (!Number.isInteger(n) || n < 1 || n > 0x10ffff) return original
+  try {
+    return String.fromCodePoint(n)
+  } catch {
+    return original
+  }
+}
+
+export const decodeEntities = (s) =>
+  String(s)
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#0?39;|&rsquo;|&apos;/gi, "'")
+    .replace(/&quot;|&ldquo;|&rdquo;/gi, '"')
+    .replace(/&amp;/gi, "&")
+    // Numeric entities, decimal and hex. SmartRecruiters emits &#xa0; for the
+    // non-breaking spaces inside its ad sections, which survived the named-
+    // entity list above and left literal "&#xa0;" wedged between words — enough
+    // to stop a keyword or blocker pattern matching across it.
+    .replace(/&#x([0-9a-f]{1,6});/gi, (m, h) => codePoint(parseInt(h, 16), m))
+    .replace(/&#(\d{1,7});/g, (m, d) => codePoint(Number(d), m))
+
+// Boards return postings as HTML (Greenhouse double-encodes it). The screen
+// only needs enough text to spot blockers — a clearance demand or a seniority
+// bar — so store a stripped, capped snippet rather than the whole ad; the lead
+// store holds dozens of these.
+export const SNIPPET_MAX = 4000
+
+export function textSnippet(...parts) {
+  const raw = parts.filter(Boolean).join("\n")
+  if (!raw) return null
+  const txt = decodeEntities(
+    decodeEntities(raw)
+      .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+      // Block boundaries become newlines BEFORE tags are stripped.
+      //
+      // This used to collapse every run of whitespace, newlines included, so a
+      // Greenhouse body arrived as one 4,000-character line. That threw away
+      // the only structure the posting had: "<h3>Minimum Qualifications</h3>"
+      // and the bullet list under it became indistinguishable from running
+      // prose. The L2 fit stage reads that structure to tell a REQUIRED skill
+      // from a "nice to have" one, and it found a requirements heading in 0 of
+      // 92 stored leads until this changed.
+      //
+      // Only block-level tags produce a break; inline markup (<b>, <a>, <span>)
+      // still collapses to a space so a bolded word does not split a sentence.
+      .replace(
+        /<\/?(?:p|div|br|li|ul|ol|h[1-6]|tr|table|section|article|header|footer|blockquote|pre)\b[^>]*>/gi,
+        "\n",
+      )
+      .replace(/<[^>]+>/g, " "),
+  )
+    // Horizontal whitespace collapses; newlines survive but never stack up.
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim()
+  return txt ? txt.slice(0, SNIPPET_MAX) : null
+}
+
+// ---------------------------------------------------------------------------
 // Fact index: id -> { id, text } from profile.yaml (+ answers.yaml)
 // ---------------------------------------------------------------------------
 export function buildFactIndex(profile, answers) {
@@ -181,109 +279,47 @@ export function yearsOfExperience(profile, now = new Date()) {
 
 // Dictionary of tech terms the verifier watches for. Includes both terms the
 // user knows AND common terms they do NOT — so invented experience is caught.
-export const TECH_TERMS = [
-  // in profile
-  "Python",
-  "TypeScript",
-  "JavaScript",
-  "C++",
-  "GDScript",
-  "SQL",
-  "HTML",
-  "CSS",
-  "React Native",
-  "React",
-  "Node.js",
-  "Next.js",
-  "AWS",
-  "PostgreSQL",
-  "Docker",
-  "Vite",
-  "GitHub Actions",
-  "Git",
-  "Godot",
-  "GameMaker",
-  "n8n",
-  "nginx",
-  "WebSockets",
-  "Cognito",
-  "EC2",
-  "EventBridge",
-  "Claude",
-  "ChatGPT",
-  "Codex",
-  "MCP",
-  "Monte Carlo",
-  "JSON",
-  "Agile",
-  "Scrum",
-  // common terms NOT in profile — presence in a document must be justified
-  "Kubernetes",
-  "Terraform",
-  "Ansible",
-  "Java",
-  "C#",
-  "Ruby",
-  "Rust",
-  "Golang",
-  "PHP",
-  "Swift",
-  "Kotlin",
-  "Scala",
-  "Angular",
-  "Vue",
-  "Svelte",
-  "Django",
-  "Flask",
-  "FastAPI",
-  "Spring",
-  "Rails",
-  "Laravel",
-  "GraphQL",
-  "MongoDB",
-  "Redis",
-  "MySQL",
-  "SQLite",
-  "DynamoDB",
-  "Kafka",
-  "RabbitMQ",
-  "Elasticsearch",
-  "Azure",
-  "GCP",
-  "Firebase",
-  "Heroku",
-  "Vercel",
-  "Netlify",
-  "Jenkins",
-  "CircleCI",
-  "Webpack",
-  "Babel",
-  "Jest",
-  "Mocha",
-  "Cypress",
-  "Playwright",
-  "Selenium",
-  "Puppeteer",
-  "TensorFlow",
-  "PyTorch",
-  "Keras",
-  "Pandas",
-  "NumPy",
-  "Spark",
-  "Hadoop",
-  "Tailwind",
-  "Bootstrap",
-  "jQuery",
-  "Express",
-  "NestJS",
-  "Deno",
-  "Bun",
-  "Remix",
-  "Astro",
-  "Flutter",
-  "Unity",
-  "Unreal",
-]
+//
+// The list itself moved to scripts/lib/keywords.mjs (2026-07-29), which is now
+// the single source for every "what technology is named here?" question. It was
+// duplicated: this list drove verify-claims R6 while a SEPARATE regex lexicon in
+// profile-gaps.mjs drove lead_keywords, and the two had already drifted — this
+// one knew Cognito and EventBridge, that one knew Svelte and Kafka. Re-exported
+// rather than moved outright so every existing importer keeps working.
+export { TECH_TERMS } from "./keywords.mjs"
+import { TECH_TERMS } from "./keywords.mjs"
+
+// The text that may be treated as EVIDENCE of the user's experience.
+//
+// This exists because the obvious version — concatenate profile.yaml and
+// answers.yaml and search that — is wrong, and was wrong in the truthfulness
+// verifier itself. answers.yaml stores the QUESTION as well as the answer, and
+// application forms ask questions that enumerate technologies:
+//
+//   question: "Which of these do you have experience with? [1 = REST APIs;
+//              ... 4 = Spring / Spring Boot; 5 = Cloud (AWS, Azure, or GCP)]"
+//   answer:   "1, 2, 3, 5"
+//
+// Treating that whole record as evidence made "Azure" and "Spring" pass
+// verify-claims R6 — so a tailored resume could have claimed Spring Boot
+// experience the user explicitly did NOT select, and Azure when what they have
+// is AWS. That is precisely the invention rule 1 forbids.
+//
+// So: an answer's text is always evidence, because the user wrote it. The
+// question's text is evidence only when the answer is an unambiguous yes —
+// "Do you have experience with React?" / "Yes" really does evidence React,
+// while "1, 2, 3, 5" evidences nothing but itself.
+const AFFIRMATIVE = /^\s*(yes|y|true|yes\.|yes,? i (do|have|am))\s*$/i
+
+export function evidenceText(profileRaw, answersDoc) {
+  const parts = [String(profileRaw ?? "")]
+  for (const a of answersDoc?.answers ?? []) {
+    const answer = a?.answer == null ? "" : String(a.answer)
+    parts.push(answer)
+    if (AFFIRMATIVE.test(answer)) parts.push(String(a?.question ?? ""))
+  }
+  return parts.join("\n")
+}
 
 function termRegex(term) {
   const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")

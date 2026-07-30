@@ -1,0 +1,284 @@
+// The one skill lexicon. Everything that asks "what technology is named here?"
+// reads this file.
+//
+// Before this existed there were two lists that had already drifted apart:
+//
+//   TECH_TERMS   (lib.mjs)         flat literal strings -> techTermsIn()
+//                                  -> verify-claims R6, the truthfulness gate
+//   TECH_LEXICON (profile-gaps.mjs) regex + aliases     -> extractTech()
+//                                  -> lead_keywords, recommend, gap analysis
+//
+// They disagreed in both directions: TECH_LEXICON knew Svelte, Kafka and
+// Observability; TECH_TERMS knew Cognito, EventBridge and Monte Carlo. Any
+// keyword feature built on top of that inherits the disagreement, so both are
+// now projections of the table below.
+//
+// The two consumers genuinely need different things, which is why an entry
+// carries two different name fields:
+//
+//   surface   LITERAL strings watched inside the user's OWN documents. R6 asks
+//             "does this exact string appear in a fact source?", so a surface
+//             form must be something a resume would really write. Abstractions
+//             ("Testing", "Auth") have none, and entries without one simply do
+//             not participate in R6 — exactly as before.
+//   aliases   what the same skill looks like in SOMEONE ELSE'S job posting,
+//             matched loosely and case-insensitively. "k8s" belongs here, never
+//             in surface: a posting may say it, a truthful resume would not.
+//
+// ats is the third: the form(s) to actually place in a tailored resume. ATS
+// keyword matching is frequently literal, and some systems index the acronym
+// while others index the expansion, so the first use should carry both.
+//
+// adjacent drives keyword-coverage.mjs' "you probably have this and never wrote
+// it down" bucket. It is a static, hand-checked map, never a model guess, and
+// it is deliberately conservative: adjacency means "someone who genuinely has
+// A has very likely touched B", not "A and B appear in the same job ads".
+
+// ---------------------------------------------------------------------------
+// Groups exist so a resume's SKILLS block can be assembled in a sensible order
+// rather than alphabetically.
+// ---------------------------------------------------------------------------
+export const GROUPS = [
+  "Languages",
+  "Frontend",
+  "Backend",
+  "Data",
+  "Cloud",
+  "Infra",
+  "Practices",
+  "AI",
+  "Games",
+  "Tools",
+]
+
+// prettier-ignore
+export const SKILLS = [
+  // --- Languages -----------------------------------------------------------
+  { canonical: "TypeScript", group: "Languages", surface: ["TypeScript"], aliases: ["typescript", "ts"], ats: ["TypeScript"], adjacent: ["JavaScript", "Node.js", "React"] },
+  { canonical: "JavaScript", group: "Languages", surface: ["JavaScript"], aliases: ["javascript", "es6", "ecmascript"], ats: ["JavaScript"], adjacent: ["TypeScript", "Node.js", "HTML/CSS"] },
+  { canonical: "Python", group: "Languages", surface: ["Python"], aliases: ["python"], ats: ["Python"], adjacent: ["Pandas", "NumPy", "FastAPI"] },
+  { canonical: "C++", group: "Languages", surface: ["C++"], aliases: ["c\\+\\+", "cpp"], ats: ["C++"], adjacent: [] },
+  { canonical: "C#", group: "Languages", surface: ["C#"], aliases: ["c#", "\\.net", "dotnet"], ats: ["C#"], adjacent: [] },
+  { canonical: "Java", group: "Languages", surface: ["Java"], aliases: ["java"], ats: ["Java"], adjacent: [] },
+  { canonical: "Go", group: "Languages", surface: ["Golang", "Go"], aliases: ["golang"], ats: ["Go"], adjacent: [] },
+  { canonical: "Rust", group: "Languages", surface: ["Rust"], aliases: ["rust"], ats: ["Rust"], adjacent: [] },
+  // Not a bare "rails" — the pre-merge lexicon had that and read "do not go off
+  // the rails" as Ruby experience.
+  { canonical: "Ruby", group: "Languages", surface: ["Ruby"], aliases: ["ruby", "ruby on rails"], ats: ["Ruby"], adjacent: [] },
+  { canonical: "PHP", group: "Languages", surface: ["PHP"], aliases: ["php", "laravel"], ats: ["PHP"], adjacent: [] },
+  { canonical: "Swift", group: "Languages", surface: ["Swift"], aliases: ["swift"], ats: ["Swift"], adjacent: [] },
+  { canonical: "Kotlin", group: "Languages", surface: ["Kotlin"], aliases: ["kotlin"], ats: ["Kotlin"], adjacent: [] },
+  { canonical: "Scala", group: "Languages", surface: ["Scala"], aliases: ["scala"], ats: ["Scala"], adjacent: [] },
+  { canonical: "GDScript", group: "Languages", surface: ["GDScript"], aliases: ["gdscript"], ats: ["GDScript"], adjacent: ["Godot"] },
+  { canonical: "SQL", group: "Languages", surface: ["SQL"], aliases: ["sql"], ats: ["SQL"], adjacent: ["PostgreSQL", "MySQL"] },
+  { canonical: "Bash", group: "Languages", surface: ["Bash", "Shell"], aliases: ["bash", "shell scripting", "shell script"], ats: ["Bash"], adjacent: ["Linux"] },
+
+  // --- Frontend ------------------------------------------------------------
+  { canonical: "React", group: "Frontend", surface: ["React"], aliases: ["react", "react\\.js", "reactjs"], ats: ["React"], adjacent: ["Redux", "Next.js", "JavaScript", "HTML/CSS"] },
+  { canonical: "React Native", group: "Frontend", surface: ["React Native"], aliases: ["react native"], ats: ["React Native"], adjacent: ["React"] },
+  { canonical: "Next.js", group: "Frontend", surface: ["Next.js"], aliases: ["next\\.js", "nextjs"], ats: ["Next.js"], adjacent: ["React", "SSR"] },
+  { canonical: "Vue", group: "Frontend", surface: ["Vue"], aliases: ["vue", "vue\\.js", "vuejs", "nuxt"], ats: ["Vue"], adjacent: [] },
+  { canonical: "Angular", group: "Frontend", surface: ["Angular"], aliases: ["angular"], ats: ["Angular"], adjacent: [] },
+  { canonical: "Svelte", group: "Frontend", surface: ["Svelte"], aliases: ["svelte", "sveltekit"], ats: ["Svelte"], adjacent: [] },
+  { canonical: "Remix", group: "Frontend", surface: ["Remix"], aliases: ["remix\\.run", "remixjs", "remix framework"], ats: ["Remix"], adjacent: ["React"] },
+  { canonical: "Astro", group: "Frontend", surface: ["Astro"], aliases: ["astro"], ats: ["Astro"], adjacent: [] },
+  { canonical: "Redux", group: "Frontend", surface: ["Redux"], aliases: ["redux", "zustand", "state management"], ats: ["Redux"], adjacent: ["React"] },
+  // tailwind/sass/scss stay as aliases here even though each is also its own
+  // entry: a posting that only names Tailwind is still CSS work, and the old
+  // lexicon counted it that way. Both fire, which is the accurate answer.
+  { canonical: "HTML/CSS", group: "Frontend", surface: ["HTML", "CSS"], aliases: ["html", "html5", "css", "css3", "tailwind", "tailwindcss", "sass", "scss"], ats: ["HTML", "CSS"], adjacent: ["Tailwind", "Responsive design"] },
+  { canonical: "Tailwind", group: "Frontend", surface: ["Tailwind"], aliases: ["tailwind", "tailwindcss"], ats: ["Tailwind CSS"], adjacent: ["HTML/CSS"] },
+  { canonical: "Sass", group: "Frontend", surface: ["Sass", "SCSS"], aliases: ["sass", "scss", "less"], ats: ["Sass"], adjacent: ["HTML/CSS"] },
+  { canonical: "Bootstrap", group: "Frontend", surface: ["Bootstrap"], aliases: ["bootstrap"], ats: ["Bootstrap"], adjacent: ["HTML/CSS"] },
+  { canonical: "jQuery", group: "Frontend", surface: ["jQuery"], aliases: ["jquery"], ats: ["jQuery"], adjacent: ["JavaScript"] },
+  { canonical: "Responsive design", group: "Frontend", surface: [], aliases: ["responsive design", "mobile-first", "mobile first"], ats: ["Responsive design"], adjacent: ["HTML/CSS"] },
+  { canonical: "Accessibility", group: "Frontend", surface: ["WCAG", "ARIA"], aliases: ["accessibility", "wcag", "a11y", "aria", "section 508"], ats: ["Accessibility (WCAG)"], adjacent: ["HTML/CSS"] },
+  { canonical: "SSR", group: "Frontend", surface: ["SSR", "SSG"], aliases: ["server-side rendering", "server side rendering", "ssr", "ssg", "static site generation"], ats: ["Server-side rendering (SSR)"], adjacent: ["Next.js"] },
+  { canonical: "Vite", group: "Frontend", surface: ["Vite"], aliases: ["vite"], ats: ["Vite"], adjacent: ["JavaScript"] },
+  { canonical: "Webpack", group: "Frontend", surface: ["Webpack"], aliases: ["webpack", "rollup", "esbuild"], ats: ["Webpack"], adjacent: ["JavaScript"] },
+  { canonical: "Babel", group: "Frontend", surface: ["Babel"], aliases: ["babel"], ats: ["Babel"], adjacent: ["JavaScript"] },
+  { canonical: "Storybook", group: "Frontend", surface: ["Storybook"], aliases: ["storybook"], ats: ["Storybook"], adjacent: ["React"] },
+
+  // --- Backend -------------------------------------------------------------
+  { canonical: "Node.js", group: "Backend", surface: ["Node.js"], aliases: ["node", "node\\.js", "nodejs"], ats: ["Node.js"], adjacent: ["Express", "JavaScript", "TypeScript"] },
+  // Never a bare "express" — the pre-merge lexicon had that and read "deliver
+  // express service to every guest" as backend experience. Matched instead via
+  // the dotted form, an explicit noun, or a neighbour in a stack list.
+  { canonical: "Express", group: "Backend", surface: ["Express"], aliases: ["express\\.js", "expressjs", "express (?:framework|server|middleware|router|api)", "(?:node|nodejs|node\\.js)\\s*[/,+&]\\s*express", "express\\s*[/,+&]\\s*(?:node|mongo|react|postgres)"], ats: ["Express"], adjacent: ["Node.js", "REST APIs"] },
+  { canonical: "NestJS", group: "Backend", surface: ["NestJS"], aliases: ["nestjs", "nest\\.js"], ats: ["NestJS"], adjacent: ["Node.js"] },
+  { canonical: "Deno", group: "Backend", surface: ["Deno"], aliases: ["deno"], ats: ["Deno"], adjacent: ["TypeScript"] },
+  // Not a bare "bun" — that reads a catered-lunch perk as a JS runtime.
+  { canonical: "Bun", group: "Backend", surface: ["Bun"], aliases: ["bun\\.sh", "bunjs", "bun runtime"], ats: ["Bun"], adjacent: ["JavaScript"] },
+  { canonical: "Django", group: "Backend", surface: ["Django"], aliases: ["django"], ats: ["Django"], adjacent: ["Python"] },
+  { canonical: "Flask", group: "Backend", surface: ["Flask"], aliases: ["flask"], ats: ["Flask"], adjacent: ["Python"] },
+  { canonical: "FastAPI", group: "Backend", surface: ["FastAPI"], aliases: ["fastapi"], ats: ["FastAPI"], adjacent: ["Python", "REST APIs"] },
+  { canonical: "Spring", group: "Backend", surface: ["Spring"], aliases: ["spring boot", "spring framework"], ats: ["Spring"], adjacent: ["Java"] },
+  { canonical: "Rails", group: "Backend", surface: ["Rails"], aliases: ["ruby on rails", "rails (?:app|framework|developer|engineer)"], ats: ["Rails"], adjacent: ["Ruby"] },
+  { canonical: "Laravel", group: "Backend", surface: ["Laravel"], aliases: ["laravel"], ats: ["Laravel"], adjacent: ["PHP"] },
+  { canonical: "REST APIs", group: "Backend", surface: ["REST", "RESTful"], aliases: ["rest api", "rest apis", "restful", "rest endpoints"], ats: ["REST APIs", "RESTful services"], adjacent: ["Node.js", "Express", "OpenAPI"] },
+  { canonical: "GraphQL", group: "Backend", surface: ["GraphQL"], aliases: ["graphql", "apollo"], ats: ["GraphQL"], adjacent: ["REST APIs"] },
+  { canonical: "gRPC", group: "Backend", surface: ["gRPC"], aliases: ["grpc", "protobuf", "protocol buffers"], ats: ["gRPC"], adjacent: ["Microservices"] },
+  { canonical: "OpenAPI", group: "Backend", surface: ["OpenAPI", "Swagger"], aliases: ["openapi", "swagger"], ats: ["OpenAPI (Swagger)"], adjacent: ["REST APIs"] },
+  { canonical: "WebSockets", group: "Backend", surface: ["WebSockets", "WebSocket"], aliases: ["websocket", "websockets", "socket\\.io", "real-time messaging"], ats: ["WebSockets"], adjacent: ["Node.js"] },
+  { canonical: "Microservices", group: "Backend", surface: ["Microservices"], aliases: ["microservice", "microservices", "service-oriented"], ats: ["Microservices"], adjacent: ["Docker", "REST APIs"] },
+  { canonical: "Serverless", group: "Backend", surface: ["Serverless"], aliases: ["serverless", "lambda functions"], ats: ["Serverless"], adjacent: ["AWS"] },
+  { canonical: "Auth", group: "Backend", surface: ["OAuth", "OAuth2", "JWT", "SSO", "OIDC", "RBAC"], aliases: ["oauth", "oauth2", "oidc", "sso", "authentication", "authorization", "jwt", "rbac", "role-based access"], ats: ["Authentication (OAuth2, JWT)"], adjacent: ["REST APIs"] },
+  { canonical: "Caching", group: "Backend", surface: [], aliases: ["caching", "cache invalidation", "cdn"], ats: ["Caching"], adjacent: ["Redis"] },
+  { canonical: "nginx", group: "Backend", surface: ["nginx"], aliases: ["nginx", "reverse proxy", "load balanc"], ats: ["nginx"], adjacent: ["Linux"] },
+
+  // --- Data ----------------------------------------------------------------
+  { canonical: "PostgreSQL", group: "Data", surface: ["PostgreSQL", "Postgres"], aliases: ["postgres", "postgresql"], ats: ["PostgreSQL"], adjacent: ["SQL"] },
+  { canonical: "MySQL", group: "Data", surface: ["MySQL"], aliases: ["mysql", "mariadb"], ats: ["MySQL"], adjacent: ["SQL"] },
+  { canonical: "SQLite", group: "Data", surface: ["SQLite"], aliases: ["sqlite"], ats: ["SQLite"], adjacent: ["SQL"] },
+  { canonical: "MongoDB", group: "Data", surface: ["MongoDB"], aliases: ["mongodb", "mongo"], ats: ["MongoDB"], adjacent: [] },
+  { canonical: "Redis", group: "Data", surface: ["Redis"], aliases: ["redis", "memcached"], ats: ["Redis"], adjacent: ["Caching"] },
+  { canonical: "DynamoDB", group: "Data", surface: ["DynamoDB"], aliases: ["dynamodb"], ats: ["DynamoDB"], adjacent: ["AWS"] },
+  { canonical: "Elasticsearch", group: "Data", surface: ["Elasticsearch"], aliases: ["elasticsearch", "opensearch"], ats: ["Elasticsearch"], adjacent: [] },
+  { canonical: "Firebase", group: "Data", surface: ["Firebase"], aliases: ["firebase", "firestore"], ats: ["Firebase"], adjacent: [] },
+  { canonical: "Supabase", group: "Data", surface: ["Supabase"], aliases: ["supabase"], ats: ["Supabase"], adjacent: ["PostgreSQL"] },
+  { canonical: "Prisma", group: "Data", surface: ["Prisma"], aliases: ["prisma", "drizzle", "typeorm", "sequelize"], ats: ["Prisma"], adjacent: ["TypeScript", "PostgreSQL"] },
+  { canonical: "Kafka", group: "Data", surface: ["Kafka"], aliases: ["kafka"], ats: ["Kafka"], adjacent: ["Microservices"] },
+  { canonical: "RabbitMQ", group: "Data", surface: ["RabbitMQ"], aliases: ["rabbitmq", "message queue", "sqs"], ats: ["RabbitMQ"], adjacent: ["Microservices"] },
+  { canonical: "Spark", group: "Data", surface: ["Spark"], aliases: ["apache spark"], ats: ["Spark"], adjacent: [] },
+  { canonical: "Hadoop", group: "Data", surface: ["Hadoop"], aliases: ["hadoop"], ats: ["Hadoop"], adjacent: [] },
+  { canonical: "Pandas", group: "Data", surface: ["Pandas"], aliases: ["pandas"], ats: ["Pandas"], adjacent: ["Python"] },
+  { canonical: "NumPy", group: "Data", surface: ["NumPy"], aliases: ["numpy"], ats: ["NumPy"], adjacent: ["Python"] },
+  { canonical: "JSON", group: "Data", surface: ["JSON"], aliases: ["json", "json schema"], ats: ["JSON"], adjacent: ["REST APIs"] },
+  { canonical: "Data modeling", group: "Data", surface: [], aliases: ["data model", "data modeling", "schema design", "database design"], ats: ["Data modeling"], adjacent: ["SQL", "PostgreSQL"] },
+
+  // --- Cloud ---------------------------------------------------------------
+  { canonical: "AWS", group: "Cloud", surface: ["AWS"], aliases: ["aws", "amazon web services"], ats: ["AWS"], adjacent: ["EC2", "S3", "Lambda"] },
+  { canonical: "EC2", group: "Cloud", surface: ["EC2"], aliases: ["ec2"], ats: ["Amazon EC2"], adjacent: ["AWS"] },
+  { canonical: "S3", group: "Cloud", surface: ["S3"], aliases: ["s3 bucket", "amazon s3"], ats: ["Amazon S3"], adjacent: ["AWS"] },
+  { canonical: "Lambda", group: "Cloud", surface: ["Lambda"], aliases: ["aws lambda"], ats: ["AWS Lambda"], adjacent: ["AWS", "Serverless"] },
+  { canonical: "Cognito", group: "Cloud", surface: ["Cognito"], aliases: ["cognito"], ats: ["AWS Cognito"], adjacent: ["AWS", "Auth"] },
+  { canonical: "EventBridge", group: "Cloud", surface: ["EventBridge"], aliases: ["eventbridge"], ats: ["AWS EventBridge"], adjacent: ["AWS"] },
+  { canonical: "GCP", group: "Cloud", surface: ["GCP"], aliases: ["gcp", "google cloud"], ats: ["Google Cloud (GCP)"], adjacent: [] },
+  { canonical: "Azure", group: "Cloud", surface: ["Azure"], aliases: ["azure"], ats: ["Azure"], adjacent: [] },
+  { canonical: "Heroku", group: "Cloud", surface: ["Heroku"], aliases: ["heroku"], ats: ["Heroku"], adjacent: [] },
+  { canonical: "Vercel", group: "Cloud", surface: ["Vercel"], aliases: ["vercel"], ats: ["Vercel"], adjacent: ["Next.js"] },
+  { canonical: "Netlify", group: "Cloud", surface: ["Netlify"], aliases: ["netlify"], ats: ["Netlify"], adjacent: [] },
+  { canonical: "Cloud deployment", group: "Cloud", surface: [], aliases: ["cloud deployment", "deploy to production", "production deployment"], ats: ["Cloud deployment"], adjacent: ["AWS", "Docker"] },
+
+  // --- Infra ---------------------------------------------------------------
+  { canonical: "Docker", group: "Infra", surface: ["Docker"], aliases: ["docker", "container", "containers", "containerized", "containerised"], ats: ["Docker"], adjacent: ["Linux", "CI/CD"] },
+  { canonical: "Kubernetes", group: "Infra", surface: ["Kubernetes"], aliases: ["kubernetes", "k8s", "eks", "helm"], ats: ["Kubernetes"], adjacent: ["Docker"] },
+  { canonical: "Terraform", group: "Infra", surface: ["Terraform"], aliases: ["terraform", "infrastructure as code", "pulumi"], ats: ["Terraform"], adjacent: ["AWS"] },
+  { canonical: "Ansible", group: "Infra", surface: ["Ansible"], aliases: ["ansible", "chef", "puppet"], ats: ["Ansible"], adjacent: ["Linux"] },
+  { canonical: "Linux", group: "Infra", surface: ["Linux", "Unix"], aliases: ["linux", "unix", "ubuntu", "debian"], ats: ["Linux"], adjacent: ["Bash"] },
+  { canonical: "CI/CD", group: "Infra", surface: ["CI/CD", "GitHub Actions", "Jenkins", "CircleCI"], aliases: ["ci/cd", "cicd", "continuous integration", "continuous delivery", "continuous deployment", "github actions", "jenkins", "circleci", "gitlab ci", "build pipeline", "deployment pipeline"], ats: ["CI/CD", "continuous integration and delivery", "GitHub Actions"], adjacent: ["Git", "Docker", "Testing"] },
+  { canonical: "Observability", group: "Infra", surface: ["Datadog", "Grafana", "Prometheus", "Sentry"], aliases: ["observability", "monitoring", "datadog", "grafana", "prometheus", "sentry", "logging", "alerting"], ats: ["Observability and monitoring"], adjacent: ["Linux"] },
+  { canonical: "Incident response", group: "Infra", surface: [], aliases: ["incident response", "on-call", "on call rotation", "postmortem", "root cause analysis"], ats: ["Incident response"], adjacent: ["Observability"] },
+
+  // --- Practices -----------------------------------------------------------
+  { canonical: "Git", group: "Practices", surface: ["Git"], aliases: ["git", "version control", "github", "gitlab", "bitbucket"], ats: ["Git", "version control"], adjacent: ["CI/CD", "Code review"] },
+  { canonical: "Code review", group: "Practices", surface: [], aliases: ["code review", "pull request", "peer review", "merge request"], ats: ["Code review"], adjacent: ["Git"] },
+  { canonical: "Testing", group: "Practices", surface: ["Jest", "Vitest", "Mocha", "Cypress", "Playwright", "Selenium", "Puppeteer", "pytest"], aliases: ["unit test", "unit testing", "integration test", "automated test", "test coverage", "jest", "vitest", "mocha", "pytest", "cypress", "playwright", "selenium", "puppeteer", "tdd", "test-driven"], ats: ["Automated testing", "unit testing"], adjacent: ["CI/CD", "Code review"] },
+  { canonical: "Agile", group: "Practices", surface: ["Agile", "Scrum", "Kanban"], aliases: ["agile", "scrum", "kanban", "sprint", "standup", "retrospective"], ats: ["Agile/Scrum"], adjacent: ["Jira"] },
+  { canonical: "System design", group: "Practices", surface: [], aliases: ["system design", "architecture design", "distributed systems", "scalable systems", "scalability"], ats: ["System design"], adjacent: ["Microservices"] },
+  { canonical: "Performance", group: "Practices", surface: [], aliases: ["performance optimization", "performance tuning", "profiling", "latency reduction"], ats: ["Performance optimization"], adjacent: ["Caching"] },
+  { canonical: "Security", group: "Practices", surface: [], aliases: ["secure coding", "owasp", "vulnerability", "penetration test", "security best practices"], ats: ["Secure coding"], adjacent: ["Auth"] },
+  { canonical: "Documentation", group: "Practices", surface: [], aliases: ["technical documentation", "write documentation", "api documentation", "runbook"], ats: ["Technical documentation"], adjacent: ["Code review"] },
+  { canonical: "Mentoring", group: "Practices", surface: [], aliases: ["mentor", "mentoring", "coaching junior", "onboarding engineers"], ats: ["Mentoring"], adjacent: ["Code review"] },
+  { canonical: "i18n", group: "Practices", surface: ["i18n"], aliases: ["internationalization", "localization", "i18n", "l10n"], ats: ["Internationalization (i18n)"], adjacent: [] },
+
+  // --- AI ------------------------------------------------------------------
+  { canonical: "AI/LLM integration", group: "AI", surface: ["Claude", "ChatGPT", "Codex", "MCP", "OpenAI"], aliases: ["llm", "openai api", "anthropic api", "rag", "prompt engineering", "genai", "generative ai", "ai-powered", "ai agent", "ai agents", "agentic", "claude", "chatgpt", "copilot", "mcp"], ats: ["LLM integration", "generative AI"], adjacent: ["Python", "REST APIs"] },
+  { canonical: "Machine Learning", group: "AI", surface: ["TensorFlow", "PyTorch", "Keras"], aliases: ["machine learning", "pytorch", "tensorflow", "keras", "scikit-learn", "deep learning", "neural network"], ats: ["Machine learning"], adjacent: ["Python", "NumPy"] },
+
+  // --- Games / math --------------------------------------------------------
+  { canonical: "Godot", group: "Games", surface: ["Godot"], aliases: ["godot"], ats: ["Godot"], adjacent: ["GDScript"] },
+  { canonical: "GameMaker", group: "Games", surface: ["GameMaker"], aliases: ["gamemaker", "game maker"], ats: ["GameMaker"], adjacent: [] },
+  { canonical: "Unity", group: "Games", surface: ["Unity"], aliases: ["unity3d", "unity engine"], ats: ["Unity"], adjacent: ["C#"] },
+  { canonical: "Unreal", group: "Games", surface: ["Unreal"], aliases: ["unreal engine"], ats: ["Unreal Engine"], adjacent: ["C++"] },
+  { canonical: "Flutter", group: "Games", surface: ["Flutter"], aliases: ["flutter"], ats: ["Flutter"], adjacent: [] },
+  { canonical: "Monte Carlo", group: "Games", surface: ["Monte Carlo"], aliases: ["monte carlo", "simulation modeling"], ats: ["Monte Carlo simulation"], adjacent: ["Probability"] },
+  { canonical: "Probability", group: "Games", surface: [], aliases: ["probability", "statistics", "combinatorics", "rtp", "volatility model", "math model"], ats: ["Probability and statistics"], adjacent: ["Monte Carlo"] },
+
+  // --- Tools ---------------------------------------------------------------
+  { canonical: "Jira", group: "Tools", surface: ["Jira"], aliases: ["jira", "confluence", "linear app", "asana"], ats: ["Jira"], adjacent: ["Agile"] },
+  { canonical: "Figma", group: "Tools", surface: ["Figma"], aliases: ["figma", "sketch app"], ats: ["Figma"], adjacent: ["HTML/CSS"] },
+  { canonical: "Postman", group: "Tools", surface: ["Postman"], aliases: ["postman", "insomnia"], ats: ["Postman"], adjacent: ["REST APIs"] },
+  { canonical: "n8n", group: "Tools", surface: ["n8n"], aliases: ["n8n", "zapier", "workflow automation"], ats: ["n8n"], adjacent: [] },
+  { canonical: "ESLint", group: "Tools", surface: ["ESLint", "Prettier"], aliases: ["eslint", "prettier", "linting"], ats: ["ESLint"], adjacent: ["JavaScript"] },
+]
+
+// ---------------------------------------------------------------------------
+// Projections. Both consumers below existed before this file and their exact
+// behaviour is preserved — see tests/lib/keywords.test.mjs, which asserts the
+// old TECH_TERMS list is still a subset and that extractTech's output over the
+// live store is unchanged.
+// ---------------------------------------------------------------------------
+
+const escLiteral = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+// TECH_TERMS: literal strings the verifier watches inside the user's OWN
+// documents (verify-claims R6). Longest-first ordering is applied by
+// techTermsIn, not here.
+export const TECH_TERMS = [...new Set(SKILLS.flatMap((s) => s.surface ?? []))]
+
+// TECH_LEXICON: canonical name + a loose alias regex, for reading SOMEONE
+// ELSE'S posting.
+//
+// `surface` is deliberately NOT folded in here, and that is the whole reason
+// the two fields exist separately. A surface form is trusted because of WHERE
+// it appears: "Go" in the user's own SKILLS block is the language. The same
+// three letters in a job posting are usually not. Auto-folding surface into
+// this regex was tried and matched, in order: "we go to production", "Spring
+// 2027 internship", "use a lambda function", "bagels, a bun, and coffee",
+// "a remix of our culture deck", "Section S3 of the handbook" — six false
+// positives out of nine probes. Same trap as SOFTWARE_BODY matching bare
+// "code" in find-jobs.mjs.
+//
+// So detection aliases are curated per entry and must be unambiguous in
+// running prose. If a skill has no unambiguous alias, it is better to miss it
+// than to index every posting that mentions a season.
+export const TECH_LEXICON = SKILLS.map((s) => ({
+  name: s.canonical,
+  group: s.group,
+  // Same boundary shape as the original lexicon in profile-gaps.mjs: a term
+  // may not be preceded or followed by another word character, but "+", "#"
+  // and "." are allowed INSIDE a term so C++, C# and Node.js match.
+  re: new RegExp(
+    `(^|[^a-z0-9+#.])(${(s.aliases ?? []).join("|")})($|[^a-z0-9+#])`,
+    "i",
+  ),
+}))
+
+// ---------------------------------------------------------------------------
+// Lookups
+// ---------------------------------------------------------------------------
+
+export const SKILL_BY_NAME = new Map(SKILLS.map((s) => [s.canonical, s]))
+
+// Which canonical skills does this text name? Used for job postings and for the
+// profile alike, which is what makes "demanded vs evidenced" a set operation.
+export function extractTech(text, lexicon = TECH_LEXICON) {
+  const found = new Set()
+  const t = String(text ?? "")
+  for (const { name, re } of lexicon) {
+    if (re.test(t)) found.add(name)
+  }
+  return found
+}
+
+// The ATS surface forms for a canonical skill — acronym AND expansion, because
+// some systems index one and not the other.
+export function atsFormsFor(name) {
+  return SKILL_BY_NAME.get(name)?.ats ?? [name]
+}
+
+// Skills a person who genuinely has `names` has very likely also touched, minus
+// the ones they already evidence. This is the "you forgot to write it down"
+// candidate set; it is a suggestion for the USER to confirm, never a fact.
+export function adjacentTo(names, evidenced = new Set()) {
+  const out = new Map() // candidate -> the evidenced skills implying it
+  for (const n of names) {
+    for (const a of SKILL_BY_NAME.get(n)?.adjacent ?? []) {
+      if (evidenced.has(a)) continue
+      if (!out.has(a)) out.set(a, [])
+      out.get(a).push(n)
+    }
+  }
+  return out
+}

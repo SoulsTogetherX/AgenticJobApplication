@@ -13,9 +13,18 @@ import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { loadYamlFile, isTerse } from "../lib/lib.mjs"
 import { extractTech, profileText } from "../profile/profile-gaps.mjs"
-import { readLeadStore, resolveLeadSource } from "../lib/db.mjs"
+import {
+  readLeadStore,
+  resolveLeadSource,
+  openDb,
+  keywordMap,
+} from "../lib/db.mjs"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 
 // Role fit from the title alone. The user targets full-stack first, back-end
 // second (docs/application-limits.yaml); generic titles score lowest.
@@ -47,9 +56,21 @@ const FLAG_PENALTY = {
 }
 
 // Pure core (exported for tests).
-export function scoreLead(lead, profileTech, now = new Date()) {
+//
+// `indexed` is the lead's keyword set from the lead_keywords table, extracted
+// once at ingest from title + description + requirements. Passing it in matters
+// more than it looks: without it this function sees only `lead.title` and
+// `lead.job_text`, and job_text exists ONLY where a job workspace has been
+// created. With no live workspaces — the normal state, since closing an
+// application folds its directory into the documents table — every lead was
+// being ranked on its title alone while 268 indexed keyword rows sat unread.
+//
+// The two sources are unioned rather than one preferred: the index covers leads
+// that have no workspace, and a captured posting is richer than the description
+// snippet the sweep stored.
+export function scoreLead(lead, profileTech, now = new Date(), indexed = null) {
   const text = [lead.title, lead.job_text].filter(Boolean).join("\n")
-  const leadTech = extractTech(text)
+  const leadTech = new Set([...extractTech(text), ...(indexed ?? [])])
   const overlap = [...leadTech].filter((t) => profileTech.has(t))
   const missing = [...leadTech].filter((t) => !profileTech.has(t))
 
@@ -77,11 +98,11 @@ export function scoreLead(lead, profileTech, now = new Date()) {
 export function rankLeads(
   leads,
   profileBlob,
-  { top = 10, now = new Date() } = {},
+  { top = 10, now = new Date(), keywords = null } = {},
 ) {
   const profileTech = extractTech(profileBlob)
   return leads
-    .map((l) => scoreLead(l, profileTech, now))
+    .map((l) => scoreLead(l, profileTech, now, keywords?.get(l.id)))
     .sort((a, b) => b.score - a.score || a.company.localeCompare(b.company))
     .slice(0, top)
 }
@@ -141,8 +162,27 @@ function main() {
     process.exit(2)
   }
 
+  // Keywords were already extracted at ingest; re-deriving them from every
+  // stored description on every run is work the store has already done. Only
+  // available on the database store — a JSON fixture (what the tests point at)
+  // falls back to deriving from the text, which is why this is best-effort.
+  let keywords = null
+  if (String(leadsPath).endsWith(".db")) {
+    try {
+      const db = openDb(leadsPath)
+      try {
+        keywords = keywordMap(db)
+      } finally {
+        db.close()
+      }
+    } catch (e) {
+      console.error(`warn: keyword index unavailable (${e.message})`)
+    }
+  }
+
   const ranked = rankLeads(leads, profileText(loadYamlFile(profilePath)), {
     top,
+    keywords,
   })
 
   if (args.includes("--json")) {

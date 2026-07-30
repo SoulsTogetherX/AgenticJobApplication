@@ -18,104 +18,21 @@ import {
   readLeadStore,
   resolveLeadSource,
   readApplications,
+  openDb,
+  keywordMap,
 } from "../lib/db.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 
-// Tech lexicon: term → detection regex (word-boundary, case-insensitive).
-// Alias groups count as one term.
-const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-const term = (name, aliases = [name]) => ({
-  name,
-  re: new RegExp(
-    `(^|[^a-z0-9+#.])(${aliases.map(esc).join("|")})($|[^a-z0-9+#])`,
-    "i",
-  ),
-})
-export const TECH_LEXICON = [
-  term("TypeScript", ["typescript"]),
-  term("JavaScript", ["javascript", "js", "es6"]),
-  term("Python", ["python"]),
-  term("Java", ["java"]),
-  term("C#", ["c#", ".net", "dotnet"]),
-  term("Go", ["golang"]),
-  term("Rust", ["rust"]),
-  term("Ruby", ["ruby", "rails"]),
-  term("PHP", ["php", "laravel"]),
-  term("React", ["react", "react.js", "reactjs"]),
-  term("Next.js", ["next.js", "nextjs"]),
-  term("Vue", ["vue", "vue.js", "nuxt"]),
-  term("Angular", ["angular"]),
-  term("Svelte", ["svelte", "sveltekit"]),
-  term("Node.js", ["node", "node.js", "nodejs"]),
-  term("Express", ["express", "express.js"]),
-  term("GraphQL", ["graphql"]),
-  term("REST APIs", ["rest api", "rest apis", "restful"]),
-  term("gRPC", ["grpc"]),
-  term("PostgreSQL", ["postgres", "postgresql"]),
-  term("MySQL", ["mysql", "mariadb"]),
-  term("SQL", ["sql"]),
-  term("MongoDB", ["mongodb", "mongo"]),
-  term("Redis", ["redis"]),
-  term("Elasticsearch", ["elasticsearch", "opensearch"]),
-  term("Kafka", ["kafka"]),
-  term("RabbitMQ", ["rabbitmq"]),
-  term("AWS", ["aws", "amazon web services", "ec2", "s3", "lambda"]),
-  term("GCP", ["gcp", "google cloud"]),
-  term("Azure", ["azure"]),
-  term("Docker", ["docker", "containers", "containerized"]),
-  term("Kubernetes", ["kubernetes", "k8s"]),
-  term("Terraform", ["terraform"]),
-  term("CI/CD", [
-    "ci/cd",
-    "cicd",
-    "continuous integration",
-    "github actions",
-    "jenkins",
-  ]),
-  term("Linux", ["linux", "unix"]),
-  term("Git", ["git"]),
-  term("Testing", [
-    "unit test",
-    "unit testing",
-    "jest",
-    "pytest",
-    "cypress",
-    "playwright",
-    "tdd",
-  ]),
-  term("Microservices", ["microservice", "microservices"]),
-  term("Serverless", ["serverless"]),
-  term("Observability", [
-    "datadog",
-    "grafana",
-    "prometheus",
-    "observability",
-    "monitoring",
-  ]),
-  term("Auth", ["oauth", "oidc", "sso", "authentication"]),
-  term("WebSockets", ["websocket", "websockets"]),
-  term("HTML/CSS", ["html", "css", "tailwind", "sass"]),
-  term("AI/LLM integration", [
-    "llm",
-    "openai api",
-    "anthropic api",
-    "rag",
-    "prompt engineering",
-    "genai",
-    "generative ai",
-  ]),
-  term("Machine Learning", ["machine learning", "pytorch", "tensorflow"]),
-]
-
-export function extractTech(text, lexicon = TECH_LEXICON) {
-  const found = new Set()
-  const t = String(text ?? "")
-  for (const { name, re } of lexicon) {
-    if (re.test(t)) found.add(name)
-  }
-  return found
-}
+// The tech lexicon and extractTech moved to scripts/lib/keywords.mjs
+// (2026-07-29), which is now the single source for every "what technology is
+// named here?" question. There used to be TWO lists: this regex lexicon drove
+// lead_keywords and this report, while a separate flat string list in lib.mjs
+// drove verify-claims R6 — and they had already drifted apart in both
+// directions. Re-exported rather than moved outright so existing importers
+// (recommend.mjs, find-jobs.mjs) keep working unchanged.
+export { TECH_LEXICON, extractTech } from "../lib/keywords.mjs"
+import { TECH_LEXICON, extractTech } from "../lib/keywords.mjs"
 
 // Flatten every string in the profile into one searchable blob.
 export function profileText(profile) {
@@ -129,7 +46,14 @@ export function profileText(profile) {
   return parts.join("\n")
 }
 
-// Pure core: jobs = [{slug, text, weight}] → ranked demand vs evidence.
+// Pure core: jobs = [{slug, weight, text?, terms?}] → ranked demand vs evidence.
+//
+// A job may supply `terms` (an iterable of canonical skill names) INSTEAD of
+// `text`. That is how a stored lead contributes: its keywords were extracted
+// once at ingest into lead_keywords, so re-parsing its description here is work
+// the store has already done. It is also the only way a lead contributes
+// anything real — gatherJobs used to hand over `text: lead.title`, so 92 stored
+// descriptions were invisible to this report.
 export function computeGaps(
   jobs,
   profileBlob,
@@ -138,7 +62,9 @@ export function computeGaps(
   const evidenced = extractTech(profileBlob, lexicon)
   const demand = new Map() // term → { weight, jobs: [slug] }
   for (const job of jobs) {
-    const terms = extractTech(job.text, lexicon)
+    const terms = job.terms
+      ? new Set(job.terms)
+      : extractTech(job.text, lexicon)
     for (const t of terms) {
       const d = demand.get(t) ?? { weight: 0, jobs: [] }
       d.weight += job.weight ?? 1
@@ -203,9 +129,34 @@ function gatherJobs(jobsDir, leadsPath, applications) {
   if (fs.existsSync(leadsPath)) {
     try {
       const { leads } = readLeadStore(leadsPath)
+      // Keywords indexed at ingest, when available. This is the difference
+      // between reading a lead's whole description and reading its title:
+      // before this, every lead contributed `text: l.title` and the 92 stored
+      // descriptions counted for nothing.
+      let indexed = new Map()
+      if (String(leadsPath).endsWith(".db")) {
+        try {
+          const db = openDb(leadsPath)
+          try {
+            indexed = keywordMap(db)
+          } finally {
+            db.close()
+          }
+        } catch (e) {
+          console.error(`warn: keyword index unavailable (${e.message})`)
+        }
+      }
       for (const l of leads ?? []) {
         if (l.status === "dismissed") continue
-        jobs.push({ slug: l.id, text: l.title ?? "", weight: 0.5 }) // titles only: weak signal
+        const terms = indexed.get(l.id)
+        // Still weighted below a captured job workspace: a lead is a posting
+        // nobody has committed effort to yet, so it should not outvote the
+        // jobs that actually went out and came back rejected.
+        jobs.push(
+          terms?.size
+            ? { slug: l.id, terms, weight: 0.5 }
+            : { slug: l.id, text: l.title ?? "", weight: 0.5 },
+        )
       }
     } catch {
       console.error(`warn: unreadable ${leadsPath}, skipped`)

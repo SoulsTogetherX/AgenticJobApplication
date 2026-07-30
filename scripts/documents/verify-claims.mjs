@@ -27,6 +27,7 @@ import {
   extractNumbers,
   extractMonthYears,
   techTermsIn,
+  evidenceText,
 } from "../lib/lib.mjs"
 
 function fail(msg) {
@@ -60,11 +61,20 @@ const answers = fs.existsSync(answersPath)
   : { answers: [] }
 const factIndex = buildFactIndex(profile, answers)
 
-// Corpus = raw text of every fact source (numbers/dates/tech are checked against it).
-let corpus =
-  fs.readFileSync(profilePath, "utf8") +
-  "\n" +
-  (fs.existsSync(answersPath) ? fs.readFileSync(answersPath, "utf8") : "")
+// Corpus = the text that may be treated as EVIDENCE (numbers/dates/tech are
+// checked against it).
+//
+// NOT the raw bytes of answers.yaml. That file stores each form QUESTION beside
+// its answer, and forms ask things like "which of these do you have experience
+// with? [... 4 = Spring / Spring Boot; 5 = Cloud (AWS, Azure, or GCP)]". With
+// the raw text as corpus, R6 accepted "Azure" and "Spring" — technologies the
+// user does not have and, in Spring's case, explicitly did not select. See
+// evidenceText() for the rule: an answer always counts, a question only counts
+// when the answer is an unambiguous yes.
+let corpus = evidenceText(
+  fs.readFileSync(profilePath, "utf8"),
+  fs.existsSync(answersPath) ? answers : { answers: [] },
+)
 if (jobPath) {
   if (!fs.existsSync(jobPath)) fail(`No such job file: ${jobPath}`)
   const job = JSON.parse(fs.readFileSync(jobPath, "utf8"))
@@ -169,12 +179,64 @@ if (mode === "resume" && annotatedBullets === 0) {
   })
 }
 
+// R8: keyword coverage. NON-BLOCKING by design.
+//
+// Every other rule here answers "is this true?", and a failure is a lie that
+// must be fixed. R8 answers "is this complete?", and a miss is a trade-off: a
+// one-page resume genuinely cannot carry every matched term, and dropping one
+// to keep the page readable is a legitimate editorial call. Making it blocking
+// would pressure the tailoring step into stuffing — the exact behaviour modern
+// parsers penalise.
+//
+// So it reports and never fails. Reading `jobs/<slug>/keywords.json` when it
+// exists; silent when it does not, so nothing about the existing flow changes.
+let coverage = null
+if (jobPath) {
+  const planPath = jobPath.replace(/job\.json$/, "keywords.json")
+  if (fs.existsSync(planPath)) {
+    try {
+      const plan = JSON.parse(fs.readFileSync(planPath, "utf8"))
+      const docTerms = new Set(techTermsIn(doc))
+      // A term counts as present if any of its ATS surface forms appears.
+      const present = (m) =>
+        docTerms.has(m.skill) ||
+        (m.ats_forms ?? []).some((f) =>
+          new RegExp(f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(doc),
+        )
+      const missing = (plan.must_use ?? []).filter((m) => !present(m))
+      // Blocked terms ARE a truthfulness matter, but R6 already catches them
+      // against the corpus. Reported here too so the message names the plan.
+      const usedBlocked = (plan.blocked ?? [])
+        .filter((b) => docTerms.has(b.skill))
+        .map((b) => b.skill)
+      coverage = {
+        must_use: (plan.must_use ?? []).length,
+        placed: (plan.must_use ?? []).length - missing.length,
+        missing: missing.map((m) => m.skill),
+        missing_required: missing.filter((m) => m.required).map((m) => m.skill),
+        used_blocked: usedBlocked,
+        title_mirror: plan.title_mirror?.mirror ?? null,
+        title_mirrored: plan.title_mirror?.mirror
+          ? new RegExp(
+              plan.title_mirror.mirror.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+              "i",
+            ).test(doc)
+          : null,
+      }
+    } catch {
+      // A malformed plan must never block verification of a truthful document.
+      coverage = { error: "keywords.json unreadable — coverage not checked" }
+    }
+  }
+}
+
 const report = {
   mode,
   file,
   ok: violations.length === 0,
   checked: { annotatedBullets, lines: lines.length },
   violations,
+  ...(coverage ? { coverage } : {}),
 }
 console.log(JSON.stringify(report, null, 2))
 process.exit(report.ok ? 0 : 1)

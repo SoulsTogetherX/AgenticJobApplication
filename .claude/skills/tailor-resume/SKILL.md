@@ -45,32 +45,50 @@ it is the contract; violations of it are bugs.
    - If the cover-letter skill already filled it, REUSE its analysis and
      consistency choices — do not contradict them.
 
-5. **Draft** `jobs/<slug>/resume.md` per the format contract (§6 of the rules):
+5. **Keyword plan** (before drafting — it tells you what to place and, just as
+   importantly, what you may not):
+
+   ```bash
+   node scripts/documents/keyword-plan.mjs <slug>
+   ```
+
+   Writes `jobs/<slug>/keywords.json`. Follow §8 of the rules: place every
+   `must_use` term in its `placement` section, write `ats_forms` in both
+   acronym and expanded form on first mention, mirror `title_mirror.mirror`
+   in the SUMMARY when it is non-null, stay under `density_cap`, and treat
+   `blocked` as forbidden. If a blocked term is genuinely true of the user,
+   ask them and record it with `save-answer.mjs` BEFORE using it.
+
+6. **Draft** `jobs/<slug>/resume.md` per the format contract (§6 of the rules):
    reorder/select/rephrase only; every bullet annotated `<!-- fact:ID -->`;
    one page; keep dates and numbers verbatim from facts.
 
-6. **Unknowns**: if anything needed is not in the fact sources, ask the user in
+7. **Unknowns**: if anything needed is not in the fact sources, ask the user in
    chat, then persist EVERY new answer:
 
    ```bash
    node scripts/profile/save-answer.mjs "<question>" "<answer>"
    ```
 
-7. **Verify** (must pass before showing the draft as final):
+8. **Verify** (must pass before showing the draft as final):
 
    ```bash
    node scripts/documents/verify-claims.mjs resume jobs/<slug>/resume.md --job jobs/<slug>/job.json
    ```
 
    Fix violations by correcting the draft — never by weakening the verifier.
+   The report also carries a non-blocking `coverage` block: it names any
+   `must_use` keyword that did not make it in. Placing a missed one is usually
+   free; dropping it for space is a legitimate call, but make it deliberately.
    Set `resume.status: "verified"` and record `facts_used`.
 
-8. **Approval gate**: show the user (a) which facts were emphasized and why,
-   (b) what was dropped, (c) notable rephrasings, (d) the gaps list. Wait for
-   approval → `status: "approved"`.
+9. **Approval gate**: show the user (a) which facts were emphasized and why,
+   (b) what was dropped, (c) notable rephrasings, (d) the gaps list, and
+   (e) keyword coverage (placed/total) plus anything `blocked` they could
+   unlock by recording an answer. Wait for approval → `status: "approved"`.
 
-9. **Render**:
-   ```bash
-   node scripts/documents/render-pdf.mjs jobs/<slug>/resume.md "jobs/<slug>/Xavier Alvarez Resume - <Company>.pdf"
-   ```
-   Confirm the PDF opens/exists, set `status: "rendered"`, and tell the user the path.
+10. **Render**:
+    ```bash
+    node scripts/documents/render-pdf.mjs jobs/<slug>/resume.md "jobs/<slug>/Xavier Alvarez Resume - <Company>.pdf"
+    ```
+    Confirm the PDF opens/exists, set `status: "rendered"`, and tell the user the path.

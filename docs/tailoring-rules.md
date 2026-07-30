@@ -72,9 +72,54 @@ Never guess. Never leave the answer only in conversation memory.
   all numbers, dates, and tech terms must exist in profile/answers (the job's
   company and title are also allowed, for addressing).
 
-## 8. Verification & approval gate
+## 8. Keyword placement (ATS + AI screening)
+
+Two gatekeepers read the resume before a human does: a parser doing literal
+keyword matching, and an LLM layer that summarises and ranks whatever survives.
+They reward different things, and both are served by the same plan file.
+
+Before drafting, build it:
+
+```bash
+node scripts/documents/keyword-plan.mjs <slug>
+```
+
+That writes `jobs/<slug>/keywords.json`. Then:
+
+- **Place every `must_use` term.** These are the intersection of the posting and
+  the fact base — each one is already true of the user, so using it invents
+  nothing. Missing one is leaving a free point on the table.
+- **Follow `placement`.** `SUMMARY+SKILLS` terms go in both; everything else in
+  the SKILLS block. The summary is the most heavily weighted region and the
+  skills block gives the parser one concentrated keyword area, while the bullets
+  supply the context the LLM layer actually reads. The summary has only
+  `summary_slots` places — do not overfill it.
+- **Use `ats_forms` on first mention.** Write "CI/CD (continuous integration and
+  delivery)", not one or the other: some systems index the acronym and some the
+  expansion.
+- **Mirror the title** when `title_mirror.mirror` is non-null — a resume
+  carrying the posting's title measurably outperforms one that does not. When it
+  is null the posting is outside the user's target roles and mirroring it would
+  be a claim about themselves that isn't true. Note the mirror already has
+  seniority words stripped: mirroring "Senior X" as "X" is honest, mirroring it
+  verbatim is not.
+- **Never exceed `density_cap` repeats of a term.** Keyword stuffing is actively
+  detected and penalised now, and a one-page resume has no room for it anyway.
+- **`blocked` terms may NOT appear, for any reason.** They are what the posting
+  wants and the fact base cannot back. This is §3 restated with the specific
+  list in hand; verify-claims R6 enforces it independently. If one of them is
+  genuinely true of the user, it gets recorded first
+  (`scripts/profile/save-answer.mjs`) and only then used — the plan prints the
+  exact command.
+
+Keyword work is **selection and placement of true facts**, never invention.
+Nothing in this section overrides §1–§3.
+
+## 9. Verification & approval gate
 
 1. Run `node scripts/documents/verify-claims.mjs <mode> <file> --job jobs/<slug>/job.json`.
+   Its report includes an R8 keyword-coverage line: non-blocking, but it names
+   any `must_use` term that did not make it into the document.
 2. Fix every violation — do not weaken the verifier, ever.
 3. Show the user: what was emphasized, dropped, and rephrased + any gaps
    (requirements the profile can't cover — these are listed, never papered over).

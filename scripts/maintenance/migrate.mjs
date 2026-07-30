@@ -52,7 +52,11 @@ function flag(args, name, fallback = null) {
 // Keywords come from everything the lead actually says about the work.
 export function leadKeywords(lead) {
   return [
-    ...extractTech([lead.title, lead.description].filter(Boolean).join("\n")),
+    ...extractTech(
+      [lead.title, lead.description, ...(lead.requirements ?? [])]
+        .filter(Boolean)
+        .join("\n"),
+    ),
   ].sort()
 }
 

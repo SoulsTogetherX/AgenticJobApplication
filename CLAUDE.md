@@ -46,6 +46,14 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   re-run): `node scripts/maintenance/migrate.mjs`
 - Board productivity audit (which swept boards actually yield reachable roles):
   `node scripts/leads/board-yield.mjs [--json]`
+- Find a company's public board from its NAME (the front half of discovery):
+  `node scripts/leads/find-boards.mjs --file docs/candidates/<list>.yaml [--append]`
+  — probes candidate slugs against the six no-auth ATS APIs and writes
+  `docs/board-candidates.yaml`. Candidate lists live in `docs/candidates/`
+  (`fortune500.yaml`, `yc.yaml` built from the public yc-oss directory,
+  `local-lv.yaml`). **It cannot reach Workday/iCIMS/Taleo/Phenom boards** —
+  those need an opaque tenant host that no slug guess produces, and that is what
+  most large employers and nearly every local Las Vegas employer uses.
 - Propose NEW boards, yield-gated (never edits job-sources.yaml itself):
   `node scripts/leads/discover-boards.mjs --candidates docs/board-candidates.yaml`
 - Prune `.render.html` intermediates (dry run by default):
@@ -61,12 +69,50 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 - Find job leads: `node scripts/leads/find-jobs.mjs search|import|list|mark ...`
   (filters through `docs/application-limits.yaml`, stores in `jobs/leads.db`;
   `search` sweeps boards in parallel — `--concurrency N`, default 8)
+  — ingest runs **two gates**: `passesLimits` on the cheap list fields
+  (title/location/date), then `bodyDisqualifiers` on the posting text. Between
+  them, postings that survived the first gate get their description fetched
+  (`--no-enrich` skips it); only survivors are fetched, so it is single digits
+  of round trips, not one per posting swept.
+- Backfill descriptions onto stored leads whose board list endpoint carried none
+  (dry run by default, idempotent): `node scripts/leads/enrich.mjs [--apply]`
+  — re-indexes keywords for every lead it fills, since keywords derive from the
+  description.
 - Manage swept boards: `node scripts/leads/manage-sources.mjs add|remove|verify|list`
   (prescreens on add, refuses duplicates; edits `docs/job-sources.yaml`)
 - Follow-ups due: `node scripts/applications/follow-ups.mjs [--days N] [--json]`
 - Record an outcome/follow-up the user reported:
   `node scripts/applications/update-application.mjs <slug-or-company> [--status s] [--followed-up]`
 - Profile-gap report: `node scripts/profile/profile-gaps.mjs [--json] [--min-demand N]`
+- **Qualifications you have but never recorded**:
+  `node scripts/profile/keyword-coverage.mjs [--min-demand N] [--include-dismissed] [--job <job.json>] [--json]`
+  — splits demanded skills into `covered` / **`ask`** / `gap`. The `ask` bucket
+  is the point: demanded, NOT in the fact base, but close to something you do
+  have — either `adjacent` (a hand-checked lexicon edge: React ⇒ Redux,
+  Docker+nginx ⇒ Linux) or the weaker `same-area`. It prints a ready-to-run
+  `save-answer.mjs` line and **never writes** — rule 2. Until a skill is
+  recorded, verify-claims R6 forbids any resume from mentioning it, so an
+  unrecorded skill is an invisible one.
+  — Demand is counted **twice**: `required` (parsed live from each description
+  with the same required-vs-nice-to-have splitter L2 uses) and `total` (from
+  `lead_keywords`). Ranking is by `required`, because "you cannot apply without
+  this" and "it would be nice" are different facts. Dismissed leads are excluded
+  by default.
+- **Per-job resume keyword plan** (run BEFORE tailoring):
+  `node scripts/documents/keyword-plan.mjs <slug> [--json]`
+  — writes `jobs/<slug>/keywords.json`: `must_use` (in the posting AND backed by
+  the fact base — placing these invents nothing), `placement`, `ats_forms`
+  (acronym _and_ expansion, since systems index one or the other),
+  `title_mirror`, `density_cap`, and `blocked` (what the posting wants that the
+  facts cannot back, each with the `save-answer` line that would unlock it).
+- **Will an ATS read the rendered resume?**
+  `node scripts/documents/ats-lint.mjs <resume.md> [--pdf <f.pdf>] [--html <f.render.html>]`
+  — checks the markdown and the intermediate `.render.html` (Chrome's exact
+  input) for the hazards that are invisible on the page: CSS `::marker` bullets
+  that emit no text, links whose URL exists only as a PDF annotation, tables,
+  images, leaked fact annotations. Also confirms the PDF has a text layer at
+  all. It does **not** decode the PDF text layer — Chrome subsets fonts with
+  Identity-H encoding and reading that back needs a CMap parser.
 - Rank leads against the profile: `node scripts/leads/recommend.mjs [--top N]`
 - Which leads to tailor ahead of time (keeps tailoring off the apply path):
   `node scripts/leads/prep-queue.mjs [--top N] [--cluster] [--json]`
@@ -77,7 +123,37 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   never against each other, so a cluster cannot chain its way from full-stack to
   platform engineering one hop at a time. Recommends only; the user approves
   reusing a resume across a cluster.
-- Mechanical ghost/scam screen: `node scripts/leads/screen.mjs [--status new] [--skip-screened] [--no-record]`
+- **Four-stage screening** — every lead runs an ordered pipeline, cheapest
+  first, stopping at the first rejection, and the stored verdict records WHICH
+  layer decided (so "why did I never see this job?" is answerable):
+
+  | Stage      | Reads                 | Decides                                                       |
+  | ---------- | --------------------- | ------------------------------------------------------------- |
+  | `l0` title | board list payload    | title keywords, hard/soft filter, location, freshness, salary |
+  | `l1` body  | the description       | hard disqualifiers stated in the text                         |
+  | `l2` fit   | the description       | can this profile do this job? **rejects** below a threshold   |
+  | `l3` risk  | description + history | scam, ghost, repost, evergreen                                |
+
+  Stages live in `scripts/leads/stages.mjs`; `l2` is `fit.mjs`, `l3` is
+  `risk.mjs`. Run one in isolation with `screen.mjs --stage l2`.
+  - **l2 rejects** (user decision 2026-07-29). What makes that safe: a posting
+    naming fewer than `fit.min_required_terms` technologies in its REQUIRED
+    section is unevaluable and can never be rejected, technologies under "nice
+    to have" never count against the profile, thresholds live in
+    `docs/application-limits.yaml`, and every rejection is visible in
+    `gate-audit.mjs`.
+  - **l3 needs reposting history**, which `dedupeLeads` used to destroy: a
+    re-posted job arrives with a new board id, matched an existing lead on
+    company+title, and was silently dropped. It now returns those sightings and
+    ingest records `repost_count` on the stored lead.
+
+- **Gate audit — run after ANY gate change**: `node scripts/leads/gate-audit.mjs [--json] [--no-save]`
+  — re-runs every stage over the whole store and diffs against the last run.
+  Newly REJECTED leads are listed in full every time (a job you never see is the
+  worst failure here); exits 1 when there are any. This is the mechanical form
+  of the "re-run the gate over the live store and check the reject list did not
+  grow" discipline the body-gate gotcha below demands.
+- Mechanical ghost/scam screen: `node scripts/leads/screen.mjs [--status new] [--skip-screened] [--no-record] [--stage l0|l1|l2|l3|all]`
   — records its verdicts to the `screens` table as `source: mechanical`.
   `--skip-screened` leaves out leads that already carry a **model** verdict.
 - Record a model screening verdict (the expensive judgment pass, so it is never
@@ -142,7 +218,9 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   roles/salary) every job must pass; `docs/job-sources.yaml` — board list for
   the sweep (managed via manage-sources)
 - `jobs/leads.db` — the SQLite store of record (gitignored): `leads`,
-  `lead_keywords` (tech terms per lead, for demand analysis), `applications`,
+  `lead_keywords` (tech terms extracted at ingest from a lead's title,
+  description AND requirements, for demand analysis — a lead with no description
+  therefore indexes nothing, which is why `enrich.mjs` exists), `applications`,
   `documents` (archived workspaces — see below), `screens` (verdicts keyed by
   `source`: `mechanical` is cheap and kept for history, `model` is the
   expensive Stage A judgment and exists so it is never re-paid), `board_stats`.
@@ -173,9 +251,13 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   both skills for consistency), `resume.md`, `cover-letter.md`, rendered PDFs
 - `schemas/` — shape documentation for job.json / context.json
 - `scripts/` — deterministic helpers (no LLM calls), grouped by domain:
-  - `lib/` — shared infrastructure: `lib.mjs`, `db.mjs`
-  - `leads/` — find, filter, rank: find-jobs, screen, recommend, prep-queue,
-    cluster, board-yield, discover-boards, manage-sources
+  - `lib/` — shared infrastructure: `lib.mjs` (incl. the HTTP + HTML
+    primitives `fetchJson`/`fetchText`/`textSnippet`/`decodeEntities`, which
+    live here because both find-jobs and enrich fetch postings; find-jobs
+    re-exports `textSnippet`/`SNIPPET_MAX` for its existing importers),
+    `db.mjs`
+  - `leads/` — find, filter, rank: find-jobs, enrich, screen, recommend,
+    prep-queue, cluster, board-yield, discover-boards, manage-sources
   - `applications/` — the application record: applications, log-application,
     update-application, check-applied, follow-ups
   - `documents/` — tailored docs: new-job, render-pdf, verify-claims, reuse-check
@@ -236,6 +318,34 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 
 - Windows machine; PDF rendering shells out to local Edge/Chrome headless
   (`PDF_BROWSER` env var overrides the browser path).
+- **Not every board's list endpoint returns a description.** Greenhouse, Ashby
+  and Lever include one; `oracle_cloud`, `smartrecruiters`, `successfactors` and
+  `workday` return none, and Adzuna returns a ~500-char teaser (already flagged
+  `partial_description`). Those four need a per-posting detail fetch —
+  `scripts/leads/enrich.mjs`, one fetcher per ATS, URLs derived from the lead's
+  own `url`/`id` rather than from `job-sources.yaml`. This mattered more than the
+  count suggests: those boards are Caesars, Station Casinos, Boyd, IGT and CVS,
+  i.e. the **local Las Vegas employers**, which are the highest-value leads
+  because on-site is in scope for them — so the least examinable leads were also
+  the most important. A lead with no description can be neither keyword-indexed
+  nor blocker-screened.
+- **The body gate's "is this a software job?" test is easy to get wrong.**
+  Job-posting prose is full of near-misses for software words: the first version
+  matched bare `code` and read "Be familiar with OSHA safety **codes**" as
+  evidence that a building-maintenance job was a software job. `application`
+  (job application), `rest` (the rest of the team), `framework` (regulatory
+  framework), `library` and `server` all fail the same way. `SOFTWARE_BODY` in
+  `find-jobs.mjs` therefore only contains multi-word or unmistakable terms, and
+  `NON_SOFTWARE_BODY` says "maintain cleanliness" not "cleanliness" (code
+  cleanliness) and "beverage server" not "server". When adding a term, re-run the
+  gate over the whole live store and check the reject list did not grow.
+- The body gate **rejects only on unambiguous evidence and flags everything
+  else**, because a false reject is a job the user never sees. Twilio's postings
+  are the reason: one carries three contradictory location sentences pasted in
+  sequence ("based in our San Francisco office" / "remote, based on the East
+  Coast" / "not eligible to be hired in CA, CT, IL…"), so in-office language
+  only ever produces an `onsite_conflict` flag. A state carve-out is decisive
+  only when it names the user's own state.
 - `profile/` and `jobs/` are gitignored on purpose (personal data). Tests use
   fixtures in `tests/fixtures/`, never the real profile.
 - profile.yaml `meta.approved_by_user` must be `true` before tailoring for real
@@ -257,3 +367,45 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   bare function expressions, not modules — they are in `.prettierignore`
   because prettier's leading-semicolon guard would make them unparseable.
   `scan-page.js` is the single source of truth; the driver loads it off disk.
+- **`docs/job-sources.yaml` is also in `.prettierignore`**, for a different
+  reason: `manage-sources.mjs` edits it LINE BY LINE to preserve its comments,
+  which only works while every board is one flow-style entry on one line.
+  Prettier reflows the longer workday/oracle_cloud entries into block style and
+  silently breaks that contract.
+- **`lead_keywords` goes stale the moment the lexicon changes.** It is indexed
+  once at ingest, so a skill added to `keywords.mjs` afterwards has zero rows
+  however often postings demand it. Re-index with
+  `node scripts/maintenance/migrate.mjs` — it only ADDS leads that are missing
+  and rebuilds keywords from what is already in the database, so it is safe on a
+  live store (268 → 443 links after the lexicon was unified, 0 leads touched).
+  Anything ranking on those counts should gate on `max(required, total)`, not
+  `total`: `keyword-coverage.mjs` dropped System design at a required-demand of
+  8 because the index predated the term.
+- **One lexicon, two name fields, and they are not interchangeable.**
+  `scripts/lib/keywords.mjs` is the single source for "what technology is named
+  here?". Each skill carries `surface` (literal strings watched inside the
+  USER'S OWN documents — drives verify-claims R6) and `aliases` (what the skill
+  looks like in SOMEONE ELSE'S posting — drives `lead_keywords`). Folding
+  `surface` into the detection regex was tried and matched "we **go** to
+  production", "**Spring** 2027 internship", "a **bun** and coffee",
+  "Section **S3** of the handbook" — six false positives in nine probes. A
+  negative-corpus test (`tests/lib/keywords.test.mjs`) pins this down; add to it
+  whenever you add an alias.
+- **`answers.yaml` question text is NOT evidence.** It stores each application
+  form question beside its answer, and forms ask things like "which of these do
+  you have? [4 = Spring / Spring Boot; 5 = Cloud (AWS, Azure, or GCP)]". Using
+  the raw file as the verifier corpus made **Azure, Spring, Java and GCP** all
+  pass R6 — including Spring, which the user explicitly did not select. Use
+  `evidenceText()` in `lib.mjs`: an answer always counts, a question only counts
+  when the answer is an unambiguous yes.
+- **`textSnippet` preserves block boundaries.** It used to collapse every run of
+  whitespace including newlines, so a Greenhouse body arrived as one
+  4,000-character line and the L2 fit stage found a requirements heading in 0 of
+  92 stored leads. Block-level tags now become newlines; inline markup still
+  collapses to a space. Section splitting in `fit.mjs` also matches headings
+  INLINE, because leads stored before this change are still flat.
+- **Slug probing can find the wrong company.** `find-boards.mjs` tries
+  "spring" for "Spring Mobile" and "ultimate" for "Ultimate Fighting
+  Championship"; a board with that slug may belong to someone else entirely.
+  This is contained because `discover-boards.mjs` reports the company and live
+  counts, and the user approves each addition — never auto-add.

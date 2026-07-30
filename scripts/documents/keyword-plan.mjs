@@ -67,23 +67,54 @@ export const DENSITY_CAP = 3
 // targets Full-Stack and Back-End roles (docs/application-limits.yaml), so a
 // posting titled "Full Stack Engineer" may be mirrored; one titled "Machine
 // Learning Engineer" may not, and this says so rather than inventing a match.
+// Level and seniority tokens, in two passes because they need different
+// casing rules.
+//
+// Words are case-insensitive, and the trailing "." is consumed so "Sr." does
+// not leave a stray period behind.
+const LEVEL_WORD =
+  /\b(?:senior|sr|jr|junior|staff|principal|distinguished|lead|associate|entry[-\s]?level|new[-\s]?grad|graduate|level|grade|tier)\b\.?/gi
+
+// Roman numerals stay case-SENSITIVE: lowercase "i" and "v" are ordinary
+// letters, and a case-insensitive version would eat the "I" out of any title
+// containing a standalone one. Digits ride along here since "Engineer 3" is the
+// same kind of level marker. `\b\d+\b` cannot touch "Web3" — there is no word
+// boundary between "b" and "3".
+const LEVEL_NUMERAL = /\b(?:[IVX]{1,4}|\d+)\b/g
+
+// Punctuation left dangling once a level token is removed: "Developer - Level 2"
+// becomes "Developer - ", "(Remote)" can become "()", and so on.
+const EMPTY_BRACKETS = /\(\s*\)|\[\s*\]|\{\s*\}/g
+const EDGE_PUNCT = /^[\s,\-–—:|/()]+|[\s,\-–—:|/(]+$/g
+
+export function cleanTitle(raw) {
+  return (
+    String(raw ?? "")
+      .replace(LEVEL_WORD, " ")
+      .replace(LEVEL_NUMERAL, " ")
+      .replace(EMPTY_BRACKETS, " ")
+      // " - - " or ", ," left where a token used to sit between separators.
+      .replace(/([,\-–—:|/])\s*(?=[,\-–—:|/])/g, "")
+      .replace(/\s{2,}/g, " ")
+      .replace(EDGE_PUNCT, "")
+      .trim()
+  )
+}
+
 export function titleMirror(jobTitle, profileTargets) {
   const t = String(jobTitle ?? "").trim()
   const norm = t.toLowerCase()
   const supported = (profileTargets ?? []).find((target) =>
     norm.includes(String(target).toLowerCase()),
   )
+  // Strip seniority and level noise: mirroring "Senior X" as "X" is honest —
+  // it claims the kind of work, not the level. Mirroring it verbatim is not.
+  const mirror = supported ? cleanTitle(t) : null
   return {
     posting_title: t,
-    // Strip seniority and level noise: the user is not claiming to be a Staff
-    // engineer by mirroring a title, only to be doing that KIND of work.
-    mirror: supported
-      ? t
-          .replace(/\b(senior|sr\.?|staff|principal|lead|ii+|iv|\d)\b/gi, "")
-          .replace(/\s{2,}/g, " ")
-          .replace(/[\s,(-]+$/, "")
-          .trim()
-      : null,
+    // A title that is ONLY level words ("Engineer II") cleans down to something
+    // too thin to mirror; better to say so than to put a fragment in a summary.
+    mirror: mirror && mirror.length >= 3 ? mirror : null,
     supported_by: supported ?? null,
     note: supported
       ? "safe to mirror in the SUMMARY line"

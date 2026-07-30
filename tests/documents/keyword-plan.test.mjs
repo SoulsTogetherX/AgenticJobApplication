@@ -9,6 +9,7 @@ import assert from "node:assert/strict"
 import {
   buildPlan,
   titleMirror,
+  cleanTitle,
   placementFor,
   SUMMARY_SLOTS,
   DENSITY_CAP,
@@ -19,7 +20,9 @@ const PROFILE_BLOB =
   "Skills: React, Node.js, TypeScript, PostgreSQL, AWS, Docker, Git. " +
   "Built web applications and automated testing pipelines."
 
-const TARGETS = ["full stack", "back-end", "software engineer"]
+// Mirrors the real docs/application-limits.yaml roles.title_keywords, so a
+// mirroring test cannot pass or fail for the wrong reason.
+const TARGETS = ["full stack", "back-end", "software engineer", "web developer"]
 
 const job = (over = {}) => ({
   slug: "acme-fs",
@@ -141,6 +144,42 @@ test("a title outside the target roles must NOT be mirrored", () => {
   const t = titleMirror("Machine Learning Engineer", TARGETS)
   assert.equal(t.mirror, null)
   assert.match(t.note, /do NOT mirror/)
+})
+
+test("stripping a level never leaves punctuation debris behind", () => {
+  // Each of these produced a broken mirror: "Sr." left a leading period,
+  // "- Level 2" left a dangling "- Level", and a single roman numeral was not
+  // recognised as a level at all.
+  const cases = [
+    ["Sr. Software Engineer", "Software Engineer"],
+    ["Jr. Web Developer", "Web Developer"],
+    ["Full Stack Developer - Level 2", "Full Stack Developer"],
+    ["Software Engineer I", "Software Engineer"],
+    ["Software Engineer 3", "Software Engineer"],
+    ["Staff Software Engineer, Platform", "Software Engineer, Platform"],
+  ]
+  for (const [raw, want] of cases) {
+    assert.equal(titleMirror(raw, TARGETS).mirror, want, `from "${raw}"`)
+  }
+})
+
+test("a title that is nothing but level words yields no mirror", () => {
+  // "Engineer II" cleans to "Engineer", too thin to put in a summary as a
+  // claim about the kind of work done.
+  assert.equal(titleMirror("Engineer II", TARGETS).mirror, null)
+})
+
+test("cleanTitle does not eat digits that are part of a word", () => {
+  // "Web3" has no word boundary between "b" and "3".
+  assert.equal(cleanTitle("Web3 Developer"), "Web3 Developer")
+  assert.equal(cleanTitle("S3 Storage Engineer"), "S3 Storage Engineer")
+})
+
+test("cleanTitle leaves lowercase i and v alone", () => {
+  // Roman-numeral stripping is case-SENSITIVE on purpose: a case-insensitive
+  // version eats the "i" out of ordinary words.
+  assert.equal(cleanTitle("Vision Developer"), "Vision Developer")
+  assert.equal(cleanTitle("iOS Developer"), "iOS Developer")
 })
 
 test("seniority words are stripped from a mirrored title", () => {

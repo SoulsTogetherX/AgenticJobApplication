@@ -13,7 +13,11 @@ import {
   workdayLocationFromPath,
 } from "../../scripts/leads/find-jobs.mjs"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 const NOW = new Date("2026-07-27T12:00:00Z")
 
 const LIMITS = {
@@ -427,7 +431,11 @@ test("loadSources reads the real job-sources.yaml with valid board entries", () 
       b.type && b.company,
       `board missing type/company: ${JSON.stringify(b)}`,
     )
-    // Host-based ATSs identify a board by host+site; the rest use a slug.
+    // Three ways a board is identified. Host-based ATSs use host+site, company
+    // boards use a slug, and the remote-only aggregators use neither: they are
+    // a single global feed, not one company's board, so the type IS the
+    // identity and there is no slug to give them.
+    const AGGREGATORS = ["jobicy", "remotive", "remoteok"]
     if (b.type === "workday") {
       assert.ok(
         b.host && b.tenant && b.site,
@@ -437,6 +445,8 @@ test("loadSources reads the real job-sources.yaml with valid board entries", () 
       assert.ok(b.host && b.site, "oracle_cloud boards need host/site")
     } else if (b.type === "successfactors") {
       assert.ok(b.host, "successfactors boards need host")
+    } else if (AGGREGATORS.includes(b.type)) {
+      assert.ok(b.company, `${b.type} aggregator needs a display company`)
     } else {
       assert.ok(b.slug, `${b.type} board needs slug`)
     }

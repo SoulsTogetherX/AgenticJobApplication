@@ -7,3 +7,10 @@ jobs/*/*.pdf
 # leading-semicolon guard would make them unparseable.
 .claude/skills/apply-job/scan.driver.mjs
 .claude/skills/apply-job/scan-page.js
+
+# manage-sources.mjs edits this file LINE BY LINE, to preserve the explanatory
+# comments a full yaml round-trip would delete. That only works while every
+# board is one flow-style entry on one line, which the file's own FORMAT RULE
+# states. Prettier reflows the longer workday and oracle_cloud entries into
+# multi-line block style, which silently breaks that contract.
+docs/job-sources.yaml

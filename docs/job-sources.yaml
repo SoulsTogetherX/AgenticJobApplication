@@ -63,3 +63,19 @@ boards:
   - { type: oracle_cloud, company: Station Casinos, host: ejfh.fa.us6.oraclecloud.com, site: StationCasinos }
   - { type: jobvite, slug: agscareer, company: AGS }
   - { type: successfactors, company: IGT, host: jobs.igt.com }
+  - { type: ashby, slug: confluent, company: Confluent }
+  - { type: smartrecruiters, slug: wynnresorts, company: Wynn Resorts }
+
+  # --- remote-only aggregators ------------------------------------------------
+  # Not a company board: the whole corpus is remote roles, so a posting's
+  # location states who may be HIRED ("USA") rather than where an office is.
+  # The fetchers set remote_source, which is what stops the location gate
+  # reading "USA" as a relocation. Full descriptions arrive in the list
+  # endpoint, so the body gate runs with no per-posting fetch.
+  #
+  # jobicy measured 5 kept of 50 (10%) on 2026-07-29 — a better yield than every
+  # company board tracked here except Render. remotive and remoteok measured 0
+  # and are left commented out; uncomment to let board-yield judge them again.
+  - { type: jobicy, company: Jobicy (remote US), geo: usa, industry: engineering }
+  # - { type: remotive, company: "Remotive (remote)", category: software-dev }
+  # - { type: remoteok, company: "RemoteOK (remote)" }

@@ -210,10 +210,29 @@ test("textSnippet unwraps Greenhouse's double-encoded HTML", () => {
 
 test("textSnippet strips scripts, collapses space, caps length, nulls empties", () => {
   assert.equal(textSnippet("<script>alert(1)</script> real text"), "real text")
-  assert.equal(textSnippet("a\n\n   b"), "a b")
+  // Horizontal whitespace collapses; a line break is structure and survives.
+  // This used to assert "a b" — every newline was flattened, which destroyed
+  // the only section structure a posting has. See the block-boundary comment
+  // in textSnippet: the L2 fit stage reads headings to separate a REQUIRED
+  // skill from a "nice to have" one, and it found a requirements heading in
+  // 0 of 92 stored leads while descriptions arrived as one unbroken line.
+  assert.equal(textSnippet("a\n\n   b"), "a\nb")
+  assert.equal(
+    textSnippet("keep   these    on  one line"),
+    "keep these on one line",
+  )
   assert.equal(textSnippet(null, undefined, ""), null)
   assert.equal(textSnippet("<p></p>"), null)
   assert.equal(textSnippet("x".repeat(SNIPPET_MAX + 500)).length, SNIPPET_MAX)
+})
+
+test("textSnippet turns block tags into breaks but inline tags into spaces", () => {
+  assert.equal(
+    textSnippet("<p>About us.</p><h3>Requirements</h3><ul><li>React</li></ul>"),
+    "About us.\nRequirements\nReact",
+  )
+  assert.equal(textSnippet("the <b>fast</b> path"), "the fast path")
+  assert.equal(textSnippet("one<br>two"), "one\ntwo")
 })
 
 test("a truncated aggregator teaser is not flagged as a thin posting", () => {

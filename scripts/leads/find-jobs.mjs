@@ -15,7 +15,16 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import yaml from "js-yaml"
-import { isTerse, mapPool } from "../lib/lib.mjs"
+import {
+  isTerse,
+  mapPool,
+  fetchJson,
+  fetchText,
+  decodeEntities,
+  textSnippet,
+  SNIPPET_MAX,
+} from "../lib/lib.mjs"
+import { enrichDescriptions } from "./enrich.mjs"
 import {
   readLeadStore,
   writeLeadStore,
@@ -28,7 +37,11 @@ import {
 } from "../lib/db.mjs"
 import { extractTech } from "../profile/profile-gaps.mjs"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 const LIMITS_PATH = path.join(ROOT, "docs", "application-limits.yaml")
 const SOURCES_PATH = path.join(ROOT, "docs", "job-sources.yaml")
 
@@ -61,6 +74,55 @@ const LOOSE_TECH_TITLE =
 // exists because "analyst" is broad enough to drag in procurement and finance.
 const TRADES_TITLE =
   /\b(maintenance|facilit\w*|paint\w*|electric\w*|plumb\w*|stationary|hvac|refrigerat\w*|custodial|grounds|kitchen|landscap\w*|carpenter|locksmith|janitor\w*|general engineer|slot technician)\b|\b(procurement|financial|finance|accounting|payroll|human resources|media operations|revenue management|benefits|tax|audit|credit|collections|supply chain|logistics)\b/i
+
+// Location strings that state WHO MAY BE HIRED rather than where to move. A
+// remote posting open to the whole country says "USA", not "Remote"; treating
+// that as a relocation is a false reject (see passesLimits for the counts).
+//
+// Deliberately anchored to the WHOLE string. A substring match would read
+// "Tulsa, USA" as country-wide remote, which it plainly is not — the point is
+// that the location field names no city at all. "Worldwide" and "Anywhere"
+// qualify because they include the US; a non-US carve-out elsewhere in the
+// string is still caught by the NON_US check that runs alongside this.
+//
+// Overridable per-user via docs/application-limits.yaml location.remote_synonyms.
+export const US_WIDE_LOCATION = [
+  "usa",
+  "u.s.",
+  "u.s.a.",
+  "us",
+  "united states",
+  "united states of america",
+  "anywhere",
+  "anywhere in the us",
+  "worldwide",
+  "global",
+  "north america",
+  "northern america",
+  "remote us",
+  "us remote",
+  "remote (us)",
+  "remote - us",
+  "remote, us",
+  "remote - united states",
+  "flexible / remote",
+  "fully remote",
+  "distributed",
+]
+
+// Whole-string, case- and punctuation-insensitive membership test. Trailing
+// punctuation and doubled spaces are stripped so "Remote (US)" and "remote - us"
+// both land on the same entry.
+export function matchesAny(value, list) {
+  const norm = (s) =>
+    String(s ?? "")
+      .toLowerCase()
+      .replace(/[().,\-–—/]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  const v = norm(value)
+  return (list ?? []).some((entry) => norm(entry) === v)
+}
 
 // Whole-word title matching. Substring matching would make "sr" hit "usr" and
 // "lead" hit "leading", so every hard/soft filter term is anchored on \b.
@@ -119,17 +181,34 @@ export function passesLimits(job, limits, now = new Date()) {
     const onsiteOk = (limits.location?.onsite_allowed ?? []).some((a) =>
       loc.includes(String(a).toLowerCase()),
     )
-    const remoteText = /\bremote\b/.test(loc) && !nonUsOnly
+    // A country-level location string on a remote posting IS the remote
+    // statement — it is naming who may be hired, not where to move.
+    //
+    // Without this the gate read `location: "USA"` as "would require relocating
+    // away from North Las Vegas" and threw the posting out. That is how every
+    // remote-only aggregator expresses US-remote, and on 2026-07-29 it rejected
+    // 35 of 35 Remotive, 50 of 50 Jobicy and 100 of 100 RemoteOK postings —
+    // a false reject, which is the worst failure this pipeline has, aimed
+    // squarely at the remote roles that are most of the reachable market.
+    const usWide = matchesAny(
+      loc,
+      limits.location?.remote_synonyms ?? US_WIDE_LOCATION,
+    )
+    // A board whose ENTIRE corpus is remote roles has already answered the
+    // question; its postings should not each be re-doubted. Set by the fetcher
+    // for sources declared `remote_only` in docs/job-sources.yaml.
+    const remoteBySource = job.remote_source === true
+    const remoteText = (/\bremote\b/.test(loc) || usWide) && !nonUsOnly
     // Board-level remote flag with a contradictory on-site location string is
     // kept but flagged: screening must confirm it is truly remote-from-NV.
-    const remoteFlagged = job.remote === true && !nonUsOnly
+    const remoteFlagged = (job.remote === true || remoteBySource) && !nonUsOnly
     const remoteOk =
       (limits.location?.remote_ok ?? true) && (remoteText || remoteFlagged)
     if (!remoteOk && !onsiteOk) {
       reasons.push(
         `location: "${job.location}" would require relocating away from ${limits.location?.base ?? "base"}`,
       )
-    } else if (remoteOk && !remoteText && !onsiteOk) {
+    } else if (remoteOk && !remoteText && !remoteBySource && !onsiteOk) {
       flags.push("remote_unverified")
     }
     local = onsiteOk
@@ -183,6 +262,195 @@ export function passesLimits(job, limits, now = new Date()) {
   return { ok: reasons.length === 0, reasons, flags }
 }
 
+// ---------------------------------------------------------------------------
+// Body gate. passesLimits above reads only the title, location and date the
+// board hands over in its list payload — the cheap fields. Everything that
+// actually disqualifies a posting tends to be a sentence in its body, and
+// until 2026-07-29 nothing in the sweep read that body at all.
+//
+// The three cases that motivated this, all from the live store:
+//   * Station Casinos "Junior Engineer - Palace" — passed on local latitude,
+//     body is "Pick up supplies and parts from vendors. Perform all repairs,
+//     maintenance and part replacements... preventive maintenance schedule".
+//     A building-maintenance job sitting in the store as a software lead.
+//   * Fusion HCR "Full Stack Developer" — clean title, body says
+//     "Type: Contract (Through End of Year)".
+//   * Twilio — board says remote, body says "This role will be based in our
+//     San Francisco, California office" AND "This role will be remote, but is
+//     not eligible to be hired in CA, CT, IL, ...".
+//
+// Precision over recall throughout. A false reject here is a job the user never
+// sees, which is worse than a flag they can dismiss, so anything ambiguous
+// FLAGS and leaves the judgment to screening. Only the unambiguous cases reject.
+// ---------------------------------------------------------------------------
+
+// Phrases that only appear in postings about building software. Every term here
+// is deliberately unambiguous, because this pattern decides whether a posting is
+// technical at all and job-posting prose is full of near-misses: the first
+// version of this matched bare "code" and read Station Casinos' "Be familiar
+// with OSHA safety codes" as evidence of a software job. "application" (job
+// application), "rest" (the rest of the team), "framework" (regulatory
+// framework) and "library" all fail the same way and are excluded on purpose.
+const SOFTWARE_BODY =
+  /\b(software (?:engineer|developer|development|engineering)|source code|codebase|coding|writes? code|programming|scripting|web (?:application|development|app|service)|api\b|apis\b|sdk\b|back-?end|front-?end|full-?stack|micro-?services?|version control|unit test\w*|code review|pull request|graphql|rest(?:ful)? api|data structures?|algorithms?|database|sql\b|git\b|ci\/cd|deployment pipeline|typescript|javascript|python|react\b|node\.?js|html|css|\.net|c#|java\b)/i
+
+// Body vocabulary of the non-software jobs that reach the store on a loose or
+// local title match. Three groups, all drawn from live postings: casino
+// facilities work, hospitality/floor work, and back-office finance.
+//
+// The hospitality group exists because the local boards (Station Casinos,
+// Boyd, Caesars) are overwhelmingly casino-floor postings and a handful reach
+// the store on local title latitude — "Junior Engineer - Palace" was a
+// maintenance job and a "Kitchen Worker" probe cleared the gate on nothing but
+// hospitality boilerplate.
+//
+// Every term is picked to be unambiguous in a software posting: "maintain
+// cleanliness" not "cleanliness" (code cleanliness), "beverage server" not
+// "server", "guest services" not "guest".
+const NON_SOFTWARE_BODY =
+  /\b(preventive maintenance|repairs? and maintenance|part replacements?|hvac|refrigerat\w*|plumb\w*|electrical (system|panel|wiring)|guest rooms?|casino floor equipment|slot machines?|hand tools|painting|landscap\w*|custodial|janitor\w*|housekeep\w*)\b|\b(maintain cleanliness|kitchen|culinary|bartend\w*|banquet|buffet|(?:beverage|food|cocktail) server|valet|table games|front desk|guest services?|security officer|cashier|dealer school|food and beverage)\b|\b(invoices?|purchase orders?|vendor contracts?|accounts payable|accounts receivable|general ledger|reconcil\w+ accounts)\b/i
+
+// "must relocate", not "relocation assistance available" — the second is a perk
+// and matching it would reject the roles that are easiest to take.
+const RELOCATION_REQUIRED =
+  /\b(must|required to|expected to|willing(?:ness)? to)\s+(?:be\s+)?relocat\w*|\brelocation\s+(?:is\s+)?(?:required|mandatory|expected)\b/i
+
+// Remote postings that carve out states. Only decisive when the carve-out names
+// this user's state; a list that excludes California says nothing about Nevada.
+const STATE_EXCLUSION =
+  /\bnot\s+(?:eligible|available|able)\s+(?:to\s+be\s+hired|for\s+hire|to\s+hire|for\s+employment)?\s*in\b([^.]{0,400})/gi
+
+// In-office expectation stated in the body. Flagged, never rejected: the Twilio
+// posting carries three mutually contradictory location sentences pasted one
+// after another, so any single-sentence match is as likely to be stale
+// boilerplate as it is to be the real requirement.
+const ONSITE_BODY =
+  /\b(?:\d+\s*(?:\+)?\s*days?\s*(?:per|a)\s*week\s*(?:in\s*(?:the\s*)?office|on-?site)|hybrid\s+(?:role|position|schedule)|(?:this\s+)?role\s+(?:will\s+)?(?:be\s+)?(?:is\s+)?based\s+(?:out\s+of|in|at)\s+our|required\s+to\s+(?:work\s+)?(?:on-?site|in\s+(?:the\s+)?office))/i
+
+// Employment shapes that are not full-time permanent. Anchored on an explicit
+// type declaration or a duration, so the word "contract" inside "contract law"
+// or "contract negotiation" (common in the analyst postings) cannot trip it.
+const EMPLOYMENT_SHAPE = [
+  [
+    /\b(?:employment|position|job|role|opportunity)\s*type\s*[:\-]?\s*(contract|temporary|temp|part[-\s]?time|seasonal|intern(?:ship)?)/i,
+    (m) => m[1].toLowerCase().replace(/\s+/g, "-"),
+  ],
+  [/\b(contract|temp)[-\s]?to[-\s]?hire\b/i, () => "contract-to-hire"],
+  [
+    /\bthis is a\s+(?:\d+[-\s]?month\s+)?(contract|temporary|part[-\s]?time|seasonal|internship)\b/i,
+    (m) => m[1].toLowerCase().replace(/\s+/g, "-"),
+  ],
+  [
+    /\b\d+[-\s]?month\s+(?:contract|assignment|engagement)\b/i,
+    () => "contract",
+  ],
+  [/\bfixed[-\s]?term\s+(?:contract|position|role)\b/i, () => "fixed-term"],
+  [
+    /\btype\s*:\s*contract\b|\bcontract\s*\((?:through|thru)[^)]*\)/i,
+    () => "contract",
+  ],
+]
+
+// A seniority bar stated in the body of a posting whose title hides it. The
+// motivating case is Chainguard's "Software Engineer (Libraries Platform)",
+// whose body said "join as a Senior Software Engineer" — a title filter cannot
+// see that, and screen.mjs' years gate only fires if a number is stated.
+const SENIOR_IN_BODY =
+  /\b(?:join(?:ing)?(?:\s+us)?\s+as\s+an?|hiring\s+an?|seeking\s+an?|as\s+an?)\s+(senior|staff|principal|lead|distinguished)\s+(?:software|full-?stack|back-?end|front-?end|web|platform)?\s*(?:engineer|developer)\b/i
+
+// Reads the parts of a posting the list endpoints do not give us. Returns the
+// same {ok, reasons, flags} shape as passesLimits so ingest can treat the two
+// gates identically. A lead with no description at all passes: this gate can
+// only speak to text it actually has.
+export function bodyDisqualifiers(job, limits = {}) {
+  const reasons = []
+  const flags = []
+  const text = [job.description, ...(job.requirements ?? [])]
+    .filter(Boolean)
+    .join("\n")
+  if (!text) return { ok: true, reasons, flags }
+
+  const titleKws = limits.roles?.title_keywords ?? []
+  const title = String(job.title ?? "").toLowerCase()
+  // A title that names the discipline outright ("Full Stack Developer") is
+  // trusted; the non-software check is aimed at the leads that arrived on
+  // local latitude or on a generic "Engineer"/"Analyst" match.
+  const explicitTech =
+    /\b(full[-\s]?stack|back[-\s]?end|front[-\s]?end|software (developer|engineer)|web developer|game (developer|engineer|mathematician))\b/i.test(
+      title,
+    )
+  const looseArrival =
+    (job.flags ?? []).includes("title_loose") ||
+    !titleKws.some((k) => title.includes(String(k).toLowerCase()))
+
+  if (!explicitTech && (looseArrival || NON_SOFTWARE_BODY.test(text))) {
+    if (!SOFTWARE_BODY.test(text) && NON_SOFTWARE_BODY.test(text)) {
+      reasons.push("body: not a software role (no software work described)")
+    } else if (!SOFTWARE_BODY.test(text)) {
+      flags.push("body_not_technical")
+    }
+  }
+
+  if (RELOCATION_REQUIRED.test(text)) {
+    reasons.push("body: requires relocating away from base")
+  }
+
+  // Only worth saying when the TITLE was clean — a posting titled "Senior
+  // Backend Engineer" is already rejected by the hard title filter, and
+  // reporting "the title hid it" about those would be plainly wrong.
+  const titleStatesLevel =
+    /\b(senior|sr\.?|staff|principal|lead|distinguished)\b/i.test(title)
+  if (!titleStatesLevel) {
+    const m = SENIOR_IN_BODY.exec(text)
+    if (m)
+      reasons.push(`body: states a ${m[1].toLowerCase()} bar the title hid`)
+  }
+
+  // Only the carve-outs that name this user's state are decisive.
+  const base = String(limits.location?.base ?? "")
+  const st = /,\s*([A-Z]{2})\b/.exec(base)?.[1] ?? "NV"
+  const stateName =
+    { NV: "nevada", CA: "california", AZ: "arizona", UT: "utah" }[st] ?? null
+  STATE_EXCLUSION.lastIndex = 0
+  for (const m of text.matchAll(STATE_EXCLUSION)) {
+    const tail = m[1] ?? ""
+    const named =
+      new RegExp(`\\b${st}\\b`).test(tail) ||
+      (stateName && new RegExp(`\\b${stateName}\\b`, "i").test(tail))
+    if (named) {
+      reasons.push(`body: not eligible for hire in ${st}`)
+      break
+    }
+  }
+
+  for (const [re, label] of EMPLOYMENT_SHAPE) {
+    const m = re.exec(text)
+    if (!m) continue
+    const kind = label(m)
+    const rejectTypes = (limits.employment?.reject_types ?? []).map((t) =>
+      String(t).toLowerCase(),
+    )
+    if (rejectTypes.includes(kind)) {
+      reasons.push(`body: ${kind}, not full-time permanent`)
+    } else {
+      flags.push(`employment:${kind}`)
+    }
+    break
+  }
+
+  if (ONSITE_BODY.test(text)) {
+    const onsiteOk = (limits.location?.onsite_allowed ?? []).some((a) =>
+      new RegExp(
+        `\\b${String(a).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+        "i",
+      ).test(text),
+    )
+    if (!onsiteOk) flags.push("onsite_conflict")
+  }
+
+  return { ok: reasons.length === 0, reasons, flags }
+}
+
 // Best-effort max-salary parse from strings like "$150K – $220K • 0.15%".
 // Returns annual USD or null; amounts under 1000 are treated as $K shorthand.
 export function parseSalaryMax(text) {
@@ -219,34 +487,6 @@ export function workdayLocationFromPath(externalPath) {
   return m ? m[1].replace(/-/g, " ") : ""
 }
 
-// Boards return postings as HTML (Greenhouse double-encodes it). The screen
-// only needs enough text to spot blockers — a clearance demand or a seniority
-// bar — so store a stripped, capped snippet rather than the whole ad; the lead
-// store holds dozens of these.
-export const SNIPPET_MAX = 4000
-
-const decodeEntities = (s) =>
-  String(s)
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&#0?39;|&rsquo;|&apos;/gi, "'")
-    .replace(/&quot;|&ldquo;|&rdquo;/gi, '"')
-    .replace(/&amp;/gi, "&")
-
-export function textSnippet(...parts) {
-  const raw = parts.filter(Boolean).join("\n")
-  if (!raw) return null
-  const txt = decodeEntities(
-    decodeEntities(raw)
-      .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
-      .replace(/<[^>]+>/g, " "),
-  )
-    .replace(/\s+/g, " ")
-    .trim()
-  return txt ? txt.slice(0, SNIPPET_MAX) : null
-}
-
 export function normUrl(u) {
   try {
     const p = new URL(u)
@@ -259,26 +499,50 @@ export function normUrl(u) {
 const companyTitleKey = (x) =>
   `${String(x.company ?? "").toLowerCase()}::${String(x.title ?? "").toLowerCase()}`
 
+// Returns the candidates worth storing, and — via `reposts` — the ones dropped
+// because the store already holds that company+title.
+//
+// That second return value is not bookkeeping. Reposting is the strongest
+// ghost-job signal there is, and this function is where the evidence was being
+// destroyed: a posting taken down and put back up arrives with a fresh board id
+// and a fresh date, matches an existing lead on company+title, and was silently
+// discarded. The lead store therefore contained ZERO repeated company+title
+// pairs by construction, so L3's repost check had nothing to read. The sighting
+// is the signal; ingest records it against the lead already stored.
 export function dedupeLeads(candidates, existingLeads = [], applied = []) {
   const seen = new Set()
+  const byCompanyTitle = new Map()
   for (const l of existingLeads) {
     if (l.id) seen.add(l.id)
     if (l.url) seen.add(normUrl(l.url))
-    seen.add(companyTitleKey(l))
+    const ct = companyTitleKey(l)
+    seen.add(ct)
+    if (!byCompanyTitle.has(ct)) byCompanyTitle.set(ct, l)
   }
   const appliedKeys = new Set(applied.map(companyTitleKey))
   const fresh = []
+  const reposts = []
   for (const c of candidates) {
-    const keys = [
-      c.id,
-      c.url ? normUrl(c.url) : null,
-      companyTitleKey(c),
-    ].filter(Boolean)
-    if (keys.some((k) => seen.has(k))) continue
-    if (appliedKeys.has(companyTitleKey(c))) continue
+    const ct = companyTitleKey(c)
+    const keys = [c.id, c.url ? normUrl(c.url) : null, ct].filter(Boolean)
+    if (keys.some((k) => seen.has(k))) {
+      // A DIFFERENT posting id for a company+title already stored is a repost.
+      // The same id arriving again is just the same posting still being live,
+      // which says nothing.
+      const existing = byCompanyTitle.get(ct)
+      if (existing && c.id && existing.id !== c.id && !seen.has(c.id)) {
+        reposts.push({ lead: existing, candidate: c })
+      }
+      continue
+    }
+    if (appliedKeys.has(ct)) continue
     keys.forEach((k) => seen.add(k))
     fresh.push(c)
   }
+  // Array-with-extras: every existing caller destructures or iterates this as
+  // the list of fresh candidates, and changing that shape would touch the
+  // import path, board-yield, discover-boards and three tests for no gain.
+  fresh.reposts = reposts
   return fresh
 }
 
@@ -318,18 +582,9 @@ const WORKDAY_PAGE = 20
 const ADZUNA_PAGE = 50
 const ORACLE_PAGE = 200 // Oracle silently clamps anything above this
 
-async function fetchJson(url, body = null) {
-  const res = await fetch(url, {
-    method: body ? "POST" : "GET",
-    headers: {
-      "user-agent": "agentic-job-application/0.1 (personal job search tool)",
-      ...(body ? { "content-type": "application/json" } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
-  return res.json()
-}
+// Re-exported from lib.mjs, where they now live so enrich.mjs can share them
+// without importing this module back.
+export { textSnippet, SNIPPET_MAX }
 
 async function fetchGreenhouse(board) {
   const data = await fetchJson(
@@ -559,17 +814,6 @@ async function fetchOracleCloud(board) {
   return out
 }
 
-async function fetchText(url) {
-  const res = await fetch(url, {
-    headers: {
-      "user-agent": "agentic-job-application/0.1 (personal job search tool)",
-      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
-  return res.text()
-}
-
 const cdata = (s) =>
   decodeEntities(
     String(s ?? "")
@@ -783,6 +1027,91 @@ async function fetchAdzuna(query, limits, env = loadEnv()) {
   return out // cross-query duplicates fall out in dedupeLeads
 }
 
+// Remote-only aggregators.
+//
+// These differ from every board above in one way that matters: their entire
+// corpus is remote roles, so a posting's location field states WHO MAY BE HIRED
+// ("USA", "Anywhere") rather than where an office is. `remote_source: true`
+// tells passesLimits to read it that way — without it the location gate called
+// every one of them a relocation and threw the lot out (see US_WIDE_LOCATION).
+//
+// They also return the FULL description in the list endpoint, so the body gate
+// and keyword indexing work with no per-posting enrich round trip.
+//
+// Measured 2026-07-29 against the real gates, after the remote fix:
+//   jobicy    5 kept of 50  (10%) — incl. a Graduate Software Engineer.
+//             Better than every tracked board except Render (8.8%).
+//   remotive  0 of 35 — category filter is unreliable ("Patient Care
+//             Specialist" filed under software-dev) and the free tier caps a
+//             category at ~35 rows.
+//   remoteok  0 of 100 — ~500-char descriptions, titles skew senior.
+// Only jobicy is swept by default; the other two are available for
+// job-sources.yaml to switch on, and board-yield will judge them on evidence.
+//
+// NOT added: The Muse (0 kept of 200 sampled — its "entry level software
+// engineering" is dominated by SpaceX production technicians and 93% were
+// stale) and Arbeitnow (a German/EU corpus the location gate rejects wholesale).
+const JOBICY_COUNT = 50
+
+async function fetchJobicy(board) {
+  const geo = board.geo ?? "usa"
+  const industry = board.industry ?? "engineering"
+  const data = await fetchJson(
+    `https://jobicy.com/api/v2/remote-jobs?count=${JOBICY_COUNT}&geo=${encodeURIComponent(geo)}&industry=${encodeURIComponent(industry)}`,
+  )
+  return (data.jobs ?? []).map((j) => ({
+    id: `jobicy:${j.id}`,
+    source: "jobicy",
+    company: j.companyName || "unknown",
+    title: j.jobTitle ?? "",
+    location: j.jobGeo ?? "",
+    remote: true,
+    remote_source: true,
+    url: j.url,
+    posted_at: j.pubDate ?? null,
+    salary_max: j.salaryMax ? Number(j.salaryMax) : null,
+    description: textSnippet(j.jobDescription ?? j.jobExcerpt),
+  }))
+}
+
+async function fetchRemotive(board) {
+  const category = board.category ?? "software-dev"
+  const data = await fetchJson(
+    `https://remotive.com/api/remote-jobs?category=${encodeURIComponent(category)}`,
+  )
+  return (data.jobs ?? []).map((j) => ({
+    id: `remotive:${j.id}`,
+    source: "remotive",
+    company: j.company_name || "unknown",
+    title: j.title ?? "",
+    location: j.candidate_required_location ?? "",
+    remote: true,
+    remote_source: true,
+    url: j.url,
+    posted_at: j.publication_date ?? null,
+    salary_max: parseSalaryMax(j.salary),
+    description: textSnippet(j.description),
+  }))
+}
+
+async function fetchRemoteOk() {
+  const data = await fetchJson("https://remoteok.com/api")
+  // Row 0 is a legal notice, not a posting.
+  return (Array.isArray(data) ? data.slice(1) : []).map((j) => ({
+    id: `remoteok:${j.id}`,
+    source: "remoteok",
+    company: j.company || "unknown",
+    title: j.position ?? "",
+    location: j.location ?? "",
+    remote: true,
+    remote_source: true,
+    url: j.url || j.apply_url,
+    posted_at: j.date ?? null,
+    salary_max: j.salary_max ? Number(j.salary_max) : null,
+    description: textSnippet(j.description),
+  }))
+}
+
 async function fetchHackerNews(query) {
   const q = encodeURIComponent(query || "full stack")
   const data = await fetchJson(
@@ -819,6 +1148,9 @@ const BOARD_FETCHERS = {
   oracle_cloud: fetchOracleCloud,
   jobvite: fetchJobvite,
   successfactors: fetchSuccessFactors,
+  jobicy: fetchJobicy,
+  remotive: fetchRemotive,
+  remoteok: fetchRemoteOk,
 }
 
 export const BOARD_TYPES = Object.keys(BOARD_FETCHERS)
@@ -931,7 +1263,13 @@ function indexKeywords(leads) {
     const db = openDb(src.file)
     try {
       for (const l of leads) {
-        const text = [l.title, l.description].filter(Boolean).join("\n")
+        // requirements is included because an imported lead (Playwright/WebFetch
+        // capture) carries its qualifications as a separate array rather than
+        // folded into the description, and those bullets are precisely where the
+        // demanded stack is named.
+        const text = [l.title, l.description, ...(l.requirements ?? [])]
+          .filter(Boolean)
+          .join("\n")
         setLeadKeywords(db, l.id, [...extractTech(text)])
       }
     } finally {
@@ -987,27 +1325,60 @@ function recordSweep(results, limits, now) {
   }
 }
 
-function ingest(candidates, limits) {
+// Two gates, cheapest first. passesLimits reads the list payload's title,
+// location and date and throws out the thousands; only what survives is worth a
+// per-posting detail fetch, and only once a description exists can the body gate
+// read it. Running them in the other order would mean one HTTP round trip per
+// posting the sweep was going to discard anyway.
+async function ingest(candidates, limits, { enrich = true } = {}) {
   const store = loadLeads()
   const applied = loadApplied()
   const now = new Date()
-  const kept = []
+  const survivors = []
   const rejected = []
   const backfilled = backfillDescriptions(candidates, store.leads)
-  for (const c of dedupeLeads(candidates, store.leads, applied)) {
+  const deduped = dedupeLeads(candidates, store.leads, applied)
+
+  // Record repost sightings on the lead already stored. This is the only place
+  // the evidence exists: the re-posted copy is about to be discarded as a
+  // duplicate, and its existence is the whole signal (see dedupeLeads).
+  for (const { lead, candidate } of deduped.reposts ?? []) {
+    lead.repost_count = (lead.repost_count ?? 0) + 1
+    lead.first_seen_at ??= lead.found_at ?? now.toISOString()
+    lead.last_seen_at = now.toISOString()
+    if (candidate.posted_at) lead.last_reposted_at = candidate.posted_at
+  }
+
+  for (const c of deduped) {
     const verdict = passesLimits(c, limits, now)
     if (!verdict.ok) {
       rejected.push({ ...c, reasons: verdict.reasons })
       continue
     }
+    survivors.push({ ...c, flags: verdict.flags })
+  }
+
+  let enriched = { filled: 0, attempted: 0, failures: [] }
+  if (enrich && survivors.length) {
+    enriched = await enrichDescriptions(survivors)
+  }
+
+  const kept = []
+  for (const s of survivors) {
+    const body = bodyDisqualifiers(s, limits)
+    if (!body.ok) {
+      rejected.push({ ...s, reasons: body.reasons })
+      continue
+    }
     kept.push({
-      ...c,
-      flags: verdict.flags,
+      ...s,
+      flags: [...new Set([...(s.flags ?? []), ...body.flags])],
       status: "new",
       found_at: now.toISOString(),
       notes: "",
     })
   }
+
   store.leads.push(...kept)
   saveLeads(store)
   indexKeywords(kept)
@@ -1017,6 +1388,16 @@ function ingest(candidates, limits) {
     explain: ei !== -1,
     explainTop: Number.isFinite(eN) && eN > 0 ? eN : 30,
   })
+  if (enriched.attempted) {
+    console.log(
+      isTerse()
+        ? `enriched=${enriched.filled}/${enriched.attempted}`
+        : `Fetched descriptions for ${enriched.filled} of ${enriched.attempted} posting(s) whose board list endpoint carries none.`,
+    )
+  }
+  for (const f of enriched.failures) {
+    console.error(`warn: description fetch failed: ${f}`)
+  }
   if (backfilled) {
     console.log(
       `Backfilled description snippets onto ${backfilled} existing lead(s).`,
@@ -1076,16 +1457,20 @@ async function cmdSearch(args) {
       failures.push(`adzuna — ${e.message} (skipped)`)
     }
   }
-  ingest(candidates, limits)
+  await ingest(candidates, limits, {
+    enrich: !args.includes("--no-enrich"),
+  })
   for (const f of failures) console.error(`warn: source failed: ${f}`)
 }
 
-function cmdImport(args) {
+async function cmdImport(args) {
   const file = args.find((a) => !a.startsWith("--"))
   if (!file) throw new Error("usage: find-jobs.mjs import <file.json>")
   const raw = JSON.parse(fs.readFileSync(file, "utf8"))
   const candidates = Array.isArray(raw) ? raw : (raw.leads ?? [])
-  ingest(candidates, loadLimits())
+  await ingest(candidates, loadLimits(), {
+    enrich: !args.includes("--no-enrich"),
+  })
 }
 
 function cmdList(args) {
@@ -1148,7 +1533,7 @@ function cmdMark(args) {
 async function main() {
   const [cmd, ...args] = process.argv.slice(2)
   if (cmd === "search") await cmdSearch(args)
-  else if (cmd === "import") cmdImport(args)
+  else if (cmd === "import") await cmdImport(args)
   else if (cmd === "list") cmdList(args)
   else if (cmd === "mark") cmdMark(args)
   else {

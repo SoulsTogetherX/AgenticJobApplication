@@ -23,10 +23,15 @@ import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { isTerse, loadYamlFile, yearsOfExperience } from "../lib/lib.mjs"
 import { loadLimits } from "./find-jobs.mjs"
+import { evaluateStages, STAGE_IDS } from "./stages.mjs"
+import { buildHistory } from "./risk.mjs"
+import { extractTech } from "../lib/keywords.mjs"
+import { profileText } from "../profile/profile-gaps.mjs"
 import {
   readLeadStore,
   resolveLeadSource,
   openDb,
+  keywordMap,
   recordScreens,
   screenIndex,
 } from "../lib/db.mjs"
@@ -326,6 +331,25 @@ function main() {
   const skipScreened = args.includes("--skip-screened")
   const noRecord = args.includes("--no-record")
 
+  // --stage l0|l1|l2|l3|all (comma-separated). Narrowing is for diagnosing one
+  // layer in isolation — "what would L2 alone say about the store?" — without
+  // the earlier layers short-circuiting everything first.
+  const stageArg = flag(args, "--stage")
+  const stages =
+    !stageArg || stageArg === true || stageArg === "all"
+      ? STAGE_IDS
+      : String(stageArg)
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+  const unknownStage = stages.find((s) => !STAGE_IDS.includes(s))
+  if (unknownStage) {
+    console.error(
+      `unknown stage "${unknownStage}" — expected one of ${STAGE_IDS.join(", ")} or "all"`,
+    )
+    process.exit(2)
+  }
+
   // The already-model-screened set. Consulted whether or not --skip-screened is
   // passed, so the count can be reported either way: knowing that 40 of 99
   // leads have already been judged is the whole saving on offer.
@@ -345,21 +369,61 @@ function main() {
   const alreadyJudged = all.filter((l) => modelScreened.has(l.id)).length
   const leads = skipScreened ? all.filter((l) => !modelScreened.has(l.id)) : all
 
+  // Stage context, built once. History spans EVERY lead (dismissed included),
+  // not just the ones being screened — a lead dismissed three weeks ago is the
+  // evidence that today's identical posting is a repost.
+  const now = new Date()
+  const history = buildHistory(readLeadStore(leadsPath).leads ?? [], { now })
+  const profileTech = extractTech(profileText(profile))
+  let keywordIdx = new Map()
+  if (isDb) {
+    try {
+      const db = openDb(leadsPath)
+      try {
+        keywordIdx = keywordMap(db)
+      } finally {
+        db.close()
+      }
+    } catch {}
+  }
+
   const results = leads.map((l) => {
     const captured = byUrl.get(l.url)
     // Prefer a full captured posting; fall back to the snippet the sweep
     // stored, so blockers are caught before a workspace ever exists.
-    return screenJob(
+    const job = {
+      ...l,
+      description: captured?.description ?? l.description,
+      requirements: captured?.requirements,
+      partial_description: !captured?.description,
+    }
+    const base = screenJob(job, limits, now, profileYears)
+    // Which LAYER decided, recorded alongside the verdict. Without this a
+    // stored "reject" says what happened but never why, and "why did I never
+    // see this job?" stays unanswerable.
+    const staged = evaluateStages(
+      job,
       {
-        ...l,
-        description: captured?.description ?? l.description,
-        requirements: captured?.requirements,
-        partial_description: !captured?.description,
+        limits,
+        now,
+        profileYears,
+        profileTech,
+        keywords: keywordIdx.get(l.id),
+        history,
       },
-      limits,
-      new Date(),
-      profileYears,
+      stages,
     )
+    return {
+      ...base,
+      // A stage rejection outranks the pattern screen: the stages are the
+      // ordered pipeline, screenJob is the scam/culture pass layered over it.
+      verdict: staged.ok ? base.verdict : "reject",
+      stage: staged.stage,
+      signals: [...new Set([...base.signals, ...staged.flags])],
+      reasons: staged.reasons,
+      fit_score: staged.fit_score ?? null,
+      repost_count: staged.repost_count ?? 0,
+    }
   })
 
   // Recorded for history, not for speed — see the header. Never on a JSON
@@ -375,6 +439,13 @@ function main() {
           verdict: r.verdict,
           signals: r.signals,
           years_required: r.years_required,
+          // Recorded inside `doc`, which is a verbatim-JSON column by design —
+          // so this needs no schema change and cannot repeat the healScreens
+          // problem (a table whose SHAPE changed after being created).
+          stage: r.stage,
+          reasons: r.reasons,
+          fit_score: r.fit_score,
+          repost_count: r.repost_count,
         })),
       )
     } finally {
@@ -400,19 +471,34 @@ function main() {
   const judged = alreadyJudged
     ? ` model-screened=${alreadyJudged}${skipScreened ? " (skipped)" : ""}`
     : ""
+  // How many each layer caught — the headline number for "is my screening
+  // actually filtering, and where?".
+  const byStage = results.reduce((a, r) => {
+    if (r.stage) a[r.stage] = (a[r.stage] ?? 0) + 1
+    return a
+  }, {})
+  const stageSummary = Object.entries(byStage)
+    .map(([s, n]) => `${s}=${n}`)
+    .join(" ")
+
   if (isTerse()) {
     // Only non-passing rows need attention; passes are just a count.
     for (const r of results.filter((r) => r.verdict !== "pass")) {
-      console.log(`${r.verdict}|${r.id}|${r.company}|${r.signals.join(",")}`)
+      console.log(
+        `${r.verdict}|${r.stage ?? "-"}|${r.id}|${r.company}|${r.signals.join(",")}`,
+      )
     }
     console.log(
-      `pass=${counts.pass ?? 0} caution=${counts.caution ?? 0} reject=${counts.reject ?? 0}${judged}`,
+      `pass=${counts.pass ?? 0} caution=${counts.caution ?? 0} reject=${counts.reject ?? 0}${stageSummary ? ` ${stageSummary}` : ""}${judged}`,
     )
     return
   }
   for (const r of results) {
+    const where = r.stage ? ` (caught at ${r.stage})` : ""
     console.log(
-      `[${r.verdict}] ${r.company} — ${r.title}${r.signals.length ? `\n  signals: ${r.signals.join(", ")}` : ""}`,
+      `[${r.verdict}]${where} ${r.company} — ${r.title}` +
+        (r.reasons?.length ? `\n  ${r.reasons.join("; ")}` : "") +
+        (r.signals.length ? `\n  signals: ${r.signals.join(", ")}` : ""),
     )
   }
   console.log(

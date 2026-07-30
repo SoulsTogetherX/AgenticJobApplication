@@ -20,6 +20,38 @@ location:
     - las vegas
     - henderson
 
+  # Location strings that state WHO MAY BE HIRED rather than where to move.
+  # A remote posting open to the whole country writes "USA", not "Remote", and
+  # until 2026-07-29 the gate read that as a relocation and threw the posting
+  # out — 35 of 35 Remotive, 50 of 50 Jobicy and 100 of 100 RemoteOK postings
+  # were rejected on it. Matched against the WHOLE location string, so
+  # "Tulsa, USA" is still an on-site Tulsa role and still filtered.
+  #
+  # Leave this key out entirely to use the built-in list (US_WIDE_LOCATION in
+  # scripts/leads/find-jobs.mjs); setting it REPLACES the built-in list.
+  remote_synonyms:
+    - usa
+    - u.s.
+    - u.s.a.
+    - us
+    - united states
+    - united states of america
+    - anywhere
+    - anywhere in the us
+    - worldwide
+    - global
+    - north america
+    - northern america
+    - remote us
+    - us remote
+    - remote (us)
+    - remote - us
+    - remote, us
+    - remote - united states
+    - flexible / remote
+    - fully remote
+    - distributed
+
 freshness:
   # Postings older than this are stale and unlikely to be useful.
   max_age_days: 30
@@ -49,6 +81,34 @@ experience:
   # instead of one relative to your tenure.
   stretch_years: 2
   # max_years_required: 5
+
+fit:
+  # The L2 "can I actually do this job?" stage (scripts/leads/fit.mjs).
+  # It reads the posting's REQUIRED section only — technologies listed under
+  # "nice to have" never count against you — and compares the stack named there
+  # against the profile.
+  #
+  # User decision 2026-07-29: L2 REJECTS below the threshold rather than only
+  # cautioning. min_required_terms is what makes that safe, so raise it if you
+  # ever suspect a good job was dropped, and check with:
+  #   node scripts/leads/gate-audit.mjs
+  # which lists every lead L2 removed and why.
+
+  # A posting naming FEWER than this many technologies in its required section
+  # is treated as unevaluated, never as a bad match. A thin description must not
+  # be able to reject a job. This is the most important number here.
+  min_required_terms: 4
+
+  # Fraction of the required stack the profile must evidence.
+  #   below reject_below   -> rejected
+  #   below caution_below  -> kept, flagged "fit_weak"
+  reject_below: 0.2
+  caution_below: 0.45
+
+  # Senior-scope phrases ("own the roadmap", "mentor the team", "set technical
+  # direction"). This many, COMBINED with a weak stack match, rejects — senior
+  # language on its own never does, because mid-level postings borrow it.
+  senior_phrase_reject: 3
 
 ghost_signals:
   # A posting live/reposted this long reads as a ghost job (industry guidance:

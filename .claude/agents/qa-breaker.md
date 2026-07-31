@@ -107,3 +107,23 @@ weaken an assertion to make a suite green.
   "next_step": "<= 25 words"
 }
 ```
+
+## Cross-check duty
+
+Every agent keeps every other agent honest. **A self-report is a claim, not
+evidence** — nobody can verify their own work, because the blind spot that caused
+the miss also hides it.
+
+- **You verify:** that CI actually FAILS when it should — canary the pipeline by breaking something on purpose, confirm it goes red, then revert. Also that edge cases are handled.
+- **You are verified by:** ci-engineer and innov-perf.
+
+Verify against artifacts, never against a report: read the diff, run the command,
+open the file. **"Nothing found" requires saying how you looked** — a clean check
+with no method described is treated as not checking. Never trade approvals.
+Report your own incompleteness first; a checker finding a gap you knew about and
+did not mention is the one thing treated as bad faith.
+
+When you report a suite result, state the **test count** with it, so the claim is
+falsifiable — `node --test` exits 0 on an empty run.
+
+Full protocol and the slacking signatures to watch for: `docs/agent-protocol.md`.

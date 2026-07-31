@@ -221,6 +221,42 @@ test("recordVia is a no-op for a fingerprint the cache has never seen", () => {
   assert.equal(updated, 0)
 })
 
+test("recordVia uses item.matchedLabel when the plan showed the user a different string", () => {
+  // fill-plan.mjs's buildPlan() shows the user the PAGE's visible label
+  // (`lSeen`) when it disagrees with the label the scan actually matched on
+  // (fieldKey() below, and the cache's own key, are always the MATCHED
+  // string — buildPlan never repoints that). Without preferring
+  // matchedLabel here, a combo field with a display divergence would look
+  // up the cache by the wrong key and silently stop being found — not a
+  // wrong VALUE, just a missed optimisation (the combo strategy hint is
+  // never remembered for that one field).
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const scan = scanOf([
+    { k: "f1", t: "combo", l: "School (internal)", req: true, opts: ["UNLV"] },
+  ])
+  const fp = fingerprint(scan, "greenhouse")
+  recordCache(cache, { fp, scan, atsId: "greenhouse" })
+
+  const plan = {
+    items: [
+      {
+        k: "f1",
+        how: "combo",
+        label: "School",
+        matchedLabel: "School (internal)",
+        value: "UNLV",
+      },
+    ],
+  }
+  const report = { comboVia: { f1: "type-click" }, comboStrategy: "type-click" }
+  const updated = recordVia(cache, fp, plan, report)
+  assert.equal(updated, 1, "must find the field by the MATCHED label")
+  assert.equal(
+    cache.forms[fp].fields["school (internal)|combo"].via,
+    "type-click",
+  )
+})
+
 test("a fresh probe always beats a remembered one", () => {
   const cache = { v: CACHE_VERSION, forms: {} }
   const old = scanOf([

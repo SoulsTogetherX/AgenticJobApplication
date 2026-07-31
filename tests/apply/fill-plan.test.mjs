@@ -15,8 +15,10 @@ import {
   isHardConsent,
   loadConsentAllowlist,
   readiness,
+  submitReadiness,
   resolveScanPath,
   combosNeedingProbe,
+  fieldIdentityMismatch,
   buildDriverSource,
   buildBootstrap,
 } from "../../scripts/apply/fill-plan.mjs"
@@ -104,13 +106,62 @@ test("readiness is true only when nothing is deferred and something is fillable"
   assert.equal(state.reason, null)
 })
 
-test("any deferred field makes the plan not ready, and says how many", () => {
+test("any non-consent deferred field makes the plan not ready, and says how many", () => {
   const state = readiness({
+    items: [{ k: "f1", how: "fill", value: "Jane" }],
+    defer: [{ k: "f2", label: "Desired salary", why: "unknown" }],
+  })
+  assert.equal(state.ready, false)
+  assert.match(state.reason, /1 deferred/)
+})
+
+// --- readiness vs. submitReadiness: two different questions ----------------
+//
+// docs/autonomy-plan.md's Phase 2 table names this the highest-leverage fix
+// in the plan: `isConsent` pushes almost every real ATS's "I agree to the
+// Terms" box to `defer` before anything else runs, and the OLD readiness()
+// counted that defer the same as any other unresolved field — so `ready=true`
+// was unreachable on any form this pipeline has ever actually met, however
+// completely the fact base answered everything else. A consent box is not
+// the "the fact base failed" problem readiness() exists to flag; it is a
+// decision only the user may make (hard rule 6), and ticking it in a browser
+// they are ALREADY reviewing costs zero model turns — so it does not block
+// `ready`. It still blocks `submitReadiness`, the stricter "nothing at all
+// is left for a human" gate neither function uses to authorise a submit
+// click by itself.
+test("a consent-only defer does not block readiness", () => {
+  const state = readiness({
+    items: [{ k: "f1", how: "fill", value: "Jane" }],
+    defer: [{ k: "f2", label: "I agree to the Terms", why: "consent" }],
+  })
+  assert.equal(state.ready, true)
+  assert.equal(state.reason, null)
+})
+
+test("a consent-only defer still blocks submitReadiness", () => {
+  const state = submitReadiness({
     items: [{ k: "f1", how: "fill", value: "Jane" }],
     defer: [{ k: "f2", label: "I agree to the Terms", why: "consent" }],
   })
   assert.equal(state.ready, false)
   assert.match(state.reason, /1 deferred/)
+})
+
+test("a mix of a consent defer and a real defer is not ready either way", () => {
+  // Ready must count ONLY the non-consent defer; submitReady counts both, so
+  // the two functions must not simply agree by coincidence on a plan with
+  // just one kind of defer.
+  const plan = {
+    items: [{ k: "f1", how: "fill", value: "Jane" }],
+    defer: [
+      { k: "f2", label: "I agree to the Terms", why: "consent" },
+      { k: "f3", label: "Desired salary", why: "unknown" },
+    ],
+  }
+  assert.equal(readiness(plan).ready, false)
+  assert.match(readiness(plan).reason, /1 deferred/, "consent must not count")
+  assert.equal(submitReadiness(plan).ready, false)
+  assert.match(submitReadiness(plan).reason, /2 deferred/)
 })
 
 test("a plan of nothing but skips is not ready", () => {
@@ -135,13 +186,13 @@ test("a real built plan carries its readiness", () => {
   const notReady = buildPlan({
     scan: scanOf([
       { k: "f1", t: "text", l: "First Name", req: true },
-      { k: "f2", t: "checkbox", l: "I agree to the Terms and Conditions" },
+      { k: "f2", t: "text", l: "Desired Salary", req: true },
     ]),
-    resolved: [ok("f1", "Jane")],
+    resolved: [ok("f1", "Jane"), { k: "f2", status: "UNKNOWN", value: "" }],
     adapter: greenhouse,
     files,
   })
-  assert.equal(readiness(notReady).ready, false)
+  assert.equal(readiness(notReady).ready, false, "an unresolved fact blocks it")
 
   const ready = buildPlan({
     scan: scanOf([{ k: "f1", t: "text", l: "First Name", req: true }]),
@@ -150,6 +201,22 @@ test("a real built plan carries its readiness", () => {
     files,
   })
   assert.equal(readiness(ready).ready, true)
+
+  // An unresolvable consent box, by itself, is a real defer (never silently
+  // dropped or auto-filled) but no longer the kind that blocks `ready` — see
+  // the readiness()-vs-submitReadiness() tests above for why.
+  const readyDespiteConsent = buildPlan({
+    scan: scanOf([
+      { k: "f1", t: "text", l: "First Name", req: true },
+      { k: "f2", t: "checkbox", l: "I agree to the Terms and Conditions" },
+    ]),
+    resolved: [ok("f1", "Jane")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(readyDespiteConsent.defer[0].why, "consent")
+  assert.equal(readiness(readyDespiteConsent).ready, true)
+  assert.equal(submitReadiness(readyDespiteConsent).ready, false)
 })
 
 // --- consent --------------------------------------------------------------
@@ -200,25 +267,32 @@ test("a consent field is deferred even when the bank resolved it confidently", (
   assert.equal(plan.defer[0].why, "consent")
 })
 
-// --- consent allowlist: the readiness fast path -----------------------------
+// --- consent allowlist + vouch: the readiness fast path ---------------------
 //
 // readiness() was unreachable on any real form: `isConsent` pushes every
 // agreement to `defer` before anything else runs, and nearly every ATS has at
 // least one ("I agree to the Terms and Conditions"). pending-questions.mjs
 // already excluded consent from its own "worth asking about" set — these
-// tests pin the actual fix: an exact, user-approved label moves a checkbox
-// from `defer` into `items` as a `check`, which is what makes ready=true
-// reachable at all.
-// labelExact is the scanner's positive assertion that this label is the
-// COMPLETE, VISIBLE text. scan-page.js does not set it yet — it prefers
-// aria-label over visible text and truncates at 120 chars — so on a real form
-// today every consent box defers. These tests pass it explicitly to exercise
-// the path that becomes live once the scanner can supply a trustworthy label.
-const checkboxConsent = (label, optCount = 1, labelExact = true) => ({
+// tests pin the actual fix: an exact, user-approved label THAT OUR OWN
+// SCANNER ALSO VOUCHES FOR moves a checkbox from `defer` into `items` as a
+// `check`. `readiness()`'s own fix (a consent-only defer does not block
+// `ready`) is what makes ready=true reachable EVEN WITHOUT a tick — see the
+// "readiness vs. submitReadiness" block above; the tests below are about the
+// narrower, riskier question of when a box may be auto-CHECKED at all.
+//
+// `vouchedLabels` is the scanner's own in-process assertion (an array of
+// complete visible label strings, built by scan-engine.mjs's scanPage() —
+// see fill-plan.mjs's own consent-branch comment for the full four-hole
+// history of why this is an ARGUMENT and not a field read off the scan
+// object). `checkboxConsent` builds an ordinary scan field with no
+// labelExact at all — buildPlan ignores that field unconditionally now, so
+// setting it here would test nothing; a test that wants the "vouched" case
+// passes `vouchedLabels` explicitly, which is what actually exercises the
+// real mechanism.
+const checkboxConsent = (label, optCount = 1) => ({
   k: "g1",
   t: "checkbox",
   l: label,
-  labelExact,
   o: Array.from({ length: optCount }, (_, i) => ({
     k: `f${i}`,
     l: label,
@@ -226,7 +300,7 @@ const checkboxConsent = (label, optCount = 1, labelExact = true) => ({
   })),
 })
 
-test("an allowlisted consent checkbox with an exact label is auto-checked", () => {
+test("an allowlisted, scanner-vouched consent checkbox is auto-checked", () => {
   const label = "I agree to the Terms and Conditions"
   const scan = scanOf([checkboxConsent(label)])
   const plan = buildPlan({
@@ -235,6 +309,7 @@ test("an allowlisted consent checkbox with an exact label is auto-checked", () =
     adapter: greenhouse,
     files,
     consentAllowlist: new Set([label.toLowerCase()]),
+    vouchedLabels: [label],
   })
   assert.equal(plan.defer.length, 0)
   assert.equal(plan.items.length, 1)
@@ -244,65 +319,17 @@ test("an allowlisted consent checkbox with an exact label is auto-checked", () =
   assert.equal(plan.items[0].why, "consent:allowlisted")
 })
 
-// The scanner cannot currently promise the label is the complete visible text,
-// and three exploits turned on exactly that gap: an aria-label saying "I
-// certify the information is true" over a visible "I agree to binding
-// arbitration"; a 131-char certification and an arbitration-appended variant
-// that truncate to the same 120 chars; and reworded clauses the pattern list
-// misses. Without the promise, nothing is ticked.
-test("an allowlisted consent box defers when the label is not exact", () => {
+test("an allowlisted consent box defers when the scanner does not vouch for it", () => {
+  // No vouchedLabels passed at all — the honest state on every path that
+  // exists today (the CLI reads a scan already written to disk, downstream
+  // of the process boundary the vouch cannot cross). Three exploits used to
+  // turn on exactly this gap when the vouch was a boolean INSIDE the scan
+  // instead of an argument: an aria-label saying "I certify the information
+  // is true" over a visible "I agree to binding arbitration"; a 131-char
+  // certification and an arbitration-appended variant that truncated to the
+  // same 120 chars; and a hand-built scan asserting labelExact:true with no
+  // scanner behind it at all (tests/security/rce-round-trip.test.mjs).
   const label = "I agree to the Terms and Conditions"
-  // `false`, not `undefined` — passing undefined to a defaulted parameter
-  // triggers the default, which would have made this test assert the exact
-  // opposite of its name while still reading correctly.
-  const scan = scanOf([checkboxConsent(label, 1, false)])
-  const plan = buildPlan({
-    scan,
-    resolved: [],
-    adapter: greenhouse,
-    files,
-    consentAllowlist: new Set([label.toLowerCase()]),
-  })
-  assert.equal(plan.items.length, 0, "an untrustworthy label must never tick")
-  assert.equal(plan.defer.length, 1)
-  assert.equal(plan.defer[0].why, "consent")
-})
-
-test("readiness is reachable once the only consent box is allowlisted", () => {
-  const label = "I agree to the Terms and Conditions"
-  const scan = scanOf([
-    { k: "f1", t: "text", l: "First Name", req: true },
-    checkboxConsent(label),
-  ])
-  const plan = buildPlan({
-    scan,
-    resolved: [ok("f1", "Jane")],
-    adapter: greenhouse,
-    files,
-    consentAllowlist: new Set([label.toLowerCase()]),
-  })
-  assert.equal(readiness(plan).ready, true)
-})
-
-test("without the allowlist entry, the same box still blocks readiness", () => {
-  const label = "I agree to the Terms and Conditions"
-  const scan = scanOf([
-    { k: "f1", t: "text", l: "First Name", req: true },
-    checkboxConsent(label),
-  ])
-  const plan = buildPlan({
-    scan,
-    resolved: [ok("f1", "Jane")],
-    adapter: greenhouse,
-    files,
-    // no consentAllowlist passed at all — must match the pre-existing default
-  })
-  assert.equal(readiness(plan).ready, false)
-  assert.equal(plan.defer[0].why, "consent")
-})
-
-test("arbitration is excluded from the allowlist regardless of what it says", () => {
-  const label = "I agree to resolve disputes through binding arbitration"
   const scan = scanOf([checkboxConsent(label)])
   const plan = buildPlan({
     scan,
@@ -311,11 +338,105 @@ test("arbitration is excluded from the allowlist regardless of what it says", ()
     files,
     consentAllowlist: new Set([label.toLowerCase()]),
   })
+  assert.equal(plan.items.length, 0, "an unvouched label must never tick")
+  assert.equal(plan.defer.length, 1)
+  assert.equal(plan.defer[0].why, "consent")
+})
+
+test("a page-set labelExact on the scan is not a vouch — buildPlan never reads it", () => {
+  // The exact scenario innov-resilience demonstrated against a real
+  // buildPlan(): a scan object (however produced — a bug, a hand-authored
+  // fixture, a future producer nobody has audited yet) carrying
+  // `labelExact: true` must carry NO weight at all. Only the `vouchedLabels`
+  // argument does.
+  const label = "I agree to the Terms and Conditions"
+  const scan = scanOf([{ ...checkboxConsent(label), labelExact: true }])
+  const plan = buildPlan({
+    scan,
+    resolved: [],
+    adapter: greenhouse,
+    files,
+    consentAllowlist: new Set([label.toLowerCase()]),
+    // still no vouchedLabels
+  })
+  assert.equal(plan.items.length, 0, "a flag inside the scan is not a boundary")
+  assert.equal(plan.defer[0].why, "consent")
+})
+
+test("readiness is reachable whether or not the consent box could be ticked", () => {
+  const label = "I agree to the Terms and Conditions"
+  const scan = scanOf([
+    { k: "f1", t: "text", l: "First Name", req: true },
+    checkboxConsent(label),
+  ])
+  const vouchedAndAllowed = buildPlan({
+    scan,
+    resolved: [ok("f1", "Jane")],
+    adapter: greenhouse,
+    files,
+    consentAllowlist: new Set([label.toLowerCase()]),
+    vouchedLabels: [label],
+  })
+  assert.equal(
+    vouchedAndAllowed.items.some((i) => i.how === "check"),
+    true,
+  )
+  assert.equal(readiness(vouchedAndAllowed).ready, true)
+
+  const unvouched = buildPlan({
+    scan,
+    resolved: [ok("f1", "Jane")],
+    adapter: greenhouse,
+    files,
+    consentAllowlist: new Set([label.toLowerCase()]),
+    // no vouchedLabels — the box defers instead of ticking...
+  })
+  assert.equal(unvouched.defer[0].why, "consent")
+  // ...but readiness is reached anyway: the box is still there for the user
+  // to tick in the browser they are reviewing, which costs no model turn.
+  assert.equal(readiness(unvouched).ready, true)
+  assert.equal(submitReadiness(unvouched).ready, false)
+})
+
+test("without the allowlist entry, the same box still never ticks (but no longer blocks readiness)", () => {
+  const label = "I agree to the Terms and Conditions"
+  const scan = scanOf([
+    { k: "f1", t: "text", l: "First Name", req: true },
+    checkboxConsent(label),
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "Jane")],
+    adapter: greenhouse,
+    files,
+    vouchedLabels: [label],
+    // no consentAllowlist passed at all — must match the pre-existing default
+  })
+  assert.equal(
+    plan.items.some((i) => i.how === "check"),
+    false,
+  )
+  assert.equal(plan.defer[0].why, "consent")
+  assert.equal(readiness(plan).ready, true, "consent no longer blocks ready")
+  assert.equal(submitReadiness(plan).ready, false, "but submit is stricter")
+})
+
+test("arbitration is excluded regardless of the allowlist, EVEN when vouched", () => {
+  const label = "I agree to resolve disputes through binding arbitration"
+  const scan = scanOf([checkboxConsent(label)])
+  const plan = buildPlan({
+    scan,
+    resolved: [],
+    adapter: greenhouse,
+    files,
+    consentAllowlist: new Set([label.toLowerCase()]),
+    vouchedLabels: [label],
+  })
   assert.equal(plan.items.length, 0, "arbitration must never auto-check")
   assert.equal(plan.defer[0].why, "consent")
 })
 
-test("background checks and e-signatures are excluded regardless of the allowlist", () => {
+test("background checks and e-signatures are excluded regardless of the allowlist, EVEN when vouched", () => {
   for (const label of [
     "I authorize a background check as part of this application",
     "By checking this box you provide your electronic signature",
@@ -327,6 +448,7 @@ test("background checks and e-signatures are excluded regardless of the allowlis
       adapter: greenhouse,
       files,
       consentAllowlist: new Set([label.toLowerCase()]),
+      vouchedLabels: [label],
     })
     assert.equal(plan.items.length, 0, label)
     assert.equal(plan.defer[0].why, "consent", label)
@@ -343,10 +465,9 @@ test("isHardConsent identifies exactly the legally-weighted categories", () => {
   )
 })
 
-test("the allowlist match is exact text, never a pattern", () => {
-  const scan = scanOf([
-    checkboxConsent("I agree to the Updated Terms and Conditions"),
-  ])
+test("the allowlist match is exact text, never a pattern — even when vouched", () => {
+  const trueLabel = "I agree to the Updated Terms and Conditions"
+  const scan = scanOf([checkboxConsent(trueLabel)])
   const plan = buildPlan({
     scan,
     resolved: [],
@@ -354,6 +475,10 @@ test("the allowlist match is exact text, never a pattern", () => {
     files,
     // Approved a DIFFERENT (superficially similar) wording only.
     consentAllowlist: new Set(["i agree to the terms and conditions"]),
+    // The scanner vouches for the TRUE text, which only proves the vouch and
+    // the allowlist are two independent checks, neither of which alone is
+    // enough.
+    vouchedLabels: [trueLabel],
   })
   assert.equal(plan.items.length, 0, "a near-miss label must still defer")
   assert.equal(plan.defer[0].why, "consent")
@@ -370,6 +495,7 @@ test("a combo/select-shaped consent field is never auto-checked", () => {
     adapter: greenhouse,
     files,
     consentAllowlist: new Set([label.toLowerCase()]),
+    vouchedLabels: [label],
   })
   assert.equal(plan.items.length, 0)
   assert.equal(plan.defer[0].why, "consent")
@@ -385,6 +511,7 @@ test("a checkbox group with more than one option is never auto-checked", () => {
     adapter: greenhouse,
     files,
     consentAllowlist: new Set([label.toLowerCase()]),
+    vouchedLabels: [label],
   })
   assert.equal(plan.items.length, 0)
   assert.equal(plan.defer[0].why, "consent")
@@ -405,6 +532,205 @@ test("loadConsentAllowlist reads a JSON array of exact labels, normalized", (t) 
 test("loadConsentAllowlist tolerates a missing or corrupt file", () => {
   assert.equal(loadConsentAllowlist(null).size, 0)
   assert.equal(loadConsentAllowlist("/no/such/file.json").size, 0)
+})
+
+// --- a label that lies about the field it wraps -----------------------------
+//
+// FINDING (qa-adversary, tests/fixtures/hostile/forms/mislabelled-inputs.html):
+// every resolution in this pipeline is keyed on the LABEL, and the label is
+// whatever the page says — <label for="m-phone">Phone number</label> wrapping
+// <input name="ssn"> plans the user's real phone number into a field named
+// "ssn", and the approval message shows "Phone number", so the substitution
+// is invisible in review. fieldIdentityMismatch() is the guard: it checks the
+// ELEMENT's own exposed identity (scan-page.js's `sel`) against the category
+// the LABEL claims, using only real, always-present scan data — never a
+// fixture-only property.
+
+test("fieldIdentityMismatch: a name-attribute selector that contradicts the label is caught", () => {
+  assert.match(
+    fieldIdentityMismatch({
+      k: "f1",
+      l: "Phone number",
+      sel: 'input[name="ssn"]',
+    }),
+    /"phone".*"ssn"/,
+  )
+  assert.match(
+    fieldIdentityMismatch({
+      k: "f2",
+      l: "Preferred start date",
+      sel: 'input[name="salary_floor"]',
+    }),
+    /"date".*"salary"/,
+  )
+})
+
+test("fieldIdentityMismatch: an id selector consistent with the label is silent", () => {
+  assert.equal(
+    fieldIdentityMismatch({ k: "f1", l: "Email", sel: "#email-field" }),
+    "",
+  )
+  // No category on either side: not evidence of anything, in either
+  // direction — must never manufacture a mismatch out of an opaque id.
+  assert.equal(
+    fieldIdentityMismatch({ k: "f1", l: "Twitter handle", sel: "#q_182818" }),
+    "",
+  )
+})
+
+test("fieldIdentityMismatch: a checkbox/radio group is checked on its OPTION's selector", () => {
+  // Groups have no `sel` of their own (buildPlan's own "groups have no
+  // element of their own" comment) — the identity lives on `o[].sel`.
+  assert.match(
+    fieldIdentityMismatch({
+      k: "g1",
+      l: "Email address",
+      o: [{ k: "f3", sel: 'input[name="agree_arbitration"]' }],
+    }),
+    /"email".*"arbitration"/,
+  )
+  // The mislabelled-inputs.html fixture's own g1 ("Are you legally
+  // authorized to work in the United States?", wired to
+  // name="agree_arbitration") is the harder, documented limit: the label
+  // names no category this list tracks, so there is nothing to contradict —
+  // this function is a floor, not a ceiling (see its own doc comment).
+  assert.equal(
+    fieldIdentityMismatch({
+      k: "g1",
+      l: "Are you legally authorized to work in the United States?",
+      o: [{ k: "f3", sel: "#m-authorized" }],
+    }),
+    "",
+  )
+})
+
+test("a field whose identity contradicts its label always defers, never fills — required or not", () => {
+  const scan = scanOf([
+    { k: "f1", t: "text", l: "Phone number", sel: 'input[name="ssn"]' },
+    {
+      k: "f2",
+      t: "text",
+      l: "Preferred start date",
+      sel: 'input[name="salary_floor"]',
+      req: true,
+    },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "(702) 810-4950"), ok("f2", "2026-08-01")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.items.length, 0, "neither must be planned as a fill")
+  assert.deepEqual(
+    plan.defer.map((d) => d.k),
+    ["f1", "f2"],
+    "both must be visible to the user, required or not",
+  )
+  for (const d of plan.defer) assert.match(d.why, /label.*identity/)
+})
+
+test("an honest form with matching labels and selectors is unaffected", () => {
+  const scan = scanOf([
+    { k: "f1", t: "email", l: "Email", sel: 'input[name="email"]' },
+    { k: "f2", t: "tel", l: "Phone", sel: 'input[name="phone"]', req: true },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "jane@test.example"), ok("f2", "(702) 810-4950")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.defer.length, 0)
+  assert.equal(plan.items.length, 2)
+})
+
+// --- the label shown to the user vs. the label matched on -------------------
+//
+// FINDING (qa-adversary, "the label the plan shows the user is not the label
+// on the page"): an input can carry BOTH a visible <label for>Email</label>
+// AND aria-label="Emergency contact phone"; labelOf() reads the attribute
+// first, so the OLD single `label` put "Emergency contact phone" in the
+// approval message for a field the page shows as "Email". scan-page.js
+// reports this divergence as `lSeen` — the REAL, documented field (never the
+// qa-adversary fixture's own `_visible_label` convenience property, which
+// this file does not and must not read).
+
+test("item.label shows the PAGE's visible text (lSeen) when it disagrees with the matched label", () => {
+  const scan = scanOf([
+    {
+      k: "f1",
+      t: "email",
+      l: "Emergency contact phone",
+      lSeen: "Email",
+      sel: 'input[name="emergency_contact_phone"]',
+    },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "jane@test.example")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.items[0].label, "Email", "shows what the page shows")
+  assert.equal(
+    plan.items[0].matchedLabel,
+    "Emergency contact phone",
+    "the matched string rides along, never lost",
+  )
+})
+
+test("item.label carries no matchedLabel at all when there is nothing to disagree with", () => {
+  const scan = scanOf([{ k: "f1", t: "text", l: "First Name" }])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "Jane")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.items[0].label, "First Name")
+  assert.equal(
+    "matchedLabel" in plan.items[0],
+    false,
+    "absent rather than redundant, so JSON.stringify drops it",
+  )
+})
+
+test("a deferred field also shows the visible label, not the matched one", () => {
+  const scan = scanOf([
+    {
+      k: "f1",
+      t: "text",
+      l: "matched-only text",
+      lSeen: "Twitter Handle",
+      req: true,
+    },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [{ k: "f1", status: "UNKNOWN", value: "" }],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.defer[0].label, "Twitter Handle")
+  assert.equal(plan.defer[0].matchedLabel, "matched-only text")
+})
+
+test("routing (which bank rule fires) still uses the matched label, not the visible one", () => {
+  // scan-page.js's own reasoning for never repointing `l`: routing must not
+  // grow a new cost on a real board just because a DIFFERENT field's display
+  // string changed. A file-slot field whose lSeen looks like "Attach" but
+  // whose matched label says "Resume/CV" must still route on "Resume/CV".
+  const scan = scanOf([
+    { k: "f1", t: "file", l: "Resume/CV", lSeen: "Attach" },
+    { k: "f2", t: "file", l: "Attach", lSeen: "Cover Letter Upload" },
+  ])
+  const plan = buildPlan({ scan, resolved: [], adapter: greenhouse, files })
+  assert.deepEqual(
+    plan.items.map((i) => i.paths[0]),
+    [files.resume, files.cover],
+    "routing followed the MATCHED text, ignoring the display-only lSeen",
+  )
 })
 
 test("a question about the name is not answered with the name", async () => {
@@ -760,6 +1086,50 @@ test("combosNeedingProbe: already-probed and non-combo fields are never listed",
       { k: "f2", status: "OK" },
       { k: "f3", status: "UNKNOWN" },
     ]),
+    [],
+  )
+})
+
+// FINDING (qa-adversary, tests/fixtures/hostile/forms/destructive-combobox.html):
+// scan-page.js identifies a dropdown by SHAPE alone ([role=combobox] etc.), so
+// a button reading "Withdraw my application" dressed the same way used to
+// come back as "worth probing" here whenever it was required — and whatever
+// reads that output (a human reading the printed `probe\t...` line today; a
+// future `skipProbe` wiring tomorrow) would be told clicking it is a good
+// idea, before any plan exists. Reuses scan-engine.mjs's own probeRefusal()
+// so this can never drift from what the real scanner already refuses to
+// click — not a re-implementation of the word list, an import of it.
+test("combosNeedingProbe: destructive controls are never recommended for a probe, even when required", () => {
+  const fields = [
+    { k: "f1", t: "combo", l: "Country", req: true },
+    { k: "f2", t: "combo", l: "Withdraw my application", req: true },
+    {
+      k: "f3",
+      t: "combo",
+      l: "Delete my candidate account and all application history",
+      req: true,
+    },
+    { k: "f4", t: "combo", l: "Submit application now", req: true },
+  ]
+  const resolved = fields.map((f) => ({ k: f.k, status: "UNKNOWN" }))
+  assert.deepEqual(combosNeedingProbe(fields, resolved), ["f1"])
+})
+
+test("combosNeedingProbe: a button whose own text equals its name is refused structurally, not just by wordlist", () => {
+  // scan-engine.mjs's rule 1: a PICKER's name comes from OUTSIDE it; a BUTTON's
+  // name is its own rendered text. Catches a destructive control the word list
+  // was never taught, the same way the real scanner's structural check does.
+  const fields = [
+    {
+      k: "f1",
+      t: "combo",
+      l: "Deactivate my profile permanently",
+      v: "Deactivate my profile permanently",
+      req: true,
+    },
+  ]
+  assert.deepEqual(
+    combosNeedingProbe(fields, [{ k: "f1", status: "UNKNOWN" }]),
     [],
   )
 })

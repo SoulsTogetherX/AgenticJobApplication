@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
+import { matchOption } from "../../scripts/apply/answer-bank.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -107,6 +108,64 @@ test("an unprobed combo defers instead of silently accepting the first candidate
     assert.equal(f.status, "NEEDS-CHOICE", `${k}: ${JSON.stringify(f)}`)
     assert.match(f.note, /not (been )?probed|unprobed/i)
   }
+})
+
+// --- the prefix rule must never invent detail the label never offered ------
+//
+// AUDIT C1/C2. matchOption() lets a banked "Yes" expand to a longer OFFERED
+// option that merely restates the label ("Will you require sponsorship?" ->
+// "No, I will not require sponsorship" — nothing new asserted). The bug: the
+// same mechanism used to accept ANY option merely starting with "Yes"/"No",
+// so a banked "Yes" for "Do you have experience with React?" against an
+// option list offering "Yes, 5+ years professionally" invented a duration
+// nowhere in the label or the banked answer — a confidently wrong,
+// auto-filled claim. remainderIsGrounded() is the fix: whatever text SURVIVES
+// past the matched value must already be implied by the FIELD's own label.
+test("matchOption: a banked Yes does not expand into invented detail the label never offered (AUDIT C1)", () => {
+  const r = matchOption("Yes", ["Yes, 5+ years professionally", "No"], {
+    requireOptions: true,
+    label: "Do you have experience with React?",
+  })
+  assert.notEqual(
+    r.value,
+    "Yes, 5+ years professionally",
+    "a bare Yes must not be upgraded into an invented years-of-experience claim",
+  )
+  assert.equal(
+    r.needsChoice,
+    true,
+    "must defer to the user instead of guessing",
+  )
+})
+
+test("matchOption: a banked No does not expand into an invented list-negation (AUDIT C2)", () => {
+  // "None of the above" is only correct when the label actually asked about a
+  // list — copying it onto an ordinary yes/no question invents a shape the
+  // label never had. `none\b` was deliberately removed from NO_LONG for
+  // exactly this reason.
+  const r = matchOption(
+    "No",
+    ["None of the above", "Yes, I was previously employed here"],
+    {
+      requireOptions: true,
+      label: "Have you previously been employed at Globex?",
+    },
+  )
+  assert.notEqual(r.value, "None of the above")
+  assert.equal(r.needsChoice, true)
+})
+
+test("matchOption: a grounded long-form option still expands correctly", () => {
+  // The positive control: whatever survives past the matched value IS
+  // already implied by the label, so the expansion is a restatement, not an
+  // invention, and must still resolve OK — this is the case the AUDIT C1 fix
+  // must not break in the name of fixing it.
+  const r = matchOption("No", ["No, I will not require sponsorship", "Yes"], {
+    requireOptions: true,
+    label: "Will you now or in the future require sponsorship?",
+  })
+  assert.equal(r.value, "No, I will not require sponsorship")
+  assert.equal(r.needsChoice, undefined)
 })
 
 test("a free-text field with no options is unaffected by the unprobed-combo guard", () => {

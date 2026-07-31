@@ -25,10 +25,38 @@ export const HANDOFF = [
   },
 ]
 
+// FINDING (qa-adversary, tests/security/fake-board.test.mjs): HANDOFF used to
+// be matched against the WHOLE url string, so a tracking parameter on a REAL
+// Greenhouse posting (?utm_source=myworkdayjobs.com) forced a Workday
+// hand-off — fail-safe rather than fail-dangerous (the pipeline refuses to
+// apply rather than filling something wrong), but still a third party
+// silently denying an application the user could otherwise submit
+// themselves; on the unattended auto-apply path that is a denial of service
+// with nobody watching. HANDOFF is now matched against the URL's HOSTNAME
+// only, parsed properly rather than string-sniffed, so a query parameter,
+// fragment or path segment can never trigger it.
+//
+// Deliberately NARROW: adapter selection below is UNCHANGED. The broader
+// "any board can impersonate any ATS via a URL substring" finding is real
+// (same test file, the characterisation test above the one this fixes) but
+// this repo's own fake-board fixture currently depends on that property to
+// select a real adapter at all (see tests/fixtures/boards/server.mjs) — that
+// is a coordinated fixture change, not something to fix as a side effect
+// here. HANDOFF is the one half with a real consequence (a silent refusal to
+// apply) cheap enough to close without touching the fixture.
+function hostnameOf(url) {
+  try {
+    return new URL(String(url ?? "")).hostname
+  } catch {
+    return ""
+  }
+}
+
 export function detectAts(url) {
   const u = String(url ?? "")
+  const host = hostnameOf(u)
   for (const h of HANDOFF) {
-    if (h.match.test(u)) return { id: h.id, handoff: true, reason: h.reason }
+    if (h.match.test(host)) return { id: h.id, handoff: true, reason: h.reason }
   }
   for (const a of ADAPTERS) {
     if (a.match.test(u)) return a

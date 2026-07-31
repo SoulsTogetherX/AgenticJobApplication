@@ -21,9 +21,15 @@
 // Anything the fact base cannot answer is DEFERRED, never guessed. Consent,
 // terms, arbitration and e-signature fields are always deferred regardless of
 // what the bank says — the agent does not agree to things on the user's behalf
-// — UNLESS the exact label is on the user's own --consent-allowlist, and even
-// then arbitration/background-check/e-signature wording is excluded no matter
-// what the allowlist says (see isHardConsent).
+// — UNLESS ALL of: our OWN scanner vouches for the exact text (an in-process
+// `vouchedLabels` argument to buildPlan, never a flag read off the scan file —
+// see buildPlan's own consent-branch comment), the exact label is on the
+// user's own --consent-allowlist, and even then arbitration/background-check/
+// e-signature wording is excluded no matter what the allowlist says (see
+// isHardConsent). `vouchedLabels` has no producer on this CLI's own scan-file
+// path today, so every consent box defers here regardless of the allowlist —
+// that does not block `ready` (see readiness()'s own comment): the user ticks
+// it in the browser they are reviewing anyway, which costs nothing.
 //
 // Usage: node scripts/apply/fill-plan.mjs <slug> [--scan <path> | --page <N>]
 //        [--url <url>] [--resume <pdf>] [--cover <pdf>] [--json]
@@ -52,6 +58,18 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { isTerse } from "../lib/lib.mjs"
 import { detectAts } from "./ats/index.mjs"
 import { resolveFieldsFromFiles, normalizeQuestion } from "./answer-bank.mjs"
+// Read-only reuse of scan-engine.mjs's own "is this control safe to click"
+// rule -- not a mirror, an import. combosNeedingProbe() decides what fill-plan
+// tells a rescan is "worth probing"; scan-engine.mjs's probeRefusal() is what
+// the ACTUAL scanner already refuses to click (Withdraw/Delete/Submit dressed
+// as a combobox). Recommending a probe of something the scanner would refuse
+// anyway is still a live hazard: the recommendation is printed output
+// (`probe\t...`) a human or a future caller could act on through some OTHER
+// path that does not go through scan-engine.mjs's own guard. One source of
+// truth, never duplicated -- fill-plan.mjs is an ordinary ES module, unlike
+// scan.driver.mjs and scan-page.js's own probe loop, which cannot import it
+// (see scan-engine.mjs's own header comment on why those two DO mirror it).
+import { probeRefusal } from "./scan-engine.mjs"
 import {
   fingerprint,
   loadCache,
@@ -79,14 +97,36 @@ const ROOT = path.resolve(
 //
 // Deliberately does NOT match "Are you legally authorized to work..." — that is
 // a fact about the user, not a promise being extracted from them.
+//
+// FINDING (qa-adversary, tests/security/hostile-forms.test.mjs): "I accept
+// binding dispute resolution, authorise a background investigation, and adopt
+// this document electronically" — three legal acts — matched neither the verb
+// list (only "agree|consent|acknowledge|understand|certify", not "accept")
+// nor any topic pattern ("arbitration" but not "dispute resolution",
+// "background check|screening" but not "investigation", a signature pattern
+// that requires the literal word "sign"). The box fell through the ENTIRE
+// consent branch and was resolved as an ordinary optional checkbox — which is
+// worse than "shown in the wrong section of an approval message": an ordinary
+// checkbox can be auto-CHECKED by an unrelated exact/fuzzy bank hit, with none
+// of the allowlist/vouch/hard-exclusion protection below ever consulted, since
+// that protection only runs for a field isConsent() routes into this branch
+// at all. A false NEGATIVE here is a total bypass; a false POSITIVE just
+// defers one extra field. So this list is deliberately generous — topic
+// patterns stand alone (no verb required: "binding arbitration" appearing
+// anywhere is consent-shaped regardless of how the sentence introduces it),
+// and the verb list is broad. It still is not, and cannot be, exhaustive — see
+// isHardConsent below for what actually gates the dangerous auto-tick path;
+// this list's job is only to make sure a legal-shaped box is never silently
+// treated as a plain fact question.
 const CONSENT_PATTERNS = [
-  /\barbitration\b/i,
+  /\barbitrat/i,
+  /\bdispute resolution\b/i,
   /\bterms (and|&) conditions\b/i,
   /\bprivacy (notice|policy|statement)\b/i,
   /\bconfirm receipt\b/i,
-  /\bi (agree|consent|acknowledge|understand|certify)\b/i,
-  /\be-?sign(ature|ed)?\b|\b(electronic|digital)ly? sign(ature)?\b|\bsignature\b/i,
-  /\bbackground (check|screening)\b/i,
+  /\bi (agree|accept|consent|acknowledge|understand|certify|affirm|attest)\b/i,
+  /\be-?sign(ature|ed)?\b|\b(electronic|digital)(al)?ly? sign(ature|ed)?\b|\bsignature\b|\badopt(ing|ed)?\s+this\s+(document|application|form)\b/i,
+  /\bbackground (check|screening|investigation)\b/i,
   /\bconsent to\b/i,
   /\bcode of conduct\b/i,
 ]
@@ -102,10 +142,26 @@ export function isConsent(label) {
 // --consent-allowlist REGARDLESS of what the allowlist file contains: no
 // exact label, however many times the user has approved it before, moves one
 // of these into an auto-checked plan item.
+// CORRECTED (found by running the suite, not by inspection): widening
+// isConsent above to catch a reworded box WITHOUT also widening this list is
+// not a partial fix, it is a NEW hole — it routes the box INTO the branch
+// that is allowed to auto-tick, and if isHardConsent still misses it,
+// nothing left in that branch stops it. Verified against a real buildPlan():
+// "I accept binding dispute resolution, authorise a background
+// investigation, and adopt this document electronically." — vouched and
+// allowlisted — auto-ticked an arbitration/background-check/e-signature
+// clause under the narrower list below. So this list's topic patterns match
+// isConsent's: arbitration by name OR by its common synonym "dispute
+// resolution", a background check by name OR "investigation", and an
+// e-signature by name OR the "adopt this document electronically" idiom.
+// Same asymmetry as isConsent's own comment: a false positive here just
+// keeps one more box out of the allowlist path (defer, cheap); a false
+// negative lets exactly the thing this list exists to stop through.
 const HARD_CONSENT_PATTERNS = [
-  /\barbitration\b/i,
-  /\bbackground (check|screening)\b/i,
-  /\be-?sign(ature|ed)?\b|\b(electronic|digital)ly? sign(ature)?\b|\bsignature\b/i,
+  /\barbitrat/i,
+  /\bdispute resolution\b/i,
+  /\bbackground (check|screening|investigation)\b/i,
+  /\be-?sign(ature|ed)?\b|\b(electronic|digital)(al)?ly? sign(ature|ed)?\b|\bsignature\b|\badopt(ing|ed)?\s+this\s+(document|application|form)\b/i,
 ]
 
 export function isHardConsent(label) {
@@ -189,6 +245,22 @@ export function resolveFields(fields, { profile, answers } = {}) {
 // NEEDS-CHOICE instead of filling OK — safe, but it undoes the intended
 // speedup. `skipProbe` should be the COMPLEMENT of this function's output,
 // not fields this function returns.
+//
+// FINDING (qa-adversary, tests/security/hostile-forms.test.mjs): this used to
+// answer "worth probing" purely from req/bank-status, so a required field
+// shaped like "Withdraw my application" — combobox by SHAPE alone
+// ([role=combobox] etc.; scan-page.js cannot tell a picker from a button a
+// board decorated to look like one) — came back in the list. Whatever reads
+// this output (today: a human/agent reading the printed `probe\t...` line;
+// tomorrow: scan-engine.mjs's `skipProbe`) would then be told that clicking
+// Withdraw/Delete/Submit is a good idea, before any plan exists and before
+// anything is approved. Filtered with scan-engine.mjs's OWN probeRefusal() —
+// imported, not re-implemented, so this can never drift from what the actual
+// scanner already refuses to click. Structural first (a picker's name comes
+// from OUTSIDE it; a button's name is its own rendered text), a word-list
+// backstop second. Never removes a genuine dropdown: "Country" has no name of
+// its own that collides with its label and matches no destructive wording, so
+// it is untouched by this filter.
 export function combosNeedingProbe(fields, resolved) {
   const byKey = new Map((resolved ?? []).map((r) => [r.k, r]))
   const worthProbing = (f) => {
@@ -200,8 +272,86 @@ export function combosNeedingProbe(fields, resolved) {
   }
   return (fields ?? [])
     .filter((f) => f.t === "combo" && !(Array.isArray(f.opts) && f.opts.length))
+    .filter((f) => !probeRefusal(f))
     .filter(worthProbing)
     .map((f) => f.k)
+}
+
+// FINDING (qa-adversary, tests/fixtures/hostile/forms/mislabelled-inputs.html):
+// every resolution in this pipeline is keyed on the LABEL, and the label is
+// chosen by the page — nothing before this checked that the element behind
+// the label is the kind of thing the label describes. Demonstrated live:
+// <label for="m-phone">Phone number</label> wrapping <input name="ssn">
+// planned the user's real phone number into a field named "ssn", and the
+// approval message showed "Phone number", so the substitution was invisible
+// in review.
+//
+// The only real signal available for the ELEMENT's own identity is `sel`,
+// scan-page.js's stable selector (id first, else name/data-testid/data-qa/
+// aria-label — see stableSel() there). This is a FLOOR, not a ceiling: an id
+// deliberately chosen to read as consistent with a fake label defeats it —
+// the fixture's own #m-authorized, wired to name="agree_arbitration", is
+// exactly that case, and `sel` alone cannot recover a name attribute an id
+// selector never exposed. Categories are narrow and word-bounded, on the same
+// reasoning as EEO_RE/DECLINE_RE in answer-bank.mjs: a false POSITIVE here
+// costs one extra defer (cheap), a false NEGATIVE lets a value land in the
+// wrong field (what this exists to stop) — so the list stays short rather
+// than growing to cover everything, but nothing about it exists to reduce
+// defers, only to add them. It never invents a match: an identity token that
+// matches no category is not evidence of anything, in either direction.
+const IDENTITY_CATEGORIES = [
+  ["ssn", /\bssn\b|social.?security/i],
+  ["phone", /\bphone\b|\bmobile\b|\bcell\b|\btelephone\b/i],
+  ["email", /\be-?mail\b/i],
+  ["salary", /\bsalary\b|\bcompensation\b|\bpay\b/i],
+  ["date", /\bdate\b/i],
+  ["name", /\b(first|last|full|legal|given|family|sur)?\s*name\b/i],
+  ["address", /\baddress\b/i],
+  ["arbitration", /\barbitrat/i],
+]
+const identityCategoryOf = (text) =>
+  IDENTITY_CATEGORIES.find(([, re]) => re.test(String(text ?? "")))?.[0] ?? null
+
+// Pulls whatever identity token scan-page.js's stableSel() embedded in a CSS
+// selector: the attribute VALUE from [name=...]/[data-testid=...]/
+// [data-qa=...]/[aria-label=...], or the id from a bare #selector (checked
+// only when no attribute selector matched, since stableSel() tries id
+// FIRST). Underscores/hyphens normalize to spaces ("salary_floor" -> "salary
+// floor") so a word-bounded category still matches a snake_case or
+// kebab-case attribute value.
+function selectorIdentity(sel) {
+  const s = String(sel ?? "")
+  const attr =
+    /\[(?:name|data-testid|data-qa|aria-label)=["']?([^"'\]]+)["']?\]/.exec(s)
+  if (attr) return attr[1].replace(/[_-]+/g, " ")
+  const id = /^#([\w-]+)/.exec(s)
+  return id ? id[1].replace(/[_-]+/g, " ") : null
+}
+
+// "" when the label is consistent with (or silent about) the element it
+// sits on, else the reason it is not. Checkbox/radio groups carry their
+// selector on the OPTION, not the group (see buildPlan's own "groups have no
+// element of their own" comment below), so every option's selector is
+// checked — a real form's id is not chosen to be adversarial, so this floor
+// still catches the ordinary case (f1/f2 in the fixture, whose `sel` uses a
+// name-attribute selector that plainly disagrees with the label) even though
+// it cannot catch every disguise (g1's own id, chosen to look consistent).
+export function fieldIdentityMismatch(f) {
+  const labelCat = identityCategoryOf(f.l)
+  if (!labelCat) return ""
+  const sels = f.sel != null ? [f.sel] : (f.o ?? []).map((o) => o.sel)
+  for (const sel of sels.filter(Boolean)) {
+    const identity = selectorIdentity(sel)
+    const identityCat = identityCategoryOf(identity)
+    if (identityCat && identityCat !== labelCat) {
+      return (
+        `label reads as "${labelCat}" but the field's own identity ` +
+        `("${identity}") reads as "${identityCat}" — the label may not ` +
+        "describe this control"
+      )
+    }
+  }
+  return ""
 }
 
 // Pure core (exported for tests).
@@ -212,7 +362,21 @@ export function buildPlan({
   files = {},
   url,
   consentAllowlist = new Set(),
+  // The scanner's vouch for a label, threaded IN-PROCESS from
+  // scan-engine.mjs's scanPage(), which now returns
+  // `{ scan, vouchedLabels }` (see that file's "THE VOUCH LEAVES OUT OF
+  // BAND" comment). An array of complete visible label strings, or a Set —
+  // either is accepted and normalized the same way the consent allowlist is,
+  // so "the user approved this text" and "our own scanner attests to this
+  // text" compare on equal footing. Absent by default: see the consent
+  // branch below for why that is the honest state today, not a degradation.
+  vouchedLabels,
 }) {
+  const vouchedSet = new Set(
+    Array.from(vouchedLabels ?? [], (l) => normalizeQuestion(l)).filter(
+      Boolean,
+    ),
+  )
   const items = []
   const defer = []
   const byKey = new Map(resolved.map((r) => [r.k, r]))
@@ -252,55 +416,119 @@ export function buildPlan({
 
   for (const f of scan.fields ?? []) {
     const r = byKey.get(f.k) ?? {}
+    // `label` is what answer-bank matched against, what fieldKey() keys on
+    // and what fingerprint() hashes — it is `f.l`, unchanged, per
+    // scan-page.js's own header comment ("l is deliberately NOT changed...
+    // silently repointing all of that at a different string is a bigger
+    // change than the one being fixed"). `displayLabel` is what a human
+    // looking at the rendered page actually sees: `lSeen` when the scanner
+    // flagged a divergence (an aria-label/placeholder that disagrees with
+    // the rendered text), else the same string as `label`.
+    //
+    // FINDING (qa-adversary, "the label the plan shows the user is not the
+    // label on the page"): an input can carry BOTH a visible
+    // <label for>Email</label> AND aria-label="Emergency contact phone";
+    // labelOf() reads the attribute first, so the OLD single `label` put
+    // "Emergency contact phone" in the approval message for a field the page
+    // shows as "Email" — the user approves a form they are not looking at.
+    // Routing (which bank rule fires, the consent allowlist/vouch match, the
+    // file-slot regex below) stays on `label` — unchanged matching
+    // semantics, so this carries no new cost on a real board, the same
+    // reasoning scan-page.js gives for never repointing `l` itself. Only
+    // what is SHOWN to the user switches to `displayLabel`, and
+    // `matchedLabel` rides along on the item/defer entry whenever it
+    // differs, so field-cache.mjs's recordVia() can still find the field it
+    // cached under the matched text (see mLabel() below) and a human
+    // auditing the plan can see both strings, not just one.
     const label = String(r.label ?? f.l ?? "")
+    const seenLabel = typeof f.lSeen === "string" ? f.lSeen.trim() : ""
+    const displayLabel = seenLabel || label
+    const mLabel = () => (displayLabel !== label ? { matchedLabel: label } : {})
     const verb = VERB[f.t]
 
     // Agreements first — this outranks whatever the bank resolved. A consent
-    // box only ever becomes an auto-checked item when ALL of: it is not
-    // hard-excluded, its exact normalized label is on the caller's
-    // allowlist, it is a genuine checkbox (not a combo/select-shaped
-    // "confirm receipt" widget — there is no clean single verb for those),
-    // and it has exactly one stamped option (never guess WHICH box to click
-    // among several sharing a label).
-    // WHY f.labelExact GATES ALL OF THIS, and why nothing auto-ticks today.
+    // box only ever becomes an auto-checked item when ALL of: our OWN
+    // scanner vouches for this exact text, it is not hard-excluded, its
+    // exact normalized label is on the caller's allowlist, it is a genuine
+    // checkbox (not a combo/select-shaped "confirm receipt" widget — there
+    // is no clean single verb for those), and it has exactly one stamped
+    // option (never guess WHICH box to click among several sharing a
+    // label).
     //
-    // Every condition below reasons about `label` — but `label` is whatever
-    // scan-page.js produced, and that string is not trustworthy for a legal
-    // assertion. Three holes were demonstrated against this exact code:
+    // WHY THE VOUCH IS AN ARGUMENT, NOT A FIELD ON THE SCAN, and why nothing
+    // auto-ticks on the path that actually runs today (the MCP/CLI flow,
+    // reading a scan already written to jobs/<slug>/scan-p<N>.json).
     //
-    //   1. DECOUPLING. labelOf() reads aria-labelledby and aria-label BEFORE
-    //      any visible <label>, so a page controls the matched string and the
-    //      displayed string INDEPENDENTLY:
+    // The label the user approved, the label that is matched, and the label
+    // shown in the approval message have to be ONE string, and it has to be
+    // the whole thing — that is what scan-page.js's `labelExact` computes.
+    // But `labelExact` used to travel as a BOOLEAN FIELD INSIDE THE SCAN,
+    // and a boolean inside the data that crosses a trust boundary is not a
+    // boundary — it is a field, and every producer of a scan object can set
+    // it. Four holes were demonstrated against this exact code, fixed at
+    // four different layers:
+    //
+    //   1. DECOUPLING. labelOf() used to read aria-labelledby/aria-label
+    //      BEFORE any visible <label>, so a page could control the matched
+    //      string and the displayed string INDEPENDENTLY:
     //        <input aria-label="I certify the information is true">
     //        <span>I agree to binding arbitration and waive a jury trial.</span>
-    //      The allowlist hits the innocuous text, the box auto-ticks, and the
-    //      approval message shows the innocuous text too. An irreversible legal
-    //      waiver, ticked, invisible in review.
-    //   2. TRUNCATION. txt() slices labels to 120 chars upstream of everything.
-    //      A 131-char certification the user approved, and the same text with
-    //      " I also agree to binding arbitration." appended, truncate to the
-    //      IDENTICAL string. Both auto-tick; nothing the user sees changes.
-    //   3. isHardConsent IS A PATTERN LIST, so it cannot be the load-bearing
-    //      control. "binding dispute resolution", "background investigation",
-    //      "adopt this document electronically" all pass it. The 26th
-    //      rewording is free.
+    //      The allowlist hit the innocuous text, the box auto-ticked, and
+    //      the approval message showed the innocuous text too. Closed in
+    //      scan-page.js: only rendered, adjacent, unambiguous DOM text can
+    //      vouch — an attribute never can, however byte-identical.
+    //   2. TRUNCATION. Labels used to slice to 120 chars upstream of
+    //      everything, so a 131-char certification and the same text plus
+    //      " I also agree to binding arbitration." sliced to the IDENTICAL
+    //      string — both would auto-tick, and nothing the user saw changed.
+    //      Closed: a vouched label is taken at full length (MAX_EXACT=1000).
+    //   3. THE PATTERN LIST. isHardConsent alone cannot be the load-bearing
+    //      control — "binding dispute resolution" reads as arbitration to a
+    //      human and not to a regex, and the 26th rewording is free. Closed
+    //      by making the POSITIVE allowlist (exact text the user typed
+    //      themselves) load-bearing instead; the pattern list demotes to
+    //      belt-and-braces (see isHardConsent below, and isConsent's own
+    //      comment on why it stays deliberately generous).
+    //   4. THE BOOLEAN ITSELF. Even with 1–3 fixed, reading `f.labelExact`
+    //      off a scan object trusts WHOEVER PRODUCED THAT OBJECT — and
+    //      there are (at least) three producers: scan-engine.mjs,
+    //      scan.driver.mjs, and the bare `window.__ajScan(false)` re-scan
+    //      apply-job/SKILL.md documents for every page after the first,
+    //      which runs through neither of the other two. Proven against this
+    //      exact function: a scan built BY HAND with `labelExact: true` on
+    //      it auto-ticked an allowlisted box
+    //      (tests/security/rce-round-trip.test.mjs) — a trust boundary
+    //      expressed as a flag INSIDE the data that crosses it is not a
+    //      boundary. So `buildPlan` now ignores `scan.fields[].labelExact`
+    //      UNCONDITIONALLY — it is not read anywhere in this function — and
+    //      takes the vouch as `vouchedLabels`, an explicit argument built by
+    //      scan-engine.mjs's `scanPage()` IN THE SAME PROCESS, before the
+    //      scan ever becomes JSON: a real second return value
+    //      (`{ scan, vouchedLabels }`), never serialized, never stashed
+    //      where the page can read it back.
     //
-    // Holes 1 and 2 are the same defect: THE STRING THE USER APPROVED, THE
-    // STRING THAT IS MATCHED, AND THE STRING SHOWN IN THE APPROVAL MESSAGE MUST
-    // BE ONE STRING, AND IT MUST BE THE COMPLETE LABEL. Fix those and hole 3
-    // stops mattering, because a positive allowlist of exact full text the user
-    // typed becomes load-bearing and the pattern list demotes to belt-and-braces.
+    // `vouchedLabels` IS ABSENT on every path that actually runs today: the
+    // CLI reads `scan-p<N>.json` off disk, which is downstream of the
+    // process boundary the vouch cannot cross, so there is nothing to pass.
+    // Every consent box therefore defers and the user ticks it in the
+    // browser — hard rule 6, and always the safe direction. THAT IS THE
+    // HONEST STATE, NOT A DEGRADATION: the alternative was a scan file
+    // (from any of the producers above, or a bug in a future one) asserting
+    // whatever it liked. The day a caller runs in the SAME process as the
+    // scan (the Phase 3 local runner) and threads scanPage()'s own
+    // `vouchedLabels` through, this starts working with no change here.
     //
-    // So the gate is the PRECONDITION, not a mood: the scanner must positively
-    // assert `labelExact` — this label is the complete, visible text. It does
-    // not set that yet, so today every consent box defers and the user ticks it
-    // in the browser, which is hard rule 6 and always the safe direction.
-    // Whoever teaches scan-page.js to capture the untruncated visible label
-    // sets labelExact and this works; nobody can re-enable it by flipping a
-    // boolean without doing that.
+    // A residual even scan-page.js's own author states plainly: `labelExact`
+    // is still COMPUTED page-side, so a board that patches
+    // HTMLElement.prototype (innerText, getBoundingClientRect,
+    // getComputedStyle) can lie to an honest scanner — no Playwright-based
+    // scanner closes that, because locator.innerText() runs in the page
+    // too. What IS closed is the page choosing WHICH FUNCTION answers, and
+    // the remaining floor is the allowlist itself: the attacker has to
+    // reproduce text the user typed into their OWN file.
     if (isConsent(label)) {
       const allowed =
-        f.labelExact === true &&
+        vouchedSet.has(normalizeQuestion(label)) &&
         !isHardConsent(label) &&
         consentAllowlist.has(normalizeQuestion(label)) &&
         f.t === "checkbox" &&
@@ -312,11 +540,12 @@ export function buildPlan({
           sel: f.o[0].sel,
           how: "check",
           value: "true",
-          label,
+          label: displayLabel,
+          ...mLabel(),
           why: "consent:allowlisted",
         })
       } else {
-        defer.push({ k: f.k, label, why: "consent" })
+        defer.push({ k: f.k, label: displayLabel, ...mLabel(), why: "consent" })
       }
       continue
     }
@@ -325,7 +554,8 @@ export function buildPlan({
       items.push({
         k: f.k,
         how: "skip",
-        label,
+        label: displayLabel,
+        ...mLabel(),
         why: "picker half of a composite widget; the text input carries the value",
       })
       continue
@@ -346,7 +576,8 @@ export function buildPlan({
       if (!doc) {
         defer.push({
           k: f.k,
-          label,
+          label: displayLabel,
+          ...mLabel(),
           why: spec
             ? `no rendered ${spec.doc}`
             : "unrecognised attachment slot",
@@ -360,13 +591,34 @@ export function buildPlan({
         // upload remounts the form and invalidates every stamp.
         labelMatch: spec.match.source,
         paths: [doc],
-        label: label && label !== "Attach" ? label : spec.doc,
+        label:
+          displayLabel && displayLabel !== "Attach" ? displayLabel : spec.doc,
+        ...mLabel(),
       })
       continue
     }
 
     if (!verb) {
-      defer.push({ k: f.k, label, why: `unsupported field type ${f.t}` })
+      defer.push({
+        k: f.k,
+        label: displayLabel,
+        ...mLabel(),
+        why: `unsupported field type ${f.t}`,
+      })
+      continue
+    }
+
+    // FINDING (qa-adversary, mislabelled-inputs.html): a field whose own
+    // exposed identity (from `sel`) contradicts what its label claims must
+    // never be auto-filled or auto-checked, however confidently the bank
+    // resolved a value for the label — a phone number belongs nowhere near
+    // a field named "ssn". Checked before req/status even matter: this is a
+    // safety concern, not an "unanswerable question", so it always defers
+    // (never silently skips as optional-and-unresolved) and always wins over
+    // an otherwise-OK resolution.
+    const identityWhy = fieldIdentityMismatch(f)
+    if (identityWhy) {
+      defer.push({ k: f.k, label: displayLabel, ...mLabel(), why: identityWhy })
       continue
     }
 
@@ -379,14 +631,16 @@ export function buildPlan({
         items.push({
           k: f.k,
           how: "skip",
-          label,
+          label: displayLabel,
+          ...mLabel(),
           why: `optional and not in the fact base (${(r.status ?? "unresolved").toLowerCase()})`,
         })
         continue
       }
       defer.push({
         k: f.k,
-        label,
+        label: displayLabel,
+        ...mLabel(),
         why: (r.status ?? "UNRESOLVED").toLowerCase(),
         options: f.opts ?? (f.o ?? []).map((o) => o.l),
         optsTruncated: f.optsTruncated || undefined,
@@ -395,11 +649,21 @@ export function buildPlan({
       continue
     }
     if (r.status === "SKIP") {
-      defer.push({ k: f.k, label, why: "needs a document or long-form text" })
+      defer.push({
+        k: f.k,
+        label: displayLabel,
+        ...mLabel(),
+        why: "needs a document or long-form text",
+      })
       continue
     }
     if (r.status !== "OK" || r.value === "" || r.value == null) {
-      defer.push({ k: f.k, label, why: "no value resolved" })
+      defer.push({
+        k: f.k,
+        label: displayLabel,
+        ...mLabel(),
+        why: "no value resolved",
+      })
       continue
     }
 
@@ -408,7 +672,8 @@ export function buildPlan({
       if (!r.pick) {
         defer.push({
           k: f.k,
-          label,
+          label: displayLabel,
+          ...mLabel(),
           why: "no option matched the resolved value",
         })
         continue
@@ -418,7 +683,8 @@ export function buildPlan({
         sel: r.pickSel,
         how: "check",
         value: "true",
-        label: `${label} → ${r.value}`,
+        label: `${displayLabel} → ${r.value}`,
+        ...mLabel(),
       })
       continue
     }
@@ -428,7 +694,8 @@ export function buildPlan({
       sel: r.sel ?? f.sel,
       how: verb,
       value: r.value,
-      label,
+      label: displayLabel,
+      ...mLabel(),
       // A combo strategy remembered from a previous application to this same
       // form (threaded from the field cache via applyCache). The engine is
       // free to ignore this and walk its normal strategy order; it is a
@@ -478,12 +745,62 @@ export function buildPlan({
 // branches on a flag instead of reading the plan and forming an opinion, which
 // is the whole point: on ready=true the path is scan -> fill -> hand over.
 //
-// Consent does not get special-cased here: buildPlan already resolved every
-// allowlisted, non-hard consent box into a `check` item above, so anything
-// still sitting in `defer` under `why: "consent"` is a box nobody has
-// pre-approved (or one that legally cannot be) — and that correctly blocks
-// the fast path, the same as any other undecided field.
+// A CONSENT-ONLY defer does not block ready, and every other kind still does.
+// docs/autonomy-plan.md's Phase 2 table names this the highest-leverage item
+// in the whole plan ("readiness() stops counting consent defers — re-enables
+// the fast path that has never fired"), because nearly every real ATS has at
+// least one consent box, `isConsent` pushes it to `defer` before anything
+// else runs, and the OLD readiness() counted that defer the same as any
+// other — making `ready=true` unreachable on any form this pipeline has ever
+// actually met, however completely the fact base answered everything else.
+//
+// The reasoning this rests on: a consent box is not the "the fact base
+// failed to answer this" problem readiness() exists to flag. It is a
+// decision only the user may make (hard rule 6), and the user ticking a box
+// in a browser they are ALREADY looking at — reviewing this exact filled
+// form before clicking Submit themselves — costs zero model turns. That is
+// the whole test `ready` applies: "does a model need to think before the
+// ENGINE can run?" A consent box does not change that answer, so it does not
+// change `ready`.
+//
+// This is deliberately NOT the same question as "may this be submitted
+// unattended?" — see submitReadiness() below, which a consent defer DOES
+// block, same as before. `ready=true` only ever hands the FILLING step to
+// the engine; hard rule 6 (the user is on the submit button, always) is
+// untouched by either function's answer, and an unticked consent box simply
+// sits on the filled form for the user to tick themselves before they click
+// Submit — visible, not hidden, not guessed at.
 export function readiness(plan) {
+  const fillable = (plan.items ?? []).filter((i) => i.how !== "skip")
+  const blocking = (plan.defer ?? []).filter((d) => d.why !== "consent")
+  if (blocking.length) {
+    return {
+      ready: false,
+      reason: `${blocking.length} deferred field(s) need a human`,
+    }
+  }
+  if (!fillable.length) {
+    return { ready: false, reason: "nothing to fill" }
+  }
+  return { ready: true, reason: null }
+}
+
+// The stricter twin: "would EVERY field on this form be resolved, with
+// NOTHING at all left for a human — including a consent box?" Any defer
+// blocks this, consent included: a consent box is deferred FOR the user, not
+// resolved, so "nothing left undecided" is false while one still sits there
+// unticked. This is docs/autonomy-plan.md 3.3's plan-side half of the
+// two-key Phase 3 pre-submit gate ("readiness() after the live scan, plus a
+// new submitReadiness() requiring zero failures, zero verify mismatches,
+// zero required-empty, zero defers, and a submit-role button") — the fuller
+// gate needs the fill REPORT too (verify mismatches, required-empty fields,
+// which button is submit-shaped), which does not exist until after the
+// engine has actually run, so it belongs to Phase 3's automatability.mjs once
+// that is built. What is computable from the PLAN alone, today, is this: has
+// the planner left anything at all undecided. Never used to authorise an
+// actual submit click by itself — hard rule 6 is enforced independently of
+// what any function in this file returns.
+export function submitReadiness(plan) {
   const fillable = (plan.items ?? []).filter((i) => i.how !== "skip")
   if (plan.defer?.length) {
     return {
@@ -633,6 +950,26 @@ export function resolveScanPath(jobDir, { scanFlag, pageFlag } = {}) {
   }
 }
 
+// Belt-and-braces (innov-resilience, on top of buildPlan already ignoring
+// `f.labelExact` unconditionally — see buildPlan's own consent-branch
+// comment for the full four-hole history). `buildPlan` never reads this
+// field for its tick decision, so this call changes no OBSERVABLE behaviour
+// today. It exists because the documented per-page re-scan
+// (`browser_evaluate () => window.__ajScan(false)`, apply-job/SKILL.md) is a
+// bare call to the page-side scanner that runs through NEITHER
+// scan-engine.mjs NOR scan.driver.mjs, so nothing strips the field before it
+// lands in scan-p<N>.json — the one producer whose output this file loads
+// straight off disk. Deleting it here, at the point of load, means the field
+// is gone before anything downstream (a future reader, a debugging session,
+// a change nobody has made yet) could be tempted to trust it.
+function stripUnvouchedLabelExact(scan) {
+  for (const f of scan?.fields ?? []) {
+    delete f.labelExact
+    for (const o of f.o ?? []) delete o.labelExact
+  }
+  return scan
+}
+
 function main() {
   const args = process.argv.slice(2)
   const wantJson = args.includes("--json")
@@ -718,7 +1055,9 @@ function main() {
     console.error(`no scan at ${scanPath} — run the page scanner first`)
     process.exit(2)
   }
-  const scan = JSON.parse(fs.readFileSync(scanPath, "utf8"))
+  const scan = stripUnvouchedLabelExact(
+    JSON.parse(fs.readFileSync(scanPath, "utf8")),
+  )
   scan.slug = slug
 
   const url = urlFlag || scan.url
@@ -808,10 +1147,28 @@ function main() {
   const bootstrap = buildBootstrap(relJs)
 
   const state = readiness(plan)
+  // Two independent keys (docs/autonomy-plan.md 3.3): `state`/`ready` is "no
+  // model turn needed before filling" and gates the fast path this file's own
+  // header describes; `submitState`/`submitReady` is the strictly stricter
+  // "nothing at all is left for a human, including consent" and is the
+  // plan-side half of the future auto-submit gate. Neither authorises an
+  // actual submit click — hard rule 6 is enforced elsewhere, unconditionally.
+  const submitState = submitReadiness(plan)
 
   if (wantJson) {
     console.log(
-      JSON.stringify({ plan, bootstrap, probeNeeded, ...state }, null, 2),
+      JSON.stringify(
+        {
+          plan,
+          bootstrap,
+          probeNeeded,
+          ...state,
+          submitReady: submitState.ready,
+          submitReason: submitState.reason,
+        },
+        null,
+        2,
+      ),
     )
     return
   }
@@ -821,6 +1178,7 @@ function main() {
     console.log(
       `ats=${plan.ats} ready=${state.ready}` +
         (state.ready ? "" : ` reason=${JSON.stringify(state.reason)}`) +
+        ` submitReady=${submitState.ready}` +
         ` items=${plan.items.length - skipped.length}` +
         ` defer=${plan.defer.length} skip=${skipped.length} checked=${checked.length}` +
         // hits/probed/miss, not just hits/(hits+probed): a combo the cache

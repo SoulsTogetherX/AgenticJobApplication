@@ -17,7 +17,18 @@
 import fs from "node:fs"
 import crypto from "node:crypto"
 
-export const CACHE_VERSION = 2
+// Bumped 2 -> 3: a checkbox/radio group whose COMPLETE visible label exceeds
+// 120 chars and now earns the scan-page.js vouch gets a new, longer `f.l` —
+// fieldKey() below hashes `norm(f.l)`, so the field's own key changes and the
+// old cache entry is orphaned (never read again, harmlessly). Second-order:
+// `fingerprint()` hashes `norm(f.l)` of every REQUIRED field, so a required
+// consent box whose label just got longer changes the board's fingerprint
+// too — one full re-probe per board, once. Third-order: scan-page.js's own
+// isReq() matches a trailing `*`, which used to sit past the old 120-char
+// cut on some labels — a field can newly read as `req:true`, which ALSO
+// feeds the fingerprint. loadCache() already starts clean on any mismatch,
+// so bumping this is the whole fix; no migration code needed.
+export const CACHE_VERSION = 3
 
 // scan-page.js's own MAX_OPTS (40) already truncates a long list before it
 // ever reaches this file; this cap exists so a caller that hands recordCache
@@ -173,6 +184,16 @@ export function invalidate(cache, fp) {
 // most combos on this form. `plan` is the SAME plan object that was just
 // filled — its `items[].label` is what maps an engine key back to this
 // cache's label|type field key.
+//
+// `item.matchedLabel ?? item.label`, not `item.label` alone: fill-plan.mjs's
+// buildPlan() shows the user the PAGE's visible label (`lSeen`) when it
+// disagrees with the label the scan actually matched on, and rides the
+// matched string along as `item.matchedLabel` whenever the two differ (see
+// buildPlan's own comment on why `l`/the matched string is what fieldKey()
+// keys on — it is never repointed). Looking this cache up by the DISPLAYED
+// string for such a field would silently stop finding it — not a wrong
+// answer, just a missed optimisation (the combo strategy hint would not be
+// remembered), so this reads the matched string when it is available.
 export function recordVia(cache, fp, plan, report) {
   const entry = cache.forms[fp]
   if (!entry) return 0
@@ -182,7 +203,7 @@ export function recordVia(cache, fp, plan, report) {
     if (item.how !== "combo") continue
     const via = comboVia[item.k]
     if (!via) continue
-    const field = entry.fields[`${norm(item.label)}|combo`]
+    const field = entry.fields[`${norm(item.matchedLabel ?? item.label)}|combo`]
     if (!field) continue
     field.via = via
     updated++

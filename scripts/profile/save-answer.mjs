@@ -3,7 +3,9 @@
 // way for the agent to add to the fact base).
 //
 // Usage: node scripts/profile/save-answer.mjs "<question>" "<answer>" [--id a-007]
-//        [--source user|model] [--replace] [--file profile/answers.yaml]
+//        [--source user|model] [--class datum|assertion] [--replace]
+//        [--file profile/answers.yaml]
+//        node scripts/profile/save-answer.mjs "<question>" --set-class datum|assertion
 //
 // --source records provenance. `user` (the default) means the user said it in
 // chat. `model` means the agent picked an option off a form and the user
@@ -43,6 +45,17 @@
 // so a government or financial identifier is refused here (exit 4) and the
 // user types it themselves, in the browser, on the page they are looking at.
 //
+// AND EVERY ANSWER IS CLASSIFIED datum OR assertion.
+//
+// A datum is a fact about the user (email, city, a skill, a salary figure);
+// typing it into a form commits them to nothing. An assertion is something they
+// ASSERT or AGREE TO — authorisation to work, willingness to relocate, consent
+// to a background check, an e-signature — and it must never be acted on
+// unattended, whatever widget a board renders it as. See untrusted.mjs for why
+// this lives with the ANSWER and not with the control: a board authors the page
+// and can defeat any test of the page, but it cannot change what kind of thing
+// the user recorded.
+//
 // Exit codes: 0 saved, 1 conflict, 2 usage, 3 instruction-shaped, 4 sensitive.
 import fs from "node:fs"
 import { loadYamlFile, dumpYaml } from "../lib/lib.mjs"
@@ -54,36 +67,167 @@ import {
   findSensitiveValues,
   describeSensitive,
   SENSITIVE_LIMITS,
+  classifyAnswer,
+  answerClass,
+  describeClass,
+  ANSWER_CLASSES,
+  CLASS_LIMITS,
 } from "../lib/untrusted.mjs"
 
 const SOURCES = new Set(["user", "model"])
+const DEFAULT_FILE = "profile/answers.yaml"
 
-const args = process.argv.slice(2)
-function flag(name, dflt) {
-  const i = args.indexOf(name)
-  if (i !== -1) {
-    const v = args[i + 1]
-    args.splice(i, 2)
-    return v
-  }
-  return dflt
+const USAGE =
+  'Usage: save-answer.mjs "<question>" "<answer>" [--id a-NNN] [--source user|model]\n' +
+  "                      [--class datum|assertion] [--replace] [--file answers.yaml]\n" +
+  '       save-answer.mjs "<question>" --set-class datum|assertion [--file answers.yaml]'
+
+function usage(msg) {
+  console.error(`${msg}\n${USAGE}`)
+  process.exit(2)
 }
-const file = flag("--file", "profile/answers.yaml")
-const forcedId = flag("--id", null)
-const source = flag("--source", "user")
-const replaceIdx = args.indexOf("--replace")
-const wantReplace = replaceIdx !== -1
-if (wantReplace) args.splice(replaceIdx, 1)
-const [rawQuestion, rawAnswer] = args
 
-if (!rawQuestion?.trim() || !rawAnswer?.trim()) {
+// --- STRICT ARGUMENT PARSING ------------------------------------------------
+//
+// THIS IS AN INCIDENT FIX, not tidiness. The old parser looked up each flag it
+// knew about and ignored everything else, so an unrecognised flag was silently
+// DROPPED and the run continued as if it had never been typed. On 2026-07-31
+// an agent verifying this script by execution invoked it with `--answers <tmp>`
+// — the real flag is `--file` — and the write went to the user's REAL fact
+// base. Three probe values landed in profile/answers.yaml stamped
+// `source: user`, which was false, and one of them (a fabricated phone number)
+// then resolved OK on the exact label that appears on nearly every application
+// form.
+//
+// A usage error must never fall through to a successful write, and the file
+// this script writes is the one file the agent is otherwise forbidden to touch.
+// So: any token starting with "--" that is not a known flag is exit 2, and so
+// is a third positional argument — because that is what a swallowed
+// `--answers <path>` looks like once the flag has been dropped.
+//
+// `--` ends flag parsing, so an answer that genuinely begins with "--" is still
+// expressible.
+const VALUE_FLAGS = new Map([
+  ["--file", "file"],
+  ["--id", "id"],
+  ["--source", "source"],
+  ["--class", "cls"],
+  ["--set-class", "setClass"],
+])
+// Named near-misses get told what to type instead. A bare "unknown flag" on the
+// exact mistake that caused the incident would be a wasted opportunity.
+const HINTS = new Map([
+  ["--answers", "--file"],
+  ["--answers-file", "--file"],
+  ["--path", "--file"],
+  ["--out", "--file"],
+  ["--output", "--file"],
+  ["--replace-all", "--replace"],
+  ["--overwrite", "--replace"],
+  ["--type", "--class"],
+  ["--kind", "--class"],
+])
+
+const argv = process.argv.slice(2)
+const opts = {
+  file: DEFAULT_FILE,
+  id: null,
+  source: "user",
+  cls: null,
+  setClass: null,
+}
+let wantReplace = false
+let fileGiven = false
+const positional = []
+let endOfFlags = false
+for (let i = 0; i < argv.length; i++) {
+  const tok = argv[i]
+  if (!endOfFlags && tok === "--") {
+    endOfFlags = true
+    continue
+  }
+  if (!endOfFlags && tok.startsWith("--")) {
+    const eq = tok.indexOf("=")
+    const name = eq === -1 ? tok : tok.slice(0, eq)
+    if (VALUE_FLAGS.has(name)) {
+      const v = eq === -1 ? argv[++i] : tok.slice(eq + 1)
+      if (v === undefined) usage(`${name} needs a value.`)
+      opts[VALUE_FLAGS.get(name)] = v
+      if (name === "--file") fileGiven = true
+      continue
+    }
+    if (name === "--replace" && eq === -1) {
+      wantReplace = true
+      continue
+    }
+    const hint = HINTS.get(name)
+    usage(
+      `Unrecognised flag ${name}.${hint ? ` Did you mean ${hint}?` : ""}\n` +
+        `Nothing was written. An unknown flag is NOT ignored here: this script writes the fact base,\n` +
+        `and a dropped --file would have sent it to ${DEFAULT_FILE}.`,
+    )
+  }
+  positional.push(tok)
+}
+
+// A TEST PROCESS MAY NEVER REACH THE REAL FACT BASE.
+//
+// Found the honest way, by doing it: while canarying the strict-parsing fix
+// above — deliberately breaking the guard to prove the test goes red — a test
+// invocation with no --file fell through to the default and wrote `a-053` into
+// the user's real profile/answers.yaml. Same class of incident as the one this
+// commit exists to fix, caused by the person fixing it, and it is the argument
+// the coordinator asked for: the default path is fine for a human at a terminal
+// and is NOT fine for anything spawned by a test runner.
+//
+// So the default stands (CLAUDE.md documents the command without --file, and
+// breaking that would be a worse cure), but it is unreachable from a test.
+// NODE_TEST_CONTEXT is set by `node --test` and is inherited by a spawned
+// child, which is exactly the shape every test in this suite has.
+//
+// This is a belt to the test helper's braces: tests/profile/save-answer.test.mjs
+// also refuses to build an argv without --file. Two independent guards, because
+// the thing they prevent is silent, permanent and in the one file the agent is
+// otherwise forbidden to touch.
+if (!fileGiven && process.env.NODE_TEST_CONTEXT) {
   console.error(
-    'Usage: save-answer.mjs "<question>" "<answer>" [--id a-NNN] [--source user|model] [--replace] [--file answers.yaml]',
+    `Refusing to write the default ${DEFAULT_FILE} from a test process.\n` +
+      `NODE_TEST_CONTEXT is set, so this is running under \`node --test\`. Pass --file <tmpfile>.\n` +
+      `A test that writes the real fact base leaves permanent, global, unattributable entries in it —\n` +
+      `this exact accident happened twice on 2026-07-31, once to an agent verifying by execution and\n` +
+      `once to the agent fixing that.`,
   )
   process.exit(2)
 }
+
+const file = opts.file
+const forcedId = opts.id
+const source = opts.source
 if (!SOURCES.has(source)) {
   console.error(`--source must be one of ${[...SOURCES].join("|")}`)
+  process.exit(2)
+}
+if (opts.cls !== null && !ANSWER_CLASSES.has(opts.cls))
+  usage(`--class must be one of ${[...ANSWER_CLASSES].join("|")}.`)
+if (opts.setClass !== null && !ANSWER_CLASSES.has(opts.setClass))
+  usage(`--set-class must be one of ${[...ANSWER_CLASSES].join("|")}.`)
+
+// --set-class corrects the CLASSIFICATION of an entry that already exists and
+// never touches the answer, so it takes the question alone.
+const wantSetClass = opts.setClass !== null
+const maxPositional = wantSetClass ? 1 : 2
+if (positional.length > maxPositional) {
+  usage(
+    `Too many arguments (${positional.length}); expected ${maxPositional}.\n` +
+      `A swallowed flag looks exactly like this — check the spelling of every --flag above.`,
+  )
+}
+if (wantSetClass && (wantReplace || opts.cls !== null))
+  usage("--set-class cannot be combined with --replace or --class.")
+
+const [rawQuestion, rawAnswer] = positional
+if (!rawQuestion?.trim() || (!wantSetClass && !rawAnswer?.trim())) {
+  console.error(USAGE)
   process.exit(2)
 }
 
@@ -117,7 +261,7 @@ if (hostile.length) {
 
 const question = scan.q.text
 const answer = scan.a.text
-if (!question.trim() || !answer.trim()) {
+if (!question.trim() || (!wantSetClass && !answer.trim())) {
   console.error("Refusing to save: nothing readable left after sanitising.")
   process.exit(3)
 }
@@ -179,6 +323,83 @@ if (!Array.isArray(data.answers)) {
 const dupQ = data.answers.find(
   (a) => a.question?.trim().toLowerCase() === question.trim().toLowerCase(),
 )
+
+const header = `# ANSWERS BANK — user-editable. Agent adds entries ONLY via scripts/profile/save-answer.mjs.\n`
+const write = () => fs.writeFileSync(file, header + dumpYaml(data), "utf8")
+
+// --- classification ---------------------------------------------------------
+//
+// Three provenances, and the difference between them is the whole control:
+//
+//   user      the user said which it is (--class, with the default --source).
+//   model     the agent proposed it and the user approved the save, exactly the
+//             rule that already governs a model-derived ANSWER (hard rule 2).
+//   inferred  nobody said, so classifyAnswer read the recorded question. This
+//             is recorded AS inferred rather than laundered into a decision
+//             somebody made, so a wrong call is visible in the file and can be
+//             corrected with --set-class instead of being silently re-decided
+//             on every future application.
+//
+// The reasons are stored for an inferred assertion because that is the only
+// case where somebody will later ask "why does this one not fill?" and deserve
+// an answer better than "the script said so".
+function classifyFor(q, a) {
+  if (opts.cls !== null) return { cls: opts.cls, src: source, reasons: [] }
+  const got = classifyAnswer(q, a)
+  return { cls: got.class, src: "inferred", reasons: got.reasons }
+}
+function applyClass(entry, cls, src, reasons) {
+  entry.class = cls
+  entry.class_source = src
+  if (cls === "assertion" && reasons.length) entry.class_reasons = reasons
+  else delete entry.class_reasons
+}
+
+// --- the --set-class correction path ----------------------------------------
+//
+// Correcting a CLASSIFICATION is not correcting a fact, so this never touches
+// the answer and is not governed by --replace's "the agent may not overwrite
+// what the user said" rule — that rule is about the answer's truth.
+//
+// It is asymmetric on purpose. TIGHTENING (datum -> assertion) is always
+// allowed: the worst it costs is a field the user fills by hand. LOOSENING
+// (assertion -> datum) is the direction that grants unattended auto-action to
+// something the user asserts, so the agent may not do it — an agent declaring
+// --source model is refused, and the change is the user's to make.
+if (wantSetClass) {
+  if (!dupQ) {
+    console.error(
+      `No entry matches "${question.trim()}" in ${file}. --set-class corrects an existing answer; ` +
+        `it does not create one.`,
+    )
+    process.exit(1)
+  }
+  const before = answerClass(dupQ)
+  if (opts.setClass === "datum" && before.class === "assertion") {
+    if (source === "model") {
+      console.error(
+        `Refusing to reclassify ${dupQ.id} from assertion to datum on a model-derived request.\n` +
+          `"${dupQ.question}" is recorded as something the user ASSERTS (${before.reasons.join(", ") || "declared"}),\n` +
+          `and datum means "may be filled unattended on any form, in any widget". That is the user's call to\n` +
+          `make, not a pick the agent proposes. Ask them, then re-run without --source model.\n` +
+          `Note: ${CLASS_LIMITS}`,
+      )
+      process.exit(1)
+    }
+    console.error(
+      `Note: ${dupQ.id} is now a datum and may be filled unattended. It was an assertion` +
+        `${before.reasons.length ? ` (${before.reasons.join(", ")})` : ""}.`,
+    )
+  }
+  applyClass(dupQ, opts.setClass, source, [])
+  write()
+  console.log(
+    `Reclassified ${dupQ.id}: ${before.class}/${before.source} -> ${opts.setClass}/${source}` +
+      ` -> ${file}`,
+  )
+  process.exit(0)
+}
+
 if (dupQ) {
   // Entries written before provenance existed have no source. Those came from
   // the user, so they get the user's protection.
@@ -200,9 +421,16 @@ if (dupQ) {
   dupQ.answer = answer.trim()
   dupQ.source = source
   dupQ.added = new Date().toISOString().slice(0, 10)
-  const header = `# ANSWERS BANK — user-editable. Agent adds entries ONLY via scripts/profile/save-answer.mjs.\n`
-  fs.writeFileSync(file, header + dumpYaml(data), "utf8")
-  console.log(`Replaced ${dupQ.id} (was model-derived): "${question.trim()}"`)
+  // The answer changed, so the class is re-derived rather than inherited. An
+  // entry whose answer was replaced with an agreement token must not keep the
+  // datum class the old answer earned.
+  const k = classifyFor(question, answer)
+  applyClass(dupQ, k.cls, k.src, k.reasons)
+  write()
+  console.log(
+    `Replaced ${dupQ.id} (was model-derived): "${question.trim()}" ` +
+      `[${describeClass(answerClass(dupQ))}] -> ${file}`,
+  )
   process.exit(0)
 }
 
@@ -221,14 +449,34 @@ if (id) {
   } while (used.has(id))
 }
 
-data.answers.push({
+const entry = {
   id,
   question: question.trim(),
   answer: answer.trim(),
   source,
   added: new Date().toISOString().slice(0, 10),
-})
+}
+const k = classifyFor(question, answer)
+applyClass(entry, k.cls, k.src, k.reasons)
+data.answers.push(entry)
 
-const header = `# ANSWERS BANK — user-editable. Agent adds entries ONLY via scripts/profile/save-answer.mjs.\n`
-fs.writeFileSync(file, header + dumpYaml(data), "utf8")
-console.log(`Saved ${id} (source: ${source}): "${question.trim()}"`)
+write()
+// The TARGET PATH is printed on every success, not only when it was passed.
+// The incident on 2026-07-31 was a dropped --file flag: the run reported
+// success and the operator had no way to see it had gone to the real fact base
+// instead of their temp file. Strict parsing now stops that case outright, and
+// this makes any future variant of it visible in the one line a caller reads.
+console.log(
+  `Saved ${id} (source: ${source}, class: ${describeClass(answerClass(entry))}): ` +
+    `"${question.trim()}" -> ${file}${fileGiven ? "" : " (default)"}`,
+)
+if (entry.class === "assertion") {
+  // Said out loud because it changes what happens on every future application:
+  // this answer will be presented, not auto-acted.
+  console.error(
+    `Note: recorded as an ASSERTION (${k.reasons.join(", ") || "declared"}) — something you assert or\n` +
+      `agree to, not a fact about you. It will not be acted on unattended, whatever control a board\n` +
+      `renders it as. Correct with: --set-class datum\n` +
+      `Note: ${CLASS_LIMITS}`,
+  )
+}

@@ -28,6 +28,11 @@ import {
   findSensitiveValues,
   describeSensitive,
   SENSITIVE_LIMITS,
+  classifyAnswer,
+  answerClass,
+  mayAutoActUnattended,
+  describeClass,
+  CLASS_LIMITS,
 } from "../../scripts/lib/untrusted.mjs"
 import { textSnippet } from "../../scripts/lib/lib.mjs"
 import {
@@ -737,4 +742,244 @@ test("SENSITIVE_LIMITS states the hole rather than implying completeness", () =>
     findSensitiveValues("What is your ID number?", "123456789"),
     [],
   )
+})
+// --- answer classification: datum vs assertion --------------------------------
+//
+// A board authors the page, so every test OF the page is defeatable: it can
+// rename the `name`, reword the label, choose the widget and choose the
+// server-side column. Two entirely ordinary renderings — a tickbox whose own
+// label is "Yes" and a radio pair Yes/No — defeated the shape test that was
+// supposed to stop unattended consent, and the radio pair is the most common
+// real ATS rendering of a yes/no question.
+//
+// What a board cannot change is what kind of thing the USER recorded. These
+// tests pin that: the classification is a property of the answer, so the widget
+// is irrelevant by construction.
+
+test("the widget is irrelevant: one answer, one class, every rendering", () => {
+  // The point of the whole design in one assertion. If this ever needs to know
+  // about a control, the classification has moved back onto the page.
+  const q = "Are you legally authorized to work in the United States?"
+  for (const widget of ["checkbox", "radio", "select", "div-role-checkbox"]) {
+    const entry = { question: q, answer: "Yes", widget }
+    assert.equal(answerClass(entry).class, "assertion", widget)
+    assert.equal(mayAutoActUnattended(entry), false, widget)
+  }
+})
+
+test("the live case classifies as an assertion", () => {
+  // A real stored answer, and what the escalated fixture tried to weaponise.
+  const got = classifyAnswer(
+    "Are you legally authorized to work in the United States?",
+    "Yes",
+  )
+  assert.equal(got.class, "assertion")
+  assert.deepEqual(got.reasons, ["work_authorization"])
+})
+
+test("assertions are recognised across every named family", () => {
+  // ONE assertion over the whole list so a fix for the first cannot hide the
+  // rest, and the misses are named in the failure message.
+  const cases = [
+    ["Are you legally authorized to work in the United States?", "Yes"],
+    ["Will you now or in the future require sponsorship?", "No"],
+    ["Are you a U.S. citizen?", "Yes"],
+    ["I consent to a background check", "Yes"],
+    ["Do you agree to the terms and conditions?", "Yes"],
+    ["I agree to binding arbitration", "Yes"],
+    [
+      "I certify that the information in this application is true and complete",
+      "Yes",
+    ],
+    ["Type your full legal name to sign below", "Xavier Alvarez"],
+    ["Have you ever been convicted of a felony?", "No"],
+    ["Are you willing to relocate?", "No"],
+    ["Are you able and willing to obtain a security clearance?", "Yes"],
+    ["Are you currently bound to a non-compete agreement?", "No"],
+    ["Are you at least 18 years of age?", "Yes"],
+    ["Do you have a valid Nevada driver's license?", "No"],
+    ["Do you consent to a drug screen?", "Yes"],
+    ["Please confirm receipt", "I agree"],
+  ]
+  const missed = cases.filter(
+    ([q, a]) => classifyAnswer(q, a).class !== "assertion",
+  )
+  assert.deepEqual(
+    missed.map(([q]) => q),
+    [],
+    "these were classified as data",
+  )
+})
+
+test("ordinary facts stay data, or the guard gets turned off", () => {
+  // The mirror of the above, and the more dangerous direction in practice: a
+  // classifier that defers on a third of a form is one the user disables, and
+  // then it protects nothing. Every case is drawn from the real
+  // profile/answers.yaml or is the textbook near-miss for a rule above.
+  const cases = [
+    ["Preferred contact email for job applications", "x@example.com"],
+    ["Phone number", "702-555-0134"],
+    ["Postal Code", "89032"],
+    ["Country of Residence", "United States"],
+    ["Address Line 1", "3532 Lonesome Dumb St."],
+    [
+      "How many years of professional software development experience do you have?",
+      "3",
+    ],
+    ["What is your highest level of education?", "B.S. Computer Science, UNLV"],
+    ["What is your experience with GraphQL?", "Brief use."],
+    ["Do you have experience programming in Java?", "No"],
+    ["What is your desired total annual compensation?", "86900"],
+    ["What is your earliest available start date?", "Available immediately"],
+    ["How did you hear about this job?", "Job Board"],
+    ["EEO self-identification: race/ethnicity", "Hispanic or Latino"],
+    [
+      "Are you a veteran or active member of the United States Armed Forces?",
+      "I do not wish to answer",
+    ],
+    ["Current / Most Recent Employer", "Other"],
+    // "available" contains "able"; "self-identification" contains a chunk of
+    // "certification". Both are the near-misses that would wreck the list.
+    ["Are you available to start in June?", "Yes"],
+    ["EEO voluntary self-identification", "Decline to self-identify"],
+    // An essay that MENTIONS agreeing is not an agreement. The answer-side leg
+    // is anchored to the whole string precisely so this stays a datum.
+    [
+      "What is something you have built recently?",
+      "I agreed with the client on the scope, then built the pipeline and deployed it.",
+    ],
+  ]
+  const deferred = cases.filter(
+    ([q, a]) => classifyAnswer(q, a).class !== "datum",
+  )
+  assert.deepEqual(
+    deferred.map(([q]) => q),
+    [],
+    "these ordinary facts would stop auto-filling — narrow the rule or the user bypasses the guard",
+  )
+})
+
+test("bare Yes is not an agreement token", () => {
+  // The whole difference between "Do you know React? -> Yes" and "I agree".
+  // Folding yes/true/on into the agreement list would defer most of a form.
+  for (const a of ["Yes", "yes", "true", "on", "checked", "1"])
+    assert.equal(
+      classifyAnswer("Do you have experience with React?", a).class,
+      "datum",
+      a,
+    )
+  for (const a of ["I agree", "I certify", "Acknowledge", "consent", "Signed"])
+    assert.equal(classifyAnswer("Please confirm", a).class, "assertion", a)
+})
+
+test("a legacy entry with no class is classified from what the user recorded", () => {
+  // Every entry in the real fact base predates this field. Treating "no class"
+  // as "never fill" would stop the pipeline filling anything, and a control
+  // that stops the product gets removed — so a legacy entry IS classified, from
+  // the question text in a file the board cannot write, and the record says the
+  // provenance is inference rather than a decision somebody made.
+  const legacy = {
+    id: "a-005",
+    question: "Are you legally authorized to work in the United States?",
+    answer: "Yes",
+  }
+  const got = answerClass(legacy)
+  assert.equal(got.class, "assertion")
+  assert.equal(got.source, "inferred")
+  assert.equal(mayAutoActUnattended(legacy), false)
+
+  const datum = {
+    id: "a-011",
+    question: "Preferred contact email",
+    answer: "x@example.com",
+  }
+  assert.equal(answerClass(datum).class, "datum")
+  assert.equal(mayAutoActUnattended(datum), true)
+})
+
+test("a declared class outranks inference, in both directions", () => {
+  // The user's call is the top of the hierarchy: they can tighten something the
+  // patterns missed and loosen something they judge harmless.
+  const tightened = {
+    question: "Preferred contact email",
+    answer: "x@example.com",
+    class: "assertion",
+    class_source: "user",
+  }
+  assert.equal(answerClass(tightened).class, "assertion")
+  assert.equal(mayAutoActUnattended(tightened), false)
+
+  const loosened = {
+    question: "Are you willing to relocate?",
+    answer: "No",
+    class: "datum",
+    class_source: "user",
+  }
+  assert.equal(answerClass(loosened).class, "datum")
+  assert.equal(answerClass(loosened).source, "user")
+  assert.equal(mayAutoActUnattended(loosened), true)
+})
+
+test("a malformed stored class cannot grant auto-action", () => {
+  // A hand-edit that gets the spelling wrong must fall through to inference,
+  // not be silently corrected into a permission.
+  for (const bad of ["Datum", "DATUM", "yes", "", 7, null, {}]) {
+    const e = {
+      question: "Are you legally authorized to work in the US?",
+      answer: "Yes",
+      class: bad,
+    }
+    assert.equal(answerClass(e).class, "assertion", String(bad))
+    assert.equal(mayAutoActUnattended(e), false, String(bad))
+  }
+  // And a class with no provenance claims the WEAKEST one, never the user's.
+  const e = {
+    question: "Preferred contact email",
+    answer: "x@example.com",
+    class: "datum",
+  }
+  assert.equal(answerClass(e).source, "inferred")
+  const spoofed = {
+    question: "x",
+    answer: "y",
+    class: "datum",
+    class_source: "the-board-said-so",
+  }
+  assert.equal(answerClass(spoofed).source, "inferred")
+})
+
+test("CLASS_LIMITS states the hole rather than implying completeness", () => {
+  // The same rule as SANITIZER_LIMITS and SENSITIVE_LIMITS: a defence described
+  // as stronger than it is makes the next reader stop looking.
+  assert.match(CLASS_LIMITS, /pattern matching/i)
+  assert.match(CLASS_LIMITS, /rule 6/i)
+  // The named residual, asserted as UNCAUGHT on purpose. A reworded or
+  // non-English consent clause classifies as a datum. If these ever start being
+  // caught, check what else started being caught with them before deleting the
+  // assertion.
+  assert.equal(
+    classifyAnswer("Do you assent to the enclosed covenant?", "Yes").class,
+    "datum",
+  )
+  assert.equal(
+    classifyAnswer("Autoriza usted una verificacion de antecedentes?", "Si")
+      .class,
+    "datum",
+  )
+})
+
+test("describeClass prints the class, the provenance and the reason", () => {
+  assert.equal(
+    describeClass(
+      answerClass({ question: "Are you willing to relocate?", answer: "No" }),
+    ),
+    "assertion/inferred (willingness_or_commitment)",
+  )
+  assert.equal(
+    describeClass(
+      answerClass({ question: "Phone number", answer: "702-555-0134" }),
+    ),
+    "datum/inferred",
+  )
+  assert.equal(describeClass(null), null)
 })

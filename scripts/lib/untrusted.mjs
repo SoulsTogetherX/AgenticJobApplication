@@ -1175,3 +1175,225 @@ export function describeSensitive(findings) {
   if (!findings?.length) return null
   return [...new Set(findings.map((f) => f.label))].join(", ")
 }
+
+// ===========================================================================
+// Answer classification — datum vs assertion
+// ===========================================================================
+//
+// THE THIRD THING IN THIS FILE, and the same architectural idea as the second:
+// a boundary that decides, rather than a downstream reader that has to be
+// clever about a page it does not control.
+//
+// -------------------------------------------------------------------------
+// WHY THIS IS NOT A WIDGET PROBLEM
+// -------------------------------------------------------------------------
+//
+// innov-resilience ruled on 2026-07-31, on a live finding: a hostile board can
+// get a legally meaningful box ticked unattended. The control everyone believed
+// was holding — a checkbox that defers on its SHAPE — does not fire on the page
+// in question, and two entirely ordinary renderings defeat it outright:
+//
+//   * a tickbox whose own label is "Yes"      -> auto-ticked
+//   * a radio pair Yes / No                   -> auto-ticked
+//
+// and the radio pair is the MOST COMMON real ATS rendering of a yes/no
+// question. The prose test had a one-character bypass on top: delete the
+// trailing full stop and `looksLikeAgreementProse` flips to false while the
+// clause remains exactly as binding.
+//
+// Every layer that reads the PAGE is defeatable, because the board authors the
+// page. A board can rename the `name`, reword the label, choose the widget, and
+// choose the server-side column. What it CANNOT do is change what kind of thing
+// the user recorded. So the decision moves to the answer:
+//
+//   datum      a fact about the user — email, phone, city, years of
+//              experience, a skill, a salary figure, a degree, an essay.
+//              Typing it commits the user to nothing, so it is safe to fill
+//              on any form, in any widget.
+//
+//   assertion  something the user ASSERTS or AGREES TO — authorisation to
+//              work, willingness to relocate, consent to a background check,
+//              agreement to arbitration, an e-signature, certifying that the
+//              application is accurate. Never auto-acts unattended, WHATEVER
+//              widget the board renders it as.
+//
+// A radio pair, a labelled tickbox, a <select> and a <div role="checkbox"> all
+// get the same treatment, because the decision was made when the user recorded
+// the answer and not when a board rendered a control.
+//
+// -------------------------------------------------------------------------
+// WHY THE QUESTION AND (NARROWLY) THE ANSWER
+// -------------------------------------------------------------------------
+//
+// The classification reads the QUESTION, because an assertion is defined by
+// what is being asked, not by what was said back. "Yes" answers both "Are you
+// authorized to work in the US?" and "Do you have experience with React?", so
+// the answer text alone cannot separate them and a matcher built on it would
+// have to defer on every yes/no field — which is most of a form.
+//
+// The one answer-side leg is deliberately narrow: an answer whose WHOLE text is
+// an explicit agreement verb ("I agree", "I certify", "I acknowledge") records
+// an agreement whatever the question was called. Anchored to the entire string,
+// so an essay that happens to contain "I agreed to the client's request" is
+// untouched. Nothing looser: bare "Yes"/"true"/"on" is NOT an agreement token,
+// because that is exactly what a skill question answers.
+//
+// -------------------------------------------------------------------------
+// THE HONEST LIMIT — read this before trusting the list
+// -------------------------------------------------------------------------
+//
+// THIS IS PATTERN MATCHING and it has the same permanent holes as everything
+// else in this file. A reworded consent clause, a non-English one, or a novel
+// legal instrument classifies as `datum` and is therefore auto-fillable. The
+// list is not the guarantee. What is load-bearing is:
+//
+//   1. hard rule 6 — the user is on the submit button, always. Nothing here
+//      submits anything; the worst case is a control pre-set on a page the
+//      user is still looking at.
+//   2. the class is STORED, INSPECTABLE and CORRECTABLE. An inferred class is
+//      recorded as inferred, so a wrong one is visible in the file rather than
+//      re-decided invisibly on every application.
+//   3. a class the USER declared always outranks an inferred one, and the
+//      dangerous direction (assertion -> datum) is the user's alone.
+//
+// If a payload shape gets past this, adding an eighth rule is usually the wrong
+// fix — ask whether the CLASS should have been declared at save time instead.
+export const CLASS_LIMITS =
+  "pattern matching on the recorded question: a reworded or non-English consent clause classifies as " +
+  "datum and stays auto-fillable. The controls are hard rule 6 (the user submits) and that a declared " +
+  "class outranks an inferred one — not the completeness of this list."
+
+export const ANSWER_CLASSES = new Set(["datum", "assertion"])
+
+// Each rule is [id, pattern]. The id lands in the record, so a stored
+// `assertion` says WHICH family decided it and a wrong call is arguable rather
+// than mysterious.
+//
+// Every pattern below was checked BOTH ways against the real
+// profile/answers.yaml: it must fire on all of the entries that are genuinely
+// assertions and on none of the entries that are facts. A rule that refuses to
+// auto-fill an ordinary skill question is not a safer rule — it is a rule the
+// user turns off.
+const ASSERTION_RULES = [
+  // Immigration and right-to-work status. The single most common assertion on
+  // an application form, and the live case: "Are you legally authorized to work
+  // in the United States?" -> "Yes" is a real stored answer.
+  [
+    "work_authorization",
+    /\b(?:work(?:ing)?\s+authoriz|authoriz(?:ed|ation)\s+to\s+work|legally\s+(?:authoriz|eligible|entitled|permitted|allowed)|right\s+to\s+work|employment\s+eligibilit|require\s+sponsorship|sponsorship\s+(?:for|to|now)|require\s+.{0,20}sponsorship|visa\s+(?:status|sponsorship)|work\s+visa|u\.?\s?s\.?\s+citizen|citizenship|permanent\s+resident|green\s+card|\bi-?9\b|e-?verify)/i,
+  ],
+  // Consent and agreement. Granting a permission is the purest assertion: it
+  // is not a claim about the user at all, it is the user giving something away.
+  [
+    "consent_or_agreement",
+    /\b(?:consent(?:\s+to|ing)?\b|i\s+(?:agree|accept|consent|authorize)\b|agree\s+to\s+(?:the\s+)?(?:terms|arbitration|be|receive|this|these|abide)|do\s+you\s+agree\b|agree\s+and\s+acknowledge|acknowledge\s+(?:that|and|receipt)|terms\s+(?:and\s+conditions|of\s+(?:use|service))|arbitration|opt[\s-]?in\b)/i,
+  ],
+  // Certification, attestation, signature. "I certify that the information in
+  // this application is true and complete" is the clause that makes a false
+  // answer a firing offence rather than a mistake.
+  [
+    "certification_or_signature",
+    /\b(?:certif(?:y|ies|ying|ication\s+that)|attest\b|affirm\b|i\s+declare\b|under\s+penalt|true\s+and\s+(?:complete|accurate|correct)|to\s+the\s+best\s+of\s+my\s+knowledge|e-?signature|electronic(?:ally)?\s+sign|(?:type|enter)\s+your\s+(?:full\s+)?(?:legal\s+)?name\s+(?:to|as|below|here)|sign\s+(?:here|below)|initial\s+(?:here|below))/i,
+  ],
+  // Vetting permissions. Ticking these authorises a third party to go and look
+  // — at a criminal record, a credit file, a former employer.
+  [
+    "background_or_vetting",
+    /\b(?:background\s+(?:check|screen|investigation|inquiry)|credit\s+check|drug\s+(?:test|screen)|reference\s+check|criminal\s+(?:record|history|convict|background)|felon|convicted\b|security\s+clearance|polygraph|fingerprint)/i,
+  ],
+  // Willingness and commitment. Named explicitly in the ruling: willingness to
+  // relocate is an assertion, not a fact, because it is a promise about future
+  // conduct that an employer will rely on.
+  [
+    "willingness_or_commitment",
+    /\b(?:willing(?:ness)?\s+to\b|able\s+and\s+willing\b|are\s+you\s+able\s+to\s+(?:obtain|maintain|commit|comply|pass|perform|travel|relocate|work\s+on)|do\s+you\s+commit\b|open\s+to\s+relocat|agree\s+to\s+relocat)/i,
+  ],
+  // Contractual and regulatory disclosures. A wrong answer here is a legal
+  // problem for the user with a party that is not the employer.
+  [
+    "legal_status_disclosure",
+    /\b(?:non-?compete|non-?solicit|restrictive\s+covenant|bound\s+(?:by|to)\s+(?:any\s+|an?\s+)?(?:agreement|contract|non)|conflict\s+of\s+interest|government\s+official|politically\s+exposed|related\s+to\s+(?:any\s+)?(?:current\s+)?employee)/i,
+  ],
+  // Statutory eligibility and licence attestations. "Are you at least 18 years
+  // of age?" is not a datum about age; it is a declaration of legal capacity.
+  [
+    "eligibility_attestation",
+    /\b(?:at\s+least\s+\d+\s+years?\s+(?:of\s+age|old)|over\s+the\s+age\s+of\s+\d+|\d+\s+years?\s+of\s+age\s+or\s+older|legal\s+working\s+age|minimum\s+age|valid\b[^?]{0,30}\blicen[cs]e|currently\s+licensed)/i,
+  ],
+]
+
+// The answer-side leg. ANCHORED TO THE WHOLE STRING on purpose: the point is
+// "the recorded answer IS an agreement", not "the answer mentions agreeing".
+// Bare "yes", "true", "on" and "checked" are deliberately absent — those are
+// what an ordinary skill question is answered with, and including them would
+// defer most of a form.
+const AGREEMENT_TOKEN =
+  /^\s*(?:i\s+)?(?:agree|agreed|accept|accepted|consent|certify|acknowledge|affirm|attest|signed|e-?signed)(?:\s+(?:and|to)\s+[\w\s]{1,40})?[.!]?\s*$/i
+
+// Classify a question/answer pair. Returns { class, reasons } where `class` is
+// "datum" or "assertion" and `reasons` names the rules that fired (empty for a
+// datum, because a datum is the ABSENCE of evidence, never a positive finding —
+// which is precisely why an inferred datum is weaker than a declared one).
+export function classifyAnswer(question, answer) {
+  const q = String(question ?? "")
+  const a = String(answer ?? "")
+  const reasons = []
+  for (const [id, re] of ASSERTION_RULES) if (re.test(q)) reasons.push(id)
+  if (AGREEMENT_TOKEN.test(a)) reasons.push("agreement_answer")
+  return { class: reasons.length ? "assertion" : "datum", reasons }
+}
+
+// THE CONSUMER ENTRY POINT. Reads a stored answers.yaml entry and says what
+// class it is and how confidently.
+//
+//   source: "user"      the user declared it (--class with --source user)
+//   source: "model"     the agent proposed it and the user approved the save
+//   source: "inferred"  no class was recorded, so it was derived HERE from the
+//                       stored question by classifyAnswer
+//
+// WHY A LEGACY ENTRY IS RE-CLASSIFIED RATHER THAN REFUSED. Every entry in the
+// real fact base predates this field, so treating "no class" as "never fill"
+// would stop the pipeline filling anything at all, and a control that stops the
+// product is a control that gets removed. Re-classifying is still structural:
+// classifyAnswer reads the question TEXT THE USER RECORDED, which is in a file
+// the board cannot write. It is weaker than a declared class and the record
+// says so, which is the honest position.
+//
+// A malformed stored class ("Datum", "yes", 7) is NOT trusted and is not
+// silently corrected either: it falls through to inference, so a hand-edit that
+// gets the spelling wrong cannot accidentally grant auto-action.
+export const CLASS_SOURCES = new Set(["user", "model", "inferred"])
+
+export function answerClass(entry) {
+  const stored = entry?.class
+  if (typeof stored === "string" && ANSWER_CLASSES.has(stored)) {
+    const src = entry?.class_source
+    return {
+      class: stored,
+      // An unrecognised or absent class_source on a stored class is reported as
+      // "inferred" — the WEAKEST provenance, not the strongest. A hand-edit
+      // that writes `class: datum` and nothing else must not be able to claim
+      // the user declared it.
+      source: CLASS_SOURCES.has(src) ? src : "inferred",
+      reasons: Array.isArray(entry?.class_reasons) ? entry.class_reasons : [],
+    }
+  }
+  const { class: cls, reasons } = classifyAnswer(entry?.question, entry?.answer)
+  return { class: cls, source: "inferred", reasons }
+}
+
+// The single question a filler needs to ask. `true` ONLY for a datum.
+//
+// This is deliberately not "is it safe to show the user this value" — filling a
+// form while the user watches is a different act from acting unattended, and
+// this predicate answers the second one only.
+export function mayAutoActUnattended(entry) {
+  return answerClass(entry).class === "datum"
+}
+
+// One line for an approval message or a plan note.
+export function describeClass(info) {
+  if (!info) return null
+  const reasons = info.reasons?.length ? ` (${info.reasons.join(", ")})` : ""
+  return `${info.class}/${info.source}${reasons}`
+}

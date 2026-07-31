@@ -60,9 +60,15 @@ test("a label made unreadable with color:transparent must not be vouched for", a
     // LOUD skip. The reason is printed, and the report says exactly which
     // assertion is unverified rather than letting a green tick imply coverage.
     t.skip(
-      `no browser available (${got.reason}) — UNVERIFIED: whether scan-page.js ` +
-        `vouches for a color:transparent label. Needs playwright-core plus a ` +
-        `Chromium binary; run this leg before trusting consent auto-tick.`,
+      `no browser available (${got.reason}) — UNVERIFIED: whether a REAL ` +
+        `browser's computed style makes scan-page.js withhold the vouch. ` +
+        `Partly covered without a browser since 2026-07-31: the consent ` +
+        `fixture now carries the transparent box, scan-fidelity.test.mjs ` +
+        `pins the scanner's refusal over the served HTML, and ` +
+        `hostile-forms.test.mjs asserts g5 defers at buildPlan. What only ` +
+        `this leg can prove is that Chromium reports the colour the same way ` +
+        `the DOM harness's shim does. Needs playwright-core plus a Chromium ` +
+        `binary; run it before trusting consent auto-tick.`,
     )
     return
   }

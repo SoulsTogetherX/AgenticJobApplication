@@ -149,7 +149,9 @@ test("Greenhouse replica: a label longer than 120 characters", () => {
   assert.ok(full, "the long-label field must exist")
   assert.ok(full.length > 120, `expected >120 chars, got ${full.length}`)
   // And the scan fixture stores the truncation, not the full text.
-  const field = scan("greenhouse-step1").fields.find((f) => f.k === "f7")
+  // f8, not f7: scan-page.js stamps COMBOS first, so the react-select takes
+  // f1 and every input shifts up one. Found by scan-fidelity.test.mjs.
+  const field = scan("greenhouse-step1").fields.find((f) => f.k === "f8")
   assert.equal(field.l.length, 120)
   assert.equal(field.l, txt(full))
 })

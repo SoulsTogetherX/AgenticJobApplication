@@ -310,9 +310,19 @@ test("no consent box auto-ticks on the decoupled or truncated fixture", () => {
     // defect rather than removing it, which is what "the 26th rewording is
     // free" means in practice.
     g4: "background investigation + electronic adoption, missed by isHardConsent",
+    // THE color:transparent CARRIER, ON EVERY LEG. This box was in the served
+    // page from the start and MISSING from the scan fixture, so until
+    // scan-fidelity.test.mjs caught the omission the only consumer assertion
+    // on it lived in browser-vouch.test.mjs — which skips wherever there is no
+    // Chromium, i.e. on the leg most people run. The label is byte-identical
+    // text the user cannot see, so scan-page.js withholds the vouch
+    // (labelWhy: "label text is not visibly rendered") and it must defer.
+    g5: "label hidden with color:transparent, so the vouch is withheld",
   }
   const leaked = Object.entries(HOSTILE)
-    .filter(([k]) => !deferred.has(k))
+    // A key that no longer resolves is a failure, not a shorter list — the
+    // fixture was renumbered once already.
+    .filter(([k]) => !s.fields.some((f) => f.k === k) || !deferred.has(k))
     .map(([k, why]) => `${k} (${why})`)
   assert.deepEqual(
     leaked,
@@ -434,17 +444,30 @@ test("FINDING (w3-resolution + innov-resilience): the consent pattern list is no
   // that never enters the consent branch, so it is handled as an ordinary
   // optional checkbox and never appears as an agreement in the approval
   // message the user reads before submitting.
+  // g6-g9, not g5-g8: the scan fixture was missing the #consent-transparent
+  // box the served page has always carried, and adding it shifted every group
+  // after it by one. Found by scan-fidelity.test.mjs.
   const REAL = {
-    g5: "FCRA consumer-report authorisation (a background check)",
-    g6: "jury-trial waiver (arbitration, in plain English)",
-    g7: "typed name as a legal mark (an electronic signature)",
-    g8: "inquiry into employment history (a background check)",
+    g6: "FCRA consumer-report authorisation (a background check)",
+    g7: "jury-trial waiver (arbitration, in plain English)",
+    g8: "typed name as a legal mark (an electronic signature)",
+    g9: "inquiry into employment history (a background check)",
   }
   const s = scan("consent-decoupled")
+  // A KEY THAT NO LONGER RESOLVES IS A FAILURE, NOT A SHORTER LIST. The
+  // earlier `.filter(([f]) => f && ...)` dropped a vanished field silently, so
+  // renumbering the fixture — which is exactly what happened when the missing
+  // #consent-transparent box was restored — would have shrunk this finding to
+  // nothing and read as a fix. Missing fields are reported in the same list.
+  const lookup = (k) => s.fields.find((f) => f.k === k)
   const unrecognised = Object.entries(REAL)
-    .map(([k, what]) => [s.fields.find((f) => f.k === k), what])
-    .filter(([f]) => f && !isConsent(f.l))
-    .map(([f, what]) => `${what}: ${JSON.stringify(f.l.slice(0, 60))}…`)
+    .map(([k, what]) => [lookup(k), what, k])
+    .filter(([f]) => !f || !isConsent(f.l))
+    .map(([f, what, k]) =>
+      f
+        ? `${what}: ${JSON.stringify(f.l.slice(0, 60))}…`
+        : `${what}: field ${k} is not in the fixture at all`,
+    )
 
   assert.deepEqual(
     unrecognised,
@@ -459,9 +482,9 @@ test("FINDING (w3-resolution + innov-resilience): the consent pattern list is no
 
   // And the harder bar, reported after so it cannot pre-empt the above.
   const notHard = Object.entries(REAL)
-    .map(([k, what]) => [s.fields.find((f) => f.k === k), what])
-    .filter(([f]) => f && !isHardConsent(f.l))
-    .map(([, what]) => what)
+    .map(([k, what]) => [lookup(k), what, k])
+    .filter(([f]) => !f || !isHardConsent(f.l))
+    .map(([f, what, k]) => (f ? what : `${what} (field ${k} is missing)`))
   assert.deepEqual(
     notHard,
     [],
@@ -521,6 +544,29 @@ test("FINDING (w3-resolution): a label that names a different field aims the ans
   // The plan that results says label "Phone number" and targets name="ssn".
   // The approval message the user reads shows the label, so the substitution
   // is invisible in review.
+  //
+  // REOPENED 2026-07-31, and the reason matters more than the finding.
+  // fieldIdentityMismatch() in fill-plan.mjs reads the element's identity out
+  // of `sel` — selectorIdentity() pulls the value from a [name=…] selector, or
+  // the id from a bare `#…`. It went green against a fixture claiming
+  // `sel: input[name="ssn"]`. The REAL scanner never emits that: stableSel()
+  // tries `#id` FIRST and only falls back to a name selector when no unique id
+  // exists (scan-page.js, stableSel). This page's inputs all have ids, so the
+  // scanner emits `#m-phone` — "m phone" — which agrees with the label
+  // "Phone number", the guard finds no mismatch, and the phone number is
+  // planned into name="ssn" exactly as before.
+  //
+  // Verified by running the real scan-page.js over the served page through
+  // tests/fixtures/boards/dom.mjs; tests/security/scan-fidelity.test.mjs now
+  // pins the fixture to that output, which is what surfaced this.
+  //
+  // So the guard is not weak, it is UNREACHABLE on the shape it was written
+  // for: the one input it has is chosen by the same page that chose the label.
+  // A hostile board picks the id. `sel` cannot carry the name attribute of an
+  // element the scanner selected by id, so no pattern added to
+  // IDENTITY_CATEGORIES changes this — the fix needs the scanner to REPORT the
+  // element's own identity (name/type/autocomplete) as a field of its own,
+  // which is w2-engine's scan-page.js, not w3's matcher.
   const s = scan("mislabelled-inputs")
   const plan = planFrom(s)
 

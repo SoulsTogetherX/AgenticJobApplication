@@ -311,12 +311,49 @@ import { TECH_TERMS } from "./keywords.mjs"
 // while "1, 2, 3, 5" evidences nothing but itself.
 const AFFIRMATIVE = /^\s*(yes|y|true|yes\.|yes,? i (do|have|am))\s*$/i
 
+// THE SIBLING CASE, and the one the fix above left open.
+//
+// The rule "a question counts when the answer is an unambiguous yes" reads the
+// ANSWER and never the shape of the QUESTION — and the employer writes the
+// question. So a compound label whitelists everything it happens to mention:
+//
+//   question: "Are you legally authorized to work in the United States?
+//              (Our stack is Kubernetes, Terraform, Kotlin, Rust and Scala.)"
+//   answer:   "Yes"
+//
+// One "Yes" about work authorisation made Kubernetes, Terraform, Kotlin, Rust
+// and Scala all pass R6 — verified ok:true against a real document. The user
+// only ever said yes to being allowed to work here.
+//
+// Two narrowings, both deliberately conservative, because R6 is the control
+// that stops a posting putting a false claim on a document signed with the
+// user's name:
+//
+//   1. Parentheticals and bracketed asides are stripped before the question
+//      counts. They are context the employer added, not the thing being asked.
+//   2. What remains evidences a skill only when it names exactly ONE. "Do you
+//      have experience with React?" / "Yes" is unambiguous. "Experience with
+//      React, Vue and Angular?" / "Yes" is not — all three? any one? — and an
+//      ambiguous yes must never become evidence. The user can always record
+//      each skill outright with save-answer.mjs, which is unambiguous by
+//      construction.
+// Both narrowings are UNCONDITIONAL, deliberately. An earlier draft injected
+// the term-counter so lib.mjs would not have to reach for the lexicon — but
+// techTermsIn lives in this same file, so there was never a cycle to avoid, and
+// an optional guard is a guard a future caller forgets. Safe by default.
+const ASIDE = /[([{][^)\]}]*[)\]}]/g
+
+export function questionEvidence(question) {
+  const stripped = String(question ?? "").replace(ASIDE, " ")
+  return techTermsIn(stripped).length > 1 ? "" : stripped
+}
+
 export function evidenceText(profileRaw, answersDoc) {
   const parts = [String(profileRaw ?? "")]
   for (const a of answersDoc?.answers ?? []) {
     const answer = a?.answer == null ? "" : String(a.answer)
     parts.push(answer)
-    if (AFFIRMATIVE.test(answer)) parts.push(String(a?.question ?? ""))
+    if (AFFIRMATIVE.test(answer)) parts.push(questionEvidence(a?.question))
   }
   return parts.join("\n")
 }

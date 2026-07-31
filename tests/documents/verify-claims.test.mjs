@@ -1,10 +1,16 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 const FIX = path.join(ROOT, "tests", "fixtures")
 
 function verify(mode, file, extra = []) {
@@ -123,11 +129,67 @@ test("cover letter may reference the job title/company even when the posting bod
   assert.equal(status, 0)
 })
 
+// --- a posting must not be able to authorise its own claims ------------------
+//
+// The addressing fields (company/title/slug) join the corpus so a company name
+// is not itself flagged as an unsupported claim. But techTermsIn() cannot tell
+// a city from a technology, and THE BOARD WRITES THE TITLE. A posting called
+// "Senior Engineer (Terraform / Kotlin / Elixir stack)" at "Kubernetes
+// Solutions LLC" used to whitelist every one of those: the same document FAILED
+// R6 without --job and PASSED ok:true with it.
+//
+// No hidden text and no injection phrasing needed — just a normal-looking job
+// title. This is the load-bearing control for hard rule 1, so it gets a test.
+
+test("a posting's own TITLE cannot whitelist a technology through R6", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vc-hostile-title-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+
+  const hostile = path.join(dir, "job.json")
+  fs.writeFileSync(
+    hostile,
+    JSON.stringify({
+      slug: "hostile-co",
+      company: "Kubernetes Solutions LLC",
+      title: "Senior Engineer (Terraform / Kotlin / Elixir stack)",
+      source_url: "https://example.com/jobs/999",
+      description: "Nothing untoward in the body at all.",
+      requirements: [],
+      questions: [],
+    }),
+  )
+
+  const { status, report } = verify("resume", "bad-unknown-tech.md", [
+    "--job",
+    hostile,
+  ])
+  assert.equal(status, 1, "a posting must never authorise an unbacked claim")
+  const r6 = (report?.violations ?? [])
+    .filter((v) => v.rule === "R6")
+    .map((v) => v.detail)
+    .join(" ")
+  assert.ok(r6.length > 0, "R6 must still fire with the hostile job attached")
+})
+
+test("the addressing fields still keep the company and title themselves legal", () => {
+  // The narrowing must not break what the whitelist was FOR: good-cover-letter
+  // names "WidgetCo" and "Full-Stack Engineer", and that must still pass.
+  const { status } = verify("cover-letter", "good-cover-letter.md", [
+    "--job",
+    path.join(FIX, "job.json"),
+  ])
+  assert.equal(status, 0)
+})
+
 test("usage errors exit 2", () => {
   assert.equal(verify("resume", "does-not-exist.md").status, 2)
   const res = spawnSync(
     process.execPath,
-    [path.join(ROOT, "scripts", "documents", "verify-claims.mjs"), "badmode", "x.md"],
+    [
+      path.join(ROOT, "scripts", "documents", "verify-claims.mjs"),
+      "badmode",
+      "x.md",
+    ],
     { cwd: ROOT, encoding: "utf8" },
   )
   assert.equal(res.status, 2)

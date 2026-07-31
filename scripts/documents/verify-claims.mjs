@@ -71,20 +71,41 @@ const factIndex = buildFactIndex(profile, answers)
 // user does not have and, in Spring's case, explicitly did not select. See
 // evidenceText() for the rule: an answer always counts, a question only counts
 // when the answer is an unambiguous yes.
-let corpus = evidenceText(
+const evidence = evidenceText(
   fs.readFileSync(profilePath, "utf8"),
   fs.existsSync(answersPath) ? answers : { answers: [] },
 )
+
+// The addressing fields exist so a company name or a job title is not itself
+// flagged as an unsupported claim. They are NOT evidence of a skill, and the
+// distinction is load-bearing: the board writes them.
+//
+// The old comment here said "only the addressing fields — the posting body must
+// never whitelist claims", which was true and insufficient, because
+// techTermsIn() cannot tell a city from a technology. A posting titled
+//
+//   "Senior Engineer (Terraform / Kotlin / Elixir stack)"
+//   at "Kubernetes Solutions LLC"
+//
+// whitelisted every one of those: a résumé claiming them FAILED R6 without
+// --job and PASSED ok:true with it. A posting chooses its own title, so a
+// posting could authorise claims on a document signed with the user's name —
+// no hidden text and no injection phrasing needed, just a normal-looking title.
+//
+// So addressing text still counts for numbers and dates (a title like
+// "Engineer II" legitimately carries one), and never for technology.
+let addressing = ""
 if (jobPath) {
   if (!fs.existsSync(jobPath)) fail(`No such job file: ${jobPath}`)
   const job = JSON.parse(fs.readFileSync(jobPath, "utf8"))
-  // Only the addressing fields — the posting body must never whitelist claims.
-  corpus += `\n${job.company ?? ""} ${job.title ?? ""} ${job.slug ?? ""}`
+  addressing = `\n${job.company ?? ""} ${job.title ?? ""} ${job.slug ?? ""}`
 }
+const corpus = evidence + addressing
 
 const corpusNumbers = extractNumbers(corpus)
 const corpusDates = extractMonthYears(corpus)
-const corpusTech = new Set(techTermsIn(corpus))
+// Tech comes from the EVIDENCE ONLY — never from board-controlled addressing.
+const corpusTech = new Set(techTermsIn(evidence))
 
 const violations = []
 const lines = doc.split(/\r?\n/)

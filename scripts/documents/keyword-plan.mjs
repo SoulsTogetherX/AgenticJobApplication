@@ -222,6 +222,12 @@ function main() {
   // "AWS, Azure, or GCP" is not evidence of Azure. This is the same rule
   // verify-claims R6 applies, so must_use can never contain a term the
   // verifier would go on to reject.
+  // evidenceText also drops a compound question answered "Yes" ("...authorized
+  // to work here? (Our stack is Kubernetes, Terraform, Kotlin.)"), because one
+  // yes cannot say which of three it meant. That matters most HERE: a hostile
+  // label that widened `evidenced` would move those terms out of `blocked` and
+  // into `must_use`, i.e. the pipeline would actively instruct the tailoring
+  // step to place a claim the fact base cannot back.
   const blob = evidenceText(
     profileText(loadYamlFile(profilePath)),
     fs.existsSync(answersPath) ? loadYamlFile(answersPath) : { answers: [] },

@@ -280,6 +280,10 @@ function main() {
   // (AWS, Azure, or GCP)]" is not evidence of Azure. Counting it as such would
   // mark a genuine gap as already covered and hide it from this report — the
   // exact opposite of the job. Same rule verify-claims R6 applies.
+  // It also drops a compound question answered "Yes", because one yes cannot
+  // say which of the listed skills it meant. Here the consequence runs the
+  // other way from keyword-plan's — counting it would mark a genuine gap as
+  // already covered and hide it from this report.
   const blob = evidenceText(
     profileText(loadYamlFile(profilePath)),
     fs.existsSync(answersPath) ? loadYamlFile(answersPath) : { answers: [] },

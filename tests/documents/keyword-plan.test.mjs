@@ -257,6 +257,50 @@ test("a question answered YES does evidence what it asked about", () => {
   assert.ok(techTermsIn(evidenceText("", answers)).includes("Kubernetes"))
 })
 
+// --- the sibling of the Spring/Azure bug ------------------------------------
+//
+// evidenceText was fixed for the enumerated shape ("4 = Spring; 5 = Cloud" /
+// "1, 2, 3, 5") and left open for the compound one. The EMPLOYER writes the
+// question, so a parenthetical stack list rode along on a yes about work
+// authorisation. Verified ok:true against a real document before this fix.
+
+test("a compound question answered YES does not evidence its parenthetical stack", () => {
+  const answers = {
+    answers: [
+      {
+        question:
+          "Are you legally authorized to work in the United States? " +
+          "(Our stack is Kubernetes, Terraform, Kotlin, Rust and Scala — familiarity preferred.)",
+        answer: "Yes",
+      },
+    ],
+  }
+  const terms = techTermsIn(evidenceText("", answers))
+  for (const t of ["Kubernetes", "Terraform", "Kotlin", "Rust", "Scala"]) {
+    assert.ok(
+      !terms.includes(t),
+      `"${t}" came from the employer's parenthetical, not from the user`,
+    )
+  }
+})
+
+test("a YES to a multi-skill question is ambiguous, so it evidences nothing", () => {
+  // All three? Any one? An ambiguous yes must not become evidence — the user
+  // can always record each skill outright with save-answer.mjs.
+  const answers = {
+    answers: [
+      {
+        question: "Do you have experience with Kubernetes, Terraform and Rust?",
+        answer: "Yes",
+      },
+    ],
+  }
+  const terms = techTermsIn(evidenceText("", answers))
+  assert.ok(!terms.includes("Kubernetes"))
+  assert.ok(!terms.includes("Terraform"))
+  assert.ok(!terms.includes("Rust"))
+})
+
 test("a question answered NO does not evidence what it asked about", () => {
   const answers = {
     answers: [

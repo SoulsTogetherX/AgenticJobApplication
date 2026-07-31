@@ -66,6 +66,11 @@ and never a single finding from a checker.
 
 - `scripts/apply/fill-plan.mjs` — **`w3-resolution`**. `w2-engine` delivers the
   replacement `buildDriverSource()` as a spec.
+- `.claude/skills/apply-job/scan-page.js`, `scan.driver.mjs`, `fill-page.js` —
+  **`w2-engine`**, not `doc-scribe`. They live under `.claude/skills/` but they
+  are executable code eval'd in a browser, not prose; the scribe owns `SKILL.md`
+  in that directory and nothing else. `scan-page.js` is the single source of
+  truth for the scan, so it belongs with the engine that consumes it.
 - `scripts/leads/risk.mjs` — **`w5-leads`**. `w1-security` sends the
   `injection_attempt` spec.
 - `scripts/documents/verify-claims.mjs` — **`w1-security`**, not
@@ -111,10 +116,13 @@ everything else, and the manager re-staffs on the numbers.
 
 ## Log
 
-| Date       | Change                                               | Reason                                                                                                          |
-| ---------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| 2026-07-30 | Hired the initial 11 (3 innovators, 6 workers, 2 QA) | Autonomy build kickoff; file sets carved disjoint from the plan's phases                                        |
-| 2026-07-30 | Added `cicd` and `scribe` as **distinct roles**      | User decision: CI/CD and documentation are their own disciplines, not worker sidelines                          |
-| 2026-07-30 | `w6-documents` gave up `docs/` and `.claude/skills/` | Collided with `doc-scribe`. w6 keeps the user's résumé pipeline; the scribe takes the prose                     |
-| 2026-07-30 | `ci-engineer` took `package.json` and `.gitignore`   | Previously unowned. Single owner because uncoordinated edits leak personal data                                 |
-| 2026-07-30 | Adopted the cross-check protocol                     | User decision: agents keep each other in check. Prompted by a run reporting `completed` over six errored agents |
+| Date       | Change                                                           | Reason                                                                                                                                                                                    |
+| ---------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-07-30 | Hired the initial 11 (3 innovators, 6 workers, 2 QA)             | Autonomy build kickoff; file sets carved disjoint from the plan's phases                                                                                                                  |
+| 2026-07-30 | Added `cicd` and `scribe` as **distinct roles**                  | User decision: CI/CD and documentation are their own disciplines, not worker sidelines                                                                                                    |
+| 2026-07-30 | `w6-documents` gave up `docs/` and `.claude/skills/`             | Collided with `doc-scribe`. w6 keeps the user's résumé pipeline; the scribe takes the prose                                                                                               |
+| 2026-07-30 | `ci-engineer` took `package.json` and `.gitignore`               | Previously unowned. Single owner because uncoordinated edits leak personal data                                                                                                           |
+| 2026-07-30 | Adopted the cross-check protocol                                 | User decision: agents keep each other in check. Prompted by a run reporting `completed` over six errored agents                                                                           |
+| 2026-07-31 | `w2-engine` took the three `apply-job/*.js` files                | Unowned in the original carve-up. They are eval'd browser code, not docs; `doc-scribe` keeps `SKILL.md` there                                                                             |
+| 2026-07-31 | **`w2-engine` runs BEFORE `w3-resolution`**, not beside it       | User decision. 147eb68 is the evidence: run concurrently, w2's spec cannot reach w3 in time and the RCE survived a green suite                                                            |
+| 2026-07-31 | Tie-break invoked: `w2-engine` vs `qa-adversary` on `labelExact` | First use of the third-lens rule. `innov-resilience` ruled **patch, not structural**, and proved it by running `buildPlan` rather than arguing. Neither side was overruled by the manager |

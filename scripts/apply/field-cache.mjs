@@ -1,5 +1,6 @@
 // Remembers the SHAPE of a form we have already filled: which widget each
-// field is, and what options it offers.
+// field is, what options it offers, and (once learned) which combo strategy
+// actually worked on it.
 //
 // Why it matters: the expensive half of a page scan is probing custom
 // dropdowns. The scanner opens each one, waits for the menu to render, reads
@@ -17,6 +18,14 @@ import fs from "node:fs"
 import crypto from "node:crypto"
 
 export const CACHE_VERSION = 2
+
+// scan-page.js's own MAX_OPTS (40) already truncates a long list before it
+// ever reaches this file; this cap exists so a caller that hands recordCache
+// a list some OTHER way (bypassing that scanner) cannot blow the cache file
+// up unboundedly. It is deliberately above scan-page.js's cap, so under
+// normal operation this file is never the one doing the cutting — see
+// `optsTruncated` below for what happens when a list WAS cut somewhere.
+const MAX_CACHED_OPTS = 60
 
 const norm = (s) =>
   String(s ?? "")
@@ -60,12 +69,24 @@ export function saveCache(file, cache) {
 
 // Fill in what this scan did not capture. Never overwrites live data — a fresh
 // probe always wins over a remembered one.
-// Reports hits against every field that needs an option list, not just the
-// ones the cache happened to know — otherwise a total miss and an empty form
-// both read as "0/0" and there is no way to tell them apart.
+//
+// Reports THREE counts, not two, against every field that needs an option
+// list — not just the ones the cache happened to know:
+//   probed  this scan already opened the dropdown itself
+//   hits    the cache supplied options this scan did not have to probe
+//   miss    NEITHER of the above — a combo/select the cache has never seen
+//           and this scan did not probe either. This is the count that used
+//           to vanish: a field landing here previously incremented nothing,
+//           so a form that is entirely new (every combo a genuine miss) and
+//           a form with no combos at all both printed "0/0" — indistinguishable,
+//           even though the first one needs a full probe and the second needs
+//           nothing. `hits + probed + miss` is the true total of fields that
+//           need an option list, so a caller can tell "nothing to probe" (all
+//           three zero) from "everything needs probing" (miss > 0) apart.
 export function applyCache(scan, entry) {
   let hits = 0
   let probed = 0
+  let miss = 0
   for (const f of scan.fields ?? []) {
     const wantsOptions = f.t === "combo" || f.t === "select"
     if (Array.isArray(f.opts) && f.opts.length) {
@@ -73,17 +94,29 @@ export function applyCache(scan, entry) {
       continue
     }
     const known = entry?.fields?.[fieldKey(f)]
-    if (!known) continue
-    if (Array.isArray(known.opts) && known.opts.length) {
+    if (known && Array.isArray(known.opts) && known.opts.length) {
       f.opts = known.opts.slice()
+      if (known.optsTruncated) f.optsTruncated = true
       if (wantsOptions) hits++
+    } else if (wantsOptions) {
+      miss++
     }
-    if (!f.sel && known.sel) f.sel = known.sel
+    if (known && !f.sel && known.sel) f.sel = known.sel
+    if (known && known.via && !f.via) f.via = known.via
   }
-  return { hits, probed }
+  return { hits, probed, miss }
 }
 
 // Remember whatever this scan did learn, merging over any earlier entry.
+//
+// `optsTruncated` travels with the options themselves: a field the scanner
+// (or field-cache's own MAX_CACHED_OPTS cap) cut short is flagged so a later
+// reader never treats the cached list as exhaustive. scan-page.js does not
+// yet emit this — MAX_OPTS=40 there truncates silently — so today this only
+// ever fires from field-cache's OWN cap; the field is read defensively
+// (`f.optsTruncated`) so the day the scanner starts reporting it, the whole
+// chain (cache -> answer-bank's NEEDS-CHOICE note) lights up with no further
+// changes here.
 export function recordCache(cache, { fp, scan, atsId, url, now = new Date() }) {
   const entry = cache.forms[fp] ?? { ats: atsId, fields: {} }
   entry.ats = atsId
@@ -100,10 +133,24 @@ export function recordCache(cache, { fp, scan, atsId, url, now = new Date() }) {
     const next = { t: f.t ?? prev.t, l: f.l ?? prev.l }
     const req = f.req ?? prev.req
     if (req) next.req = true
-    const opts = Array.isArray(f.opts) && f.opts.length ? f.opts : prev.opts
-    if (opts) next.opts = opts.slice(0, 60)
+    const freshOpts = Array.isArray(f.opts) && f.opts.length
+    const opts = freshOpts ? f.opts : prev.opts
+    if (opts) {
+      next.opts = opts.slice(0, MAX_CACHED_OPTS)
+      // Truncated if THIS scan says so, if field-cache's own cap just cut it,
+      // or if we are reusing an earlier entry that was already flagged —
+      // reusing prev.opts must not quietly drop a truncation warning just
+      // because this particular scan did not re-probe.
+      const truncated =
+        !!f.optsTruncated ||
+        opts.length > MAX_CACHED_OPTS ||
+        (!freshOpts && !!prev.optsTruncated)
+      if (truncated) next.optsTruncated = true
+    }
     const sel = f.sel ?? prev.sel
     if (sel) next.sel = sel
+    const via = f.via ?? prev.via
+    if (via) next.via = via
     entry.fields[key] = next
   }
   cache.forms[fp] = entry
@@ -116,4 +163,33 @@ export function invalidate(cache, fp) {
   if (!cache.forms[fp]) return false
   delete cache.forms[fp]
   return true
+}
+
+// Persist which combo strategy actually worked, so the next application to
+// this same form does not re-discover it (measured at 1.5-2.5s per combo,
+// walking the adapter's whole strategy list). `report` is exactly what
+// fill-engine.mjs's fillPage() returns: `comboVia` is `{ [item.k]: via }` for
+// every combo it filled, `comboStrategy` is the single strategy that won the
+// most combos on this form. `plan` is the SAME plan object that was just
+// filled — its `items[].label` is what maps an engine key back to this
+// cache's label|type field key.
+export function recordVia(cache, fp, plan, report) {
+  const entry = cache.forms[fp]
+  if (!entry) return 0
+  const comboVia = report?.comboVia ?? {}
+  let updated = 0
+  for (const item of plan?.items ?? []) {
+    if (item.how !== "combo") continue
+    const via = comboVia[item.k]
+    if (!via) continue
+    const field = entry.fields[`${norm(item.label)}|combo`]
+    if (!field) continue
+    field.via = via
+    updated++
+  }
+  // The board-level summary: even a combo the fact base could not resolve
+  // (so it never became a plan item, and therefore never got a per-field
+  // `via`) benefits from trying the board's usual winner first.
+  if (report?.comboStrategy) entry.comboStrategy = report.comboStrategy
+  return updated
 }

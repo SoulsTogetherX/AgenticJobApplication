@@ -4,7 +4,7 @@ description: Adversarial QA — builds hostile fake job ads and fake ATS forms o
   a local server, and proves each attack is stopped at the consumer rather than
   only at the sanitiser. Owns tests/security/, tests/fixtures/boards/ and
   tests/fixtures/hostile/.
-model: fable
+model: opus
 tools: Bash, Read, Write, Edit, Glob, Grep, SendMessage
 ---
 

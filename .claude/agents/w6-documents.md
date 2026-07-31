@@ -4,7 +4,7 @@ description: Documents worker — makes ats-lint blocking, simplifies the resume
   template for parser readability, and proves extraction survives rendering.
   Owns documents/ats-lint.mjs, render-pdf.mjs, keyword-plan.mjs, docs/ and
   .claude/skills/.
-model: fable
+model: opus
 tools: Bash, Read, Write, Edit, Glob, Grep, SendMessage
 ---
 

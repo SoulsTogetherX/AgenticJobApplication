@@ -4,7 +4,11 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 const FIXTURES = path.join(ROOT, "tests", "fixtures")
 
 function run(fields, extra = []) {
@@ -50,7 +54,17 @@ test("resolves contact fields from the profile", () => {
 
 test("matches the answers bank and maps the answer onto real options", () => {
   const r = resolveAll([
-    { k: "f1", t: "select", l: "Are you authorized to work in the US?" },
+    // `opts` is deliberately populated: a `select` with no recorded options
+    // is UNPROBED (see the "unprobed combo defers" test below), and a bank
+    // hit there must defer, not silently accept the first candidate. This
+    // test is about the bank producing a strong match and that match landing
+    // on a real, offered option — both need the option actually offered.
+    {
+      k: "f1",
+      t: "select",
+      l: "Are you authorized to work in the US?",
+      opts: ["Yes, US citizen, no sponsorship needed.", "No"],
+    },
     {
       k: "g1",
       t: "radio",
@@ -69,6 +83,70 @@ test("matches the answers bank and maps the answer onto real options", () => {
   assert.equal(g.status, "OK")
   assert.equal(g.value, "Yes")
   assert.match(g.note, /pick=f8/)
+})
+
+test("an unprobed combo defers instead of silently accepting the first candidate", () => {
+  // Same question as above, but with NO opts at all — exactly what a
+  // combo/select looks like before the browser ever opened its menu. A
+  // resolved bank value must not be trusted as "offered" when nobody has
+  // actually seen the real option list.
+  const r = resolveAll([
+    {
+      k: "f1",
+      t: "select",
+      l: "Are you authorized to work in the US?",
+    },
+    {
+      k: "f2",
+      t: "combo",
+      l: "Are you legally authorized to work in the United States?",
+    },
+  ])
+  for (const k of ["f1", "f2"]) {
+    const f = r.get(k)
+    assert.equal(f.status, "NEEDS-CHOICE", `${k}: ${JSON.stringify(f)}`)
+    assert.match(f.note, /not (been )?probed|unprobed/i)
+  }
+})
+
+test("a free-text field with no options is unaffected by the unprobed-combo guard", () => {
+  // Text/email/etc. fields have no option list to begin with — that is not
+  // the same fact as "a dropdown nobody opened", and must keep resolving.
+  const r = resolveAll([{ k: "f1", t: "email", l: "Email" }])
+  assert.equal(r.get("f1").status, "OK")
+  assert.equal(r.get("f1").value, "jane@test.example")
+})
+
+test("a truncated option list is flagged in the NEEDS-CHOICE note, not presented as complete", () => {
+  // field-cache.mjs sets optsTruncated when a cached/recorded list may not be
+  // the whole thing (AUDIT H3). A "no match" note must say so, rather than
+  // implying the value is definitely not offered anywhere on the real form.
+  const r = resolveAll([
+    {
+      k: "f1",
+      t: "select",
+      l: "Are you authorized to work in the US?",
+      opts: ["Green card holder", "Requires sponsorship"],
+      optsTruncated: true,
+    },
+  ])
+  const f = r.get("f1")
+  assert.equal(f.status, "NEEDS-CHOICE")
+  assert.match(f.note, /truncat/i)
+})
+
+test("an untruncated option list with no match gets the plain options note", () => {
+  const r = resolveAll([
+    {
+      k: "f1",
+      t: "select",
+      l: "Are you authorized to work in the US?",
+      opts: ["Green card holder", "Requires sponsorship"],
+    },
+  ])
+  const f = r.get("f1")
+  assert.equal(f.status, "NEEDS-CHOICE")
+  assert.doesNotMatch(f.note, /truncat/i)
 })
 
 test("unmatched questions come back UNKNOWN instead of invented", () => {
@@ -152,7 +230,11 @@ test("usage errors: no input and malformed JSON", () => {
   assert.equal(run([], ["--json"]).status, 0) // empty list is fine
   const bad = spawnSync(
     process.execPath,
-    [path.join(ROOT, "scripts", "apply", "answer-bank.mjs"), "--fields", "{not json"],
+    [
+      path.join(ROOT, "scripts", "apply", "answer-bank.mjs"),
+      "--fields",
+      "{not json",
+    ],
     { cwd: ROOT, encoding: "utf8" },
   )
   assert.equal(bad.status, 2)

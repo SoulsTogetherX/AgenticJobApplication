@@ -80,6 +80,10 @@ export function mergeQuestions(found) {
     for (const o of q.options ?? []) {
       if (!entry.options.includes(o)) entry.options.push(o)
     }
+    // If ANY source says this list might be incomplete, the merged entry
+    // must say so too — a form the list came from complete on and one it
+    // came from truncated on do not cancel each other out.
+    if (q.optsTruncated) entry.optsTruncated = true
     // A defer computed from a real scan outranks a guess from the cache.
     if (q.source === "plan") entry.why = q.why
   }
@@ -108,6 +112,7 @@ export function questionsFromPlans(plans) {
         label: d.label,
         why: d.why,
         options: d.options ?? [],
+        optsTruncated: d.optsTruncated || undefined,
       })
     }
   }
@@ -135,6 +140,10 @@ export function predictedFields(cache, atsIds) {
         l: label,
         req: true,
         opts: f.opts ?? [],
+        // Carried through so a predicted NEEDS-CHOICE also gets the "this
+        // list may be incomplete" caveat answer-bank.mjs attaches — see
+        // field-cache.mjs's optsTruncated (AUDIT H3).
+        optsTruncated: f.optsTruncated || undefined,
         ats: entry.ats,
       })
     }
@@ -158,6 +167,7 @@ export function questionsFromPredicted(fields, resolved) {
       label: f.l,
       why: (r.status ?? "UNRESOLVED").toLowerCase(),
       options: f.opts ?? [],
+      optsTruncated: f.optsTruncated || undefined,
     })
   }
   return found
@@ -262,7 +272,10 @@ function main() {
         ].join("\t"),
       )
       if (q.options.length) {
-        console.log(`opts\t${q.options.slice(0, 20).join(" | ")}`)
+        console.log(
+          `opts\t${q.options.slice(0, 20).join(" | ")}` +
+            (q.optsTruncated ? "\t(truncated)" : ""),
+        )
       }
     }
     console.log(
@@ -287,7 +300,10 @@ function main() {
       : `${q.ats.join(", ")} (predicted)`
     console.log(`- ${q.label}\n    ${q.why} — ${where}`)
     if (q.options.length) {
-      console.log(`    options: ${q.options.slice(0, 12).join(" | ")}`)
+      console.log(
+        `    options: ${q.options.slice(0, 12).join(" | ")}` +
+          (q.optsTruncated ? " (list may be incomplete — verify by hand)" : ""),
+      )
     }
   }
   console.log(

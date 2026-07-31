@@ -99,6 +99,55 @@ test("options from different forms are unioned, and a real scan wins on the reas
   assert.deepEqual(merged[0].sources, ["predicted", "plan"])
 })
 
+test("a truncated option list stays flagged after merging with a complete one", () => {
+  // One source's list might be complete and another's truncated for the same
+  // question (AUDIT H3) — the caveat must survive, not get silently dropped
+  // because SOME source looked complete.
+  const merged = mergeQuestions([
+    {
+      source: "predicted",
+      ats: "greenhouse",
+      label: "Country",
+      why: "unknown",
+      options: ["USA"],
+    },
+    {
+      source: "plan",
+      slug: "a",
+      ats: "greenhouse",
+      label: "Country",
+      why: "needs-choice",
+      options: ["USA", "Canada"],
+      optsTruncated: true,
+    },
+  ])
+  assert.equal(merged.length, 1)
+  assert.equal(merged[0].optsTruncated, true)
+})
+
+test("prediction carries optsTruncated through from the cached field", () => {
+  const cache = { v: 2, forms: {} }
+  recordCache(cache, {
+    fp: "gh1",
+    atsId: "greenhouse",
+    url: "https://job-boards.greenhouse.io/x/jobs/1",
+    scan: {
+      fields: [
+        {
+          k: "f1",
+          t: "select",
+          l: "Country",
+          req: true,
+          opts: ["USA", "Canada"],
+          optsTruncated: true,
+        },
+      ],
+    },
+  })
+  const fields = predictedFields(cache, new Set(["greenhouse"]))
+  assert.equal(fields[0].optsTruncated, true)
+})
+
 test("prediction reads required fields off remembered forms, for the right ATS", () => {
   const cache = { v: 2, forms: {} }
   recordCache(cache, {

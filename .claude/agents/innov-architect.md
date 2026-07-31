@@ -4,7 +4,7 @@ description: Software-architecture innovator — reviews the codebase for
   structural improvements, decides what should be deleted or rewritten rather
   than patched, and answers workers' design questions. Writes no product code.
   Use when a fix is accumulating guards, or before restructuring the team.
-model: fable
+model: opus
 tools: Bash, Read, Glob, Grep, SendMessage, WebFetch, WebSearch
 ---
 

@@ -20,23 +20,38 @@
 //
 // Anything the fact base cannot answer is DEFERRED, never guessed. Consent,
 // terms, arbitration and e-signature fields are always deferred regardless of
-// what the bank says — the agent does not agree to things on the user's behalf.
+// what the bank says — the agent does not agree to things on the user's behalf
+// — UNLESS the exact label is on the user's own --consent-allowlist, and even
+// then arbitration/background-check/e-signature wording is excluded no matter
+// what the allowlist says (see isHardConsent).
 //
-// Usage: node scripts/apply/fill-plan.mjs <slug> [--scan <path>] [--url <url>]
-//        [--resume <pdf>] [--cover <pdf>] [--json]
+// Usage: node scripts/apply/fill-plan.mjs <slug> [--scan <path> | --page <N>]
+//        [--url <url>] [--resume <pdf>] [--cover <pdf>] [--json]
 //        [--profile <path>] [--answers <path>] [--jobs-dir <path>]
-//        [--no-cache] [--invalidate]
+//        [--consent-allowlist <path>] [--no-cache] [--invalidate]
+//        [--record-via <path-to-fill-report.json>]
+//
+// --page <N> is sugar for --scan <jobDir>/scan-p<N>.json — the apply-job skill
+// writes scan-p<N>.json per page of a multi-step form. Neither flag is needed
+// when the job directory holds exactly one scan-p*.json (the common case); with
+// more than one, the scan path MUST be given explicitly — see resolveScanPath.
 //
 // --invalidate drops the remembered shape of this form; use it when the engine
 // reports verify.mismatch on a field whose options came from the cache.
 //
+// --record-via reads the engine's fill report (fill-engine.mjs's return value,
+// written to disk by the caller) and persists comboVia/comboStrategy into the
+// field cache against the LAST plan built for this slug, so the next
+// application to the same form does not re-discover which combo strategy
+// works. Runs standalone: no scan/profile/answers needed for this mode.
+//
 // Exit codes: 0 ok, 2 usage / missing scan, 3 ATS needs a human (Workday).
 import fs from "node:fs"
 import path from "node:path"
-import { spawnSync } from "node:child_process"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { isTerse } from "../lib/lib.mjs"
 import { detectAts } from "./ats/index.mjs"
+import { resolveFieldsFromFiles, normalizeQuestion } from "./answer-bank.mjs"
 import {
   fingerprint,
   loadCache,
@@ -44,6 +59,7 @@ import {
   applyCache,
   recordCache,
   invalidate,
+  recordVia,
 } from "./field-cache.mjs"
 
 const ROOT = path.resolve(
@@ -63,7 +79,8 @@ const ENGINE_PATH = path.join(
 )
 
 // Agreements. These are always the user's to accept, so they never become plan
-// items no matter how confidently the bank resolves them.
+// items no matter how confidently the bank resolves them — UNLESS the exact
+// label is on the caller's consent allowlist (see isHardConsent/buildPlan).
 //
 // Deliberately does NOT match "Are you legally authorized to work..." — that is
 // a fact about the user, not a promise being extracted from them.
@@ -81,6 +98,48 @@ const CONSENT_PATTERNS = [
 
 export function isConsent(label) {
   return CONSENT_PATTERNS.some((re) => re.test(String(label ?? "")))
+}
+
+// The subset of consent that carries legal weight beyond "my resume is
+// accurate" — arbitration signs away a legal right, a background check
+// authorizes a third party to pull the user's history, and an e-signature is
+// a binding signature on the whole application. These are excluded from
+// --consent-allowlist REGARDLESS of what the allowlist file contains: no
+// exact label, however many times the user has approved it before, moves one
+// of these into an auto-checked plan item.
+const HARD_CONSENT_PATTERNS = [
+  /\barbitration\b/i,
+  /\bbackground (check|screening)\b/i,
+  /\be-?sign(ature|ed)?\b|\b(electronic|digital)ly? sign(ature)?\b|\bsignature\b/i,
+]
+
+export function isHardConsent(label) {
+  return HARD_CONSENT_PATTERNS.some((re) => re.test(String(label ?? "")))
+}
+
+// --consent-allowlist <path>: a JSON array of the user's OWN exact consent-box
+// wording, approved over time. Matched by EXACT normalized text only — the
+// same normalization answer-bank.mjs uses for a saved answer, never a
+// pattern, so a superficially similar box on a different board is never
+// silently ticked just because it shares some words with one the user
+// approved. An unreadable or missing file yields an empty allowlist, which is
+// the same as not passing the flag at all — nothing gets auto-checked.
+export function loadConsentAllowlist(file) {
+  const out = new Set()
+  if (!file || !fs.existsSync(file)) return out
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"))
+    const list = Array.isArray(raw) ? raw : raw?.labels
+    if (!Array.isArray(list)) return out
+    for (const s of list) {
+      const n = normalizeQuestion(s)
+      if (n) out.add(n)
+    }
+  } catch {
+    /* an unparsable file is treated as "nothing allowlisted", not an error —
+       the safe default (defer) still applies to every consent box. */
+  }
+  return out
 }
 
 // scan field type -> engine verb.
@@ -104,27 +163,61 @@ const VERB = {
 // Statuses answer-bank emits that mean "a human still has to decide".
 const NEEDS_HUMAN = new Set(["UNKNOWN", "NEEDS-CHOICE", "MAYBE"])
 
-export function resolveFields(fields, { profile, answers, script } = {}) {
-  const args = [
-    script ?? path.join(ROOT, "scripts", "apply", "answer-bank.mjs"),
-    "--fields",
-    JSON.stringify(fields),
-    "--json",
-  ]
-  if (profile) args.push("--profile", profile)
-  if (answers) args.push("--answers", answers)
-  const res = spawnSync(process.execPath, args, {
-    encoding: "utf8",
-    maxBuffer: 32 * 1024 * 1024,
+// Imports answer-bank.mjs directly rather than spawning a subprocess per
+// call — twice, today (here and, transitively, in pending-questions.mjs). A
+// spawned command line also has a hard ~32,767-character ceiling on Windows,
+// which a probed 200-option country list serialized into --fields can blow;
+// an in-process call has no such ceiling.
+export function resolveFields(fields, { profile, answers } = {}) {
+  const { results } = resolveFieldsFromFiles(fields, {
+    profileFile: profile,
+    answersFile: answers,
   })
-  if (res.status !== 0) {
-    throw new Error(`answer-bank failed (${res.status}): ${res.stderr?.trim()}`)
+  return results
+}
+
+// Fields still missing options where a probe would actually change the
+// outcome: the fact base has *something* to try against them (a rule/bank
+// hit, or an EEO field probing could resolve to "decline"), or the form
+// insists on an answer, so the real option list is worth showing the human
+// even when nothing auto-resolves. A combo the fact base has nothing for, on
+// a field the form does not require, is skipped in the plan either way —
+// probing it is pure latency (measured 1.5-2.5s each) for zero effect on the
+// outcome.
+//
+// NOTE for whoever wires this into scan-engine.mjs's `skipProbe`: that
+// parameter's OWN doc comment currently treats "the fact base already
+// resolved a value" as sufficient reason to skip probing. Since the fix
+// below (requireOptions in answer-bank.mjs's matchOption) now requires a
+// combo's options to be genuinely known before trusting a resolved value,
+// skipping the probe on exactly those fields makes them defer as
+// NEEDS-CHOICE instead of filling OK — safe, but it undoes the intended
+// speedup. `skipProbe` should be the COMPLEMENT of this function's output,
+// not fields this function returns.
+export function combosNeedingProbe(fields, resolved) {
+  const byKey = new Map((resolved ?? []).map((r) => [r.k, r]))
+  const worthProbing = (f) => {
+    if (f.req) return true
+    const r = byKey.get(f.k)
+    if (!r) return false
+    if (r.source === "eeo") return true
+    return !!r.status && r.status !== "UNKNOWN"
   }
-  return JSON.parse(res.stdout).results ?? []
+  return (fields ?? [])
+    .filter((f) => f.t === "combo" && !(Array.isArray(f.opts) && f.opts.length))
+    .filter(worthProbing)
+    .map((f) => f.k)
 }
 
 // Pure core (exported for tests).
-export function buildPlan({ scan, resolved, adapter, files = {}, url }) {
+export function buildPlan({
+  scan,
+  resolved,
+  adapter,
+  files = {},
+  url,
+  consentAllowlist = new Set(),
+}) {
   const items = []
   const defer = []
   const byKey = new Map(resolved.map((r) => [r.k, r]))
@@ -167,9 +260,32 @@ export function buildPlan({ scan, resolved, adapter, files = {}, url }) {
     const label = String(r.label ?? f.l ?? "")
     const verb = VERB[f.t]
 
-    // Agreements first — this outranks whatever the bank resolved.
+    // Agreements first — this outranks whatever the bank resolved. A consent
+    // box only ever becomes an auto-checked item when ALL of: it is not
+    // hard-excluded, its exact normalized label is on the caller's
+    // allowlist, it is a genuine checkbox (not a combo/select-shaped
+    // "confirm receipt" widget — there is no clean single verb for those),
+    // and it has exactly one stamped option (never guess WHICH box to click
+    // among several sharing a label).
     if (isConsent(label)) {
-      defer.push({ k: f.k, label, why: "consent" })
+      const allowed =
+        !isHardConsent(label) &&
+        consentAllowlist.has(normalizeQuestion(label)) &&
+        f.t === "checkbox" &&
+        Array.isArray(f.o) &&
+        f.o.length === 1
+      if (allowed) {
+        items.push({
+          k: f.o[0].k,
+          sel: f.o[0].sel,
+          how: "check",
+          value: "true",
+          label,
+          why: "consent:allowlisted",
+        })
+      } else {
+        defer.push({ k: f.k, label, why: "consent" })
+      }
       continue
     }
 
@@ -241,6 +357,7 @@ export function buildPlan({ scan, resolved, adapter, files = {}, url }) {
         label,
         why: (r.status ?? "UNRESOLVED").toLowerCase(),
         options: f.opts ?? (f.o ?? []).map((o) => o.l),
+        optsTruncated: f.optsTruncated || undefined,
         note: r.note,
       })
       continue
@@ -280,6 +397,11 @@ export function buildPlan({ scan, resolved, adapter, files = {}, url }) {
       how: verb,
       value: r.value,
       label,
+      // A combo strategy remembered from a previous application to this same
+      // form (threaded from the field cache via applyCache). The engine is
+      // free to ignore this and walk its normal strategy order; it is a
+      // hint, not a guarantee the field still works the same way.
+      ...(verb === "combo" && f.via ? { via: f.via } : {}),
     })
   }
 
@@ -307,6 +429,11 @@ export function buildPlan({ scan, resolved, adapter, files = {}, url }) {
     ats: adapter.id,
     urlGuard: url ?? scan.url ?? null,
     comboStrategies: adapter.comboStrategies,
+    // Where an ATS renders a value differently from the option text it was
+    // chosen by (Greenhouse's country picker shows "United States +1" but
+    // reduces to "+1" once chosen) — defined on every adapter, previously
+    // never copied onto the plan the engine actually reads. AUDIT H8.
+    valueAliases: adapter.valueAliases ?? [],
     items,
     defer,
   }
@@ -318,6 +445,12 @@ export function buildPlan({ scan, resolved, adapter, files = {}, url }) {
 // whether anything is left to fill. Emitting it as a boolean means the caller
 // branches on a flag instead of reading the plan and forming an opinion, which
 // is the whole point: on ready=true the path is scan -> fill -> hand over.
+//
+// Consent does not get special-cased here: buildPlan already resolved every
+// allowlisted, non-hard consent box into a `check` item above, so anything
+// still sitting in `defer` under `why: "consent"` is a box nobody has
+// pre-approved (or one that legally cannot be) — and that correctly blocks
+// the fast path, the same as any other undecided field.
 export function readiness(plan) {
   const fillable = (plan.items ?? []).filter((i) => i.how !== "skip")
   if (plan.defer?.length) {
@@ -352,6 +485,14 @@ export function readiness(plan) {
 // require, and no working dynamic import (see fill-page.js's sandbox notes)
 // — so the only place that CAN do this read is an ordinary Node process, i.e.
 // this file, before any of it is handed to the browser.
+//
+// KNOWN ISSUE (owned by w2-engine, not this file): this reads
+// window.__ajFillSrc back OUT of the page and evals it Playwright-side, which
+// lets a hostile page that defines its own __ajFillSrc getter run arbitrary
+// code with this process's privileges. w2-engine delivers the replacement as
+// a spec; this function is intentionally left as-is until that spec lands —
+// see w3-resolution's own notes for why guessing at the fix here would be
+// worse than waiting for it.
 export function buildDriverSource(plan, engineSrc) {
   const planSrc = "window.__ajPlan = " + JSON.stringify(plan)
   return `// Generated by scripts/apply/fill-plan.mjs — do not edit by hand.
@@ -387,6 +528,43 @@ export function buildBootstrap(relJs) {
   )
 }
 
+// Which scan file to read when the caller did not pass --scan explicitly.
+//
+// The bug this guards: fill-plan.mjs used to hardcode scan-p1.json
+// regardless of how many pages had been scanned, and the engine's urlGuard
+// cannot catch a wrong page on a single-URL multi-step form (the URL never
+// changes between steps) — so page 2's answers were silently planned against
+// page 1's fields. A single scan-p*.json in the job directory is unambiguous
+// and used automatically (the common case: most forms are one page, and a
+// multi-step form is still on page 1 the first time through). More than one
+// is ambiguous and this refuses to guess — the caller must say --scan or
+// --page. A guess that is loud and wrong (a usage error) is recoverable; a
+// guess that is silent and wrong (page 1's answers in page 2's fields) is not.
+export function resolveScanPath(jobDir, { scanFlag, pageFlag } = {}) {
+  if (scanFlag) return { path: scanFlag }
+  if (pageFlag) return { path: path.join(jobDir, `scan-p${pageFlag}.json`) }
+
+  const candidates = fs.existsSync(jobDir)
+    ? fs
+        .readdirSync(jobDir)
+        .filter((f) => /^scan-p\d+\.json$/.test(f))
+        .sort()
+    : []
+  if (candidates.length === 1) {
+    return { path: path.join(jobDir, candidates[0]) }
+  }
+  if (candidates.length === 0) {
+    // Preserve the pre-existing "no scan found" message for the common case
+    // of a job that has never been scanned at all.
+    return { path: path.join(jobDir, "scan-p1.json") }
+  }
+  return {
+    error:
+      `${candidates.length} scans found in ${jobDir} (${candidates.join(", ")}) ` +
+      "— pass --scan <path> or --page <N> to say which page this plan is for",
+  }
+}
+
 function main() {
   const args = process.argv.slice(2)
   const wantJson = args.includes("--json")
@@ -407,21 +585,66 @@ function main() {
 
   const jobsDir = flag("--jobs-dir") || path.join(ROOT, "jobs")
   const scanFlag = flag("--scan")
+  const pageFlag = flag("--page")
   const urlFlag = flag("--url")
   const resumeFlag = flag("--resume")
   const coverFlag = flag("--cover")
   const profileFlag = flag("--profile")
   const answersFlag = flag("--answers")
+  const consentAllowlistFlag = flag("--consent-allowlist")
+  const recordViaFlag = flag("--record-via")
 
   const slug = args.find((a) => !a.startsWith("--"))
   if (!slug) {
     console.error(
-      "usage: node scripts/apply/fill-plan.mjs <slug> [--scan <path>]",
+      "usage: node scripts/apply/fill-plan.mjs <slug> [--scan <path> | --page <N>]",
     )
     process.exit(2)
   }
   const jobDir = path.join(jobsDir, slug)
-  const scanPath = scanFlag || path.join(jobDir, "scan-p1.json")
+
+  // --record-via is a standalone mode: persist a fill report's learned combo
+  // strategies against the LAST plan built for this slug. No scan needed.
+  if (recordViaFlag) {
+    const planPath = path.join(jobDir, "fill-plan.json")
+    if (!fs.existsSync(planPath)) {
+      console.error(`no plan at ${planPath} — run fill-plan.mjs first`)
+      process.exit(2)
+    }
+    const plan = JSON.parse(fs.readFileSync(planPath, "utf8"))
+    if (!plan.fp) {
+      console.error(
+        "plan has no cached fingerprint — re-run fill-plan.mjs to regenerate it",
+      )
+      process.exit(2)
+    }
+    let report
+    try {
+      report = JSON.parse(fs.readFileSync(recordViaFlag, "utf8"))
+    } catch (e) {
+      console.error(
+        `could not read fill report at ${recordViaFlag}: ${e.message}`,
+      )
+      process.exit(2)
+    }
+    const cachePath = path.join(jobsDir, ".field-cache.json")
+    const cache = loadCache(cachePath)
+    const updated = recordVia(cache, plan.fp, plan, report)
+    saveCache(cachePath, cache)
+    console.log(
+      isTerse()
+        ? `recorded-via=${updated} fp=${plan.fp}`
+        : `Recorded which combo strategy worked for ${updated} field(s).`,
+    )
+    return
+  }
+
+  const scanResolution = resolveScanPath(jobDir, { scanFlag, pageFlag })
+  if (scanResolution.error) {
+    console.error(scanResolution.error)
+    process.exit(2)
+  }
+  const scanPath = scanResolution.path
 
   if (!fs.existsSync(scanPath)) {
     console.error(`no scan at ${scanPath} — run the page scanner first`)
@@ -454,20 +677,47 @@ function main() {
     saveCache(cachePath, cache)
     console.error(`evicted cached shape ${fp} — the next scan will re-probe`)
   }
+  const cachedEntry = cache.forms[fp]
   const cacheStats = noCache
-    ? { hits: 0, probed: 0 }
-    : applyCache(scan, cache.forms[fp])
+    ? { hits: 0, probed: 0, miss: 0 }
+    : applyCache(scan, cachedEntry)
 
   const resolved = resolveFields(scan.fields ?? [], {
     profile: profileFlag,
     answers: answersFlag,
   })
-  const plan = buildPlan({ scan, resolved, adapter, files, url })
+  const consentAllowlist = loadConsentAllowlist(consentAllowlistFlag)
+  const plan = buildPlan({
+    scan,
+    resolved,
+    adapter,
+    files,
+    url,
+    consentAllowlist,
+  })
+  // A board-level hint: even a combo the fact base could not resolve (so it
+  // never became a plan item and has no per-field `via`) is worth trying
+  // with whatever strategy usually wins on this form first.
+  if (
+    cachedEntry?.comboStrategy &&
+    plan.comboStrategies?.includes(cachedEntry.comboStrategy)
+  ) {
+    plan.comboStrategies = [
+      cachedEntry.comboStrategy,
+      ...plan.comboStrategies.filter((s) => s !== cachedEntry.comboStrategy),
+    ]
+  }
+  const probeNeeded = combosNeedingProbe(scan.fields ?? [], resolved)
 
   if (!noCache) {
     recordCache(cache, { fp, scan, atsId: adapter.id, url })
     saveCache(cachePath, cache)
   }
+
+  // Carried on the written plan (not the pure buildPlan() return value) so a
+  // later `--record-via` run can find its way back into the cache without
+  // re-reading the scan.
+  plan.fp = fp
 
   fs.mkdirSync(jobDir, { recursive: true })
   const jsPath = path.join(jobDir, "fill-plan.js")
@@ -485,23 +735,34 @@ function main() {
   const state = readiness(plan)
 
   if (wantJson) {
-    console.log(JSON.stringify({ plan, bootstrap, ...state }, null, 2))
+    console.log(
+      JSON.stringify({ plan, bootstrap, probeNeeded, ...state }, null, 2),
+    )
     return
   }
   if (isTerse()) {
     const skipped = plan.items.filter((i) => i.how === "skip")
+    const checked = plan.items.filter((i) => i.why === "consent:allowlisted")
     console.log(
       `ats=${plan.ats} ready=${state.ready}` +
         (state.ready ? "" : ` reason=${JSON.stringify(state.reason)}`) +
         ` items=${plan.items.length - skipped.length}` +
-        ` defer=${plan.defer.length} skip=${skipped.length}` +
-        ` cache=${cacheStats.hits}/${cacheStats.hits + cacheStats.probed} fp=${fp}`,
+        ` defer=${plan.defer.length} skip=${skipped.length} checked=${checked.length}` +
+        // hits/probed/miss, not just hits/(hits+probed): a combo the cache
+        // has never seen AND this scan did not probe used to vanish from
+        // this ratio entirely, so a brand-new form and an all-text form both
+        // printed cache=0/0 — indistinguishable. miss=N makes them different.
+        ` cache=${cacheStats.hits}/${cacheStats.hits + cacheStats.probed + cacheStats.miss}` +
+        ` miss=${cacheStats.miss} fp=${fp}`,
     )
     for (const d of plan.defer) {
       console.log(`defer\t${d.k}\t${d.why}\t${d.label}`)
     }
     for (const s of skipped) {
       console.log(`skip\t${s.k}\t${s.why}\t${s.label}`)
+    }
+    if (probeNeeded.length) {
+      console.log(`probe\t${probeNeeded.join(",")}`)
     }
     console.log(`plan=${relJs}`)
     console.log(`bootstrap:\n${bootstrap}`)

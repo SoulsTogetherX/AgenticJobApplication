@@ -5,7 +5,7 @@ description: Documentation role — owns CLAUDE.md, docs/reference/, the skill
   the oversized CLAUDE.md, keeps docs from claiming capabilities that moved, and
   protects the comments that record why something is the way it is. Not a
   worker, innovator, QA or manager — a distinct role.
-model: fable
+model: opus
 tools: Bash, Read, Write, Edit, Glob, Grep, SendMessage
 ---
 

@@ -12,7 +12,11 @@ import { fileURLToPath } from "node:url"
 import {
   buildPlan,
   isConsent,
+  isHardConsent,
+  loadConsentAllowlist,
   readiness,
+  resolveScanPath,
+  combosNeedingProbe,
   buildDriverSource,
   buildBootstrap,
 } from "../../scripts/apply/fill-plan.mjs"
@@ -195,6 +199,183 @@ test("a consent field is deferred even when the bank resolved it confidently", (
   assert.equal(plan.defer[0].why, "consent")
 })
 
+// --- consent allowlist: the readiness fast path -----------------------------
+//
+// readiness() was unreachable on any real form: `isConsent` pushes every
+// agreement to `defer` before anything else runs, and nearly every ATS has at
+// least one ("I agree to the Terms and Conditions"). pending-questions.mjs
+// already excluded consent from its own "worth asking about" set — these
+// tests pin the actual fix: an exact, user-approved label moves a checkbox
+// from `defer` into `items` as a `check`, which is what makes ready=true
+// reachable at all.
+const checkboxConsent = (label, optCount = 1) => ({
+  k: "g1",
+  t: "checkbox",
+  l: label,
+  o: Array.from({ length: optCount }, (_, i) => ({
+    k: `f${i}`,
+    l: label,
+    sel: `#c${i}`,
+  })),
+})
+
+test("an allowlisted consent checkbox is auto-checked, not deferred", () => {
+  const label = "I agree to the Terms and Conditions"
+  const scan = scanOf([checkboxConsent(label)])
+  const plan = buildPlan({
+    scan,
+    resolved: [],
+    adapter: greenhouse,
+    files,
+    consentAllowlist: new Set([label.toLowerCase()]),
+  })
+  assert.equal(plan.defer.length, 0)
+  assert.equal(plan.items.length, 1)
+  assert.equal(plan.items[0].how, "check")
+  assert.equal(plan.items[0].k, "f0", "targets the checkbox's own stamped key")
+  assert.equal(plan.items[0].sel, "#c0")
+  assert.equal(plan.items[0].why, "consent:allowlisted")
+})
+
+test("readiness is reachable once the only consent box is allowlisted", () => {
+  const label = "I agree to the Terms and Conditions"
+  const scan = scanOf([
+    { k: "f1", t: "text", l: "First Name", req: true },
+    checkboxConsent(label),
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "Jane")],
+    adapter: greenhouse,
+    files,
+    consentAllowlist: new Set([label.toLowerCase()]),
+  })
+  assert.equal(readiness(plan).ready, true)
+})
+
+test("without the allowlist entry, the same box still blocks readiness", () => {
+  const label = "I agree to the Terms and Conditions"
+  const scan = scanOf([
+    { k: "f1", t: "text", l: "First Name", req: true },
+    checkboxConsent(label),
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "Jane")],
+    adapter: greenhouse,
+    files,
+    // no consentAllowlist passed at all — must match the pre-existing default
+  })
+  assert.equal(readiness(plan).ready, false)
+  assert.equal(plan.defer[0].why, "consent")
+})
+
+test("arbitration is excluded from the allowlist regardless of what it says", () => {
+  const label = "I agree to resolve disputes through binding arbitration"
+  const scan = scanOf([checkboxConsent(label)])
+  const plan = buildPlan({
+    scan,
+    resolved: [],
+    adapter: greenhouse,
+    files,
+    consentAllowlist: new Set([label.toLowerCase()]),
+  })
+  assert.equal(plan.items.length, 0, "arbitration must never auto-check")
+  assert.equal(plan.defer[0].why, "consent")
+})
+
+test("background checks and e-signatures are excluded regardless of the allowlist", () => {
+  for (const label of [
+    "I authorize a background check as part of this application",
+    "By checking this box you provide your electronic signature",
+  ]) {
+    const scan = scanOf([checkboxConsent(label)])
+    const plan = buildPlan({
+      scan,
+      resolved: [],
+      adapter: greenhouse,
+      files,
+      consentAllowlist: new Set([label.toLowerCase()]),
+    })
+    assert.equal(plan.items.length, 0, label)
+    assert.equal(plan.defer[0].why, "consent", label)
+  }
+})
+
+test("isHardConsent identifies exactly the legally-weighted categories", () => {
+  assert.ok(isHardConsent("I agree to binding arbitration"))
+  assert.ok(isHardConsent("Consent to a background check"))
+  assert.ok(isHardConsent("Electronic signature required"))
+  assert.ok(
+    !isHardConsent("I agree to the Terms and Conditions"),
+    "a routine agreement is not legally weighted the same way",
+  )
+})
+
+test("the allowlist match is exact text, never a pattern", () => {
+  const scan = scanOf([
+    checkboxConsent("I agree to the Updated Terms and Conditions"),
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [],
+    adapter: greenhouse,
+    files,
+    // Approved a DIFFERENT (superficially similar) wording only.
+    consentAllowlist: new Set(["i agree to the terms and conditions"]),
+  })
+  assert.equal(plan.items.length, 0, "a near-miss label must still defer")
+  assert.equal(plan.defer[0].why, "consent")
+})
+
+test("a combo/select-shaped consent field is never auto-checked", () => {
+  // There is no clean single "check" action for a dropdown — see the
+  // existing "confirm receipt" combo test above, unaffected by the allowlist.
+  const label = "Please confirm receipt of the Company Handbook"
+  const scan = scanOf([{ k: "f1", t: "combo", l: label, opts: ["Confirmed"] }])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "Confirmed")],
+    adapter: greenhouse,
+    files,
+    consentAllowlist: new Set([label.toLowerCase()]),
+  })
+  assert.equal(plan.items.length, 0)
+  assert.equal(plan.defer[0].why, "consent")
+})
+
+test("a checkbox group with more than one option is never auto-checked", () => {
+  // Ambiguous which box the user meant to pre-approve — never guess.
+  const label = "I agree to the following"
+  const scan = scanOf([checkboxConsent(label, 2)])
+  const plan = buildPlan({
+    scan,
+    resolved: [],
+    adapter: greenhouse,
+    files,
+    consentAllowlist: new Set([label.toLowerCase()]),
+  })
+  assert.equal(plan.items.length, 0)
+  assert.equal(plan.defer[0].why, "consent")
+})
+
+test("loadConsentAllowlist reads a JSON array of exact labels, normalized", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "consent-allowlist-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, "allowlist.json")
+  fs.writeFileSync(
+    file,
+    JSON.stringify(["  I Agree to the Terms and Conditions  *"]),
+  )
+  const set = loadConsentAllowlist(file)
+  assert.ok(set.has("i agree to the terms and conditions"))
+})
+
+test("loadConsentAllowlist tolerates a missing or corrupt file", () => {
+  assert.equal(loadConsentAllowlist(null).size, 0)
+  assert.equal(loadConsentAllowlist("/no/such/file.json").size, 0)
+})
+
 test("a question about the name is not answered with the name", async () => {
   // Caught live on Affirm: "Name Pronunciation" was filled with "Xavier
   // Alvarez", which is not an answer to what was asked.
@@ -289,6 +470,42 @@ test("unresolved REQUIRED fields are deferred, never guessed", () => {
   assert.equal(plan.items.length, 0)
   assert.equal(plan.defer.length, 4)
   assert.deepEqual(plan.defer.find((d) => d.k === "f3").options, ["x", "y"])
+})
+
+test("a truncated option list is flagged on the defer entry, not presented as complete", () => {
+  // field-cache.mjs sets optsTruncated when a list may be incomplete (AUDIT
+  // H3). buildPlan must carry that flag through to the human-facing defer
+  // entry rather than silently dropping it.
+  const scan = scanOf([
+    {
+      k: "f1",
+      t: "combo",
+      l: "Country",
+      req: true,
+      opts: ["Andorra", "Belgium"],
+      optsTruncated: true,
+    },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [{ k: "f1", status: "NEEDS-CHOICE", value: "" }],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.defer[0].optsTruncated, true)
+})
+
+test("an untruncated option list carries no truncation flag at all", () => {
+  const scan = scanOf([
+    { k: "f1", t: "combo", l: "Country", req: true, opts: ["Andorra"] },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [{ k: "f1", status: "NEEDS-CHOICE", value: "" }],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.defer[0].optsTruncated, undefined)
 })
 
 test("unresolved OPTIONAL fields are left blank, not turned into questions", () => {
@@ -425,6 +642,95 @@ test("the plan carries the url guard and the adapter's strategy order", () => {
   assert.deepEqual(plan.comboStrategies, greenhouse.comboStrategies)
   assert.equal(plan.ats, "greenhouse")
   assert.equal(plan.v, 1)
+})
+
+test("the plan carries the adapter's valueAliases (AUDIT H8)", () => {
+  // greenhouse.mjs defines valueAliases for its country picker; it was never
+  // copied onto the plan the engine actually reads, so the fix it documents
+  // never fired.
+  const scan = scanOf([{ k: "f1", t: "text", l: "First Name" }])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "Xavier")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.ok(Array.isArray(plan.valueAliases))
+  assert.deepEqual(plan.valueAliases, greenhouse.valueAliases)
+  assert.ok(plan.valueAliases.length > 0)
+})
+
+test("a combo item carries a cached via hint when the field has one", () => {
+  const scan = scanOf([
+    { k: "f1", t: "combo", l: "School", opts: ["UNLV"], via: "type-click" },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "UNLV")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.items[0].via, "type-click")
+})
+
+test("a combo item with no cached via carries none", () => {
+  const scan = scanOf([{ k: "f1", t: "combo", l: "School", opts: ["UNLV"] }])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "UNLV")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.items[0].via, undefined)
+})
+
+// --- which combos are worth probing -----------------------------------------
+
+test("combosNeedingProbe: a required combo is worth it even with no bank hit", () => {
+  const fields = [{ k: "f1", t: "combo", l: "Custom Question", req: true }]
+  assert.deepEqual(
+    combosNeedingProbe(fields, [{ k: "f1", status: "UNKNOWN" }]),
+    ["f1"],
+  )
+})
+
+test("combosNeedingProbe: an optional combo the fact base knows nothing about is skipped", () => {
+  const fields = [{ k: "f1", t: "combo", l: "Twitter Handle" }]
+  assert.deepEqual(
+    combosNeedingProbe(fields, [{ k: "f1", status: "UNKNOWN" }]),
+    [],
+  )
+})
+
+test("combosNeedingProbe: an optional combo the bank can answer is still worth it", () => {
+  const fields = [{ k: "f1", t: "combo", l: "Degree" }]
+  assert.deepEqual(combosNeedingProbe(fields, [{ k: "f1", status: "OK" }]), [
+    "f1",
+  ])
+})
+
+test("combosNeedingProbe: an EEO field is worth it (probing may surface 'decline')", () => {
+  const fields = [{ k: "f1", t: "combo", l: "Gender" }]
+  assert.deepEqual(
+    combosNeedingProbe(fields, [{ k: "f1", status: "UNKNOWN", source: "eeo" }]),
+    ["f1"],
+  )
+})
+
+test("combosNeedingProbe: already-probed and non-combo fields are never listed", () => {
+  const fields = [
+    { k: "f1", t: "combo", l: "Already probed", req: true, opts: ["x"] },
+    { k: "f2", t: "text", l: "First Name", req: true },
+    { k: "f3", t: "select", l: "Country", req: true },
+  ]
+  assert.deepEqual(
+    combosNeedingProbe(fields, [
+      { k: "f1", status: "OK" },
+      { k: "f2", status: "OK" },
+      { k: "f3", status: "UNKNOWN" },
+    ]),
+    [],
+  )
 })
 
 // --- the CSP-safe bootstrap ------------------------------------------------
@@ -600,4 +906,123 @@ test("end to end: the CLI embeds the real engine and points the bootstrap at the
   // And the whole written file must parse as the single expression
   // browser_run_code_unsafe requires.
   assert.doesNotThrow(() => new Function("(" + written + ")"))
+})
+
+// --- scan path resolution ---------------------------------------------------
+//
+// fill-plan.mjs used to hardcode scan-p1.json regardless of how many pages had
+// been scanned. urlGuard cannot catch a wrong page on a single-URL
+// multi-step form (the URL never changes between steps), so page 2's answers
+// were silently planned against page 1's fields. These pin the fix: an
+// unambiguous single scan resolves automatically; more than one scan refuses
+// to guess.
+
+test("resolveScanPath: --scan wins outright, even over a --page value", () => {
+  const r = resolveScanPath("/jobs/x", {
+    scanFlag: "/explicit/path.json",
+    pageFlag: "2",
+  })
+  assert.equal(r.path, "/explicit/path.json")
+})
+
+test("resolveScanPath: --page N maps to scan-pN.json", () => {
+  const r = resolveScanPath(path.join("jobs", "x"), { pageFlag: "2" })
+  assert.equal(r.path, path.join("jobs", "x", "scan-p2.json"))
+})
+
+test("resolveScanPath: a job dir with exactly one scan resolves it automatically", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scan-path-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  fs.writeFileSync(path.join(dir, "scan-p2.json"), "{}")
+  const r = resolveScanPath(dir, {})
+  assert.equal(r.path, path.join(dir, "scan-p2.json"))
+})
+
+test("resolveScanPath: a job dir with two scans refuses to guess", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scan-path-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  fs.writeFileSync(path.join(dir, "scan-p1.json"), "{}")
+  fs.writeFileSync(path.join(dir, "scan-p2.json"), "{}")
+  const r = resolveScanPath(dir, {})
+  assert.ok(!r.path, "must not silently pick one")
+  assert.match(r.error, /scan-p1\.json/)
+  assert.match(r.error, /scan-p2\.json/)
+  assert.match(r.error, /--scan|--page/)
+})
+
+test("resolveScanPath: an unscanned job dir falls back to the pre-existing default", () => {
+  // Preserves the existing "no scan at ... run the page scanner first" error
+  // message for a job that was never scanned at all.
+  const r = resolveScanPath(path.join("jobs", "brand-new"), {})
+  assert.equal(r.path, path.join("jobs", "brand-new", "scan-p1.json"))
+})
+
+test("end to end: page 2's scan is never silently planned as page 1", (t) => {
+  // The exact reproduction of the bug: a job directory with BOTH scan-p1.json
+  // and scan-p2.json (a multi-step form, both pages already scanned), and
+  // fill-plan.mjs invoked the way the skill's documented flow calls it — with
+  // no --scan flag at all. Before the fix this silently re-planned page 1;
+  // now it must refuse outright rather than guess.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fill-plan-page-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const slug = "multi-step-co"
+  const jobDir = path.join(dir, slug)
+  fs.mkdirSync(jobDir, { recursive: true })
+
+  const page1 = {
+    url: "https://job-boards.greenhouse.io/x/apply",
+    fields: [{ k: "f1", t: "text", l: "First Name", req: true }],
+  }
+  const page2 = {
+    url: "https://job-boards.greenhouse.io/x/apply", // same URL — urlGuard alone cannot tell these apart
+    fields: [{ k: "g1", t: "text", l: "Desired Salary", req: true }],
+  }
+  fs.writeFileSync(path.join(jobDir, "scan-p1.json"), JSON.stringify(page1))
+  fs.writeFileSync(path.join(jobDir, "scan-p2.json"), JSON.stringify(page2))
+
+  const res = spawnSync(
+    process.execPath,
+    [
+      path.join(ROOT, "scripts", "apply", "fill-plan.mjs"),
+      slug,
+      "--jobs-dir",
+      dir,
+      "--profile",
+      path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+      "--answers",
+      path.join(ROOT, "tests", "fixtures", "answers-bank.yaml"),
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  )
+  assert.equal(res.status, 2, "must refuse rather than guess a page")
+  assert.match(res.stderr, /scan-p1\.json/)
+  assert.match(res.stderr, /scan-p2\.json/)
+
+  // And --page 2 (the fix's intended fast path for the skill to adopt) plans
+  // page 2's own field, not page 1's.
+  const withPage = spawnSync(
+    process.execPath,
+    [
+      path.join(ROOT, "scripts", "apply", "fill-plan.mjs"),
+      slug,
+      "--jobs-dir",
+      dir,
+      "--page",
+      "2",
+      "--profile",
+      path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+      "--answers",
+      path.join(ROOT, "tests", "fixtures", "answers-bank.yaml"),
+      "--json",
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  )
+  assert.equal(withPage.status, 0, withPage.stderr)
+  const out = JSON.parse(withPage.stdout)
+  const keys = [...out.plan.items, ...out.plan.defer].map((x) => x.k)
+  assert.ok(keys.includes("g1"), "page 2's own field must be in the plan")
+  assert.ok(
+    !keys.includes("f1"),
+    "page 1's field must not leak into page 2's plan",
+  )
 })

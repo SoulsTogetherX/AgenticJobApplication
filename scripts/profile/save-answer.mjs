@@ -138,6 +138,7 @@ const opts = {
 }
 let wantReplace = false
 let fileGiven = false
+let userApproved = false
 const positional = []
 let endOfFlags = false
 for (let i = 0; i < argv.length; i++) {
@@ -158,6 +159,22 @@ for (let i = 0; i < argv.length; i++) {
     }
     if (name === "--replace" && eq === -1) {
       wantReplace = true
+      continue
+    }
+    // --user-approved asserts, on the command line where a PreToolUse hook can
+    // see it, that the user personally gave this answer in chat. It changes
+    // nothing here: `source` already records provenance, and an agent that
+    // would lie in the flag would lie in `--source` too.
+    //
+    // It exists for scripts/hooks/guard-profile-shell.mjs, which denies any
+    // shell invocation of this script that targets the DEFAULT fact base
+    // without either --file (a test writes its own) or this flag (the user
+    // said it). Both 2026-07-31 incidents carried neither, because neither
+    // agent intended to touch the real file at all — so requiring the writer
+    // to STATE which of the two it is stops the accident class, not just the
+    // one typo that --file's strict parsing already closed.
+    if (name === "--user-approved" && eq === -1) {
+      userApproved = true
       continue
     }
     const hint = HINTS.get(name)

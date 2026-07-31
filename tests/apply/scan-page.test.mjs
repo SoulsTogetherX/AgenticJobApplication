@@ -984,6 +984,74 @@ test("a screen-reader-only visible label is not offered as what the user sees", 
   assert.equal(out.fields[0].lSeen, undefined)
 })
 
+test("an aria-labelledby pointed at HIDDEN text is a divergence too", async () => {
+  // The carrier the first version of lSeen missed. It only asked which SOURCE
+  // `l` came from (aria-label or placeholder/name), and aria-labelledby was not
+  // on that list because it points at page text. But it points at an element by
+  // id from outside that element, so it can name a clipped, transparent or
+  // zero-size one — and then `l` is exactly as unreadable as an aria-label,
+  // while the visible <label for> says something else. Same attack, same
+  // approval message describing a form the user is not looking at.
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("span", { id: "sr", rect: { width: 1, height: 1 } }, [
+          "Emergency contact phone",
+        ]),
+        h("label", { for: "t1" }, ["Email"]),
+        h("input", { type: "text", id: "t1", "aria-labelledby": "sr" }),
+      ]),
+    ]),
+  )
+  assert.equal(out.fields[0].l, "Emergency contact phone")
+  assert.equal(out.fields[0].lSeen, "Email")
+})
+
+test("an aria-labelledby pointed at VISIBLE text is not reported as a divergence", async () => {
+  // The other half, and the reason the test is visibility and not source: this
+  // page shows BOTH strings, so `l` is text the user can actually read. There
+  // is nothing to warn about — showing it is not a lie — and reporting every
+  // such field would turn lSeen into noise on honest boards that pair a
+  // question paragraph with a short field label.
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("span", { id: "q" }, ["What is your emergency contact number?"]),
+        h("label", { for: "t1" }, ["Phone"]),
+        h("input", { type: "text", id: "t1", "aria-labelledby": "q" }),
+      ]),
+    ]),
+  )
+  assert.equal(out.fields[0].l, "What is your emergency contact number?")
+  assert.equal(out.fields[0].lSeen, undefined)
+})
+
+test("a consent box labelled by hidden aria-labelledby reports the visible text", async () => {
+  // The same carrier on the branch that matters most: a tick ASSERTS
+  // something. The vouch already refused this ("label text is not visibly
+  // rendered"), so the box defers either way — but the label shown beside that
+  // defer was the invisible string, which is what the user would be asked
+  // about.
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("span", { id: "sr", rect: { width: 1, height: 1 } }, [
+          "I certify the information is true",
+        ]),
+        h("label", { for: "c1" }, [
+          "I agree to binding arbitration and waive a jury trial.",
+        ]),
+        h("input", { type: "checkbox", id: "c1", "aria-labelledby": "sr" }),
+      ]),
+    ]),
+  )
+  const g = onlyGroup(out)
+  assert.equal(g.labelExact, undefined)
+  assert.equal(g.labelWhy, "label text is not visibly rendered")
+  assert.equal(g.l, "I certify the information is true")
+  assert.match(g.lSeen, /binding arbitration/)
+})
+
 test("a checkbox reports the contradiction too, and never vouches", async () => {
   const out = await scan(
     h("body", {}, [

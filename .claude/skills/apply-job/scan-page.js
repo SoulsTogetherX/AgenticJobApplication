@@ -24,11 +24,14 @@
 //   labelWhy    why the vouch was refused. Advisory, for humans reading a
 //               defer; nothing decides on it.
 //
-// And one on ANY field: lSeen — the VISIBLE label, present only when it
-// disagrees with `l` (i.e. `l` came from an aria-label or a placeholder that
-// says something else). `l` never changes for those fields; a caller showing
-// the user a field should show both, because a page contradicting itself is
-// information. Absent on an honest field, so it costs nothing on the wire.
+// And one on ANY field: lSeen — the VISIBLE label, present only when `l` is
+// NOT text the user can read and a visible label says something else. That
+// covers an aria-label or a placeholder, and also an aria-labelledby pointed at
+// a hidden element — the test is whether every element `l` came from is visible
+// to the eye, not which source name it carries. `l` never changes for those
+// fields; a caller showing the user a field should show both, because a page
+// contradicting itself is information. Absent on an honest field, so it costs
+// nothing on the wire.
 //
 // Self-installing: evaluating this file defines window.__ajScan. To paste it
 // directly into browser_evaluate instead, paste from `async (PROBE` onward.
@@ -125,9 +128,16 @@ window.__ajScan = async (PROBE = true) => {
   //        legend      the enclosing fieldset's <legend> (a group heading)
   //        near        a nearby label-ish element found by walking ancestors
   //        attr        placeholder or name, as a last resort
-  function labelDetail(el, skipAriaLabel) {
+  // `skipAttr` skips BOTH attribute-driven sources — aria-labelledby as well
+  // as aria-label. Callers pass it to ask "what would this control's label be
+  // if the page could not choose it through an attribute?", and aria-labelledby
+  // is exactly as attribute-chosen as aria-label: it names an element by id
+  // from outside that element, so a page can point it at text the user cannot
+  // see while a plain <label for> says something else. seenOf() below needs the
+  // <label>, and would otherwise get the same referenced text back.
+  function labelDetail(el, skipAttr) {
     const attr = (a) => (el.getAttribute ? el.getAttribute(a) : null)
-    const lb = attr("aria-labelledby")
+    const lb = skipAttr ? null : attr("aria-labelledby")
     if (lb) {
       const nodes = lb
         .split(/\s+/)
@@ -142,7 +152,7 @@ window.__ajScan = async (PROBE = true) => {
       if (t) return { text: t, src: "labelledby", nodes: nodes }
     }
     const al = attr("aria-label")
-    if (!skipAriaLabel && full(al))
+    if (!skipAttr && full(al))
       return { text: full(al), src: "arialabel", nodes: [] }
     if (el.id) {
       let l = null
@@ -405,8 +415,20 @@ window.__ajScan = async (PROBE = true) => {
   // So the divergence is REPORTED instead of resolved. `lSeen` is the visible
   // text when it disagrees with `l`, and a caller showing the user a field can
   // show both — a page contradicting itself is information, not noise.
+  //
+  // The question this asks is NOT "which source did `l` come from" — that was
+  // a list (`arialabel`, `attr`) standing in for the real property, and it let
+  // one source through that has the same defect. It is: IS `l` TEXT THE USER
+  // CAN READ? An attribute contributes no element, so aria-label/placeholder/
+  // name are unreadable by construction; but aria-labelledby names an element
+  // by id from OUTSIDE it, and that element can be clipped, transparent or
+  // zero-size just as easily. `l` is then every bit as invisible as an
+  // aria-label, and the old check reported no divergence at all. So the test is
+  // "every element `l` came from is visible to the eye", which is the same
+  // property vouchFail() already requires of a vouchable label.
   const seenOf = (el, d) => {
-    if (d.src !== "arialabel" && d.src !== "attr") return undefined
+    const from = d.nodes ?? []
+    if (from.length && from.every(visibleToEye)) return undefined
     const v = labelDetail(el, true)
     if (!VOUCHABLE[v.src]) return undefined
     for (const n of v.nodes) if (!visibleToEye(n)) return undefined
@@ -428,7 +450,10 @@ window.__ajScan = async (PROBE = true) => {
       const v = labelDetail(el, true)
       if (v.text && v.text === d.text) d = v
     }
-    return { text: d.text, src: d.src, why: vouchFail(el, d) }
+    // `nodes` rides along because the checkbox branch feeds this same object to
+    // seenOf(), which asks whether the label's own elements are visible. An
+    // object missing them would answer "not readable" for every vouched box.
+    return { text: d.text, src: d.src, nodes: d.nodes, why: vouchFail(el, d) }
   }
 
   function helpOf(el) {

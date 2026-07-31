@@ -23,8 +23,17 @@
 // setTimeout, and no leading semicolon (see .prettierignore).
 async (page) => {
   const path = ".claude/skills/apply-job/scan-page.js"
-  const ready = await page.evaluate(() => typeof window.__ajScan === "function")
-  if (!ready) {
+  // Was something ALREADY answering to __ajScan before we installed anything?
+  // A board that defines that global supplies the entire scan — every label,
+  // selector and flag — because the next line is what decides whether the real
+  // scanner is installed at all. It cannot be fixed here the way
+  // scripts/apply/scan-engine.mjs fixes it (call the scanner through a local
+  // binding), because that needs the scanner's TEXT and this vm has no fs: see
+  // the header. So it is recorded, and every vouch is stripped below.
+  const preOwned = await page.evaluate(
+    () => typeof window.__ajScan === "function",
+  )
+  if (!preOwned) {
     await page.addInitScript({ path })
     try {
       // this document, without losing anything already typed into it
@@ -36,29 +45,48 @@ async (page) => {
   }
   // Scanning before React hydrates returns the raw inputs behind the custom
   // widgets instead of the widgets themselves — and no buttons at all, which is
-  // the tell. Wait, then retry once if the page still looks unhydrated.
+  // the tell. Wait for a button to EXIST rather than for a flat 1.5 seconds,
+  // then re-scan. Same ceiling; a page that hydrates in 200ms costs 200ms.
   await page.waitForLoadState("load").catch(() => {})
   let scan = await page.evaluate(() => window.__ajScan(false))
   if (!scan.btns || !scan.btns.length) {
-    await page.waitForTimeout(1500)
+    await page
+      .locator("button, [role='button'], input[type=submit]")
+      .first()
+      .waitFor({ state: "attached", timeout: 1500 })
+      .catch(() => {})
     scan = await page.evaluate(() => window.__ajScan(false))
   }
 
   // Capped: a long form should not spend a minute here, and the field cache
   // means this only runs once per board anyway.
+  //
+  // This driver cannot be told WHICH dropdowns to skip: browser_run_code_unsafe
+  // takes a filename and passes no arguments, and this vm has no fs to read a
+  // hint file with. scripts/apply/scan-engine.mjs — the ordinary-module twin
+  // used by the local runner — takes { knownOpts, skipProbe } and probes only
+  // what is genuinely unknown. Keep the two in step on everything that does
+  // NOT need a parameter, which is every wait below.
   const todo = (scan.fields || [])
     .filter((f) => f.t === "combo" && !(f.opts && f.opts.length))
     .slice(0, 18)
+  const stats = { probed: 0, cached: 0, skipped: 0, capped: 0 }
 
   for (const f of todo) {
     const loc = page.locator('[data-aj="' + f.k + '"]')
     try {
       await loc.scrollIntoViewIfNeeded({ timeout: 2000 })
       await loc.click({ timeout: 2000, force: true })
-      await page.waitForTimeout(300)
-      // react-select's own class first: a bare [role=option] also matches the
-      // phone country-code widget, which is always in the DOM and would hand
+      // Wait for the menu to RENDER, not for a flat 300ms. react-select's own
+      // class first: a bare [role=option] also matches the phone country-code
+      // widget, which is always in the DOM — so waiting on that would return
+      // instantly on every form with a phone field, and reading it would hand
       // every dropdown the same list of countries.
+      await page
+        .locator("[class*='__option']")
+        .first()
+        .waitFor({ state: "attached", timeout: 300 })
+        .catch(() => {})
       const opts = await page.evaluate(() => {
         const pick = (sel) =>
           [...document.querySelectorAll(sel)]
@@ -68,11 +96,50 @@ async (page) => {
         return (a.length ? a : pick("[role='option']")).slice(0, 40)
       })
       if (opts.length) f.opts = opts
+      stats.probed++
       await page.keyboard.press("Escape")
-      await page.waitForTimeout(80)
+      // Let the menu close before the next dropdown is clicked — for as long
+      // as that actually takes, not a flat 80ms.
+      await page
+        .locator("[class*='__option']")
+        .first()
+        .waitFor({ state: "detached", timeout: 80 })
+        .catch(() => {})
     } catch (e) {
       f.probe_error = String(e.message).slice(0, 60)
     }
+  }
+  scan.probe = stats
+
+  // NO VOUCH EVER SURVIVES THIS PATH, and that is deliberate.
+  //
+  // labelExact is fill-plan.mjs's precondition for ticking a consent box
+  // unattended. It can only mean anything if BOTH the code that computed it
+  // and the channel that carried it are out of the page's reach. Neither is
+  // true here: this driver cannot embed the scanner's text (no fs in this vm),
+  // so it must call window.__ajScan and cannot know whose function answered;
+  // and the scan is carried out of the page again by
+  //   browser_evaluate { function: "() => window.__ajLastScan", filename }
+  // where a getter on that global can return anything at all.
+  //
+  // scripts/apply/scan-engine.mjs — the ordinary-module twin — closes both
+  // (local binding in, in-process object out) and is the path Phase 3's
+  // unattended runner uses. Here the user is on the submit button anyway, so
+  // the cost of stripping is one tick in the browser. Done PLAYWRIGHT-SIDE.
+  const why = preOwned
+    ? "a script on this page already defined __ajScan"
+    : "the MCP scan path cannot vouch for a label"
+  let stripped = 0
+  for (const f of scan.fields || []) {
+    if (f.labelExact) {
+      delete f.labelExact
+      f.labelWhy = why
+      stripped++
+    }
+    for (const o of f.o || []) delete o.labelExact
+  }
+  if (stripped || preOwned) {
+    scan.signals = (scan.signals || []).concat("scan not vouched: " + why)
   }
 
   // Stashed so the scan can be written to disk without paying for it twice:

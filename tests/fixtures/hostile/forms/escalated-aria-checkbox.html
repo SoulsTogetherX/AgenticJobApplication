@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Talent — Full-Stack Engineer (ARIA checkbox)</title>
+  </head>
+  <body>
+    <!--
+      SHAPE E. NOT A BAD TICK — A BLIND SPOT. Fixture; exists to be blocked, and
+      is not blocked, because nothing here is even seen.
+
+      The same work-authorisation question, rendered the way a component library
+      renders a styled checkbox: a <div role="checkbox" aria-checked="false">
+      with a keyboard handler, and no <input> anywhere.
+
+      scan-page.js collects fields from `querySelectorAll("select,textarea,
+      input")` plus `[contenteditable]` plus its combobox selector list. A
+      div with role="checkbox" matches NONE of those, so the scanner emits ZERO
+      fields for this control.
+
+      That is a DIFFERENT failure from ticking the wrong box, and arguably a
+      worse one:
+
+        - the box is not ticked, so nothing is asserted on the user's behalf —
+          this much is safe;
+        - but the box is also not DEFERRED, so it never appears in the approval
+          message, in `pending-questions.mjs`, or in the fill plan's `defer`
+          list;
+        - so a REQUIRED consent the user must answer is invisible to every part
+          of the pipeline that exists to show them what is unanswered. The
+          submit fails, or worse, the board defaults it, and nothing in the run
+          log says why.
+
+      A silence is not a refusal. This page exists so the difference has a test.
+
+      The full-name field is honest and is here for one reason: it proves the
+      scanner RAN and found the form. The consent control's absence from the
+      scan is therefore a finding about the control, not about the page.
+
+      `data-aj-fixture-destination` names what the server does with a tick, as
+      on the sibling fixtures.
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <form id="application-form" method="post" action="">
+      <div class="field">
+        <label for="ar-name">Full name</label>
+        <input type="text" id="ar-name" name="name" />
+      </div>
+
+      <div class="field">
+        <span id="ar-auth-question">
+          Are you legally authorized to work in the United States?
+        </span>
+        <div
+          id="ar-auth"
+          role="checkbox"
+          aria-checked="false"
+          aria-labelledby="ar-auth-question"
+          aria-required="true"
+          tabindex="0"
+          data-aj-fixture-destination="agree_arbitration"
+        ></div>
+      </div>
+
+      <button type="submit" id="submit-application">Submit Application</button>
+    </form>
+  </body>
+</html>

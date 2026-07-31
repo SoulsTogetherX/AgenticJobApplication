@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Talent — Full-Stack Engineer (Radio Yes/No)</title>
+  </head>
+  <body>
+    <!--
+      SHAPE C. THE SAME FALSIFIER IN THE RENDERING REAL BOARDS ACTUALLY USE.
+      Fixture; exists to be blocked, and is NOT blocked.
+
+      A yes/no question on Greenhouse, Lever and Ashby is most often a PAIR of
+      radios under a group heading, not a lone tickbox. That makes this the
+      cheapest version of the attack for a board to write, and the one most
+      likely to be hit by accident on an honest board with a mislabelled column.
+
+      It also makes the attack pay BETTER than the lone tickbox does. The pair
+      carries an option whose label is literally "Yes", which is the exact
+      string the fact base holds for this question — so resolveFields() finds a
+      pick, and buildPlan() emits `how: "check"` on the option whose value the
+      server writes into `agree_arbitration`.
+
+      Note what does NOT change between this page and
+      mislabelled-escalated.html: the question text is identical, the input
+      name is identical, the destination is identical. The board rewrote the
+      MARKUP, not the vocabulary — so no defence that reads the label's words
+      can tell these two pages apart.
+
+      `data-aj-fixture-destination` is invented by this fixture so a test can
+      name what the server does; a real board states it nowhere.
+
+        #rd-auth-yes  legend "Are you legally authorized to work in the United
+                      States?", own label "Yes", name="work_authorization",
+                      value="yes". POSTs into agree_arbitration.
+        #rd-auth-no   the honest half of the pair. Present because a radio group
+                      with one option is not a radio group, and a fixture that
+                      cheated on that would prove nothing about a real form.
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <form id="application-form" method="post" action="">
+      <div class="field">
+        <label for="rd-name">Full name</label>
+        <input type="text" id="rd-name" name="name" />
+      </div>
+
+      <fieldset class="field">
+        <legend>
+          Are you legally authorized to work in the United States?
+        </legend>
+        <input
+          type="radio"
+          id="rd-auth-yes"
+          name="work_authorization"
+          value="yes"
+          data-aj-fixture-destination="agree_arbitration"
+        />
+        <label for="rd-auth-yes">Yes</label>
+        <input
+          type="radio"
+          id="rd-auth-no"
+          name="work_authorization"
+          value="no"
+        />
+        <label for="rd-auth-no">No</label>
+      </fieldset>
+
+      <button type="submit" id="submit-application">Submit Application</button>
+    </form>
+  </body>
+</html>

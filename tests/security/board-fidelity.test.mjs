@@ -84,6 +84,9 @@ const PAIRS = [
   ["destructive-combobox", "hostile-combobox"],
   ["mislabelled-inputs", "hostile-mislabelled"],
   ["mislabelled-escalated", "hostile-escalated"],
+  ["escalated-tickbox-yes", "hostile-escalated-tickbox"],
+  ["escalated-radio-yesno", "hostile-escalated-radio"],
+  ["escalated-aria-checkbox", "hostile-escalated-ariabox"],
 ]
 
 for (const [scanName, pageName] of PAIRS) {

@@ -27,6 +27,8 @@ import {
   resolveFields,
   isConsent,
   isHardConsent,
+  looksLikeAgreementProse,
+  readiness,
 } from "../../scripts/apply/fill-plan.mjs"
 import { normalizeQuestion } from "../../scripts/apply/answer-bank.mjs"
 
@@ -799,17 +801,72 @@ test("LANDS: the escalation buys 3 fewer identity defers and 2 more fills than t
   )
 })
 
-test("SURVIVES the escalation: the consent-shaped box is still not ticked, because its defence reads no token the board chose", () => {
-  // The one control the rename does not touch. A checkbox defers on its SHAPE
-  // — it is a control that ASSERTS something — and shape is not an attribute
-  // the page can rewrite. On this page that is the difference between the user
-  // ticking an arbitration waiver and not.
+// CORRECTION, 2026-07-31. This test used to be titled "SURVIVES the
+// escalation: the consent-shaped box is still not ticked, because its defence
+// reads no token the board chose", and it credited looksLikeAgreementProse()
+// — a SHAPE control the board cannot rewrite. The outcome it asserted was
+// real. THE STATED CAUSE WAS FALSE, and measurably so on this page's own
+// label:
+//
+//   label: "Are you legally authorized to work in the United States?"
+//   words: 10 | ends in [.!]: NO, it ends in "?"
+//   isConsent false | isHardConsent false | looksLikeAgreementProse FALSE
+//
+// looksLikeAgreementProse requires /[.!]$/. It never fired. The box is not
+// ticked for an entirely different reason: this page renders a LONE tickbox
+// whose single option label IS the question, so the stored answer "Yes" has no
+// option to match. That is a rendering accident, and a board that renders the
+// same question as a Yes/No pair gets the tick — escalated-radio-yesno, below.
+//
+// The correction was filed by innov-resilience (verdict: patch) and it is the
+// exact slacking signature the protocol names: a test asserting a true outcome
+// while naming the wrong cause. Someone reading the old title would have
+// deleted whatever was actually holding.
+test("NOT A CONTROL: the escalated box is unticked only because a lone tickbox offers no option for the stored answer to match", () => {
   const s = scan("mislabelled-escalated")
   const plan = planFrom(s)
   const g = s.fields.find((f) => f.t === "checkbox")
   assert.ok(g, "the escalated fixture must still carry the consent-shaped box")
   assert.equal(destinationOf(g), "agree_arbitration")
 
+  // 1. THE NAMED CONTROL NEVER RAN. Asserted, not narrated — if a future edit
+  //    to looksLikeAgreementProse/isConsent makes one of these true, this goes
+  //    red and the comment above stops being the record.
+  assert.deepEqual(
+    {
+      consent: isConsent(g.l),
+      hard: isHardConsent(g.l),
+      prose: looksLikeAgreementProse(g, g.l),
+    },
+    { consent: false, hard: false, prose: false },
+    "the escalated label now enters the consent branch — re-derive why this " +
+      "box is unticked before trusting the title of this test",
+  )
+
+  // 2. WHAT ACTUALLY HAPPENED, at resolveFields: the bank has an exact answer
+  //    ("Yes", a-002), and the only option to click is the question itself.
+  const r = resolveFields(s.fields, {
+    profile: PROFILE,
+    answers: ANSWERS,
+  }).find((x) => x.k === g.k)
+  assert.deepEqual(
+    {
+      value: r.value,
+      pick: r.pick ?? null,
+      optionLabels: g.o.map((o) => o.l),
+    },
+    {
+      value: "Yes",
+      pick: null,
+      optionLabels: [
+        "Are you legally authorized to work in the United States?",
+      ],
+    },
+    "the accident that stops the tick is the option list — if it ever contains " +
+      "a matchable 'Yes', this box ticks",
+  )
+
+  // 3. The outcome, unchanged: nothing ticks it.
   const acted = [...plan.items, ...plan.defer].filter(
     (i) => i.k === g.k && (i.how === "check" || i.how === "fill"),
   )
@@ -819,6 +876,16 @@ test("SURVIVES the escalation: the consent-shaped box is still not ticked, becau
     "a box whose server destination is an arbitration waiver was planned to be " +
       "ticked from a work-authorisation answer",
   )
+
+  // 4. AND IT IS NOT EVEN A DEFER. The field is optional, so buildPlan writes
+  //    a `skip` item — the arbitration box never reaches the approval message
+  //    or pending-questions.mjs at all. "Not ticked" is not the same as
+  //    "shown to the user", and only one of those is a control.
+  const planned = [
+    ...plan.items.filter((i) => i.k === g.k).map((i) => `item:${i.how}`),
+    ...plan.defer.filter((d) => d.k === g.k).map((d) => `defer:${d.why}`),
+  ]
+  assert.deepEqual(planned, ["item:skip"])
 })
 
 test("THE REAL CONTROL, at the file: the escalated page's own label cannot get a government ID into answers.yaml", () => {
@@ -851,4 +918,246 @@ test("THE REAL CONTROL, at the file: the escalated page's own label cannot get a
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// ---------------------------------------------------------------------------
+// 4c. THE FALSIFIERS: the same question, three renderings
+//
+// Section 4b's consent test used to credit a control that never ran (see the
+// correction there). The claim "a consent-shaped box is protected by its
+// SHAPE" is falsified by rendering the SAME question a different way, which
+// costs the board four lines of markup and nothing else.
+//
+// Held constant across all three pages, and ASSERTED below rather than stated
+// in prose: the question text, the input `name`, and the column the server
+// writes. Only the markup differs. So no defence that reads the board's
+// vocabulary can tell them apart — and vocabulary is all isConsent and
+// isHardConsent read, and all looksLikeAgreementProse reads apart from its
+// `t === "checkbox"` test.
+//
+//   B  escalated-tickbox-yes    one tickbox, its OWN label "Yes"   -> TICKED
+//   C  escalated-radio-yesno    Yes/No radio pair (commonest)      -> TICKED
+//   E  escalated-aria-checkbox  <div role="checkbox">              -> INVISIBLE
+//
+// B and C are LANDS tests, green on purpose, for the reason section 4b states
+// at length: this directory is the `npm run test:security` gate and a
+// permanently-red line stops being read. They go red if the behaviour moves in
+// EITHER direction.
+//
+// WHICH CONTROL EACH ONE EXERCISES is stated per test, because that is exactly
+// the mistake this section exists to correct: 4b's fixture was built to defeat
+// the IDENTITY guard and only incidentally missed the CONSENT path, and it was
+// then read as evidence about a control it never touched.
+// ---------------------------------------------------------------------------
+
+// The column the server writes for ONE option, by its stamp. destinationOf()
+// above answers for a whole field, which is ambiguous on a radio pair where
+// only the "Yes" half is hostile.
+const optionDestination = (s, k) => {
+  for (const f of s.fields ?? [])
+    for (const o of f.o ?? []) if (o.k === k) return o._destination ?? null
+  return null
+}
+
+const AUTH_Q = "Are you legally authorized to work in the United States?"
+
+test("LANDS (shape B): a tickbox whose own label is 'Yes' is auto-ticked, and the tick POSTs into an arbitration waiver", () => {
+  // EXERCISES: the ordinary checkbox branch of buildPlan — resolveFields finds
+  // an exact bank answer, finds a matching option, and buildPlan emits
+  // `how: "check"` on it.
+  // DOES NOT EXERCISE: the consent branch, the vouch, or the consent
+  // allowlist. None of them run on this field, and the assertion below pins
+  // that, so this test can never be misread as evidence about them.
+  const s = scan("escalated-tickbox-yes")
+  const g = s.fields.find((f) => f.t === "checkbox")
+  assert.deepEqual(
+    {
+      consent: isConsent(g.l),
+      hard: isHardConsent(g.l),
+      prose: looksLikeAgreementProse(g, g.l),
+    },
+    { consent: false, hard: false, prose: false },
+    "this field now enters the consent branch — the finding below is about a " +
+      "DIFFERENT code path and must be re-derived",
+  )
+
+  const plan = planFrom(s)
+  const ticks = plan.items
+    .filter((i) => i.how === "check")
+    .map((i) => ({
+      sel: i.sel,
+      value: i.value,
+      label: i.label,
+      why: i.why ?? null,
+      serverColumn: optionDestination(s, i.k),
+    }))
+  assert.deepEqual(ticks, [
+    {
+      sel: "#tb-auth-yes",
+      value: "true",
+      label: `${AUTH_Q} → Yes`,
+      // Not "consent:allowlisted": nothing consent-aware was consulted.
+      why: null,
+      serverColumn: "agree_arbitration",
+    },
+  ])
+})
+
+test("LANDS (shape C): the commonest real ATS rendering — a Yes/No radio pair — ticks the same waiver", () => {
+  // EXERCISES: the same ordinary check branch, reached from a `radio` group
+  // rather than a `checkbox` group.
+  // DOES NOT EXERCISE: the consent branch — and here it CANNOT, structurally.
+  // looksLikeAgreementProse() returns false on its first line for anything
+  // whose `t` is not "checkbox", so a radio pair never enters that branch
+  // however the legend is worded. That is a wider hole than B's, not a
+  // narrower one, and it is why this shape being the commonest matters.
+  const s = scan("escalated-radio-yesno")
+  const g = s.fields.find((f) => f.t === "radio")
+  assert.deepEqual(
+    {
+      t: g.t,
+      consent: isConsent(g.l),
+      hard: isHardConsent(g.l),
+      prose: looksLikeAgreementProse(g, g.l),
+      // Even reworded to end in a period — the shape looksLikeAgreementProse
+      // exists to catch — a radio group cannot reach the consent branch. So a
+      // fix that only widens the wording list is visibly not a fix for this.
+      proseIfReworded: looksLikeAgreementProse(
+        g,
+        "I confirm that I am legally authorized to work in the United States.",
+      ),
+    },
+    {
+      t: "radio",
+      consent: false,
+      hard: false,
+      prose: false,
+      proseIfReworded: false,
+    },
+  )
+
+  const plan = planFrom(s)
+  const ticks = plan.items
+    .filter((i) => i.how === "check")
+    .map((i) => ({
+      sel: i.sel,
+      value: i.value,
+      serverColumn: optionDestination(s, i.k),
+    }))
+  assert.deepEqual(ticks, [
+    { sel: "#rd-auth-yes", value: "true", serverColumn: "agree_arbitration" },
+  ])
+})
+
+test("LANDS (B and C): neither plan defers anything, so readiness() says fill-and-hand-over with the waiver already ticked", () => {
+  // The outcome that matters is not "an item exists" — it is that the autonomy
+  // fast path sees nothing to ask about. `ready: true` means, in
+  // fill-plan.mjs's own words, "scan -> fill -> hand over, with no model step
+  // in between". The user meets this form with the box already ticked.
+  const rows = ["escalated-tickbox-yes", "escalated-radio-yesno"].map((n) => {
+    const plan = planFrom(scan(n))
+    return [n, readiness(plan), plan.defer.map((d) => d.why)]
+  })
+  assert.deepEqual(rows, [
+    ["escalated-tickbox-yes", { ready: true, reason: null }, []],
+    ["escalated-radio-yesno", { ready: true, reason: null }, []],
+  ])
+})
+
+test("the renderings differ ONLY in markup: same question, same input name, same destination", () => {
+  // Guards the falsifier itself. If a future edit changed the wording or the
+  // input name on one of these pages, the LANDS tests above would still pass
+  // while proving something weaker — "a differently-worded question also ticks"
+  // is not the finding. The finding is that the board changed nothing any
+  // defence can read.
+  const rows = []
+  for (const n of [
+    "mislabelled-escalated",
+    "escalated-tickbox-yes",
+    "escalated-radio-yesno",
+  ]) {
+    const s = scan(n)
+    const g = s.fields.find((f) => f.t === "checkbox" || f.t === "radio")
+    const hostile = (g.o ?? []).find(
+      (o) => o._destination === "agree_arbitration",
+    )
+    rows.push([n, g.l, hostile?.n ?? null])
+  }
+  assert.deepEqual(rows, [
+    ["mislabelled-escalated", AUTH_Q, "work_authorization"],
+    ["escalated-tickbox-yes", AUTH_Q, "work_authorization"],
+    ["escalated-radio-yesno", AUTH_Q, "work_authorization"],
+  ])
+
+  // And shape E carries the identical question in the SERVED HTML, where the
+  // scanner never picks it up. Read from the page, not from the scan fixture —
+  // the scan fixture is exactly the thing that does not contain it.
+  const html = fs.readFileSync(
+    path.join(
+      ROOT,
+      "tests/fixtures/hostile/forms/escalated-aria-checkbox.html",
+    ),
+    "utf8",
+  )
+  assert.ok(
+    html.replace(/\s+/g, " ").includes(AUTH_Q),
+    "shape E must ask the same question, or it is not the same attack",
+  )
+})
+
+test("BLIND (shape E): a div[role=checkbox] consent produces no field, so it is neither ticked NOR shown to the user", () => {
+  // A DIFFERENT failure from B and C, and the reason it gets its own test.
+  // Nothing is asserted on the user's behalf — that half is safe. What is lost
+  // is the DEFER: the mechanism by which an unanswered required question
+  // reaches the approval message and pending-questions.mjs. A silence is not a
+  // refusal.
+  //
+  // EXERCISES: scan-page.js's field collection (querySelectorAll of
+  // "select,textarea,input", [contenteditable], and the combobox selector
+  // list), asserted through what buildPlan can see.
+  // DOES NOT EXERCISE: any consent control, any identity guard, any part of
+  // fill-plan.mjs's decision-making — there is nothing for them to decide
+  // about. This test says NOTHING about whether those controls work.
+  const s = scan("escalated-aria-checkbox")
+  const plan = planFrom(s)
+
+  // 1. The scanner saw the form — the honest field is there — and did not see
+  //    the consent control.
+  assert.deepEqual(
+    s.fields.map((f) => [f.k, f.t, f.l]),
+    [["f1", "text", "Full name"]],
+    "the scanner now emits a second field for this page — if it is the ARIA " +
+      "consent control, this finding is closed and the fixture must be redone",
+  )
+
+  // 2. At the consumer: the question appears NOWHERE in the plan. Not as an
+  //    item, not as a defer, not as a skip.
+  assert.ok(
+    !JSON.stringify(plan).includes(AUTH_Q),
+    "the plan mentions the consent question somewhere — find out where before " +
+      "treating this as closed",
+  )
+
+  // 3. And the plan reports itself ready, which is the actual damage: the fast
+  //    path fills and hands over a form carrying an unanswered required
+  //    consent that the user was never told existed.
+  assert.deepEqual(readiness(plan), { ready: true, reason: null })
+
+  // 4. The contrast, in one assertion, so the difference between B/C and E is
+  //    pinned rather than described: the same question on a rendering the
+  //    scanner CAN see produces a planned action; here it produces nothing.
+  const mentioned = (n) => {
+    const p = planFrom(scan(n))
+    return [...p.items, ...p.defer].some((x) =>
+      String(x.label ?? "").includes(AUTH_Q),
+    )
+  }
+  assert.deepEqual(
+    {
+      tickbox: mentioned("escalated-tickbox-yes"),
+      radio: mentioned("escalated-radio-yesno"),
+      aria: mentioned("escalated-aria-checkbox"),
+    },
+    { tickbox: true, radio: true, aria: false },
+  )
 })

@@ -38,7 +38,7 @@
         }
       ],
       "labelExact": true,
-      "_note": "the only one of the four that a structural control still stops: a consent-shaped box defers on its SHAPE, which reads no token the board chose"
+      "_note": "CORRECTED 2026-07-31. This note used to claim this was the one field a structural control still stops — a consent-shaped box deferring on its SHAPE. That was false about this very label: looksLikeAgreementProse() requires the text to end in \".\" or \"!\" and this one ends in \"?\", so it returns FALSE, as do isConsent() and isHardConsent(). No consent control runs on this field. The box is unticked because the ONLY option's label is the question itself, so the bank's stored \"Yes\" has nothing to match — a rendering accident, not a defence. escalated-tickbox-yes and escalated-radio-yesno are the same attack with the accident removed, and both TICK. Worse still: the field is optional, so buildPlan emits a `skip` item and this box never reaches the approval message either."
     },
     {
       "k": "f4",

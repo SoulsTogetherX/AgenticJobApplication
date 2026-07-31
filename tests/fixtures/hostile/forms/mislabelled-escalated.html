@@ -41,10 +41,25 @@
 
       THE ASSERTION THIS PAGE CARRIES is therefore not "the guard fires". It is
       that the pipeline's remaining defences are the ones that do not read the
-      page's own vocabulary at all: a consent-shaped control defers on its
-      SHAPE, an unanswerable label defers because the fact base has no answer,
-      and the user is on the Submit button. Everything that reads a token the
-      board chose is defeated here in four attribute renames.
+      page's own vocabulary at all: an unanswerable label defers because the
+      fact base has no answer, save-answer.mjs refuses to store an identifier
+      under any wording, and the user is on the Submit button. Everything that
+      reads a token the board chose is defeated here in four attribute renames.
+
+      CORRECTION, 2026-07-31 — READ THIS BEFORE CITING #esc-auth AS A DEFENCE.
+      This header used to list "a consent-shaped control defers on its SHAPE"
+      among the surviving defences. That was false about this page. The label
+      is "Are you legally authorized to work in the United States?";
+      looksLikeAgreementProse() requires the text to END IN "." or "!" and this
+      ends in "?", so it returns FALSE — as do isConsent() and isHardConsent().
+      No consent control runs on #esc-auth at all.
+
+      What actually stops the tick here is an accident of RENDERING: this page
+      draws a lone tickbox whose single option label is the question itself, so
+      the fact base's stored "Yes" has no option to match. A board that draws
+      the same question as a tickbox labelled "Yes", or as a Yes/No radio pair
+      — the commonest real rendering — gets the tick. Both are served:
+      escalated-tickbox-yes.html and escalated-radio-yesno.html, and both LAND.
     -->
     <h1>Full-Stack Engineer</h1>
     <form id="application-form" method="post" action="">

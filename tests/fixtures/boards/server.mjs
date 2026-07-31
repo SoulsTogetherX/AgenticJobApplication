@@ -185,6 +185,34 @@ export const ROUTES = [
     proves:
       "the same substitution with id/name/autocomplete renamed to agree with the lying label — no token left to compare",
   },
+  // The three RENDERINGS of the escalated page's yes/no question. Same
+  // question text, same input name, same server destination; only the markup
+  // differs. They exist because the claim that a consent-shaped box is
+  // structurally protected was falsified — see each file's own header.
+  {
+    name: "hostile-escalated-tickbox",
+    path: "/hostile/escalated-tickbox-yes",
+    file: path.join(HOSTILE, "forms", "escalated-tickbox-yes.html"),
+    ats: "generic",
+    proves:
+      "shape B: a lone tickbox whose OWN label is 'Yes' — the stored answer now has an option to match, and it is ticked",
+  },
+  {
+    name: "hostile-escalated-radio",
+    path: "/hostile/escalated-radio-yesno",
+    file: path.join(HOSTILE, "forms", "escalated-radio-yesno.html"),
+    ats: "generic",
+    proves:
+      "shape C: a Yes/No radio pair, the commonest real ATS rendering — same tick, from the cheapest markup",
+  },
+  {
+    name: "hostile-escalated-ariabox",
+    path: "/hostile/escalated-aria-checkbox",
+    file: path.join(HOSTILE, "forms", "escalated-aria-checkbox.html"),
+    ats: "generic",
+    proves:
+      "shape E: <div role=checkbox> — the scanner emits no field at all, so the consent is neither ticked nor shown",
+  },
 ]
 
 const byName = new Map(ROUTES.map((r) => [r.name, r]))

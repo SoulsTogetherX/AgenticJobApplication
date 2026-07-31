@@ -59,6 +59,13 @@ const PAIRS = [
   ["destructive-combobox", "hostile-combobox", "GET"],
   ["mislabelled-inputs", "hostile-mislabelled", "GET"],
   ["mislabelled-escalated", "hostile-escalated", "GET"],
+  ["escalated-tickbox-yes", "hostile-escalated-tickbox", "GET"],
+  ["escalated-radio-yesno", "hostile-escalated-radio", "GET"],
+  // Pinned even though its finding is an ABSENCE: the deep-equal below is what
+  // makes "the scanner emits no field for a div[role=checkbox]" falsifiable.
+  // If w2-engine teaches the scanner to see ARIA widgets, THIS goes red first
+  // and the consumer test in hostile-forms.test.mjs goes red with it.
+  ["escalated-aria-checkbox", "hostile-escalated-ariabox", "GET"],
 ]
 
 let board

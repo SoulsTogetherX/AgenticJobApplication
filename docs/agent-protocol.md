@@ -80,6 +80,39 @@ live risks in this one.
 - A defence described as stronger than it is.
 - A capability documented that does not exist.
 
+## The shared tree: never run a whole-tree git command
+
+Ownership is exclusive **per file**, and that is what lets a wave run without
+collisions. It does **not** protect the working tree, because agents in a wave
+share one checkout. A command scoped to the repository rather than to a path
+reaches straight past every ownership boundary.
+
+**Forbidden to every agent, manager included, while any other agent is live:**
+`git stash` (and `stash pop`), `git checkout .` / `git checkout -- .`,
+`git reset --hard`, `git clean`, and `git add -A` / `git commit -a`. Each of
+these silently takes another agent's in-flight work with it, and `stash pop`
+can bring it back into a tree that has since moved.
+
+Do this instead:
+
+- To see your own changes: `git diff -- <your paths>`, never bare `git diff`.
+- To compare against `HEAD`: `git show HEAD:<path>` into a scratch file, or
+  read the committed version directly. Do not move the tree to look at it.
+- To undo your own edit: `git checkout -- <the specific file you own>`.
+- **Always run `git status` first** and stop if it shows modifications outside
+  your file set — that means someone else is working, and it is a signal, not
+  noise.
+
+This was found the honest way, on 2026-07-31: `w3-resolution` used
+`git stash` / `stash pop` in a tree `qa-adversary` was live-editing, then
+verified afterwards that nothing had been lost and **reported it against
+itself** — "riskier than it should have been; I should have checked
+`git status` first." Nothing was damaged. The rule exists so the next one is
+not luckier.
+
+Only the manager commits, so an agent never needs a whole-tree operation to
+finish its work.
+
 ## Who checks whom
 
 No node is unchecked, including the manager.

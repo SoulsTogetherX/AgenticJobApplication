@@ -5,8 +5,50 @@ on:
     branches: [dev]
   pull_request:
     branches: [dev, main]
+  # Manual trigger. Without this no run could be started by hand, so a
+  # pipeline change could only be tested by pushing.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  # ---------------------------------------------------------------------
+  # The Phase 1 gate from docs/autonomy-plan.md ("Verification"). Autonomy
+  # does not ship until this is green. It used to be enforced by someone
+  # remembering to run the command; this is the mechanical form.
+  #
+  # It runs the plan's exact command through the test gate, which additionally
+  # fails when tests/security/ is MISSING or EMPTY. That matters more than it
+  # sounds: `node --test` exits 0 when it runs zero tests, so an absent
+  # security suite would otherwise report success.
+  #
+  # Runs on ubuntu because it is the fastest leg and this gate is the one
+  # people wait on; the same tests also run on Windows inside the matrix below.
+  # ---------------------------------------------------------------------
+  security-gate:
+    name: Phase 1 security gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --fund=false
+      - name: Security gate (tests/security + untrusted + verify-claims)
+        run: npm run test:security
+
+  # ---------------------------------------------------------------------
+  # The whole suite, on both platforms. Windows is the primary platform (the
+  # user's machine) and PDF rendering shells out to a local Edge/Chrome, so a
+  # Linux-only pipeline would prove very little about the shipped path.
+  # ---------------------------------------------------------------------
   test:
     name: npm test (${{ matrix.os }}, node ${{ matrix.node }})
     strategy:
@@ -15,14 +57,79 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         node: [20, 22]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - run: npm ci
-      # The suite includes guardrail failure-mode tests: hooks must DENY the
-      # right things and ALLOW the right things, verify-claims must fail on
-      # dishonest fixtures, etc. A green run means both directions behaved.
+      - run: npm ci --prefer-offline --no-audit --fund=false
+
+      # Diagnostic, not a gate: render-pdf.mjs shells out to a local browser
+      # and its tests skip when none is found. Printing what this leg has makes
+      # any skip in the gate summary attributable to an observable fact about
+      # the runner instead of a mystery. The gate itself fails on a skip that
+      # carries no reason.
+      - name: Report browser availability (attributes any PDF skips)
+        run: node .github/workflows/report-browsers.mjs
+
+      # `npm test` is the gate, not a bare `node --test`: it asserts the test
+      # COUNT against the floor in package.json "testGate", fails on any todo,
+      # and fails on a skip with no reason. A green run here means tests ran.
       - run: npm test
+
+      # Playwright is NOT installed here on purpose. w4-autonomy will request
+      # `playwright-core` (not `playwright`) precisely so that no postinstall
+      # downloads a browser on four matrix legs. When it lands, the browser
+      # tests need an explicit, cached `npx playwright install chromium` step
+      # ADDED HERE — until that step exists those tests must skip with a
+      # reason, which the gate reports on every run. There is deliberately no
+      # silent middle option.
+
+  # ---------------------------------------------------------------------
+  # NOT wired, on purpose:
+  #
+  # * `gate-audit.mjs` — the whole-store regression check that exits 1 when a
+  #   lead became newly REJECTED. It opens jobs/leads.db, which is gitignored
+  #   (personal data), so on a clean checkout it has no store to diff against.
+  #   A job here would pass vacuously on every run and read as coverage that
+  #   does not exist. It stays a local step the owner of a gate change runs:
+  #     node scripts/leads/gate-audit.mjs
+  #
+  # * the scaffolding reaper — fails the build when a skill marked
+  #   `scaffolding: true` outlives its `remove_after` phase. No artifact
+  #   carries that frontmatter yet (checked 2026-07-31), and a checker with
+  #   nothing to check is indistinguishable from a broken one.
+  # ---------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------
+  # One stable check name to require in branch protection. Mark `ci-gate` as
+  # the required status check on dev and main; it fails if either job above
+  # failed, was cancelled, or was skipped.
+  #
+  # HONEST LIMIT: a workflow file cannot make itself required. Branch
+  # protection is a repository setting; until someone ticks `ci-gate` there,
+  # this is blocking for the RUN's conclusion but not for merging.
+  # ---------------------------------------------------------------------
+  ci-gate:
+    name: ci-gate
+    if: always()
+    needs: [security-gate, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the security gate and the full matrix to have passed
+        run: |
+          echo "security-gate: ${{ needs.security-gate.result }}"
+          echo "test matrix:   ${{ needs.test.result }}"
+          fail=0
+          if [ "${{ needs.security-gate.result }}" != "success" ]; then
+            echo "::error::Phase 1 security gate did not pass"
+            fail=1
+          fi
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "::error::the test matrix did not pass"
+            fail=1
+          fi
+          exit $fail

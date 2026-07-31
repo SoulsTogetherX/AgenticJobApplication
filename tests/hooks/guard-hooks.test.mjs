@@ -6,7 +6,11 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 const GUARD_FILES = path.join(ROOT, "scripts", "hooks", "guard-files.mjs")
 const GUARD_BASH = path.join(ROOT, "scripts", "hooks", "guard-bash.mjs")
 const PRETTIFY = path.join(ROOT, "scripts", "hooks", "prettify.mjs")
@@ -183,6 +187,134 @@ test("guard-bash allows dev-branch git operations", () => {
   for (const c of allowed) {
     const { decision } = runHook(GUARD_BASH, bash(c))
     assert.equal(decision, null, `expected allow for: ${c}`)
+  }
+})
+
+// The over-match this hook was rewritten for: `git branch --show-current` is a
+// read-only query and was denied as "Branch create/delete/rename is blocked"
+// in a real session. Every entry here mutates nothing.
+test("guard-bash allows read-only git branch queries", () => {
+  const allowed = [
+    "git branch --show-current", // the reported false deny
+    "git branch",
+    "git branch --list",
+    "git branch -a",
+    "git branch -r",
+    "git branch -v",
+    "git branch -vv",
+    "git branch -av",
+    "git branch --list dev*",
+    "git branch -a origin/dev",
+    "git branch --contains HEAD",
+    "git branch --merged=HEAD",
+    "git branch --format=%(refname:short)",
+    "git branch --sort=committerdate --list",
+    "git branch --no-color --column",
+    "BRANCH=$(git branch --show-current)", // command substitution
+    "git status && git branch --show-current",
+    "git worktree list",
+    "git checkout -p",
+    "git checkout -- scripts/hooks/guard-bash.mjs",
+  ]
+  for (const c of allowed) {
+    const { decision } = runHook(GUARD_BASH, bash(c))
+    assert.equal(decision, null, `expected allow for: ${c}`)
+  }
+})
+
+// The other half, and the more important one. Several of these were ALLOWED by
+// the regex version of this hook; each is a way onto a branch that is not dev.
+test("guard-bash still denies every way of mutating or leaving dev", () => {
+  const blocked = [
+    // `-v` does not imply list mode: this CREATES branch `probe` (probed).
+    "git branch -v probe",
+    "git branch -m dev main",
+    "git branch -c dev copy",
+    "git branch --delete feature",
+    "git branch -f main HEAD",
+    "git branch --set-upstream-to=origin/main dev",
+    "git branch --edit-description",
+    "git branch --unset-upstream",
+    // Force-create variants the old create-flag list missed entirely.
+    "git checkout -B main",
+    "git switch -C main",
+    "git checkout --orphan gh-pages",
+    // A global option before the subcommand hid the checkout from the old rule.
+    "git -C . checkout main",
+    "git --git-dir=.git checkout main",
+    "git -c core.pager=cat checkout main",
+    // Program-name variants.
+    "git.exe checkout main",
+    "sudo git checkout main",
+    // Back to the previous branch is still off dev.
+    "git checkout -",
+    "git switch -",
+    "git checkout @{-1}",
+    // A second command after a separator, including a newline.
+    "git status; git checkout main",
+    "git status\ngit checkout main",
+    "git fetch && git switch release/2.0",
+    // Worktrees are another checkout.
+    "git worktree add ../wt main",
+    // Push refs and whole-repo pushes.
+    "git push origin HEAD:main",
+    "git push origin dev:main",
+    "git push --mirror origin",
+    "git push --all origin",
+    'git push origin "main"',
+  ]
+  for (const c of blocked) {
+    const { decision } = runHook(GUARD_BASH, bash(c))
+    assert.equal(decision, "deny", `expected deny for: ${c}`)
+  }
+})
+
+test("guard-bash: branch names inside quoted arguments are arguments, not refs", () => {
+  // Tokenizing instead of pattern-matching is what makes this true by
+  // construction rather than by a scoping trick on the push regex.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-git-"))
+  try {
+    assert.equal(spawnSync("git", ["init", "-b", "dev", dir]).status, 0)
+    const allowed = [
+      'git commit -m "checkout main when the branch is ready"',
+      'git commit -m "switch master; git push origin main"',
+      "git log --grep=main --oneline",
+    ]
+    for (const command of allowed) {
+      const payload = JSON.stringify({
+        tool_name: "Bash",
+        cwd: dir,
+        tool_input: { command },
+      })
+      const { decision } = runHook(GUARD_BASH, payload)
+      assert.equal(decision, null, `expected allow for: ${command}`)
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("guard-bash lets a command switch to dev first, then change state", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-git-"))
+  try {
+    assert.equal(spawnSync("git", ["init", "-b", "trunk", dir]).status, 0)
+    const payload = (command) =>
+      JSON.stringify({ tool_name: "Bash", cwd: dir, tool_input: { command } })
+
+    assert.equal(
+      runHook(GUARD_BASH, payload("git checkout dev && git commit -m msg"))
+        .decision,
+      null,
+      "switching to dev first must still be the way out of a wrong branch",
+    )
+    // ...but the reverse order commits on the wrong branch first.
+    assert.equal(
+      runHook(GUARD_BASH, payload("git commit -m msg && git checkout dev"))
+        .decision,
+      "deny",
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
   }
 })
 

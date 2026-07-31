@@ -5,8 +5,28 @@
   "type": "module",
   "description": "Claude Code-driven job application pipeline: tailor resume & cover letter from an approved fact profile, verify truthfulness, render PDFs.",
   "scripts": {
-    "test": "node --test",
-    "verify": "node scripts/verify-claims.mjs"
+    "test": "node .github/workflows/test-gate.mjs full",
+    "test:raw": "node --test",
+    "test:security": "node .github/workflows/test-gate.mjs security",
+    "verify": "node scripts/documents/verify-claims.mjs"
+  },
+  "testGate": {
+    "full": {
+      "floor": 719,
+      "maxTodo": 0
+    },
+    "security": {
+      "floor": 29,
+      "maxTodo": 0,
+      "requireDirs": [
+        "tests/security"
+      ],
+      "paths": [
+        "tests/security/",
+        "tests/lib/untrusted.test.mjs",
+        "tests/documents/verify-claims.test.mjs"
+      ]
+    }
   },
   "dependencies": {
     "js-yaml": "^4.1.0",

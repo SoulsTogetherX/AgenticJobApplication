@@ -100,6 +100,15 @@ No node is unchecked, including the manager.
 | `doc-scribe`       | That every doc matches the code it describes                    | every file owner it documents         |
 | `qa-adversary`     | That security fixes stop attacks at the consumer                | `w1-security`, `innov-resilience`     |
 | `qa-breaker`       | That CI fails when it should; that edge cases are handled       | `ci-engineer`, `innov-perf`           |
+| `researcher`       | That the pipeline's assumptions about hiring are still true     | `w6-documents`, `qa-adversary`        |
+
+**Why `researcher` is checked by `w6-documents` and `qa-adversary`
+specifically.** It is the only agent whose primary input is the open web, so
+its two failure modes are distinct from everyone else's: laundering folklore
+into the repository as though it were fact, and carrying a page's own text
+inward. `w6-documents` owns the résumé pipeline that would consume a bad
+keyword recommendation; `qa-adversary` is the agent that assumes text from
+outside is hostile. A researcher finding that survives both is worth acting on.
 
 ### Two checks that matter more than the rest
 

@@ -20,6 +20,7 @@ import {
   buildDriverSource,
   buildBootstrap,
 } from "../../scripts/apply/fill-plan.mjs"
+import { engineSandboxSource } from "../../scripts/apply/browser.mjs"
 import { detectAts, ADAPTERS } from "../../scripts/apply/ats/index.mjs"
 import greenhouse from "../../scripts/apply/ats/greenhouse.mjs"
 
@@ -754,10 +755,17 @@ test("buildBootstrap points at the plan file by filename, never inline code", ()
   )
 })
 
+// The engine reaches the sandbox the way engineSandboxSource() delivers it: a
+// bare function declaration whose completion value is the function. It is NOT
+// an assignment to a window global any more — that assignment, and the read
+// that paired with it, WERE the vulnerability. See the RCE tests below.
+const FAKE_ENGINE =
+  "async function fillPage(page, plan) { return { ok: 1, sawSlug: plan.slug } }\nfillPage\n"
+
 test("buildDriverSource never regresses to the CSP-broken loader", () => {
   const driverSrc = buildDriverSource(
     { v: 1, slug: "x", items: [], defer: [] },
-    "window.__ajFillSrc = String(async (page, plan) => plan)",
+    FAKE_ENGINE,
   )
   // "addScriptTag" legitimately appears in this file's own warning comments
   // ("do not fix this back to addScriptTag") — that is the point, so check
@@ -772,24 +780,123 @@ test("buildDriverSource never regresses to the CSP-broken loader", () => {
     "addScriptTag inserts an inline <script> — nonce-based CSP boards block it",
   )
   assert.ok(!/\.addInitScript\(/.test(code))
-  assert.match(driverSrc, /page\.evaluate/)
-  assert.match(driverSrc, /\(0,\s*eval\)/)
+
+  // With no scanner supplied the driver touches the page ZERO times before
+  // running the engine — nothing is injected and nothing is read. That is
+  // stronger than the property this test originally asserted, back when the
+  // engine itself was pushed into the page.
+  assert.ok(
+    !/page\.evaluate/.test(code),
+    "with no scanner there is nothing to put in the page",
+  )
+
+  // The scanner is the one thing that genuinely runs page-side, and it must go
+  // in over CDP rather than as an inline <script>, which a nonce-CSP board
+  // (Ashby) refuses outright — that broke a live application.
+  const withScanner = buildDriverSource(
+    { v: 1, slug: "x", items: [], defer: [] },
+    FAKE_ENGINE,
+    "window.__ajScan = function () { return { fields: [] } }",
+  )
+  const scannerCode = withScanner
+    .split(/\r?\n/)
+    .filter((l) => !/^\s*\/\//.test(l))
+    .join("\n")
+  assert.ok(!/\.addScriptTag\(/.test(scannerCode))
+  assert.match(scannerCode, /page\.evaluate/)
+  assert.match(scannerCode, /\(0,\s*eval\)/)
 })
 
-test("buildDriverSource embeds the exact engine source and plan as strings", () => {
+test("buildDriverSource embeds the exact engine source and plan as literals", () => {
   const plan = { v: 1, slug: "acme", items: [], defer: [] }
-  const engineSrc = 'window.__ajFillSrc = String(async () => "hi")'
-  const driverSrc = buildDriverSource(plan, engineSrc)
+  const driverSrc = buildDriverSource(plan, FAKE_ENGINE)
   assert.ok(
-    driverSrc.includes(JSON.stringify(engineSrc)),
+    driverSrc.includes(JSON.stringify(FAKE_ENGINE)),
     "the engine text must appear verbatim, not paraphrased or truncated",
   )
   assert.ok(
-    driverSrc.includes(
-      JSON.stringify("window.__ajPlan = " + JSON.stringify(plan)),
-    ),
-    "the plan must appear verbatim as a window.__ajPlan assignment string",
+    driverSrc.includes(JSON.stringify(plan)),
+    "the plan must be embedded as a literal the driver passes as an ARGUMENT",
   )
+})
+
+// --- the round-trip RCE, and why the naive assertion is wrong ---------------
+//
+// This test replaces one that asserted the driver MUST contain
+// `window.__ajPlan = ...`. That assertion pinned the vulnerability into the
+// contract: the fix could not pass it. It is the reason a green suite read as
+// "RCE closed" for as long as it did.
+//
+// Note the comment-stripping. A naive !/window\.__ajFillSrc/ check FAILS on a
+// CORRECT fix, because the embedded engine's own header comment describes the
+// hole it fixed — and deleting that comment to make a grep pass would throw
+// away the incident record. Assert on code, not on prose.
+function codeOnly(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1")
+}
+
+test("the generated driver never reads executable code back out of the page", () => {
+  const driverSrc = buildDriverSource(
+    { v: 1, slug: "x", items: [], defer: [] },
+    FAKE_ENGINE,
+  )
+  const code = codeOnly(driverSrc)
+  assert.ok(
+    !/__ajFillSrc/.test(code),
+    "reading window.__ajFillSrc back out of the page is the RCE — a board " +
+      "defining that getter chooses what runs with a live `page` handle",
+  )
+  assert.ok(
+    !/window\.__ajPlan/.test(code),
+    "the plan must travel as an argument; a page-owned global can be replaced",
+  )
+})
+
+test("a hostile page that defines __ajFillSrc/__ajPlan getters owns nothing", async () => {
+  // The test this replaces used a FRIENDLY fake page ({ window: {} }), so it
+  // could not observe the exploit even while the exploit worked. This one is
+  // hostile by construction: both globals are getters that count their reads.
+  let touched = 0
+  let submitClicked = false
+  const ATTACK =
+    '(async (page) => { globalThis.__PWNED = true; await page.click("button[type=submit]"); return { ok: 99 } })'
+
+  const hostileWindow = {}
+  for (const g of ["__ajFillSrc", "__ajPlan"]) {
+    Object.defineProperty(hostileWindow, g, {
+      get() {
+        touched++
+        return g === "__ajFillSrc" ? ATTACK : { items: [], defer: [] }
+      },
+      configurable: true,
+    })
+  }
+
+  const plan = { v: 1, slug: "acme-swe", items: [], defer: [] }
+  const driverSrc = buildDriverSource(plan, FAKE_ENGINE)
+
+  const ctx = {
+    window: hostileWindow,
+    page: {
+      evaluate: async (fn, arg) => fn.call(hostileWindow, arg),
+      click: async () => {
+        submitClicked = true
+      },
+    },
+  }
+  vm.createContext(ctx)
+  const driverFn = vm.runInContext("(" + driverSrc + ")", ctx)
+  const result = await driverFn(ctx.page)
+
+  assert.equal(touched, 0, "the driver must never read a page-owned global")
+  assert.ok(!ctx.__PWNED && !globalThis.__PWNED, "attacker code must not run")
+  assert.ok(!submitClicked, "hard rule 6: only the user clicks submit")
+
+  // ...and it still does its actual job, from the literal it was given.
+  assert.equal(result.ok, 1)
+  assert.equal(result.sawSlug, "acme-swe")
 })
 
 test("buildDriverSource output is valid JS wrapped exactly as browser_run_code_unsafe wraps it", () => {
@@ -799,36 +906,27 @@ test("buildDriverSource output is valid JS wrapped exactly as browser_run_code_u
   // bundle directly, not assumed. Reproduce the exact expression shape.
   const driverSrc = buildDriverSource(
     { v: 1, slug: "x", items: [], defer: [] },
-    "window.__ajFillSrc = String(async (page, plan) => plan)",
+    FAKE_ENGINE,
   )
   assert.doesNotThrow(() => new Function("(" + driverSrc + ")"))
 })
 
-test("buildDriverSource: the generated driver actually installs and runs the engine end to end", async () => {
-  // A full semantic round-trip using Node's own vm module — no real browser
-  // needed for THIS part, because it exercises plain JS scoping/eval
-  // semantics, not Playwright/CDP/CSP behavior (which this repo has no
-  // browser to verify — see fill-page.test.mjs's own header note).
-  const engineSrc =
-    "window.__ajFillSrc = String(async (page, plan) => ({ ok: 1, sawSlug: plan.slug }))"
-  const plan = { v: 1, slug: "acme-swe", items: [], defer: [] }
-  const driverSrc = buildDriverSource(plan, engineSrc)
-
-  // Mirrors runCode.ts's own vm.createContext({ page, ... }) +
-  // vm.runInContext("(" + code + ")", ctx). `window` is added here only so
-  // the injected window.__ajFillSrc/__ajPlan assignments have somewhere to
-  // land for inspection — in production that object is the real browser
-  // page, reached over CDP, not this process.
-  const ctx = {
-    window: {},
-    page: { evaluate: async (fn, arg) => fn(arg) },
-  }
-  vm.createContext(ctx)
-  const driverFn = vm.runInContext("(" + driverSrc + ")", ctx)
-  const result = await driverFn(ctx.page)
-
-  assert.equal(result.ok, 1)
-  assert.equal(result.sawSlug, "acme-swe")
+test("the eval stays indirect, so the engine's own function name cannot collide", () => {
+  // This looks like style and is not. A DIRECT sloppy-mode eval hoists the
+  // engine's own `function fillPage` declaration into the calling scope, where
+  // it collides with a `const fillPage = eval(...)` — a run-time SyntaxError
+  // that would surface only in the browser, only in production. Hence
+  // `(0, eval)` and a local that is deliberately NOT named fillPage.
+  const driverSrc = buildDriverSource(
+    { v: 1, slug: "x", items: [], defer: [] },
+    FAKE_ENGINE,
+  )
+  const code = codeOnly(driverSrc)
+  assert.match(code, /\(0,\s*eval\)\(ENGINE\)/)
+  assert.ok(
+    !/const\s+fillPage\s*=/.test(code),
+    "naming the local fillPage collides with the engine's own declaration",
+  )
 })
 
 test("end to end: the CLI embeds the real engine and points the bootstrap at the written file", (t) => {
@@ -875,14 +973,19 @@ test("end to end: the CLI embeds the real engine and points the bootstrap at the
   assert.ok(fs.existsSync(jsPath))
   const written = fs.readFileSync(jsPath, "utf8")
 
-  // The REAL fill-page.js, not a stand-in, must be what got embedded.
-  const engineOnDisk = fs.readFileSync(
-    path.join(ROOT, ".claude", "skills", "apply-job", "fill-page.js"),
-    "utf8",
+  // The REAL engine, not a stand-in, must be what got embedded — and it now
+  // comes from scripts/apply/fill-engine.mjs via engineSandboxSource(), which
+  // is an ordinary ESM module the local runner imports directly. The old
+  // .claude/skills/apply-job/fill-page.js was only ever a string to push into
+  // the page, and pushing it there was the vulnerability.
+  const engineForSandbox = engineSandboxSource()
+  assert.ok(
+    written.includes(JSON.stringify(engineForSandbox)),
+    "the generated bootstrap must embed the real engine source verbatim",
   )
   assert.ok(
-    written.includes(JSON.stringify(engineOnDisk)),
-    "the generated bootstrap must embed the real engine source verbatim",
+    !codeOnly(written).includes("__ajFillSrc"),
+    "the real generated driver must not read the engine back out of the page",
   )
   // The embedded engine source legitimately mentions "addScriptTag" in its
   // own warning comments (escaped onto one long line by JSON.stringify) — so

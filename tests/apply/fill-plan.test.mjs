@@ -717,6 +717,166 @@ test("fieldIdentityMismatch: a checkbox/radio group is checked on its OPTION's s
   )
 })
 
+// --- identityStatements: `n` (the real name attribute) outranks `sel` ------
+//
+// w2-engine landed `n` (verbatim scan-page.js `name`) because `sel` alone is
+// unreachable on the shape it was written for: stableSel() tries `#id`
+// FIRST, so a page whose inputs all carry ids never exposes `name` through
+// `sel` at all, and a hostile board can choose an id that agrees with the
+// lying label while the name attribute still disagrees.
+
+test("fieldIdentityMismatch: a name attribute that contradicts the label is caught even with no `sel` at all", () => {
+  assert.match(
+    fieldIdentityMismatch({ k: "f1", l: "Phone number", n: "ssn" }),
+    /"phone".*its name attribute.*"ssn"/,
+  )
+})
+
+test("fieldIdentityMismatch: an id chosen to agree with the label cannot hide a disagreeing name attribute", () => {
+  // The exact shape w2-engine measured: a page whose id READS as the label's
+  // own category (so the old `sel`-only guard saw no disagreement) but whose
+  // `name` still says otherwise.
+  const why = fieldIdentityMismatch({
+    k: "f1",
+    l: "Phone number",
+    sel: "#phone-field",
+    n: "ssn",
+  })
+  assert.match(why, /"phone".*its name attribute.*"ssn"/)
+})
+
+test("fieldIdentityMismatch: falls back to the selector when there is no name attribute to read", () => {
+  const why = fieldIdentityMismatch({
+    k: "f1",
+    l: "Phone number",
+    sel: 'input[name="ssn"]',
+  })
+  assert.match(why, /"phone".*its selector.*"ssn"/)
+})
+
+test("fieldIdentityMismatch: a name attribute that agrees with the label does not suppress a disagreeing selector", () => {
+  // f4 in mislabelled-inputs.html: name="emergency_contact_phone" (agrees
+  // with the "phone" category the label claims) but id="m-email" (reads as
+  // "email"). The first statement agreeing must not short-circuit the loop.
+  const why = fieldIdentityMismatch({
+    k: "f4",
+    l: "Emergency contact phone",
+    sel: "#m-email",
+    n: "emergency_contact_phone",
+  })
+  assert.match(why, /"phone".*its selector.*"email"/)
+})
+
+test("fieldIdentityMismatch: a checkbox/radio group reads its option's name attribute too", () => {
+  assert.match(
+    fieldIdentityMismatch({
+      k: "g1",
+      l: "Email address",
+      o: [{ k: "f3", n: "agree_arbitration" }],
+    }),
+    /"email".*its name attribute.*"arbitration"/,
+  )
+})
+
+test("fieldIdentityMismatch: renaming both id and name to agree with the label defeats the guard (the documented limit)", () => {
+  // Pinning the LIMIT, not the capability — see fieldIdentityMismatch's own
+  // "WHAT THIS IS WORTH" comment. Every token here is page-chosen.
+  assert.equal(
+    fieldIdentityMismatch({
+      k: "f1",
+      l: "Phone number",
+      sel: "#phone-field",
+      n: "phone_field",
+    }),
+    "",
+  )
+})
+
+// --- t/ac are deliberately never read -------------------------------------
+
+test("fieldIdentityMismatch: an autocomplete value alone (no name, no selector identity) is never treated as evidence", () => {
+  assert.equal(
+    fieldIdentityMismatch({ k: "f1", l: "Phone number", ac: "ssn" }),
+    "",
+  )
+})
+
+test("fieldIdentityMismatch: a type attribute alone is never treated as evidence", () => {
+  assert.equal(
+    fieldIdentityMismatch({ k: "f1", l: "Phone number", t: "ssn" }),
+    "",
+  )
+})
+
+// --- f.n rides on the plan record beside the label -------------------------
+//
+// innov-resilience's point: every token fieldIdentityMismatch reads is
+// chosen by the page, so a substitution that renames both id and name to
+// agree with the label defeats DETECTION in one line. Showing the real
+// target name beside the label makes the substitution non-silent even when
+// undetected — that is the half which survives the rename.
+
+test("an item/defer record carries the field's real name attribute beside the label", () => {
+  const scan = scanOf([
+    { k: "f1", t: "text", l: "Phone number", n: "phone_field", req: true },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "(702) 810-4950")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.items.length, 1)
+  assert.equal(plan.items[0].n, "phone_field")
+})
+
+test("a deferred field's record also carries the real name attribute", () => {
+  const scan = scanOf([
+    { k: "f1", t: "text", l: "Twitter handle", n: "twitter", req: true },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.defer.length, 1)
+  assert.equal(plan.defer[0].n, "twitter")
+})
+
+test("a field with no name attribute carries no `n` on its record at all", () => {
+  const scan = scanOf([
+    { k: "f1", t: "text", l: "Twitter handle", sel: "#tw", req: true },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal("n" in plan.defer[0], false)
+})
+
+test("a checkbox group's record carries its option's name attribute, not the group's own (which does not exist)", () => {
+  const scan = scanOf([
+    {
+      k: "g1",
+      t: "checkbox",
+      l: "Are you legally authorized to work in the United States?",
+      req: true,
+      o: [{ k: "f3", n: "agree_arbitration" }],
+    },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.defer.length, 1)
+  assert.equal(plan.defer[0].n, "agree_arbitration")
+})
+
 test("a field whose identity contradicts its label always defers, never fills — required or not", () => {
   const scan = scanOf([
     { k: "f1", t: "text", l: "Phone number", sel: 'input[name="ssn"]' },

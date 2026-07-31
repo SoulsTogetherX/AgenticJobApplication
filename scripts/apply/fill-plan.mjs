@@ -404,27 +404,67 @@ function selectorIdentity(sel) {
   return id ? id[1].replace(/[_-]+/g, " ") : null
 }
 
-// "" when the label is consistent with (or silent about) the element it
-// sits on, else the reason it is not. Checkbox/radio groups carry their
-// selector on the OPTION, not the group (see buildPlan's own "groups have no
-// element of their own" comment below), so every option's selector is
-// checked — a real form's id is not chosen to be adversarial, so this floor
-// still catches the ordinary case (f1/f2 in the fixture, whose `sel` uses a
-// name-attribute selector that plainly disagrees with the label) even though
-// it cannot catch every disguise (g1's own id, chosen to look consistent).
+// Every identity the PAGE states about this element, strongest FIRST, so the
+// defer message names the most meaningful source that disagreed.
+//
+// `n` is scan-page.js's verbatim `name` attribute. It was added 2026-07-31
+// because this guard had nothing else to read: `sel` is a SELECTOR, and
+// stableSel() tries `#id` FIRST, so on a page whose inputs all have ids —
+// most pages — `sel` carries the id and nothing else. The id is chosen by the
+// same page that chose the label, so a hostile board names the id after the
+// label and the guard sees no disagreement. It was unreachable on the shape
+// it was written for, and had only ever gone green against a fixture claiming
+// a selector the real scanner never emits.
+//
+// DELIBERATELY NOT READ HERE. Do not add either; both were measured.
+//   f.t   there is no type="ssn" and no type="salary" — a real SSN box is
+//         type="text". It catches zero of the text-typed attacks. `t` decides
+//         the VERB (type / tick / upload) and establishes no identity.
+//   f.ac  `autocomplete` appears on ZERO of the four honest board pages in
+//         tests/fixtures/boards/pages/, and on exactly one page in this repo:
+//         the hostile one. A signal only an attacker supplies is not a guard
+//         input.
+function identityStatements(el) {
+  const out = []
+  const push = (src, raw) => {
+    const v = String(raw ?? "").trim()
+    if (v) out.push({ src, raw: v, text: v.replace(/[_\-[\]().]+/g, " ") })
+  }
+  push("its name attribute", el.n)
+  push("its selector", selectorIdentity(el.sel))
+  return out
+}
+
+// "" when the label is consistent with (or silent about) the element it sits
+// on, else the reason it is not. Checkbox/radio groups have no element of
+// their own (see buildPlan's "groups have no element of their own" note), so
+// their identity rides on the stamped options — exactly where `sel` has
+// always lived.
+//
+// WHAT THIS IS WORTH, so it is never described as more. It is a PATCH, not a
+// control. Every token it reads is chosen by the page, so renaming `name` to
+// agree with the lying label defeats it in one line and nothing a user could
+// see changes — verified by running the real scanner over such a variant
+// (3 of 4 hostile fields undetected). And a field's MEANING is decided
+// server-side: an input named `phone`, labelled "Phone number", typed `tel`
+// can POST into a column called `ssn`, which is not in the document at all.
+// The real control against a government ID reaching a form is value-side —
+// no SSN/DOB/bank/passport value ever enters the answer bank — not here.
+// Widening IDENTITY_CATEGORIES does not change any of that.
 export function fieldIdentityMismatch(f) {
   const labelCat = identityCategoryOf(f.l)
   if (!labelCat) return ""
-  const sels = f.sel != null ? [f.sel] : (f.o ?? []).map((o) => o.sel)
-  for (const sel of sels.filter(Boolean)) {
-    const identity = selectorIdentity(sel)
-    const identityCat = identityCategoryOf(identity)
-    if (identityCat && identityCat !== labelCat) {
-      return (
-        `label reads as "${labelCat}" but the field's own identity ` +
-        `("${identity}") reads as "${identityCat}" — the label may not ` +
-        "describe this control"
-      )
+  const els = f.sel != null || f.n != null ? [f] : (f.o ?? [])
+  for (const el of els) {
+    for (const st of identityStatements(el)) {
+      const cat = identityCategoryOf(st.text)
+      if (cat && cat !== labelCat) {
+        return (
+          `label reads as "${labelCat}" but the field's own identity ` +
+          `(${st.src}, "${st.raw}") reads as "${cat}" — the label may not ` +
+          "describe this control"
+        )
+      }
     }
   }
   return ""
@@ -538,9 +578,21 @@ export function buildPlan({
       : noVisibleLabel
         ? `(no visible label on the page for this control${label ? ` — matched by "${label}"` : ""})`
         : label
+    // The PAGE's own name for the element the label is matched to, carried
+    // onto every item/defer record beside the label — never used for
+    // matching or routing, only for review. A group (checkbox/radio) has no
+    // element of its own (see the "groups have no element of their own"
+    // note below), so its name rides on the first stamped option that has
+    // one, same as fieldIdentityMismatch's own fallback. w2-engine's point:
+    // every token here is chosen by the page, so it catches nothing on its
+    // own — but showing the real target name beside the label makes a
+    // substitution non-silent even when fieldIdentityMismatch (above) does
+    // not fire on it.
+    const targetName = f.n ?? (f.o ?? []).find((o) => o.n)?.n
     const mLabel = () => ({
       ...(displayLabel !== label ? { matchedLabel: label } : {}),
       ...(noVisibleLabel ? { noVisibleLabel: true } : {}),
+      ...(targetName ? { n: targetName } : {}),
     })
     const verb = VERB[f.t]
 
@@ -1297,7 +1349,10 @@ function main() {
         ` miss=${cacheStats.miss} fp=${fp}`,
     )
     for (const d of plan.defer) {
-      console.log(`defer\t${d.k}\t${d.why}\t${d.label}`)
+      // Trailing column, not inserted mid-record: a consumer already reading
+      // the first four fields by position is unaffected. See mLabel()'s own
+      // comment on why the page's real name rides along beside the label.
+      console.log(`defer\t${d.k}\t${d.why}\t${d.label}\t${d.n ?? ""}`)
     }
     for (const s of skipped) {
       console.log(`skip\t${s.k}\t${s.why}\t${s.label}`)
@@ -1318,7 +1373,12 @@ function main() {
   console.log(`${plan.items.length} field(s) will be filled automatically.`)
   if (plan.defer.length) {
     console.log(`\n${plan.defer.length} left for you:`)
-    for (const d of plan.defer) console.log(`  - ${d.label} (${d.why})`)
+    // The page's real name for the target element, beside the label a human
+    // is approving — so a label that lies about the field it sits on is
+    // visible here even on the 1-of-4 escalated shape fieldIdentityMismatch
+    // cannot itself catch (see that function's own "WHAT THIS IS WORTH").
+    for (const d of plan.defer)
+      console.log(`  - ${d.label}${d.n ? ` [name="${d.n}"]` : ""} (${d.why})`)
   }
   console.log(`\nPlan written to ${relJs}`)
 }

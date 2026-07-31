@@ -262,8 +262,45 @@ export function buildPlan({
     // "confirm receipt" widget — there is no clean single verb for those),
     // and it has exactly one stamped option (never guess WHICH box to click
     // among several sharing a label).
+    // WHY f.labelExact GATES ALL OF THIS, and why nothing auto-ticks today.
+    //
+    // Every condition below reasons about `label` — but `label` is whatever
+    // scan-page.js produced, and that string is not trustworthy for a legal
+    // assertion. Three holes were demonstrated against this exact code:
+    //
+    //   1. DECOUPLING. labelOf() reads aria-labelledby and aria-label BEFORE
+    //      any visible <label>, so a page controls the matched string and the
+    //      displayed string INDEPENDENTLY:
+    //        <input aria-label="I certify the information is true">
+    //        <span>I agree to binding arbitration and waive a jury trial.</span>
+    //      The allowlist hits the innocuous text, the box auto-ticks, and the
+    //      approval message shows the innocuous text too. An irreversible legal
+    //      waiver, ticked, invisible in review.
+    //   2. TRUNCATION. txt() slices labels to 120 chars upstream of everything.
+    //      A 131-char certification the user approved, and the same text with
+    //      " I also agree to binding arbitration." appended, truncate to the
+    //      IDENTICAL string. Both auto-tick; nothing the user sees changes.
+    //   3. isHardConsent IS A PATTERN LIST, so it cannot be the load-bearing
+    //      control. "binding dispute resolution", "background investigation",
+    //      "adopt this document electronically" all pass it. The 26th
+    //      rewording is free.
+    //
+    // Holes 1 and 2 are the same defect: THE STRING THE USER APPROVED, THE
+    // STRING THAT IS MATCHED, AND THE STRING SHOWN IN THE APPROVAL MESSAGE MUST
+    // BE ONE STRING, AND IT MUST BE THE COMPLETE LABEL. Fix those and hole 3
+    // stops mattering, because a positive allowlist of exact full text the user
+    // typed becomes load-bearing and the pattern list demotes to belt-and-braces.
+    //
+    // So the gate is the PRECONDITION, not a mood: the scanner must positively
+    // assert `labelExact` — this label is the complete, visible text. It does
+    // not set that yet, so today every consent box defers and the user ticks it
+    // in the browser, which is hard rule 6 and always the safe direction.
+    // Whoever teaches scan-page.js to capture the untruncated visible label
+    // sets labelExact and this works; nobody can re-enable it by flipping a
+    // boolean without doing that.
     if (isConsent(label)) {
       const allowed =
+        f.labelExact === true &&
         !isHardConsent(label) &&
         consentAllowlist.has(normalizeQuestion(label)) &&
         f.t === "checkbox" &&

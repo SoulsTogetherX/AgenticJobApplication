@@ -209,10 +209,16 @@ test("a consent field is deferred even when the bank resolved it confidently", (
 // tests pin the actual fix: an exact, user-approved label moves a checkbox
 // from `defer` into `items` as a `check`, which is what makes ready=true
 // reachable at all.
-const checkboxConsent = (label, optCount = 1) => ({
+// labelExact is the scanner's positive assertion that this label is the
+// COMPLETE, VISIBLE text. scan-page.js does not set it yet — it prefers
+// aria-label over visible text and truncates at 120 chars — so on a real form
+// today every consent box defers. These tests pass it explicitly to exercise
+// the path that becomes live once the scanner can supply a trustworthy label.
+const checkboxConsent = (label, optCount = 1, labelExact = true) => ({
   k: "g1",
   t: "checkbox",
   l: label,
+  labelExact,
   o: Array.from({ length: optCount }, (_, i) => ({
     k: `f${i}`,
     l: label,
@@ -220,7 +226,7 @@ const checkboxConsent = (label, optCount = 1) => ({
   })),
 })
 
-test("an allowlisted consent checkbox is auto-checked, not deferred", () => {
+test("an allowlisted consent checkbox with an exact label is auto-checked", () => {
   const label = "I agree to the Terms and Conditions"
   const scan = scanOf([checkboxConsent(label)])
   const plan = buildPlan({
@@ -236,6 +242,30 @@ test("an allowlisted consent checkbox is auto-checked, not deferred", () => {
   assert.equal(plan.items[0].k, "f0", "targets the checkbox's own stamped key")
   assert.equal(plan.items[0].sel, "#c0")
   assert.equal(plan.items[0].why, "consent:allowlisted")
+})
+
+// The scanner cannot currently promise the label is the complete visible text,
+// and three exploits turned on exactly that gap: an aria-label saying "I
+// certify the information is true" over a visible "I agree to binding
+// arbitration"; a 131-char certification and an arbitration-appended variant
+// that truncate to the same 120 chars; and reworded clauses the pattern list
+// misses. Without the promise, nothing is ticked.
+test("an allowlisted consent box defers when the label is not exact", () => {
+  const label = "I agree to the Terms and Conditions"
+  // `false`, not `undefined` — passing undefined to a defaulted parameter
+  // triggers the default, which would have made this test assert the exact
+  // opposite of its name while still reading correctly.
+  const scan = scanOf([checkboxConsent(label, 1, false)])
+  const plan = buildPlan({
+    scan,
+    resolved: [],
+    adapter: greenhouse,
+    files,
+    consentAllowlist: new Set([label.toLowerCase()]),
+  })
+  assert.equal(plan.items.length, 0, "an untrustworthy label must never tick")
+  assert.equal(plan.defer.length, 1)
+  assert.equal(plan.defer[0].why, "consent")
 })
 
 test("readiness is reachable once the only consent box is allowlisted", () => {

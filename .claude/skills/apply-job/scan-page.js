@@ -14,6 +14,51 @@
 // sel=stable app-owned selector (id/name/aria-label) that outlives a React
 // remount, which data-aj does not — fill plans fall back to it.
 //
+// WHAT THE ELEMENT SAYS IT IS, reported as fields of its own rather than left
+// inside `sel` for a consumer to reverse-engineer out of a selector string:
+//   n   the element's `name` attribute, verbatim
+//   ac  the element's `autocomplete` attribute, verbatim, minus the two
+//       reserved values ("on"/"off") that name no field
+// plus `t`, which has always been here.
+//
+// READ THIS BEFORE USING ANY OF THEM. A PAGE CHOOSES ALL THREE; NONE IS
+// EVIDENCE ABOUT WHAT THE VALUE WILL BE USED FOR. They are reported, not
+// trusted. Two things they are legitimately for:
+//
+//   1. VERB SELECTION. Whether a control is typed into, ticked, or handed a
+//      file is decided by `t`, and a consumer should not be parsing that back
+//      out of a CSS selector. This is the real defect fixed here.
+//   2. MAKING A SUBSTITUTION NON-SILENT. Showing the target's real `name`
+//      beside the label in an approval message means a swapped field is
+//      visible to the user even when no check detected it.
+//
+// WHAT THEY ARE NOT: a control against a lying label. A consumer may compare
+// them with `l` and defer on a contradiction, and that is worth having,
+// but it is a PATCH and it is defeated by a one-line rename. Measured
+// (innov-resilience 2026-07-31, reproduced here by running this file through
+// tests/fixtures/boards/dom.mjs over a variant of the mislabelled fixture in
+// which id, name and autocomplete were all renamed to agree with the lying
+// label): 3 of 4 hostile fields go undetected, and nothing a user could see
+// changes. Specifically —
+//   - `type` has no token for any sensitive category. There is no
+//     type="ssn" and no type="salary"; a real SSN box is type="text". It
+//     caught zero of the two text-typed attacks. `type` is load-bearing for
+//     choosing a VERB and worthless for establishing identity.
+//   - `autocomplete` appears on zero of the four honest board pages in
+//     tests/fixtures/boards/pages/ and on exactly one page in this repo,
+//     the hostile one. A signal only attackers supply must never be a guard
+//     input.
+//   - `name` is usually the wire key a form submits under, which is some cost
+//     to lying — but a React board posts JSON off `.value` and never reads
+//     `name`, so on a SPA it is as decorative as `id`. ADVISORY.
+// And the one no scanner can reach at all: a field's MEANING is decided
+// server-side. An input named `phone`, labelled "Phone number" and typed
+// `tel` can POST into a column called `ssn`, and that fact is not in the
+// document. The real control against a government ID being typed into a form
+// is value-side — such a value never enters the answer bank — not here.
+// If anyone describes these three keys as closing that finding, that is a
+// documentation defect.
+//
 // Two long keys, on checkbox/radio groups only, because a tick is the one
 // thing on a form that ASSERTS something and fill-plan.mjs will not tick a box
 // the scanner cannot vouch for:
@@ -106,6 +151,30 @@ window.__ajScan = async (PROBE = true) => {
       if (s) return s
     }
     return undefined
+  }
+
+  // The element's OWN identity statements, verbatim and unnormalised — the
+  // scanner reports what the page wrote and nothing more. See the header for
+  // what these are for (verb selection, and making a substitution visible)
+  // and, more importantly, what they are NOT (evidence about the field).
+  //
+  // "on"/"off" are the two reserved autocomplete values; they answer "should
+  // the browser autofill this" and name no field, so emitting them would put
+  // a category-free string on the wire for every field on a form that turns
+  // autofill off wholesale. Every other value is an autofill field name.
+  //
+  // A key it has nothing to say is OMITTED, not set to undefined: a consumer
+  // asking `"n" in f` must get a straight answer, and a form that uses neither
+  // attribute pays nothing.
+  const AC_RESERVED = { on: 1, off: 1 }
+  const identityOf = (el) => {
+    const out = {}
+    if (!el || !el.getAttribute) return out
+    const n = full(el.getAttribute("name"))
+    if (n) out.n = n
+    const ac = full(el.getAttribute("autocomplete"))
+    if (ac && !AC_RESERVED[ac.toLowerCase()]) out.ac = ac
+    return out
   }
 
   const byId = (id) => {
@@ -494,6 +563,7 @@ window.__ajScan = async (PROBE = true) => {
     combos.push({
       k: stamp(el, "f"),
       sel: stableSel(el),
+      ...identityOf(el),
       t: "combo",
       l: label,
       lSeen: seenOf(el, dc),
@@ -559,9 +629,13 @@ window.__ajScan = async (PROBE = true) => {
         delete g.labelExact
         g.labelWhy = "more than one control shares this label"
       }
+      // The identity rides on the OPTION, not the group: a checkbox/radio
+      // group is a synthetic object with no element of its own, exactly as
+      // `sel` already works here.
       g.o.push({
         k: stamp(el, "f"),
         sel: stableSel(el),
+        ...identityOf(el),
         l: g.labelExact ? own : txt(own, 80),
         on: el.checked || undefined,
       })
@@ -571,6 +645,7 @@ window.__ajScan = async (PROBE = true) => {
     const f = {
       k: stamp(el, "f"),
       sel: stableSel(el),
+      ...identityOf(el),
       t: tag === "select" ? "select" : tag === "textarea" ? "textarea" : type,
       l: label,
       lSeen: seenOf(el, dg),
@@ -602,6 +677,7 @@ window.__ajScan = async (PROBE = true) => {
     fields.push({
       k: stamp(el, "f"),
       sel: stableSel(el),
+      ...identityOf(el),
       t: "richtext",
       l: labelOf(el),
       lSeen: seenOf(el, labelDetail(el)),

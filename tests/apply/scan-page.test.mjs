@@ -1091,6 +1091,142 @@ test("the scan still reports the shape it always did", async () => {
   assert.equal(out.btns[0].r, "submit")
 })
 
+// --- the element's own identity: n / ac ------------------------------------
+//
+// These are REPORTED, not trusted. See the header block in scan-page.js: a
+// page chooses `name`, `type` and `autocomplete` alike, so none of them is
+// evidence about what a value will be used for. What these tests pin is only
+// that the scanner puts the page's own statements on the wire as fields of
+// their own, instead of leaving a consumer to parse them back out of `sel` —
+// which it could not do, because `sel` carries whichever SINGLE attribute
+// made the element unique, and stableSel() tries `#id` first.
+//
+// The last test in this section is the one that matters most: it pins that
+// the keys do NOT rescue a lie once the page renames its attributes to agree
+// with the label. A future reader must not be able to mistake this for a
+// control.
+
+test("the element's own name attribute is reported, not buried in the selector", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("label", { for: "m-phone" }, ["Phone number"]),
+        h("input", { type: "text", id: "m-phone", name: "ssn" }),
+      ]),
+    ]),
+  )
+  const f = out.fields[0]
+  // The selector says "m-phone", which agrees with the lying label. The name
+  // says "ssn". Without `n` a consumer reading `sel` has no second statement
+  // to compare against, which is exactly how the routing guard was
+  // unreachable.
+  assert.equal(f.sel, "#m-phone")
+  assert.equal(f.n, "ssn")
+})
+
+test("a name attribute is reported on the OPTION of a checkbox group, like sel", async () => {
+  // A checkbox/radio group is a synthetic object with no element of its own,
+  // so its identity has to ride on the stamped option — the same place `sel`
+  // already lives.
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("p", { id: "q1" }, ["Are you legally authorized to work?"]),
+        h("input", {
+          type: "checkbox",
+          id: "m-auth",
+          name: "agree_arbitration",
+          "aria-labelledby": "q1",
+        }),
+      ]),
+    ]),
+  )
+  const g = onlyGroup(out)
+  assert.equal(g.n, undefined, "the group is synthetic and has no element")
+  assert.equal(g.o[0].n, "agree_arbitration")
+  assert.equal(g.o[0].sel, "#m-auth")
+})
+
+test("autocomplete is reported when it names a field", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("label", { for: "a1" }, ["Phone"]),
+        h("input", { type: "text", id: "a1", autocomplete: "tel" }),
+      ]),
+    ]),
+  )
+  assert.equal(out.fields[0].ac, "tel")
+})
+
+test("autocomplete=off/on name no field and are not reported", async () => {
+  // "on"/"off" answer "should the browser autofill this", not "what is this".
+  // Emitting them would put a category-free string on the wire for every
+  // field of any form that turns autofill off wholesale.
+  for (const v of ["off", "on", "OFF"]) {
+    const out = await scan(
+      h("body", {}, [
+        h("div", {}, [
+          h("label", { for: "a1" }, ["Phone"]),
+          h("input", { type: "text", id: "a1", autocomplete: v }),
+        ]),
+      ]),
+    )
+    assert.equal(out.fields[0].ac, undefined, `autocomplete="${v}" was emitted`)
+  }
+})
+
+test("an honest field with no name or autocomplete carries neither key", async () => {
+  // Absent on the wire rather than present-and-empty, so this costs nothing
+  // on a form that does not use them.
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("label", { for: "t1" }, ["Full name"]),
+        h("input", { type: "text", id: "t1" }),
+      ]),
+    ]),
+  )
+  const f = out.fields[0]
+  assert.ok(!("n" in f), `n was emitted as ${JSON.stringify(f.n)}`)
+  assert.ok(!("ac" in f), `ac was emitted as ${JSON.stringify(f.ac)}`)
+})
+
+test("renaming the attributes to agree with a lying label leaves NOTHING to detect", async () => {
+  // THE HONEST LIMIT, pinned so it cannot be quietly forgotten. This is the
+  // same attack as the first test in this section — a control that harvests a
+  // government ID under a "Phone number" label — with one difference: the
+  // page also renamed `name` and `autocomplete` to agree with the label.
+  //
+  // Every identity token the DOM can show now says "phone". The field's real
+  // meaning is decided server-side and is not in the document at all. So a
+  // consumer comparing `l` against n/t/ac/sel finds no contradiction, and it
+  // is CORRECT that it finds none — there is nothing here to find.
+  //
+  // Which is why these keys are not the control. The control is value-side:
+  // an SSN never enters the answer bank, so there is no SSN to misroute.
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("label", { for: "m-phone" }, ["Phone number"]),
+        h("input", {
+          type: "text",
+          id: "m-phone",
+          name: "phone_number",
+          autocomplete: "tel",
+        }),
+      ]),
+    ]),
+  )
+  const f = out.fields[0]
+  assert.deepEqual(
+    { sel: f.sel, n: f.n, ac: f.ac, t: f.t },
+    { sel: "#m-phone", n: "phone_number", ac: "tel", t: "text" },
+    "every DOM-visible identity token agrees with the label; the scanner has " +
+      "no way to know the value is bound for an SSN column",
+  )
+})
+
 // --- the installed global ---------------------------------------------------
 
 test("the installed scanner cannot be swapped out afterwards", async () => {

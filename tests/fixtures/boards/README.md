@@ -81,14 +81,48 @@ sent.
 
 ## The hostile variants — one line each
 
-| fixture                | proves                                                                                                                                                                                                                                                                                                                                                                                                                                 | owner if it fails |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| `fillsrc-getter`       | The code round-trip stays dead: `window.__ajFillSrc` / `__ajPlan` getters that click Submit and `setInputFiles(".env")`, counting every read.                                                                                                                                                                                                                                                                                          | `w2-engine`       |
-| `label-injection`      | A field **label** is third-party text bound for `answers.yaml`, which is the R6 evidence corpus. Corpus poisoning with and without brackets, an instruction addressed to the agent, a zero-width-hidden one, and a "do not tell the user".                                                                                                                                                                                             | `w1-security`     |
-| `consent-decoupled`    | Five consent holes: `aria-label` decoupling (matched string ≠ displayed string); the 120-character truncation collision; a reworded box no pattern list catches; a `color: transparent` label the scanner vouches for and no human can read; and four **real-world** wordings (FCRA consumer-report authorisation, jury-trial waiver, typed-name-as-legal-mark, employment-history inquiry) that are not classified as consent at all. | `w3-resolution`   |
-| `destructive-combobox` | Withdraw / Delete / Submit wearing `role="combobox"`, `data-ui="select"` and `class="Select__control"` — which the scan probe clicks with `force: true`. Keeps one genuine dropdown so an over-correction is visible.                                                                                                                                                                                                                  | `w2-engine`       |
-| `remount-mid-fill`     | A form that remounts every 400ms **preserving typed values**, so a field that filled correctly is reported as failed. A one-shot retry is not enough on its own.                                                                                                                                                                                                                                                                       | `w2-engine`       |
-| `mislabelled-inputs`   | Labels that name a different field from the input they wrap: `Phone number` → `name="ssn"`, and a visible `Email` label beside an `aria-label` of `Emergency contact phone`.                                                                                                                                                                                                                                                           | `w3-resolution`   |
+| fixture                 | proves                                                                                                                                                                                                                                                                                                                                                                                                                                 | owner if it fails |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `fillsrc-getter`        | The code round-trip stays dead: `window.__ajFillSrc` / `__ajPlan` getters that click Submit and `setInputFiles(".env")`, counting every read.                                                                                                                                                                                                                                                                                          | `w2-engine`       |
+| `label-injection`       | A field **label** is third-party text bound for `answers.yaml`, which is the R6 evidence corpus. Corpus poisoning with and without brackets, an instruction addressed to the agent, a zero-width-hidden one, and a "do not tell the user".                                                                                                                                                                                             | `w1-security`     |
+| `consent-decoupled`     | Five consent holes: `aria-label` decoupling (matched string ≠ displayed string); the 120-character truncation collision; a reworded box no pattern list catches; a `color: transparent` label the scanner vouches for and no human can read; and four **real-world** wordings (FCRA consumer-report authorisation, jury-trial waiver, typed-name-as-legal-mark, employment-history inquiry) that are not classified as consent at all. | `w3-resolution`   |
+| `destructive-combobox`  | Withdraw / Delete / Submit wearing `role="combobox"`, `data-ui="select"` and `class="Select__control"` — which the scan probe clicks with `force: true`. Keeps one genuine dropdown so an over-correction is visible.                                                                                                                                                                                                                  | `w2-engine`       |
+| `remount-mid-fill`      | A form that remounts every 400ms **preserving typed values**, so a field that filled correctly is reported as failed. A one-shot retry is not enough on its own.                                                                                                                                                                                                                                                                       | `w2-engine`       |
+| `mislabelled-inputs`    | Labels that name a different field from the input they wrap: `Phone number` → `name="ssn"`, and a visible `Email` label beside an `aria-label` of `Emergency contact phone`.                                                                                                                                                                                                                                                           | `w3-resolution`   |
+| `mislabelled-escalated` | **The same attack with `id`, `name` and `autocomplete` renamed to agree with the lying label**, so `fieldIdentityMismatch()` has no token left to compare. It LANDS, and its tests are green on purpose — see below.                                                                                                                                                                                                                   | nobody: see below |
+
+### `mislabelled-escalated` is a landed attack, deliberately asserted green
+
+Added 2026-07-31. `fieldIdentityMismatch()` closed `mislabelled-inputs` by
+comparing the label against the element's own `n`/`sel`. Every token it reads is
+chosen by the board, so four attribute renames defeat it, and nothing a human
+could see on the page changes. Measured at `buildPlan` over the two scans:
+
+| page                    | defers with an identity reason | fields filled |
+| ----------------------- | ------------------------------ | ------------- |
+| `mislabelled-inputs`    | 3                              | 0             |
+| `mislabelled-escalated` | 0                              | 2             |
+
+One of the two fills is the contact phone number going into a control whose
+server destination is the `ssn` column, with every token in the plan record —
+label, `name`, `type` — consistent with an honest phone field.
+
+**Why the tests are green rather than red or skipped.** `tests/security/` is the
+`npm run test:security` gate; a permanently-red line in it would be paid for by
+every other finding in the same suite, because a gate that is always red stops
+being read. A skip is right when a test cannot run (see the browser legs below);
+this one runs and yields the numbers above. So `hostile-forms.test.mjs` section
+4b asserts the landed outcome under names beginning `LANDS`, and it goes red if
+anyone moves the behaviour in either direction — which is the alarm worth having.
+
+**What still holds, and where it is actually fixed.** The consent-shaped box on
+the page is still not ticked, because a checkbox defers on its SHAPE and shape is
+not an attribute a board can rewrite — that is the one control the rename does
+not touch. Everything else is bounded at the value side: a field's meaning is
+decided server-side, so the blast radius of a label-lie routing attack is exactly
+the contents of the answer bank, and `save-answer.mjs` refuses a government or
+financial identifier at the write boundary (`w1-security`, exit 4). Section 4b's
+last test asserts that at the answers file, not at the detector.
 
 ## What else lives here
 

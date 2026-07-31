@@ -58,6 +58,7 @@ const PAIRS = [
   ["consent-decoupled", "hostile-consent", "GET"],
   ["destructive-combobox", "hostile-combobox", "GET"],
   ["mislabelled-inputs", "hostile-mislabelled", "GET"],
+  ["mislabelled-escalated", "hostile-escalated", "GET"],
 ]
 
 let board
@@ -154,6 +155,21 @@ test("the fixtures assert more than a label: sel, type and vouch state are all p
   for (const key of [
     "k",
     "sel",
+    // `n` and `ac` are scan-page.js's identityOf() output, added 2026-07-31
+    // and read by fill-plan.mjs's fieldIdentityMismatch(). They are listed
+    // here because a regeneration that silently DROPPED them would otherwise
+    // go green — the deep-equal above compares the fixture to whatever the
+    // scanner currently does, so it cannot tell "the scanner stopped emitting
+    // n" from "the fixture was correct all along".
+    //
+    // `ac` is carried by exactly one field in the corpus
+    // (mislabelled-escalated f1, autocomplete="tel") because it is a signal
+    // only an attacker supplies: it appears on ZERO of the four honest board
+    // pages. mislabelled-inputs f1 has autocomplete="off", which identityOf
+    // suppresses as reserved — so the suppression path is covered too, by the
+    // ABSENCE of `ac` on that field.
+    "n",
+    "ac",
     "t",
     "l",
     "lSeen",
@@ -162,6 +178,7 @@ test("the fixtures assert more than a label: sel, type and vouch state are all p
     "req",
     "v",
     "o.sel",
+    "o.n",
     "o.l",
   ]) {
     assert.ok(seen.has(key), `no fixture in the corpus carries \`${key}\``)

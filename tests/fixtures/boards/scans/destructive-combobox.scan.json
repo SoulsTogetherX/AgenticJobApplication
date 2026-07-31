@@ -7,7 +7,7 @@
   "heading": "Senior Full-Stack Engineer",
   "kind": "form",
   "fields": [
-    { "k": "f5", "sel": "#f-name", "t": "text", "l": "Full name" },
+    { "k": "f5", "sel": "#f-name", "n": "name", "t": "text", "l": "Full name" },
     {
       "k": "f1",
       "sel": "#country",

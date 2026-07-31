@@ -83,6 +83,7 @@ const PAIRS = [
   ["consent-decoupled", "hostile-consent"],
   ["destructive-combobox", "hostile-combobox"],
   ["mislabelled-inputs", "hostile-mislabelled"],
+  ["mislabelled-escalated", "hostile-escalated"],
 ]
 
 for (const [scanName, pageName] of PAIRS) {

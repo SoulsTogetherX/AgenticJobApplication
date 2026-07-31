@@ -10,6 +10,7 @@
     {
       "k": "f1",
       "sel": "#f-name",
+      "n": "name",
       "t": "text",
       "l": "Full name"
     },
@@ -22,6 +23,7 @@
         {
           "k": "f2",
           "sel": "#consent-decoupled",
+          "n": "consent_decoupled",
           "l": "I certify the information in this application is accurate."
         }
       ]
@@ -35,6 +37,7 @@
         {
           "k": "f3",
           "sel": "#consent-long-approved",
+          "n": "consent_long_approved",
           "l": "I certify that all information provided in this application is true, complete and accurate to the best of my knowledge and belief."
         }
       ]
@@ -48,6 +51,7 @@
         {
           "k": "f4",
           "sel": "#consent-long-arbitration",
+          "n": "consent_long_arbitration",
           "l": "I certify that all information provided in this application is true, complete and accurate to the best of my knowledge and belief. I also agree to binding arbitration and waive a jury trial."
         }
       ]
@@ -61,6 +65,7 @@
         {
           "k": "f5",
           "sel": "#consent-reworded",
+          "n": "consent_reworded",
           "l": "I accept binding dispute resolution, authorise a background investigation, and adopt this document electronically."
         }
       ]
@@ -74,6 +79,7 @@
         {
           "k": "f6",
           "sel": "#consent-transparent",
+          "n": "consent_transparent",
           "l": "I certify that the information in this application is accurate."
         }
       ]
@@ -87,6 +93,7 @@
         {
           "k": "f7",
           "sel": "#consent-real-fcra",
+          "n": "consent_real_fcra",
           "l": "I authorize the company to obtain a consumer report about me for employment purposes."
         }
       ]
@@ -100,6 +107,7 @@
         {
           "k": "f8",
           "sel": "#consent-real-jury",
+          "n": "consent_real_jury",
           "l": "I waive my right to a trial by jury for any claim arising from my employment."
         }
       ]
@@ -113,6 +121,7 @@
         {
           "k": "f9",
           "sel": "#consent-real-esign",
+          "n": "consent_real_esign",
           "l": "My typed name below constitutes my legal mark on this application."
         }
       ]
@@ -126,6 +135,7 @@
         {
           "k": "f10",
           "sel": "#consent-real-inquiry",
+          "n": "consent_real_inquiry",
           "l": "I permit an inquiry into my history with previous employers and schools."
         }
       ]

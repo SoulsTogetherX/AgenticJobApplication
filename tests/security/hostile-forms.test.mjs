@@ -567,6 +567,15 @@ test("FINDING (w3-resolution): a label that names a different field aims the ans
   // IDENTITY_CATEGORIES changes this — the fix needs the scanner to REPORT the
   // element's own identity (name/type/autocomplete) as a field of its own,
   // which is w2-engine's scan-page.js, not w3's matcher.
+  //
+  // GREEN SINCE 2026-07-31, AND ONLY PARTIALLY CLOSED. It needed two things:
+  // scan-page.js emitting `n` (w2-engine) and fieldIdentityMismatch reading it
+  // (w3-resolution) — neither alone flips it, measured both ways. What it does
+  // NOT mean is that the attack is dead: every token the guard reads is chosen
+  // by the board, and section 4b below runs the same page with `id`, `name`
+  // and `autocomplete` renamed to agree with the lying label. That variant
+  // lands, its tests are green on purpose, and they say so in their names.
+  // Read them before treating this line as a closed finding.
   const s = scan("mislabelled-inputs")
   const plan = planFrom(s)
 
@@ -654,4 +663,192 @@ test("the mislabelled fixture is genuinely contradictory, so the tests above can
     pairs.find(([l]) => l === "Phone number"),
     ["Phone number", "ssn"],
   )
+})
+
+test("the fixture's `_real_name` annotation still agrees with the scanner's own `n`", () => {
+  // `_real_name` is a HUMAN claim about the page and `n` is scanner output;
+  // the tests above are built on the first and the guard reads the second.
+  // Once both are in the file they can drift apart, and a drift would make the
+  // finding test assert against a truth the guard never sees. Cheapest place
+  // to notice: here.
+  const pairs = []
+  for (const f of scan("mislabelled-inputs").fields ?? []) {
+    const emitted = f.n ?? (f.o ?? []).find((o) => o.n)?.n
+    if (f._real_name) pairs.push([f._real_name, emitted ?? null])
+  }
+  // Asserted as ONE deepEqual over all of them, and the count is part of the
+  // expectation — an annotation that vanished would otherwise make this pass
+  // by having nothing to compare.
+  // Three, not four: f4 carries `_visible_label` and no `_real_name`, because
+  // its name AGREES with the matched label — it is a review attack, not a
+  // routing one.
+  assert.deepEqual(pairs, [
+    ["ssn", "ssn"],
+    ["salary_floor", "salary_floor"],
+    ["agree_arbitration", "agree_arbitration"],
+  ])
+})
+
+// ---------------------------------------------------------------------------
+// 4b. The same attack, escalated past the guard that closed 4
+//
+// READ THIS BEFORE READING SECTION 4 AS SETTLED. The finding above is green
+// because fieldIdentityMismatch() compares the label against `n`/`sel`. Every
+// token it reads is chosen by the board. mislabelled-escalated.html renames
+// id, name and autocomplete to AGREE with the lying label — four attribute
+// edits, nothing a human could see on the page changes — and the guard has
+// nothing left to compare.
+//
+// These tests are GREEN and they assert that an attack LANDS. That is a
+// deliberate choice and here is the reasoning, so nobody re-litigates it by
+// accident:
+//
+//   - A permanently-red test was the obvious alternative. Rejected: this
+//     directory is the `npm run test:security` gate, and a gate that is always
+//     red stops being read — by every other agent, for every other finding.
+//     The cost of one always-red line is paid by every future finding in the
+//     same suite.
+//   - A skip-with-reason (browser-vouch.test.mjs's pattern) is right when a
+//     test CANNOT run. This one runs and produces a number. Skipping would
+//     throw the number away.
+//   - So: assert the landed outcome, and name it so the green cannot be
+//     misread. If anyone changes the behaviour in EITHER direction these go
+//     red, which is the alarm you actually want — "someone moved this, decide
+//     whether the finding is now closed."
+//
+// WHERE THIS IS GENUINELY STOPPED: the value side. A field's meaning is
+// decided server-side, so no scanner can recover it; the blast radius of a
+// label-lie routing attack is exactly the contents of the answer bank. The
+// last test in this section asserts that boundary at the FILE.
+// ---------------------------------------------------------------------------
+
+// The truth the document does not contain: which column the server writes.
+const destinationOf = (f) =>
+  f._destination ?? (f.o ?? []).find((o) => o._destination)?._destination
+
+const PROFILE_PHONE = /^\s*phone:\s*"?([^"\n]+?)"?\s*$/m.exec(
+  fs.readFileSync(PROFILE, "utf8"),
+)?.[1]
+
+test("LANDS (unfixable in the document): renaming the attributes to agree with the lying label defeats the identity guard entirely", () => {
+  // Asserted at buildPlan, not at fieldIdentityMismatch: the question is not
+  // "did the guard fire" but "what did the pipeline decide to type, and into
+  // what".
+  const s = scan("mislabelled-escalated")
+  const plan = planFrom(s)
+  const byK = new Map(s.fields.map((f) => [f.k, f]))
+
+  const typed = plan.items
+    .filter((i) => i.how === "fill")
+    .map((i) => ({
+      label: i.label,
+      name: i.n,
+      value: i.value,
+      serverColumn: destinationOf(byK.get(i.k)) ?? null,
+    }))
+
+  assert.ok(
+    PROFILE_PHONE,
+    "could not read the contact phone out of the profile fixture",
+  )
+  assert.deepEqual(
+    typed,
+    [
+      {
+        label: "Phone number",
+        name: "phone",
+        value: PROFILE_PHONE,
+        // The whole finding in one key: every token in this record is
+        // consistent, and the value still goes to `ssn`.
+        serverColumn: "ssn",
+      },
+      {
+        label: "Email",
+        name: "emergency_contact_phone",
+        value: PROFILE_PHONE,
+        serverColumn: "emergency_contact_phone",
+      },
+    ],
+    "the escalated page's landed fills changed — re-derive whether the " +
+      "finding is still open before editing this expectation",
+  )
+})
+
+test("LANDS: the escalation buys 3 fewer identity defers and 2 more fills than the unescalated page", () => {
+  // The measurement, so the claim is falsifiable rather than narrative.
+  // Command: node --test tests/security/hostile-forms.test.mjs
+  const count = (name) => {
+    const s = scan(name)
+    const plan = planFrom(s)
+    return {
+      identityDefers: plan.defer.filter((d) =>
+        /the label may not describe/.test(d.why ?? ""),
+      ).length,
+      fills: plan.items.filter((i) => i.how === "fill").length,
+    }
+  }
+  assert.deepEqual(
+    {
+      base: count("mislabelled-inputs"),
+      escalated: count("mislabelled-escalated"),
+    },
+    {
+      base: { identityDefers: 3, fills: 0 },
+      escalated: { identityDefers: 0, fills: 2 },
+    },
+  )
+})
+
+test("SURVIVES the escalation: the consent-shaped box is still not ticked, because its defence reads no token the board chose", () => {
+  // The one control the rename does not touch. A checkbox defers on its SHAPE
+  // — it is a control that ASSERTS something — and shape is not an attribute
+  // the page can rewrite. On this page that is the difference between the user
+  // ticking an arbitration waiver and not.
+  const s = scan("mislabelled-escalated")
+  const plan = planFrom(s)
+  const g = s.fields.find((f) => f.t === "checkbox")
+  assert.ok(g, "the escalated fixture must still carry the consent-shaped box")
+  assert.equal(destinationOf(g), "agree_arbitration")
+
+  const acted = [...plan.items, ...plan.defer].filter(
+    (i) => i.k === g.k && (i.how === "check" || i.how === "fill"),
+  )
+  assert.deepEqual(
+    acted,
+    [],
+    "a box whose server destination is an arbitration waiver was planned to be " +
+      "ticked from a work-authorisation answer",
+  )
+})
+
+test("THE REAL CONTROL, at the file: the escalated page's own label cannot get a government ID into answers.yaml", () => {
+  // Where the escalated attack is actually stopped. The board picks the label,
+  // so it can ask for anything under any wording; what it cannot do is make
+  // the pipeline HOLD an identifier to type. Asserted at the file the bank
+  // lives in, not at findSensitiveValues() — the sanitiser flagging it is not
+  // a pass.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qa-escalated-"))
+  try {
+    const file = path.join(dir, "answers.yaml")
+    // 000-00-0000 and 000000000 are never-issued SSNs; nothing here is a real
+    // identifier, and none of it belongs to the user.
+    const label = scan("mislabelled-escalated").fields[0].l
+    const r = saveAnswer(label, "123-45-6789", file)
+    const written = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : ""
+
+    assert.deepEqual(
+      { onDisk: written.includes("123-45-6789"), exit: r.status },
+      { onDisk: false, exit: 4 },
+      "an SSN offered under the escalated board's own label reached the bank " +
+        `(exit ${r.status}); once it is in there, every future application can ` +
+        "type it into any field any page labels 'Phone number'",
+    )
+    // And the refusal must not perform the disclosure it is preventing.
+    assert.ok(
+      !`${r.stdout ?? ""}${r.stderr ?? ""}`.includes("123-45-6789"),
+      "the refusal echoed the value back into stdout/stderr",
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

@@ -8,6 +8,7 @@
     {
       "k": "f1",
       "sel": "#m-phone",
+      "n": "ssn",
       "t": "text",
       "l": "Phone number",
       "_real_name": "ssn"
@@ -15,6 +16,7 @@
     {
       "k": "f2",
       "sel": "#m-salary",
+      "n": "salary_floor",
       "t": "text",
       "l": "Preferred start date",
       "_real_name": "salary_floor"
@@ -30,6 +32,7 @@
         {
           "k": "f3",
           "sel": "#m-authorized",
+          "n": "agree_arbitration",
           "l": "Are you legally authorized to work in the United States?"
         }
       ]
@@ -37,6 +40,7 @@
     {
       "k": "f4",
       "sel": "#m-email",
+      "n": "emergency_contact_phone",
       "t": "email",
       "l": "Emergency contact phone",
       "lSeen": "Email",

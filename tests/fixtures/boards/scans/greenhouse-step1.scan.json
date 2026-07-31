@@ -10,6 +10,7 @@
     {
       "k": "f2",
       "sel": "#first_name",
+      "n": "job_application[first_name]",
       "t": "text",
       "l": "First Name *",
       "req": true
@@ -17,14 +18,40 @@
     {
       "k": "f3",
       "sel": "#last_name",
+      "n": "job_application[last_name]",
       "t": "text",
       "l": "Last Name *",
       "req": true
     },
-    { "k": "f4", "sel": "#email", "t": "email", "l": "Email *", "req": true },
-    { "k": "f5", "sel": "#phone", "t": "tel", "l": "Phone" },
-    { "k": "f6", "sel": "#resume", "t": "file", "l": "Attach" },
-    { "k": "f7", "sel": "#cover_letter", "t": "file", "l": "Attach" },
+    {
+      "k": "f4",
+      "sel": "#email",
+      "n": "job_application[email]",
+      "t": "email",
+      "l": "Email *",
+      "req": true
+    },
+    {
+      "k": "f5",
+      "sel": "#phone",
+      "n": "job_application[phone]",
+      "t": "tel",
+      "l": "Phone"
+    },
+    {
+      "k": "f6",
+      "sel": "#resume",
+      "n": "job_application[resume]",
+      "t": "file",
+      "l": "Attach"
+    },
+    {
+      "k": "f7",
+      "sel": "#cover_letter",
+      "n": "job_application[cover_letter]",
+      "t": "file",
+      "l": "Attach"
+    },
     {
       "k": "f1",
       "t": "combo",
@@ -35,6 +62,7 @@
     {
       "k": "f8",
       "sel": "#gh_long_q",
+      "n": "job_application[answers][0]",
       "t": "textarea",
       "l": "Please describe, in as much detail as you are comfortable sharing, the single engineering decision you are most proud of",
       "req": true
@@ -45,8 +73,8 @@
       "l": "Are you legally authorized to work in the United States?",
       "labelWhy": "label source is fieldset legend",
       "o": [
-        { "k": "f9", "l": "Yes" },
-        { "k": "f10", "l": "No" }
+        { "k": "f9", "n": "job_application[answers][1]", "l": "Yes" },
+        { "k": "f10", "n": "job_application[answers][1]", "l": "No" }
       ]
     }
   ],

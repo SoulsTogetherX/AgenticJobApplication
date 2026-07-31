@@ -177,6 +177,14 @@ export const ROUTES = [
     proves:
       "labels that describe a different field from the input they wrap (phone -> ssn)",
   },
+  {
+    name: "hostile-escalated",
+    path: "/hostile/mislabelled-escalated",
+    file: path.join(HOSTILE, "forms", "mislabelled-escalated.html"),
+    ats: "generic",
+    proves:
+      "the same substitution with id/name/autocomplete renamed to agree with the lying label — no token left to compare",
+  },
 ]
 
 const byName = new Map(ROUTES.map((r) => [r.name, r]))

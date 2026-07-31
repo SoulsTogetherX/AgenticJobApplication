@@ -1,11 +1,20 @@
 # 05 — `scripts/apply/` + the browser engine
 
-Eight scripts plus three browser-side files. This is the newest and most
-mechanically intricate part of the project: the form-filling path.
+This is the newest and most mechanically intricate part of the project: the
+form-filling path.
 
 **The governing idea:** forms are filled by _scripts_, not by the model. The model
 is in the loop exactly twice per application — once to write the approval message,
 once to hand the user the submit button.
+
+> **Partially rewritten during Phase 1 of `docs/autonomy-plan.md`
+> (2026-07-31).** `.claude/skills/apply-job/fill-page.js` **no longer exists**;
+> the engine is `scripts/apply/fill-engine.mjs` and it runs Playwright-side. The
+> `addScriptTag` bootstrap this file used to document was the round-trip RCE
+> (AUDIT **C6**) and is closed — see "The bootstrap it prints" and "the execution
+> engine" below, both corrected. The `scan-page.js` / `scan.driver.mjs` sections
+> describe files that `w2-engine` is still changing; treat their line counts and
+> step lists as approximate and read the file.
 
 ---
 
@@ -14,15 +23,18 @@ once to hand the user the submit button.
 ```
 .claude/skills/apply-job/scan.driver.mjs   ← runs Playwright-side (real locators)
 .claude/skills/apply-job/scan-page.js      ← runs in the PAGE (DOM access)
+scripts/apply/scan-engine.mjs              ← the same scan for the local runner
         │  produces the scan
         ▼
 scripts/apply/field-cache.mjs      remembers the SHAPE of forms already seen
 scripts/apply/answer-bank.mjs      scan fields → answers, from facts only
 scripts/apply/ats/*.mjs            per-ATS knowledge (never behaviour)
 scripts/apply/fill-plan.mjs        the DECISIONS happen here
-        │  produces fill-plan.js / .json
+        │  produces fill-plan.js (a self-contained driver) / .json
         ▼
-.claude/skills/apply-job/fill-page.js      ← the EXECUTION engine, no decisions
+scripts/apply/fill-engine.mjs      ← the EXECUTION engine, no decisions,
+                                      Playwright-side, never in the page
+scripts/apply/browser.mjs          ← reads the engine's own text off disk
 scripts/apply/pending-questions.mjs        every open question, across all jobs
 ```
 
@@ -397,43 +409,71 @@ anything is left to fill. Emitting a boolean means the caller branches on a flag
 instead of reading the plan and forming an opinion. On `ready=true` the path is
 scan → fill → hand over, with **no model step in between**.
 
-> **Defect:** consent defers count against `ready`, and consent boxes are
-> universal, so `ready=true` is effectively unreachable — which defeats the fast
-> path the flag exists to enable. `pending-questions.mjs` excludes consent for
+> **Defect, still open:** consent defers count against `ready`, and consent boxes
+> are universal, so `ready=true` is effectively unreachable — the documented fast
+> path has never once executed. `pending-questions.mjs` excludes consent for
 > exactly this reason, so the two scripts disagree. AUDIT **H10**.
+>
+> **Do not close this by auto-ticking consent.** That was tried and withdrawn:
+> the allowlist, `isHardConsent` and the scanner's `labelExact` vouch all read
+> one page-supplied string, so they are one control wearing three hats. The
+> agreed direction is to redefine `ready=true` as **"no model turn is needed"**
+> rather than "nothing is deferred" — a box the user ticks in the browser costs
+> no model turn. See the dated correction in `docs/autonomy-plan.md` §3.3.
 
 ### The bootstrap it prints
 
-```js
-;async (page) => {
-  for (const p of [
-    ".claude/skills/apply-job/fill-page.js",
-    "jobs/<slug>/fill-plan.js",
-  ])
-    await page.addScriptTag({ path: p })
-  const [src, plan] = await page.evaluate(() => [
-    window.__ajFillSrc,
-    window.__ajPlan,
-  ])
-  return await eval("(" + src + ")")(page, plan)
-}
+```
+mcp__playwright__browser_run_code_unsafe
+  { filename: "jobs/<slug>/fill-plan.js" }
 ```
 
-`addScriptTag` loads the engine and the plan **off disk**, so nothing but those six
-lines enters agent context regardless of how big the form is.
+`buildDriverSource()` **generates** `jobs/<slug>/fill-plan.js` — a single
+`async (page) => { … }` with the engine's text and the plan embedded as string
+literals. Both were read in an ordinary Node process (fill-plan.mjs itself); the
+vm the MCP tool runs it in has no `fs`, no `require`, and no working dynamic
+`import`. `filename` rather than `code` is what keeps a large form's plan out of
+agent context.
 
-> **Defect:** it reads executable code back **out of the untrusted page** and
-> `eval`s it host-side. A hostile ATS page can replace `window.__ajFillSrc`. AUDIT
-> **C6**. And `resolveFields` passes the whole scan as a command-line argument,
-> which on Windows has a ~32K limit — AUDIT **M15**.
+The generated driver does exactly this:
+
+```js
+const runFill = (0, eval)(ENGINE) // ENGINE came off OUR OWN disk
+return await runFill(page, PLAN) // PLAN travels as an argument
+```
+
+> **AUDIT C6 — CLOSED (`fc645f5`, `1cc7d9b`).** The version this replaced
+> `addScriptTag`ed the engine **into** the page, read `window.__ajFillSrc` back
+> **out**, and eval'd that host-side where `page` lives. Any script on a
+> third-party application page could define that global as a getter and choose
+> what ran with a live `page` handle — navigate, read everything already typed,
+> `setInputFiles` the user's `.env` into its own form, click Submit. Nothing is
+> read back out of the page any more. **Do not reintroduce a read-back**, and do
+> not "fix" the loading path back to `addScriptTag`: a nonce-CSP board (Ashby)
+> refuses an inline `<script>` outright, which broke the fill step on a live
+> application.
+>
+> Still open from the original entry: `resolveFields` passes the whole scan as a
+> command-line argument, which on Windows has a ~32K limit — AUDIT **M15**.
 
 ---
 
-## `fill-page.js` (400 lines) — the execution engine
+## `fill-engine.mjs` — the execution engine
 
-Also shipped as **source**, not a module: the driver loads it into the page, reads
-the string back, and evals it Playwright-side where `page` and real locators exist.
-Everything must be self-contained — no closure over module scope, no imports.
+An ordinary ES module with one default export, `fillPage(page, plan)`. **Every
+statement in it is a Playwright call** (`page.locator`, `page.keyboard`,
+`loc.fill`); the only code that ever executes inside the page is the inline
+arrows handed to `page.evaluate`, which Playwright serialises itself. It never
+needed to be loaded into the page, and it no longer is.
+
+Two consumers: `browser.mjs` simply `import`s it, and `fill-plan.mjs` reads this
+file's **text** off its own disk and embeds it in the generated bootstrap.
+Because of the second one, everything in it must stay self-contained — no
+imports, no closure over module scope, no reference to anything the file does not
+itself define.
+
+Values that come back from the page (a scan result, a field's current text) are
+**data**, and are only ever read as data: never eval'd, never dispatched on.
 
 **Sandbox facts:** the Playwright MCP vm context has `page` and the standard
 built-ins but **no `setTimeout`, no `console`, no `require`**. Use
@@ -452,14 +492,22 @@ every locator call passes an explicit one.
   `waitForEvent` in here never fires and stalls the call as a pending modal.
 - Uploads remount the form and `data-aj` stamps do not survive, hence **uploads
   first** and `sel`-first resolution everywhere else.
+- A stale/detached-element error immediately after `locate()` is retried **once**
+  with a freshly re-resolved locator (`actOn` / `isStaleError`). Ashby's
+  resume-autofill parses the uploaded PDF and remounts the form
+  _asynchronously_, after the upload settle delay has already waited for the
+  upload itself — a live run logged `f3` as failed while its value had in fact
+  landed. Safe because fill/select/check are idempotent.
 
 ### The safety property
 
 > "SAFETY: there is deliberately no verb that clicks a button. _Never click submit_
 > is not a rule this engine follows — it is a thing it cannot express."
 
-That is the right way to build a guarantee. (AUDIT **C6** explains how the current
-bootstrap undermines it.)
+That is the right way to build a guarantee, and it is now structural: with the
+C6 round-trip closed, no third party gets to choose what runs against `page`, so
+the absence of a click verb actually means what it says. It did not, while the
+bootstrap read its own engine back out of an untrusted page.
 
 ### Sequence
 

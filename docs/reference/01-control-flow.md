@@ -225,12 +225,15 @@ PHASE 4  THE ONE APPROVAL MESSAGE
          → on reply: save-answer.mjs for each, then render PDFs
 
 PHASE 5  fill and verify — ONE browser call
-   browser_run_code_unsafe { code: "<the bootstrap>" }
+   browser_run_code_unsafe { filename: "jobs/<slug>/fill-plan.js" }
    │
-   │  the bootstrap loads fill-page.js + fill-plan.js into the page,
-   │  reads window.__ajFillSrc back out, and evals it Playwright-side
+   │  fill-plan.js is GENERATED: fill-plan.mjs read fill-engine.mjs's text
+   │  off its own disk and embedded engine + plan as string literals. The
+   │  engine is eval'd Playwright-side and never enters the page; nothing is
+   │  read back out of the page. (The old version injected the engine and
+   │  read window.__ajFillSrc back — a hostile board owned the browser.)
    │
-   │  fill-page.js
+   │  fill-engine.mjs
    │  ├─ urlGuard          refuse if the page is not the one planned against
    │  ├─ UPLOADS FIRST     they remount the form and void every data-aj stamp
    │  ├─ locate: sel first (app-owned, survives remounts), data-aj as fallback

@@ -18,7 +18,17 @@ Written to be read top to bottom the first time, and dipped into afterwards.
 | 06  | [Record & feedback](06-record-and-feedback.md)     | applications, follow-ups, profile tools, store maintenance                        |
 | 07  | [Guardrails & config](07-guardrails-and-config.md) | hooks, the 11 skills, the subagent, every config and policy file                  |
 | 08  | [Tests](08-tests.md)                               | 36 test files, and — importantly — what they do not cover                         |
+| 09  | [Gotchas](09-gotchas.md)                           | the incident record — every trap that cost this project a real failure            |
 | —   | **[AUDIT](AUDIT.md)**                              | **54 findings, each with a reproduction and a fix direction**                     |
+
+> **This reference is a snapshot taken 2026-07-29.** Phase 1 of
+> `docs/autonomy-plan.md` landed on 2026-07-30/31 and changed several of the
+> files described here — most sharply `scripts/lib/untrusted.mjs` (rewritten,
+> 171 → 913 lines) and the browser path (`fill-page.js` deleted, the
+> `addScriptTag` round-trip closed). Corrections are marked inline in the
+> affected sections. **The file manifest below has not been re-derived** and
+> under-lists everything added since; use it to find the doc for a file, not as
+> a census.
 
 ## If you only read one thing
 
@@ -51,7 +61,7 @@ All 156 tracked files, with the doc that explains each.
 | `CLAUDE.md`                | 429   | the project's own operating manual, loaded every session                | [07](07-guardrails-and-config.md) |
 | `README.md`                | 69    | public-facing summary                                                   | [07](07-guardrails-and-config.md) |
 | `LICENSE`                  | 201   | Apache License 2.0                                                      | —                                 |
-| `package.json`             | 18    | `type: module`; deps `js-yaml` + `marked`; `npm test` = `node --test`   | [07](07-guardrails-and-config.md) |
+| `package.json`             | 18    | `type: module`; deps `js-yaml` + `marked`; `npm test` = the count gate  | [07](07-guardrails-and-config.md) |
 | `package-lock.json`        | 75    | lockfile                                                                | —                                 |
 | `.gitignore`               | 21    | `profile/*` (not `profile/`), `jobs/`, `.env`, `.playwright-mcp/`       | [07](07-guardrails-and-config.md) |
 | `.gitattributes`           | 5     | `* text=auto eol=lf` — load-bearing for template-literal tests          | [07](07-guardrails-and-config.md) |
@@ -63,25 +73,25 @@ All 156 tracked files, with the doc that explains each.
 
 ## `.claude/` — agent configuration
 
-| file                                  | lines | purpose                                                          | doc                                                      |
-| ------------------------------------- | ----- | ---------------------------------------------------------------- | -------------------------------------------------------- |
-| `settings.json`                       | 50    | permissions + the four hook registrations                        | [07](07-guardrails-and-config.md)                        |
-| `hooks/protect-profile.js`            | 41    | PreToolUse: deny writes to the fact base                         | [07](07-guardrails-and-config.md)                        |
-| `agents/job-worker.md`                | 58    | the Sonnet-pinned per-job worker and its JSON contract           | [07](07-guardrails-and-config.md)                        |
-| `skills/apply-job/SKILL.md`           | 326   | the full browser application flow                                | [05](05-apply.md), [07](07-guardrails-and-config.md)     |
-| `skills/apply-job/scan-page.js`       | 364   | the page scanner (runs in the page; eval'd, not a module)        | [05](05-apply.md)                                        |
-| `skills/apply-job/scan.driver.mjs`    | 83    | installs + runs the scanner and probes dropdowns Playwright-side | [05](05-apply.md)                                        |
-| `skills/apply-job/fill-page.js`       | 400   | the fill engine — executes a plan, makes no decisions            | [05](05-apply.md)                                        |
-| `skills/pipeline-jobs/SKILL.md`       | 190   | batch processing, one subagent per lead                          | [07](07-guardrails-and-config.md)                        |
-| `skills/find-jobs/SKILL.md`           | 103   | the sweep + four ways to ingest a user-supplied source           | [07](07-guardrails-and-config.md)                        |
-| `skills/tailor-resume/SKILL.md`       | 94    | the 10-step tailoring flow                                       | [04](04-documents.md), [07](07-guardrails-and-config.md) |
-| `skills/tailor-cover-letter/SKILL.md` | 64    | the same, sharing `context.json`                                 | [04](04-documents.md)                                    |
-| `skills/manage-applications/SKILL.md` | 137   | read/write the application store                                 | [07](07-guardrails-and-config.md)                        |
-| `skills/manage-sources/SKILL.md`      | 50    | add/remove/verify swept boards                                   | [07](07-guardrails-and-config.md)                        |
-| `skills/update-profile/SKILL.md`      | 53    | merge a replaced source doc into the profile, add-only           | [07](07-guardrails-and-config.md)                        |
-| `skills/check-applied/SKILL.md`       | 40    | history lookup                                                   | [07](07-guardrails-and-config.md)                        |
-| `skills/follow-up/SKILL.md`           | 50    | nudge cadence + outcome recording                                | [07](07-guardrails-and-config.md)                        |
-| `skills/profile-gaps/SKILL.md`        | 45    | demand-vs-profile analysis                                       | [07](07-guardrails-and-config.md)                        |
+| file                                  | lines | purpose                                                               | doc                                                      |
+| ------------------------------------- | ----- | --------------------------------------------------------------------- | -------------------------------------------------------- |
+| `settings.json`                       | 50    | permissions + the four hook registrations                             | [07](07-guardrails-and-config.md)                        |
+| `hooks/protect-profile.js`            | 41    | PreToolUse: deny writes to the fact base                              | [07](07-guardrails-and-config.md)                        |
+| `agents/job-worker.md`                | 58    | the Sonnet-pinned per-job worker and its JSON contract                | [07](07-guardrails-and-config.md)                        |
+| `skills/apply-job/SKILL.md`           | 326   | the full browser application flow                                     | [05](05-apply.md), [07](07-guardrails-and-config.md)     |
+| `skills/apply-job/scan-page.js`       | 364   | the page scanner (runs in the page; eval'd, not a module)             | [05](05-apply.md)                                        |
+| `skills/apply-job/scan.driver.mjs`    | 83    | installs + runs the scanner and probes dropdowns Playwright-side      | [05](05-apply.md)                                        |
+| ~~`skills/apply-job/fill-page.js`~~   | —     | **DELETED 2026-07-31**; the engine is `scripts/apply/fill-engine.mjs` | [05](05-apply.md)                                        |
+| `skills/pipeline-jobs/SKILL.md`       | 190   | batch processing, one subagent per lead                               | [07](07-guardrails-and-config.md)                        |
+| `skills/find-jobs/SKILL.md`           | 103   | the sweep + four ways to ingest a user-supplied source                | [07](07-guardrails-and-config.md)                        |
+| `skills/tailor-resume/SKILL.md`       | 94    | the 10-step tailoring flow                                            | [04](04-documents.md), [07](07-guardrails-and-config.md) |
+| `skills/tailor-cover-letter/SKILL.md` | 64    | the same, sharing `context.json`                                      | [04](04-documents.md)                                    |
+| `skills/manage-applications/SKILL.md` | 137   | read/write the application store                                      | [07](07-guardrails-and-config.md)                        |
+| `skills/manage-sources/SKILL.md`      | 50    | add/remove/verify swept boards                                        | [07](07-guardrails-and-config.md)                        |
+| `skills/update-profile/SKILL.md`      | 53    | merge a replaced source doc into the profile, add-only                | [07](07-guardrails-and-config.md)                        |
+| `skills/check-applied/SKILL.md`       | 40    | history lookup                                                        | [07](07-guardrails-and-config.md)                        |
+| `skills/follow-up/SKILL.md`           | 50    | nudge cadence + outcome recording                                     | [07](07-guardrails-and-config.md)                        |
+| `skills/profile-gaps/SKILL.md`        | 45    | demand-vs-profile analysis                                            | [07](07-guardrails-and-config.md)                        |
 
 ## `docs/` — policy and working documents
 

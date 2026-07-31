@@ -183,10 +183,15 @@ discipline, and a strict JSON return format: _"your reply is data for the
 orchestrator, not prose for a human"_. No posting text, no document contents, no
 browsing logs in the reply.
 
-> **Defect:** rule 3 tells it to run `node scripts/verify-claims.mjs`, which does not
-> exist — the file is at `scripts/documents/verify-claims.mjs`. This is the agent that
-> does all per-job tailoring, so hard rule 4 does not actually run inside it. AUDIT
-> **C5**. Its word limits also disagree with the same contract in
+> **AUDIT C5 — CLOSED.** Rule 3 used to tell it to run
+> `node scripts/verify-claims.mjs`, a path that moved in the 2026-07-29 reorg, so
+> hard rule 4 did not actually run inside the agent that does all per-job
+> tailoring. `job-worker.md:22` and `package.json`'s `verify` script now both
+> name `scripts/documents/verify-claims.mjs`. Kept as a record because it is the
+> cheapest possible defect with the most expensive consequence — the truthfulness
+> gate silently absent — and a future move of that file recreates it.
+>
+> **Still open:** its word limits disagree with the same contract in
 > `pipeline-jobs/SKILL.md` — AUDIT **M16**.
 
 ---
@@ -196,10 +201,34 @@ browsing logs in the reply.
 ### `package.json`
 
 Type `module`. Dependencies are exactly two: `js-yaml` and `marked`. Dev: `prettier`.
-`npm test` is `node --test`, which recurses, so nested test files are discovered
-automatically.
 
-> **Defect:** the `verify` script points at `scripts/verify-claims.mjs`. AUDIT **C5**.
+Four scripts as of 2026-07-31:
+
+| script          | is                                          |
+| --------------- | ------------------------------------------- |
+| `test`          | `node .github/workflows/test-gate.mjs full` |
+| `test:security` | the same gate over the Phase 1 security set |
+| `test:raw`      | bare `node --test`, no assertions about it  |
+| `verify`        | `node scripts/documents/verify-claims.mjs`  |
+
+A `testGate` block in the same file carries each gate's `floor`, `maxTodo` and
+path list.
+
+> **Corrected 2026-07-31 (`ci-engineer`).** Two things this section said are no
+> longer true, and both were dangerous rather than merely stale:
+>
+> - `npm test` is **not** `node --test`. `node --test` exits 0 on an empty run,
+>   so the exit code is worthless as evidence that anything executed. The gate
+>   asserts the test **count** against a floor, caps `todo` at 0, and fails any
+>   skip that carries no reason.
+> - It does **not** rely on `node --test` recursing into directories. On Node 24
+>   it does not recurse at all — it reports `Cannot find module`, which reads as
+>   a test failure. The gate walks the directories itself. See
+>   [09-gotchas.md](09-gotchas.md).
+>
+> AUDIT **C5** (the `verify` script pointing at the pre-reorg
+> `scripts/verify-claims.mjs`, so `npm run verify` did nothing at all) is
+> **closed**.
 
 ### `.claude/settings.json`
 
@@ -261,13 +290,24 @@ from disk, and CRLF checkouts silently break those comparisons on Windows.
 
 ### `.github/workflows/ci.yml`
 
-`npm ci && npm test` on a matrix of ubuntu/windows × Node 20/22, on push to `dev` and
-PRs to `dev`/`main`. The comment explains why a green run means something: the suite
-includes guardrail failure-mode tests, so both directions (hooks must deny the right
-things **and** allow the right things) behaved.
+Three jobs as of 2026-07-31, on push to `dev` and PRs to `dev`/`main`:
 
-> **Gap:** it never runs `prettier --check`, and 36 files currently fail it. AUDIT
-> **M7**.
+- **`security-gate`** — `npm run test:security` on ubuntu/Node 22. This is the
+  Phase 1 gate from `docs/autonomy-plan.md`; autonomy does not ship until it is
+  green. It additionally fails when `tests/security/` is missing or empty.
+- **`test`** — `npm ci && npm test` on ubuntu/windows × Node 20/22, plus a
+  diagnostic step that reports browser availability so a skipped PDF test is
+  attributable rather than silent.
+- **`ci-gate`** — `if: always()`, fails when either of the above failed, was
+  cancelled, or was **skipped**. Its own comment states the honest limit: a
+  workflow file cannot make itself a required check, so until branch protection
+  names `ci-gate`, this blocks the run's conclusion but not a merge.
+
+Alongside it, `.github/workflows/test-gate.mjs` is the runner both npm scripts
+call — it expands directories itself and asserts the test count.
+
+> **Gap:** it never runs `prettier --check`. AUDIT **M7** (the "36 files fail it"
+> count is from 2026-07-29 and has not been re-measured).
 
 ### `.env.example`
 
@@ -336,15 +376,20 @@ Working documents: proposals, measurements and session hand-offs. Not contracts 
 
 ### `README.md`
 
-The public-facing summary: design principles, layout, setup, usage. Accurate except
-that its layered-guardrails list still cites `scripts/verify-claims.mjs`.
+The public-facing summary: design principles, layout, setup, usage. Its
+layered-guardrails list cited the pre-reorg `scripts/verify-claims.mjs` until
+2026-07-31; corrected.
 
-### `CLAUDE.md` (429 lines)
+### `CLAUDE.md`
 
 The project's own operating manual, loaded into every session: commands, the ten hard
-rules, structure, the code-change workflow, token discipline, and a long **Gotchas**
-section. It is unusually good — most of the "why" in this reference is distilled from
-it and from the source comments.
+rules, structure, the code-change workflow, token discipline, and the gotchas.
+
+**Split on 2026-07-31** (rewrite backlog **R6**). It is re-read on every turn of
+every session, so it was a standing latency and token cost on all work. The
+gotchas moved to [09-gotchas.md](09-gotchas.md) and each left a one-line pointer
+behind; the hard rules stayed in the core **in full**, because a guardrail one
+click away is not a guardrail.
 
 Two of its claims are no longer true: that Adzuna leads are "already flagged
 `partial_description`" (nothing sets that field at ingest), and that

@@ -82,8 +82,8 @@ in the single approval message.
 
 ### A0. Which ATS is this? (0 calls)
 
-`node scripts/ats/index.mjs` is not a CLI — detection happens inside
-`fill-plan.mjs`. What matters here is what it will decide:
+`scripts/apply/ats/` is not a CLI — detection happens inside `fill-plan.mjs`.
+What matters here is what it will decide:
 
 - **greenhouse / lever / ashby** → the deterministic path below. The model fills
   nothing by hand.
@@ -260,8 +260,17 @@ B, so this message does not repeat unless a later page asks something new.
 ### D+E. Fill and verify (ONE call)
 
 Re-run `node scripts/apply/fill-plan.mjs <slug>` after rendering PDFs and saving any
-new answers. It should now print `ready=true`; if it does not, the `reason=`
-names what is still outstanding. Then run the bootstrap it printed:
+new answers. The `reason=` names what is still outstanding.
+
+**Expect `ready=false` on a real form, and do not treat that as a problem to
+solve.** Consent checkboxes count as blocking defers and nearly every board has
+one, so `ready=true` has never fired on a live application. Fill anyway; the
+consent boxes are the user's to tick in the browser, which is hard rule 6. (This
+is AUDIT **H10**, and the fix is a redefinition of `ready` — see the dated
+correction in `docs/autonomy-plan.md` §3.3. Do **not** "fix" it by auto-ticking
+consent.)
+
+Then run the bootstrap it printed:
 
 ```
 mcp__playwright__browser_run_code_unsafe

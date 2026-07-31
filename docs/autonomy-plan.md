@@ -683,6 +683,49 @@ yourself** — never a pattern. Arbitration, background checks and e-signatures
 are excluded **regardless of the allowlist**; those carry legal weight beyond
 "my resume is accurate."
 
+> **Correction, 2026-07-31 — `innov-resilience`. The paragraph above is wrong
+> about why it is safe, and it is left in place rather than rewritten so the
+> unsafe reasoning is not rebuilt from scratch later.**
+>
+> It presents three controls — the **exact-label allowlist**, **`isHardConsent`**,
+> and the scanner's **`labelExact`** vouch — as if they were independent. They
+> are not. All three read **one string the attacker chose**: the label the page
+> produced, carried on `scan.fields[].labelExact` through a scan file the board
+> can influence.
+>
+> The concrete failure: an arbitration clause that never enters the scan never
+> triggers the "excluded regardless of the allowlist" rule. `isHardConsent`
+> cannot fire on text it never sees, so "excluded regardless" is not a floor
+> under the allowlist — it is a second read of the same untrusted string.
+> Truncation and `aria-label` decoupling are two ways to arrange that, and both
+> were demonstrated against this exact code (`fill-plan.mjs`, the block above
+> `isConsent(label)`).
+>
+> **The "two independent keys" claim later in this section does not apply to
+> consent.** It holds for the classify-then-verify path — the tier classifier and
+> `submitReadiness()` read different evidence at different times — and that is
+> what risk 1 relies on. Consent has one key.
+>
+> **Resolution (agreed, in flight as of 2026-07-31 — not yet in the code):**
+>
+> 1. The vouch travels **out of band**. `scan-engine.mjs` returns
+>    `{ scan, vouchedLabels }` in-process; `buildPlan` takes `vouchedLabels` as a
+>    parameter and **ignores `scan.fields[].labelExact` entirely**. A value that
+>    reached us through a file the board can shape is no longer a vouch.
+> 2. `ready=true` is redefined as **"no model turn is needed"** rather than
+>    "nothing is deferred". That recovers the fast path — which, per the Context
+>    section above, has never once fired — **with no consent auto-tick at all**.
+>    A consent box the user ticks in the browser costs no model turn, so it does
+>    not have to block `ready`.
+>
+> Together those make the consent question moot rather than better-guarded, which
+> is the stronger outcome: the safest control is the one that is not needed.
+>
+> Verified when writing this note: `vouchedLabels` does not yet appear anywhere
+> in `scripts/`, and `scan.driver.mjs` strips every vouch unconditionally, so
+> nothing auto-ticks on the path that runs today. See the matching note under
+> **Risks, ranked** #2.
+
 **L2 ranking-only needs zero code changes.** `evaluateStages` already takes an
 `only` list — the runner calls it with `["l0","l1","l3"]` and calls `scoreFit`
 separately, purely to order the queue. Scams and stale postings still hard-gate:
@@ -844,8 +887,21 @@ npm test
 **Phase 1 gate — autonomy stays off until all of these pass:**
 
 ```bash
-node --test tests/security/ tests/lib/untrusted.test.mjs tests/documents/verify-claims.test.mjs
+npm run test:security
 ```
+
+> **Corrected 2026-07-31 — `ci-engineer`.** This gate was written as
+> `node --test tests/security/ tests/lib/untrusted.test.mjs tests/documents/verify-claims.test.mjs`
+> and it ran **zero** security tests. On Node 24 `node --test <directory>` does
+> not recurse — it tries to load the directory as a module and reports
+> `Cannot find module`, which reads as a test failure, so the obvious repair
+> (dropping the directory argument) would have produced a green run over nothing.
+> Node 20 and 22 do recurse, so the same command meant different things across
+> the CI matrix. `npm run test:security` goes through
+> `.github/workflows/test-gate.mjs`, which expands directories itself and
+> asserts the count against a floor. `ci-engineer` reports the security gate
+> going from 29 tests to 124 as a result. The non-recursion itself was
+> re-confirmed independently on Node v24.13.1 while writing this note.
 
 Specifically: a fixture board defining `window.__ajFillSrc` must **fail to
 influence the fill**; a posting titled with unbacked tech must **not** let a
@@ -890,8 +946,19 @@ Exits 1 if any lead became newly rejected.
    per-company cap, dry-run default, l0/l1/l3 hard gates, and the two-key
    classify-then-verify gate.
 2. **Consent auto-tick** — legally meaningful assertions ticked unattended.
-   Controlled by exact-label allowlisting you write yourself, with
-   arbitration/background-check/e-sign excluded above it.
+   ~~Controlled by exact-label allowlisting you write yourself, with
+   arbitration/background-check/e-sign excluded above it.~~
+
+   > **Superseded 2026-07-31 — `innov-resilience`.** The struck text describes
+   > two controls that are really one: the allowlist and the
+   > arbitration/background-check exclusion both read the same page-supplied
+   > label, so the exclusion cannot fire on a clause that never reached the
+   > scan. Full reasoning and the agreed resolution are in §3.3. The direction
+   > taken is to remove the auto-tick rather than layer another check on it —
+   > `ready=true` becomes "no model turn is needed", so a consent box the user
+   > ticks in the browser stops blocking the fast path without anything ticking
+   > it for them.
+
 3. **A wrong saved answer propagating silently** to every future application.
    Unchanged from today; the audit trail is what makes it findable.
 4. **Half-filled abandoned applications** on multi-page forms where a later page

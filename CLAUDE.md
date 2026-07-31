@@ -7,7 +7,15 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 
 ## Commands
 
-- Tests: `npm test` (node --test; see the testing rule in Workflow below)
+- Tests: `npm test` — the **count-asserting gate**, not a bare `node --test`.
+  It expands directories itself, asserts the test count against a floor in
+  `package.json`'s `testGate` block, caps `todo` at 0, and fails any skip that
+  carries no reason — because `node --test` exits 0 on an empty run, so an exit
+  code alone is not evidence that anything ran.
+  `npm run test:security` is the same gate over the Phase 1 security set;
+  `npm run verify` runs verify-claims (it pointed at a path that moved in the
+  2026-07-29 reorg and did nothing at all until 2026-07-31).
+  See the testing rule in Workflow below.
 - Verify a tailored doc: `node scripts/documents/verify-claims.mjs <resume|cover-letter> <file> [--job jobs/<slug>/job.json]`
 - New job workspace: `node scripts/documents/new-job.mjs <slug> --company "X" --title "Y" [--url Z]`
   — or, preferred when the posting is already a stored lead,
@@ -281,16 +289,21 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
     primitives `fetchJson`/`fetchText`/`textSnippet`/`decodeEntities`, which
     live here because both find-jobs and enrich fetch postings; find-jobs
     re-exports `textSnippet`/`SNIPPET_MAX` for its existing importers),
-    `db.mjs`
-  - `leads/` — find, filter, rank: find-jobs, enrich, screen, recommend,
-    prep-queue, cluster, board-yield, discover-boards, manage-sources
+    `db.mjs`, `keywords.mjs` (the one lexicon), `untrusted.mjs` (rule 0)
+  - `leads/` — find, filter, rank: find-jobs, enrich, screen, `stages.mjs` +
+    `fit.mjs` (l2) + `risk.mjs` (l3), gate-audit, recommend, prep-queue,
+    cluster, board-yield, find-boards, discover-boards, manage-sources
   - `applications/` — the application record: applications, log-application,
     update-application, check-applied, follow-ups
-  - `documents/` — tailored docs: new-job, render-pdf, verify-claims, reuse-check
+  - `documents/` — tailored docs: new-job, keyword-plan, render-pdf,
+    verify-claims, reuse-check, ats-lint
   - `apply/` — browser form-filling: answer-bank, fill-plan, pending-questions,
-    field-cache, `ats/`
-  - `profile/` — fact-base tools: apply-profile, profile-gaps, save-answer
+    field-cache, `ats/`, plus the browser side — `fill-engine.mjs` (executes a
+    plan, Playwright-side), `scan-engine.mjs`, `browser.mjs`
+  - `profile/` — fact-base tools: apply-profile, profile-gaps, save-answer,
+    keyword-coverage
   - `maintenance/` — store lifecycle: migrate, prune-jobs, archive
+  - `dev/` — benchmark harnesses (innovator-owned; never on the apply path)
   - `hooks/` — guardrail hooks wired in `.claude/settings.json` (guard-files,
     guard-bash, prettify). **Note:** these are NOT agent-protected —
     `.claude/hooks/protect-profile.js` only denies writes under
@@ -298,8 +311,9 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   - `status.mjs` stays at the root: it is the one cross-cutting digest
 - `tests/` — mirrors `scripts/` one-for-one (`tests/leads/`, `tests/apply/`, …)
   with shared `tests/fixtures/`. Includes guardrail failure-mode tests; keep
-  them passing. `npm test` is `node --test`, which recurses, so nested test
-  files are discovered automatically.
+  them passing. `tests/security/` is the Phase 1 gate. Discovery is done by
+  `.github/workflows/test-gate.mjs`, which walks the directories itself — do
+  **not** assume `node --test <dir>` recurses (see the Node 24 gotcha below).
 
 ## Workflow for any code change
 
@@ -310,6 +324,9 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
    run the single relevant test file while iterating
    (`node --test tests/<group>/<file>.test.mjs`), and `npm test` once before
    committing. Never re-run a suite that just passed on unchanged code.
+   **Never pass a bare directory to `node --test`** — on Node 24 it does not
+   recurse, it reports `Cannot find module`, and that looks like a test
+   failure. Use the quoted glob: `node --test "tests/<group>/**/*.test.mjs"`.
 3. New features need tests covering success AND failure/boundary cases.
 4. Do not commit unless the user asks.
 
@@ -340,138 +357,64 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
    sessions are the single biggest cost driver.
 7. **Batch tool calls** that don't depend on each other into one message.
 
-## Gotchas
+## Gotchas — one line each; full account in [docs/reference/09-gotchas.md](docs/reference/09-gotchas.md)
 
-- Windows machine; PDF rendering shells out to local Edge/Chrome headless
-  (`PDF_BROWSER` env var overrides the browser path).
-- **Not every board's list endpoint returns a description.** Greenhouse, Ashby
-  and Lever include one; `oracle_cloud`, `smartrecruiters`, `successfactors` and
-  `workday` return none, and Adzuna returns a ~500-char teaser (already flagged
-  `partial_description`). Those four need a per-posting detail fetch —
-  `scripts/leads/enrich.mjs`, one fetcher per ATS, URLs derived from the lead's
-  own `url`/`id` rather than from `job-sources.yaml`. This mattered more than the
-  count suggests: those boards are Caesars, Station Casinos, Boyd, IGT and CVS,
-  i.e. the **local Las Vegas employers**, which are the highest-value leads
-  because on-site is in scope for them — so the least examinable leads were also
-  the most important. A lead with no description can be neither keyword-indexed
-  nor blocker-screened.
-- **The body gate's "is this a software job?" test is easy to get wrong.**
-  Job-posting prose is full of near-misses for software words: the first version
-  matched bare `code` and read "Be familiar with OSHA safety **codes**" as
-  evidence that a building-maintenance job was a software job. `application`
-  (job application), `rest` (the rest of the team), `framework` (regulatory
-  framework), `library` and `server` all fail the same way. `SOFTWARE_BODY` in
-  `find-jobs.mjs` therefore only contains multi-word or unmistakable terms, and
-  `NON_SOFTWARE_BODY` says "maintain cleanliness" not "cleanliness" (code
-  cleanliness) and "beverage server" not "server". When adding a term, re-run the
-  gate over the whole live store and check the reject list did not grow.
-- The body gate **rejects only on unambiguous evidence and flags everything
-  else**, because a false reject is a job the user never sees. Twilio's postings
-  are the reason: one carries three contradictory location sentences pasted in
-  sequence ("based in our San Francisco office" / "remote, based on the East
-  Coast" / "not eligible to be hired in CA, CT, IL…"), so in-office language
-  only ever produces an `onsite_conflict` flag. A state carve-out is decisive
-  only when it names the user's own state.
-- `profile/` and `jobs/` are gitignored on purpose (personal data). Tests use
-  fixtures in `tests/fixtures/`, never the real profile.
-- profile.yaml `meta.approved_by_user` must be `true` before tailoring for real
-  applications; if false, warn the user first.
-- Playwright MCP runs with a persistent browser profile
-  (`--user-data-dir .playwright-mcp/profile` in `.mcp.json`) so ATS logins
-  survive between sessions. It holds real session cookies — gitignored, never
-  commit it. Changing `.mcp.json` needs a session restart to take effect.
-- `openDb` sets `PRAGMA busy_timeout` **before** `journal_mode = WAL`, and the
-  order is load-bearing: switching the journal mode takes a brief exclusive
-  lock, so with the pragmas the other way round four processes opening the store
-  at once have three die on the WAL statement itself — before the timeout they
-  were about to set could apply. This is what makes the pipeline's subagent
-  fan-out safe.
-- The `SCHEMA` string in `scripts/lib/db.mjs` is a **template literal**, so a
-  backtick anywhere in its SQL comments ends the string and the file stops
-  parsing. Quote identifiers in those comments with plain words, not backticks.
-- `.claude/skills/apply-job/scan-page.js` and `scan.driver.mjs` are eval'd as
-  bare function expressions, not modules — they are in `.prettierignore`
-  because prettier's leading-semicolon guard would make them unparseable.
-  `scan-page.js` is the single source of truth; the driver loads it off disk.
-- **`docs/job-sources.yaml` is also in `.prettierignore`**, for a different
-  reason: `manage-sources.mjs` edits it LINE BY LINE to preserve its comments,
-  which only works while every board is one flow-style entry on one line.
-  Prettier reflows the longer workday/oracle_cloud entries into block style and
-  silently breaks that contract.
-- **`lead_keywords` goes stale the moment the lexicon changes.** It is indexed
-  once at ingest, so a skill added to `keywords.mjs` afterwards has zero rows
-  however often postings demand it. Re-index with
-  `node scripts/maintenance/migrate.mjs` — it only ADDS leads that are missing
-  and rebuilds keywords from what is already in the database, so it is safe on a
-  live store (268 → 443 links after the lexicon was unified, 0 leads touched).
-  Anything ranking on those counts should gate on `max(required, total)`, not
-  `total`: `keyword-coverage.mjs` dropped System design at a required-demand of
-  8 because the index predated the term.
-- **One written form per skill.** `checkWrittenForm()` in keywords.mjs catches
-  "Javascript"/"NodeJS"/"Postgres" and acronyms used without their expansion
-  ("AWS" but never "Amazon Web Services"). It excludes URLs and emails —
-  "github.com" is correct lowercase — and the pair list is deliberately short:
-  a first draft flagged API/SQL/UI/UX and produced eight warnings on a good
-  resume, and a checker that cries wolf gets ignored.
-- **One lexicon, two name fields, and they are not interchangeable.**
-  `scripts/lib/keywords.mjs` is the single source for "what technology is named
-  here?". Each skill carries `surface` (literal strings watched inside the
-  USER'S OWN documents — drives verify-claims R6) and `aliases` (what the skill
-  looks like in SOMEONE ELSE'S posting — drives `lead_keywords`). Folding
-  `surface` into the detection regex was tried and matched "we **go** to
-  production", "**Spring** 2027 internship", "a **bun** and coffee",
-  "Section **S3** of the handbook" — six false positives in nine probes. A
-  negative-corpus test (`tests/lib/keywords.test.mjs`) pins this down; add to it
-  whenever you add an alias.
-- **`answers.yaml` question text is NOT evidence.** It stores each application
-  form question beside its answer, and forms ask things like "which of these do
-  you have? [4 = Spring / Spring Boot; 5 = Cloud (AWS, Azure, or GCP)]". Using
-  the raw file as the verifier corpus made **Azure, Spring, Java and GCP** all
-  pass R6 — including Spring, which the user explicitly did not select. Use
-  `evidenceText()` in `lib.mjs`: an answer always counts, a question only counts
-  when the answer is an unambiguous yes.
-- **A fuzzy-matched yes/no answer can find the right CONCEPT and still return the
-  wrong TRUTH VALUE.** `answer-bank.mjs`'s `CONCEPTS` guard stops a question
-  being answered out of the wrong bucket, but a label can name the right concept
-  and still negate it. Ramp asks "are you authorized to work in the U.S.
-  **without** company sponsorship?"; that shares nearly every token with the
-  banked "Will you now or in the future require sponsorship?" -> `No`, so the
-  matcher copied `No` verbatim at 0.75 and reported **OK** — asserting the
-  opposite of the truth on the highest-stakes field on the form. The polarity
-  guard (`NEGATION_RE` / `isNegated` / `polarityMismatch`, just above `resolve`)
-  compares negation between the field label and the matched bank question; a
-  mismatch on a yes/no-shaped answer defers to `NEEDS-CHOICE`. It never
-  auto-inverts — a double negative would flip straight back, so deferring is
-  strictly preferred. This guards the FUZZY tier only; saving an exact-label
-  answer (`save-answer.mjs`) still resolves `OK` and is the permanent fix.
-- **The fill bootstrap loads by `filename`, never `addScriptTag`.**
-  `page.addScriptTag({ path })` injects a real inline `<script>`, which a
-  nonce-based CSP board (Ashby) refuses outright — this broke the fill step on a
-  live application. `fill-plan.mjs`'s `buildDriverSource()` now reads
-  `fill-page.js` off disk itself and embeds the engine and the plan as strings
-  into `jobs/<slug>/fill-plan.js`, loaded via `browser_run_code_unsafe
-{ filename }` and injected with `page.evaluate((s) => { (0, eval)(s) }, s)` —
-  CDP evaluation is not gated by the page's CSP the way a `<script>` tag is.
-  Related: that vm context can never use dynamic `import()` (playwright-core's
-  `runCode.ts` wires up no `importModuleDynamically` callback, so `await
-import("node:fs")` throws `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`), and
-  `require` is undefined — file reads for the browser side must happen in
-  ordinary Node, never inside the injected driver.
-- **Non-upload fills retry once on a stale/detached locator.** Ashby's
-  resume-autofill remounts the form ASYNCHRONOUSLY, after the upload settle
-  delay, so the remount can land between `locate()` and the interaction that
-  follows — a live run logged `f3` as failed while its value had in fact
-  landed. `fill-page.js`'s loop (`actOn` / `isStaleError`) re-resolves and
-  replays that one item once before recording a failure; safe because
-  fill/select/check are idempotent.
-- **`textSnippet` preserves block boundaries.** It used to collapse every run of
-  whitespace including newlines, so a Greenhouse body arrived as one
-  4,000-character line and the L2 fit stage found a requirements heading in 0 of
-  92 stored leads. Block-level tags now become newlines; inline markup still
-  collapses to a space. Section splitting in `fit.mjs` also matches headings
-  INLINE, because leads stored before this change are still flat.
-- **Slug probing can find the wrong company.** `find-boards.mjs` tries
-  "spring" for "Spring Mobile" and "ultimate" for "Ultimate Fighting
-  Championship"; a board with that slug may belong to someone else entirely.
-  This is contained because `discover-boards.mjs` reports the company and live
-  counts, and the user approves each addition — never auto-add.
+Every one of these is an incident record. Read the full entry before touching
+the thing it names; the one-liner is a warning, not the explanation.
+
+- **`node --test <dir>` does not recurse on Node 24** — it fails with
+  `Cannot find module`, which looks like a test failure, and "fixing" it by
+  dropping the argument gives you a green run over zero tests. Use
+  `node --test "tests/**/*.test.mjs"`.
+- **PDF rendering** shells out to local Edge/Chrome headless; `PDF_BROWSER`
+  overrides the path.
+- **Four boards' list endpoints carry no description** (`oracle_cloud`,
+  `smartrecruiters`, `successfactors`, `workday`) and they are the local Las
+  Vegas employers — the highest-value leads. `enrich.mjs` exists for them.
+- **The body gate's software-job test is easy to get wrong** — bare `code`
+  matched "OSHA safety codes". Multi-word terms only; re-run `gate-audit.mjs`
+  after any change and check the reject list did not grow.
+- **The body gate flags rather than rejects** on ambiguous evidence, because a
+  false reject is a job the user never sees (Twilio's three contradictory
+  location sentences).
+- **Slug probing can find the wrong company** — "spring" for "Spring Mobile".
+  Never auto-add a discovered board.
+- **`textSnippet` preserves block boundaries.** Collapsing newlines made L2 find
+  a requirements heading in 0 of 92 leads.
+- **`lead_keywords` goes stale when the lexicon changes** — re-index with
+  `migrate.mjs`, and gate on `max(required, total)`.
+- **`surface` and `aliases` in `keywords.mjs` are not interchangeable.** Folding
+  `surface` into the detection regex gave six false positives in nine probes
+  ("we **go** to production").
+- **`checkWrittenForm`'s pair list is deliberately short** — a checker that
+  cries wolf gets ignored.
+- **`answers.yaml` question text is NOT evidence.** Using the raw file as the
+  verifier corpus passed Azure, Spring, Java and GCP through R6. Use
+  `evidenceText()`.
+- **A fuzzy yes/no match can find the right concept and the wrong truth value** —
+  Ramp's "authorized to work **without** sponsorship" got `No` copied verbatim
+  and reported OK. The polarity guard defers instead; it never auto-inverts.
+- **The bootstrap loads by `filename`, never `addScriptTag`** — a nonce-CSP
+  board (Ashby) refuses inline scripts and this broke the fill step on a live
+  application. Page-side injection goes over CDP via `page.evaluate`. **Do not
+  "fix" this back.**
+- **The fill engine runs Playwright-side and never enters the page**, and
+  nothing is read back out of it. The version that round-tripped through
+  `window.__ajFillSrc` handed a hostile board a live `page` handle.
+- **Non-upload fills retry once on a stale locator** — Ashby remounts the form
+  asynchronously after upload; a live run logged a fill as failed while the
+  value had landed.
+- **`scan-page.js` / `scan.driver.mjs` are eval'd bare function expressions** and
+  are in `.prettierignore`; prettier's semicolon guard makes them unparseable.
+- **`docs/job-sources.yaml` is in `.prettierignore` too** — `manage-sources.mjs`
+  edits it line by line and prettier's reflow silently breaks that contract.
+- **`db.mjs`'s `SCHEMA` is a template literal** — a backtick in its SQL comments
+  ends the string and the file stops parsing.
+- **`openDb` sets `busy_timeout` BEFORE `journal_mode = WAL`.** Reversed, four
+  processes opening the store at once have three die. Do not reorder.
+- **`profile/` and `jobs/` are gitignored on purpose**; tests use
+  `tests/fixtures/`, never the real profile. `.playwright-mcp/profile` holds real
+  session cookies — never commit it, and `.mcp.json` changes need a session
+  restart.
+- **`profile.yaml` `meta.approved_by_user` must be `true`** before tailoring for
+  real applications; warn the user if it is false.

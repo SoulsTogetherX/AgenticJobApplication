@@ -17,8 +17,11 @@ deterministically and renders ATS-friendly PDFs.
 - **Truthfulness guardrails** (layered):
   1. Skills may only rephrase/reorder facts, never invent (see `docs/tailoring-rules.md`).
   2. Every resume bullet carries a `<!-- fact:ID -->` annotation tying it to a profile fact.
-  3. `scripts/verify-claims.mjs` deterministically fails any output containing
-     numbers, dates, or tech keywords not present in the referenced facts / profile.
+  3. `scripts/documents/verify-claims.mjs` deterministically fails any output
+     containing numbers, dates, or tech keywords not present in the referenced
+     facts / profile. This is the load-bearing control, not the sanitiser that
+     runs earlier: a claim the fact base cannot back never survives verification,
+     however it got proposed.
   4. A PreToolUse hook blocks the agent from editing the profile fact base directly.
 - **Privacy**: `profile/` (except the example) and `jobs/` are gitignored — real
   personal data never leaves this machine via git.
@@ -40,7 +43,9 @@ profile/profile.example.yaml        sanitized template (committed)
 jobs/<slug>/                        per-job workspace (gitignored)
 schemas/                            JSON shape docs for job.json / context.json
 scripts/                            deterministic helpers (no LLM)
-tests/                              node --test suite incl. guardrail failure cases
+tests/                              test suite incl. guardrail failure cases
+                                    (`npm test` — a count-asserting gate, not a
+                                     bare `node --test`)
 templates/document.css              print stylesheet for PDF rendering
 ```
 

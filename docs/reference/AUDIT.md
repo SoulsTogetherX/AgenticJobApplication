@@ -3,6 +3,25 @@
 Scope: all 156 tracked files. Baseline: `npm test` → **597 pass, 0 fail**. The
 suite being green is why these matter — every one of them is invisible to it.
 
+> **This is a dated snapshot, not a live tracker.** Entries are left as written
+> even after the defect is fixed, because each one records how the bug was found
+> and reproduced, and that is what stops it coming back. Do not delete an entry
+> because it is closed.
+>
+> **Closed since, verified by reading the code on 2026-07-31 rather than by
+> reading a report:**
+>
+> | #       | closed by            | evidence                                                                                                                  |
+> | ------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+> | **C5**  | `a3a99fc`            | `package.json`'s `verify` and `.claude/agents/job-worker.md:22` both name `scripts/documents/verify-claims.mjs`           |
+> | **C6**  | `fc645f5`, `1cc7d9b` | `fill-plan.mjs`'s `buildDriverSource()` embeds engine text read off our own disk; nothing reads `window.__ajFillSrc` back |
+> | **H11** | `859ef9b`            | every regex in `untrusted.mjs`'s `INJECTION_PATTERNS` now carries `g`                                                     |
+>
+> Everything else here should be assumed **open until someone checks the file**.
+> In particular **H10** (`ready=true` unreachable) is open, and §"The bootstrap
+> it prints" in [05-apply.md](05-apply.md) explains why the obvious fix for it
+> was withdrawn.
+
 Severity is judged by **what reaches the outside world**. A bug that puts a false
 claim on a submitted application outranks a bug that wastes tokens.
 

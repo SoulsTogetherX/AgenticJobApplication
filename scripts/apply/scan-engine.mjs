@@ -66,6 +66,71 @@ export function readScannerSource(file = SCANNER_PATH) {
   return fs.readFileSync(file, "utf8")
 }
 
+// --- WHAT THE PROBE IS ALLOWED TO CLICK ------------------------------------
+//
+// A probe exists to DISCOVER OPTIONS, and it is an optimisation: the cost of
+// not probing a control is that the user picks that value themselves. The cost
+// of probing the wrong control is a click on someone's live application, fired
+// by the SCANNER — before a plan exists, before anything has been approved,
+// and on the unattended path with nobody watching. Those costs are not
+// symmetric, so this refuses on any doubt.
+//
+// scan-page.js identifies dropdowns by SHAPE ALONE ([role=combobox],
+// [aria-haspopup=listbox], [class*=select__control], [data-ui=select]) and
+// shape cannot tell a country picker from a button a board decorated with
+// role="combobox" and labelled "Withdraw my application". In
+// tests/fixtures/hostile/forms/destructive-combobox.html the honest and the
+// hostile controls are deliberately identical in shape, so no shape rule can
+// separate them and a rule that tries is theatre.
+//
+// TWO RULES. ONLY THE FIRST IS STRUCTURAL:
+//
+//   1. A PICKER'S NAME COMES FROM OUTSIDE IT; A BUTTON'S NAME IS ITS OWN TEXT.
+//      A dropdown renders a placeholder ("Select...") or its current value and
+//      takes its NAME from a separate label — that is what makes it a picker.
+//      A control whose accessible name is exactly the words rendered inside it
+//      is a button wearing a dropdown's clothes. This is a property of the
+//      widget, and it is what separates the fixture's #country from its
+//      #withdraw, #delete and #submit-now.
+//   2. A WORD LIST, as a backstop, named as one. It has a word list's weakness
+//      — the next rewording is free — and it exists only to catch shapes rule 1
+//      misses. Nothing rests on it alone, and adding a 27th word is not a fix.
+//
+// Mirrored, because a click happens in three places and none of them can
+// import this: .claude/skills/apply-job/scan.driver.mjs (the MCP vm has no
+// module loader) and scan-page.js's own PROBE loop (page context). This file
+// is the canonical copy; tests/apply/fill-page.test.mjs pins all three
+// character-for-character so a drift is loud.
+export const DESTRUCTIVE_LABEL =
+  /\b(withdraw|delete|deactivate|remove|revoke)\b|\bsubmit\b|\bsend (my |the )?applicat|\bconfirm and\b|\bclose (my )?(account|profile)\b/i
+
+// "" when the probe may open this control, else the reason it may not.
+export function probeRefusal(f, norm = (s) => key(s)) {
+  const name = norm(f?.l)
+  const own = norm(f?.v)
+  // Nothing identifies it as a picker, and a control with no label cannot be
+  // resolved by the answer bank either — so refusing costs a field that was
+  // already going to defer.
+  if (!name) return "no label to identify it as a picker"
+  if (
+    own &&
+    (name === own ||
+      (own.length >= 12 && (name.startsWith(own) || own.startsWith(name))))
+  ) {
+    return "its name is its own text, so it is a button, not a picker"
+  }
+  if (DESTRUCTIVE_LABEL.test(String(f?.l ?? ""))) {
+    return "label reads as an action on the application, not a choice"
+  }
+  return ""
+}
+
+const key = (s) =>
+  String(s || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+
 // scan-page.js's text is an ASSIGNMENT — `window.__ajScan = async (PROBE...`.
 // Everything from the arrow onward is the function on its own, which the
 // scanner's own header already documents as the paste-able form. We need that
@@ -74,6 +139,13 @@ export function readScannerSource(file = SCANNER_PATH) {
 // text: scan-page.js's header comment quotes "async (PROBE" when it tells a
 // human where to paste from, so searching for that lands inside the comment
 // and returns prose. The result is checked by a test that parses it.
+//
+// It stops at scan-page.js's end marker, because the file is a SCRIPT with a
+// second statement after the function (it locks window.__ajScan non-writable),
+// and slicing to end-of-file would hand eval two statements instead of one
+// expression.
+export const SCANNER_END = "// --- scanner ends here"
+
 export function scannerExpression(src = readScannerSource()) {
   const m = /^window\.__ajScan\s*=\s*/m.exec(String(src))
   if (!m) {
@@ -82,7 +154,9 @@ export function scannerExpression(src = readScannerSource()) {
         "at the start of a line — scannerExpression() depends on it",
     )
   }
-  return src.slice(m.index + m[0].length).trim()
+  const rest = src.slice(m.index + m[0].length)
+  const end = rest.indexOf(SCANNER_END)
+  return (end < 0 ? rest : rest.slice(0, end)).trim()
 }
 
 export default async function scanPage(page, opts = {}) {
@@ -172,21 +246,25 @@ export default async function scanPage(page, opts = {}) {
   // is the labels the fact base already resolves. A field nobody has told us
   // about is still probed — too little information is the expensive failure
   // here, not too much.
-  const key = (s) =>
-    String(s || "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase()
   const known = new Map(
     Object.entries(opts.knownOpts || {}).map(([k, v]) => [key(k), v]),
   )
   const skip = new Set((opts.skipProbe || []).map(key))
   const probeMax = opts.probeMax === undefined ? 18 : opts.probeMax
 
-  const stats = { probed: 0, cached: 0, skipped: 0, capped: 0 }
+  const stats = { probed: 0, cached: 0, skipped: 0, capped: 0, refused: 0 }
   const todo = []
   for (const f of scan.fields || []) {
     if (f.t !== "combo" || (f.opts && f.opts.length)) continue
+    // Before anything else, and independent of what the caller asked for: a
+    // caller that forgets to pass skipProbe must not be able to make the
+    // scanner click Withdraw. See probeRefusal above.
+    const refusal = probeRefusal(f)
+    if (refusal) {
+      f.probe_refused = refusal
+      stats.refused++
+      continue
+    }
     const cached = known.get(key(f.l)) || known.get(key(f.k))
     if (cached && cached.length) {
       f.opts = cached
@@ -212,7 +290,14 @@ export default async function scanPage(page, opts = {}) {
     const loc = page.locator('[data-aj="' + f.k + '"]')
     try {
       await loc.scrollIntoViewIfNeeded({ timeout: 2000 })
-      await loc.click({ timeout: 2000, force: true })
+      // NOT force:true. A forced click skips every actionability check —
+      // "is it visible", "is it covered by an overlay", "does it receive
+      // pointer events" — which is precisely "click something the user could
+      // not have clicked". The scanner has no business doing that before a
+      // plan exists. A control that is genuinely unclickable now fails here,
+      // is caught below as probe_error, and defers to the user, which is the
+      // designed failure mode for a probe.
+      await loc.click({ timeout: 2000 })
       // Wait for the menu to RENDER, not for 300ms. react-select's own class
       // first: a bare [role=option] also matches the phone country-code
       // widget, which is always in the DOM — so waiting on that would return
@@ -246,23 +331,51 @@ export default async function scanPage(page, opts = {}) {
     }
   }
   scan.probe = stats
-  if (!expr) untrustScan(scan, "the scanner was called through window.__ajScan")
+
+  // --- THE VOUCH LEAVES OUT OF BAND -----------------------------------------
+  //
+  // `labelExact` used to travel as a boolean INSIDE the scan, and a boolean
+  // inside the data that crosses a trust boundary is not a boundary — it is a
+  // field, and every producer of a scan object can set it. There are three
+  // producers: this file, .claude/skills/apply-job/scan.driver.mjs, and the
+  // bare `browser_evaluate () => window.__ajScan(false)` re-scan that
+  // apply-job/SKILL.md documents for page 2 onward, which runs neither of the
+  // other two and whose output still becomes scan-p<N>.json.
+  //
+  // So the vouch is now a SECOND RETURN VALUE. `vouchedLabels` is an array of
+  // complete visible label strings, held in this process. It never goes into
+  // the page, it is never stashed, and it is not in the scan written to disk.
+  // buildPlan takes it as an explicit parameter and ignores
+  // scan.fields[].labelExact entirely — so a scan file, however it was
+  // produced and whoever wrote it, can no longer assert anything.
+  //
+  // It is collected ONLY when `expr` is set, i.e. when the scanner was called
+  // through a local binding and we therefore know whose function answered.
+  const vouchedLabels = []
+  if (expr) {
+    const seen = new Set()
+    for (const f of scan.fields || []) {
+      if (f.labelExact !== true) continue
+      const l = String(f.l ?? "")
+      if (!l || seen.has(l)) continue
+      seen.add(l)
+      vouchedLabels.push(l)
+    }
+  }
+  untrustScan(
+    scan,
+    expr
+      ? "the vouch is carried out of band and is not in this file"
+      : "the scanner was called through window.__ajScan",
+  )
 
   // Stashed so the scan can be written to disk without paying for it twice:
   //   browser_evaluate { function: "() => window.__ajLastScan",
   //                      filename: "scan-p1.json" }
-  //
-  // A VOUCH NEVER CROSSES THIS LINE. Whatever is stashed here is read back out
-  // of the page by that call, and the page can redefine __ajLastScan as a
-  // getter returning anything it likes — so a labelExact that goes in can come
-  // back out attached to wording the user never approved. The copy that keeps
-  // its vouch is the one RETURNED from this function, in this process, which
-  // never touches the page again.
-  await page.evaluate(
-    (s) => (window.__ajLastScan = s),
-    untrustScan(structuredClone(scan), "read back out of the page").scan,
-  )
-  return scan
+  // Nothing above survives into it, so the getter risk on __ajLastScan is now
+  // only about the scan's DATA, which was always the page's to write anyway.
+  await page.evaluate((s) => (window.__ajLastScan = s), scan)
+  return { scan, vouchedLabels }
 }
 
 // Strip every vouch from a scan whose provenance we cannot establish, and say

@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url"
 import fillPage from "../../scripts/apply/fill-engine.mjs"
 import scanPage, {
   SCANNER_PATH,
+  probeRefusal,
   scannerExpression,
 } from "../../scripts/apply/scan-engine.mjs"
 import {
@@ -1085,17 +1086,23 @@ test("the scan comes from a local binding, never from window.__ajScan", async ()
       ],
     },
   })
-  const scan = await scanPage(page, { scannerSrc: SCANNER_TEXT })
+  const { scan } = await scanPage(page, { scannerSrc: SCANNER_TEXT })
   assert.ok(page.log.some((e) => e[0] === "scan-local"))
   assert.ok(!page.log.some((e) => e[0] === "scan-global"))
   assert.equal(scan.fields[0].l, "Real label")
   assert.equal(scan.fields[0].labelExact, undefined)
 })
 
-test("a vouch is never stashed where the page can read it back", async () => {
-  // window.__ajLastScan is read back OUT of the page to write scan-p1.json.
-  // A getter on that global returns whatever the board likes, so a labelExact
-  // that goes in can come back attached to wording nobody approved.
+// THIS ASSERTION CHANGED WITH THE CONTRACT, not to make anything pass. It used
+// to say the RETURNED scan keeps labelExact while the stashed copy loses it.
+// That was still a boolean inside the data crossing the boundary, and a
+// boolean inside the data is not a boundary: three different producers write
+// scan-p<N>.json (this file, scan.driver.mjs, and the bare
+// `browser_evaluate () => window.__ajScan(false)` re-scan SKILL.md documents
+// for page 2 onward), and only two of them strip. The vouch now leaves as a
+// SECOND RETURN VALUE that never enters the page and is never written to disk.
+test("the vouch leaves out of band, in neither the scan nor the page", async () => {
+  const CERT = "I certify that the information provided is true and complete."
   const page = fakeScanPage({
     scan: {
       btns: [{ k: "b1", l: "Submit", r: "submit" }],
@@ -1103,22 +1110,50 @@ test("a vouch is never stashed where the page can read it back", async () => {
         {
           k: "g1",
           t: "checkbox",
-          l: "I agree",
+          l: CERT,
           labelExact: true,
-          o: [{ k: "f1" }],
+          o: [{ k: "f1", l: CERT }],
+        },
+        {
+          k: "g2",
+          t: "checkbox",
+          l: "I agree to arbitration",
+          o: [{ k: "f2" }],
         },
       ],
     },
   })
-  const returned = await scanPage(page, { scannerSrc: SCANNER_TEXT })
-  const stashed = page.log.find((e) => e[0] === "stash")
-  assert.equal(returned.fields[0].labelExact, true, "the caller still gets it")
-  assert.equal(
-    stashed[1].fields[0].labelExact,
-    undefined,
-    "and the page never does",
-  )
-  assert.match(stashed[1].signals.join(" "), /not vouched/)
+  const { scan, vouchedLabels } = await scanPage(page, {
+    scannerSrc: SCANNER_TEXT,
+  })
+
+  // The complete visible label strings, and only those.
+  assert.deepEqual(vouchedLabels, [CERT])
+  // Not in the object the caller gets...
+  assert.equal(scan.fields[0].labelExact, undefined)
+  // ...not in what is stashed for the page to read back out...
+  const stashed = page.log.find((e) => e[0] === "stash")[1]
+  assert.equal(stashed.fields[0].labelExact, undefined)
+  // ...and not in what would be written to scan-p1.json.
+  assert.ok(!JSON.stringify(scan).includes("labelExact"))
+  assert.match(scan.fields[0].labelWhy, /out of band/)
+})
+
+test("a scan whose provenance is unknown vouches for nothing at all", async () => {
+  // No source to embed means the scanner was reached through window.__ajScan,
+  // so we cannot know whose function answered. vouchedLabels must be empty
+  // even though the scan claims a vouch.
+  const page = fakeScanPage({
+    scan: {
+      btns: [{ k: "b1", l: "Submit", r: "submit" }],
+      fields: [
+        { k: "g1", t: "checkbox", l: "I agree", labelExact: true, o: [] },
+      ],
+    },
+  })
+  const { scan, vouchedLabels } = await scanPage(page, { scannerSrc: "" })
+  assert.deepEqual(vouchedLabels, [])
+  assert.equal(scan.fields[0].labelExact, undefined)
 })
 
 test("a scan read through the global carries no vouch at all", async () => {
@@ -1139,7 +1174,7 @@ test("a scan read through the global carries no vouch at all", async () => {
     },
     installed: true,
   })
-  const scan = await scanPage(page, { scannerSrc: "" })
+  const { scan } = await scanPage(page, { scannerSrc: "" })
   assert.ok(page.log.some((e) => e[0] === "scan-global"))
   assert.equal(scan.fields[0].labelExact, undefined)
   assert.equal(scan.fields[0].o[0].labelExact, undefined)
@@ -1167,7 +1202,7 @@ test("a dropdown whose answer is already known is never opened", async () => {
   const page = fakeScanPage({
     scan: comboScan(3, ["Country", "How did you hear about us?", "Pronouns"]),
   })
-  const scan = await scanPage(page, {
+  const { scan } = await scanPage(page, {
     scannerSrc: "",
     skipProbe: ["country", "PRONOUNS"],
   })
@@ -1180,7 +1215,7 @@ test("a dropdown whose answer is already known is never opened", async () => {
 
 test("a remembered form shape is used instead of re-probing", async () => {
   const page = fakeScanPage({ scan: comboScan(2, ["Country", "Visa status"]) })
-  const scan = await scanPage(page, {
+  const { scan } = await scanPage(page, {
     scannerSrc: "",
     knownOpts: { Country: ["United States", "Canada"] },
   })
@@ -1196,7 +1231,10 @@ test("a remembered form shape is used instead of re-probing", async () => {
 
 test("an unfamiliar dropdown is still probed — less information is the expensive failure", async () => {
   const page = fakeScanPage({ scan: comboScan(1, ["Something new"]) })
-  const scan = await scanPage(page, { scannerSrc: "", skipProbe: ["Country"] })
+  const { scan } = await scanPage(page, {
+    scannerSrc: "",
+    skipProbe: ["Country"],
+  })
   assert.equal(scan.probe.probed, 1)
   assert.deepEqual(plain(scan.fields[0].opts), ["Yes", "No"])
 })
@@ -1222,7 +1260,7 @@ test("probing waits for the menu to render, not for a flat 300ms", async () => {
 
 test("the probe cap still bounds a long form", async () => {
   const page = fakeScanPage({ scan: comboScan(20) })
-  const scan = await scanPage(page, { scannerSrc: "" })
+  const { scan } = await scanPage(page, { scannerSrc: "" })
   assert.equal(scan.probe.probed, 18)
   assert.equal(scan.probe.capped, 2)
   assert.equal(page.log.filter((e) => e[0] === "click").length, 18)
@@ -1256,7 +1294,7 @@ test("a probe failure is recorded on the field, never thrown", async () => {
     }
     return loc
   }
-  const scan = await scanPage(page, { scannerSrc: "" })
+  const { scan } = await scanPage(page, { scannerSrc: "" })
   assert.match(scan.fields[0].probe_error, /intercepted/)
   assert.deepEqual(plain(scan.fields[1].opts), ["Yes", "No"])
 })
@@ -1338,6 +1376,143 @@ test("the scan driver says so when the page already owned __ajScan", async () =>
   assert.ok(!page.log.some((e) => e[0] === "addScriptTag"))
 })
 
+// --- what the probe is allowed to click ------------------------------------
+
+test("a control whose name is its own text is a button, not a picker", async () => {
+  // The structural half. tests/fixtures/hostile/forms/destructive-combobox.html
+  // makes the honest and hostile controls IDENTICAL in shape, so this is the
+  // only thing that separates them: #country is named "Country" from an
+  // external label and renders "Select...", while #withdraw is named
+  // "Withdraw my application" and renders those same words.
+  assert.equal(probeRefusal({ l: "Country", v: "Select..." }), "")
+  assert.match(
+    probeRefusal({
+      l: "Withdraw my application",
+      v: "Withdraw my application",
+    }),
+    /its own text/,
+  )
+  // A picker that already holds a value is still a picker.
+  assert.equal(probeRefusal({ l: "Country", v: "United States" }), "")
+  // v is cut at 60 and l at 120, so a long name matches by prefix.
+  const long = "Delete my candidate account and all application history"
+  assert.match(probeRefusal({ l: long, v: long.slice(0, 40) }), /its own text/)
+  // An unlabelled control identifies itself as nothing, and the answer bank
+  // could not have resolved it either.
+  assert.match(probeRefusal({ l: "", v: "Select..." }), /no label/)
+})
+
+test("the word list is a backstop, and catches what shape cannot", () => {
+  // Named as a backstop in the source: it has a word list's weakness. It is
+  // here for the shapes rule 1 misses — e.g. a submit button with an external
+  // label, where the name is NOT its own text.
+  assert.match(probeRefusal({ l: "Submit application now", v: "" }), /action/)
+  assert.match(probeRefusal({ l: "Withdraw", v: "Choose" }), /action/)
+  assert.match(probeRefusal({ l: "Close my account", v: "Choose" }), /action/)
+  // and it must not swallow ordinary form vocabulary
+  for (const l of [
+    "Country",
+    "How did you hear about us?",
+    "Years of experience",
+    "Preferred pronouns",
+    "Are you legally authorized to work in the United States?",
+    "Desired salary",
+    "Notice period",
+    "Veteran status",
+  ]) {
+    assert.equal(probeRefusal({ l, v: "Select..." }), "", `refused ${l}`)
+  }
+})
+
+test("the scanner never opens a destructive control, whatever the caller says", async () => {
+  // The caller cannot make this happen: no skipProbe, no knownOpts, every
+  // field required — exactly the shape a hostile board would use to guarantee
+  // a click.
+  const hostile = {
+    url: "http://127.0.0.1:8123/apply",
+    btns: [{ k: "b1", l: "Submit Application", r: "submit" }],
+    fields: [
+      { k: "f1", t: "combo", l: "Country", v: "Select...", req: true },
+      {
+        k: "f2",
+        t: "combo",
+        l: "Withdraw my application",
+        v: "Withdraw my application",
+        req: true,
+      },
+      {
+        k: "f3",
+        t: "combo",
+        l: "Delete my candidate account and all application history",
+        v: "Delete my candidate account and all application history",
+        req: true,
+      },
+      {
+        k: "f4",
+        t: "combo",
+        l: "Submit application now",
+        v: "Submit application now",
+        req: true,
+      },
+    ],
+  }
+  const page = fakeScanPage({ scan: hostile })
+  const { scan } = await scanPage(page, { scannerSrc: SCANNER_TEXT })
+  const clicked = page.log.filter((e) => e[0] === "click").map((e) => e[1])
+  assert.deepEqual(clicked, ['[data-aj="f1"]'], "only the country picker")
+  assert.equal(scan.probe.refused, 3)
+  for (const k of ["f2", "f3", "f4"]) {
+    assert.ok(scan.fields.find((f) => f.k === k).probe_refused)
+  }
+  // and the honest one was genuinely probed, not merely spared
+  assert.deepEqual(plain(scan.fields[0].opts), ["Yes", "No"])
+})
+
+test("the probe click is never forced", async () => {
+  // force:true skips every actionability check, which is "click something the
+  // user could not have clicked". A control that is genuinely unclickable must
+  // fail and defer instead.
+  for (const [name, src] of [
+    [
+      "scan-engine.mjs",
+      fs.readFileSync(
+        path.join(ROOT, "scripts", "apply", "scan-engine.mjs"),
+        "utf8",
+      ),
+    ],
+    ["scan.driver.mjs", DRIVER],
+  ]) {
+    const code = src
+      .split(/\r?\n/)
+      .filter((l) => !/^\s*\/\//.test(l))
+      .join("\n")
+    assert.ok(!/force:\s*true/.test(code), `${name} still forces a click`)
+  }
+})
+
+test("all three copies of the probe guard are identical", () => {
+  // A click happens in three places and none of them can import the other two:
+  // the engine (module), the MCP driver (vm, no module loader) and the
+  // scanner's own probe loop (page context). Copies drift — the flat sleeps
+  // already proved that — so the drift is made loud here.
+  const engine = fs.readFileSync(
+    path.join(ROOT, "scripts", "apply", "scan-engine.mjs"),
+    "utf8",
+  )
+  const scanner = fs.readFileSync(SCANNER_PATH, "utf8")
+  const re = /\/\\b\(withdraw\|delete[^\n]*\/i/
+  const found = [engine, DRIVER, scanner].map((s) => re.exec(s)?.[0])
+  assert.ok(found[0], "the engine's DESTRUCTIVE_LABEL must be findable")
+  assert.equal(found[1], found[0], "scan.driver.mjs drifted from the engine")
+  assert.equal(found[2], found[0], "scan-page.js drifted from the engine")
+  for (const s of [DRIVER, scanner]) {
+    assert.ok(
+      s.includes("its name is its own text, so it is a button, not a picker"),
+      "the structural rule must be in every copy, not just the word list",
+    )
+  }
+})
+
 test("the scan driver and the scan engine agree on their ceilings", () => {
   const engine = fs.readFileSync(
     path.join(ROOT, "scripts", "apply", "scan-engine.mjs"),
@@ -1352,7 +1527,7 @@ test("the scan driver and the scan engine agree on their ceilings", () => {
     assert.ok(driverCode.includes(ceiling), `driver lost: ${ceiling}`)
   }
   // Both cap the probe at the same number of dropdowns.
-  assert.ok(driverCode.includes("slice(0, 18)"))
+  assert.ok(driverCode.includes("todo.length >= 18"))
   assert.ok(engine.includes("opts.probeMax === undefined ? 18"))
 })
 

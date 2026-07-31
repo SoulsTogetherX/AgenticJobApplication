@@ -67,16 +67,64 @@ async (page) => {
   // used by the local runner — takes { knownOpts, skipProbe } and probes only
   // what is genuinely unknown. Keep the two in step on everything that does
   // NOT need a parameter, which is every wait below.
-  const todo = (scan.fields || [])
-    .filter((f) => f.t === "combo" && !(f.opts && f.opts.length))
-    .slice(0, 18)
-  const stats = { probed: 0, cached: 0, skipped: 0, capped: 0 }
+  //
+  // WHAT THE PROBE IS ALLOWED TO CLICK. Mirrored from scripts/apply/
+  // scan-engine.mjs's probeRefusal(), which is the canonical copy and carries
+  // the full reasoning; this vm has no module loader so it cannot import it,
+  // and tests/apply/fill-page.test.mjs pins the two character-for-character.
+  // In short: shape alone cannot tell a country picker from a button a board
+  // decorated with role="combobox" and labelled "Withdraw my application", so
+  // (1) a picker's name comes from OUTSIDE it while a button's name is its own
+  // text, and (2) a word list as a named backstop.
+  const KEY = (s) =>
+    String(s || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase()
+  const DESTRUCTIVE_LABEL =
+    /\b(withdraw|delete|deactivate|remove|revoke)\b|\bsubmit\b|\bsend (my |the )?applicat|\bconfirm and\b|\bclose (my )?(account|profile)\b/i
+  const probeRefusal = (f) => {
+    const name = KEY(f && f.l)
+    const own = KEY(f && f.v)
+    if (!name) return "no label to identify it as a picker"
+    if (
+      own &&
+      (name === own ||
+        (own.length >= 12 && (name.startsWith(own) || own.startsWith(name))))
+    ) {
+      return "its name is its own text, so it is a button, not a picker"
+    }
+    if (DESTRUCTIVE_LABEL.test(String((f && f.l) || ""))) {
+      return "label reads as an action on the application, not a choice"
+    }
+    return ""
+  }
+
+  const stats = { probed: 0, cached: 0, skipped: 0, capped: 0, refused: 0 }
+  const todo = []
+  for (const f of scan.fields || []) {
+    if (f.t !== "combo" || (f.opts && f.opts.length)) continue
+    const refusal = probeRefusal(f)
+    if (refusal) {
+      f.probe_refused = refusal
+      stats.refused++
+      continue
+    }
+    if (todo.length >= 18) {
+      f.probe_skipped = "probe cap"
+      stats.capped++
+      continue
+    }
+    todo.push(f)
+  }
 
   for (const f of todo) {
     const loc = page.locator('[data-aj="' + f.k + '"]')
     try {
       await loc.scrollIntoViewIfNeeded({ timeout: 2000 })
-      await loc.click({ timeout: 2000, force: true })
+      // NOT force:true — a forced click skips every actionability check, which
+      // is "click something the user could not have clicked". See the engine.
+      await loc.click({ timeout: 2000 })
       // Wait for the menu to RENDER, not for a flat 300ms. react-select's own
       // class first: a bare [role=option] also matches the phone country-code
       // widget, which is always in the DOM — so waiting on that would return

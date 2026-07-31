@@ -246,9 +246,25 @@ function h(tag, attrs, kids) {
 // Loads the real scanner text with the globals it expects. `new Function`
 // rather than a vm realm so the DOM objects the scanner touches are ordinary
 // same-realm objects.
-function loadScanner(root) {
+// `viewport` opts in to the occlusion check: elementFromPoint only means
+// anything for a point that is on screen, and the scanner will not scroll the
+// user's page to find out — so with no viewport the scanner takes the
+// documented below-the-fold path and skips it. Tests that want to exercise
+// occlusion set one, and give their elements real rects.
+function loadScanner(root, { viewport = null } = {}) {
   ORDER = 0
   DOC.root = root
+  const hitsAt = (x, y) =>
+    [root, ...root.descendants()].filter((e) => {
+      const r = e.getBoundingClientRect()
+      return (
+        e.style.pointerEvents !== "none" &&
+        x >= r.left &&
+        x < r.right &&
+        y >= r.top &&
+        y < r.bottom
+      )
+    })
   const doc = {
     body: root,
     title: "Apply",
@@ -258,10 +274,19 @@ function loadScanner(root) {
     querySelectorAll: (s) =>
       (matches(root, s) ? [root] : []).concat(root.querySelectorAll(s)),
   }
+  // Painted last wins, which is what a plain overlay does.
+  if (viewport) {
+    doc.elementFromPoint = (x, y) => {
+      const hits = hitsAt(x, y)
+      return hits.length ? hits[hits.length - 1] : null
+    }
+  }
   DOC.documentElement = root
   const win = {
     scrollX: 0,
     scrollY: 0,
+    innerWidth: viewport ? viewport.width : 0,
+    innerHeight: viewport ? viewport.height : 0,
     CSS: { escape: (s) => String(s).replace(/[^\w-]/g, "\\$&") },
   }
   const globals = {
@@ -281,15 +306,18 @@ function loadScanner(root) {
         visibility: el.style.visibility || "visible",
         display: el.style.display || "block",
         opacity: el.style.opacity || "1",
+        color: el.style.color || "rgb(0, 0, 0)",
+        fontSize: el.style.fontSize || "16px",
       }
     },
   }
   const fn = new Function(...Object.keys(globals), SRC)
   fn(...Object.values(globals))
+  DOC.win = win
   return win.__ajScan
 }
 
-const scan = (root) => loadScanner(root)(false)
+const scan = (root, opts) => loadScanner(root, opts)(false)
 const fieldFor = (out, pred) => out.fields.find(pred)
 const onlyGroup = (out) => out.fields.find((f) => f.t === "checkbox")
 
@@ -502,6 +530,108 @@ test("aria-labelledby pointing at a screen-reader-only box is not vouched", asyn
   const g = onlyGroup(out)
   assert.equal(g.labelExact, undefined)
   assert.equal(g.labelWhy, "label text is not visibly rendered")
+})
+
+// --- hiding text from the eye with pure CSS, no JavaScript at all ----------
+// I originally framed this residual as "a board that patches DOM prototypes",
+// which under-stated it badly: every case below is a stylesheet, and an
+// earlier version of the vouch caught none of them.
+
+test("opacity:0 on an ANCESTOR is not visible, though the element's own is 1", async () => {
+  // The one that made the rest reachable: opacity does not inherit, so the
+  // label's own computed opacity is still "1" and a check on the element alone
+  // sails through while nothing is on screen.
+  const out = await scan(
+    h("body", {}, [
+      h("div", { style: { opacity: "0" } }, [
+        h("div", {}, [
+          h("label", { for: "c1" }, [CERT]),
+          h("input", { type: "checkbox", id: "c1" }),
+        ]),
+      ]),
+    ]),
+  )
+  const g = onlyGroup(out)
+  assert.equal(g.labelExact, undefined)
+  assert.equal(g.labelWhy, "label text is not visibly rendered")
+})
+
+test("transparent text is not visible text", async () => {
+  for (const color of ["transparent", "rgba(0, 0, 0, 0)"]) {
+    const out = await scan(
+      h("body", {}, [
+        h("div", {}, [
+          h("label", { for: "c1", style: { color } }, [CERT]),
+          h("input", { type: "checkbox", id: "c1" }),
+        ]),
+      ]),
+    )
+    assert.equal(onlyGroup(out).labelExact, undefined, `color: ${color}`)
+  }
+  // and an ordinary colour still vouches
+  const ok = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("label", { for: "c1", style: { color: "rgba(20, 20, 20, 1)" } }, [
+          CERT,
+        ]),
+        h("input", { type: "checkbox", id: "c1" }),
+      ]),
+    ]),
+  )
+  assert.equal(onlyGroup(ok).labelExact, true)
+})
+
+test("font-size:0 text is not visible text", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("label", { for: "c1", style: { fontSize: "0px" } }, [CERT]),
+        h("input", { type: "checkbox", id: "c1" }),
+      ]),
+    ]),
+  )
+  assert.equal(onlyGroup(out).labelExact, undefined)
+})
+
+test("a label painted over by another element is not vouched", async () => {
+  const label = h(
+    "label",
+    { for: "c1", rect: { width: 300, height: 20, top: 100, left: 0 } },
+    [CERT],
+  )
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [label, h("input", { type: "checkbox", id: "c1" })]),
+      // Painted after, covering the label's centre.
+      h("div", { rect: { width: 400, height: 60, top: 80, left: 0 } }, [
+        "Something else entirely",
+      ]),
+    ]),
+    { viewport: { width: 1000, height: 800 } },
+  )
+  const g = onlyGroup(out)
+  assert.equal(g.labelExact, undefined)
+  assert.equal(g.labelWhy, "label text is not visibly rendered")
+})
+
+test("an unoccluded label in view is still vouched (negative control)", async () => {
+  // Same viewport, same geometry, no overlay: the occlusion check must not be
+  // refusing everything, or the four tests above prove nothing.
+  const out = await scan(
+    h("body", {}, [
+      h("div", { rect: { width: 400, height: 60, top: 80, left: 0 } }, [
+        h(
+          "label",
+          { for: "c1", rect: { width: 300, height: 20, top: 100, left: 0 } },
+          [CERT],
+        ),
+        h("input", { type: "checkbox", id: "c1" }),
+      ]),
+    ]),
+    { viewport: { width: 1000, height: 800 } },
+  )
+  assert.equal(onlyGroup(out).labelExact, true)
 })
 
 test("a label parked off the left edge is not vouched", async () => {
@@ -891,6 +1021,55 @@ test("the scan still reports the shape it always did", async () => {
   assert.equal(out.fields[0].l, "Full name")
   assert.equal(out.fields[0].v, "Ada")
   assert.equal(out.btns[0].r, "submit")
+})
+
+// --- the installed global ---------------------------------------------------
+
+test("the installed scanner cannot be swapped out afterwards", async () => {
+  // Not load-bearing: scan-engine.mjs never reads window.__ajScan, and the MCP
+  // driver strips every vouch precisely because it must. This removes a free
+  // move — a script that runs after us cannot quietly replace the scanner, and
+  // an attempt fails loudly instead of succeeding in silence.
+  await scan(h("body", {}, [h("input", { type: "text", id: "t1" })]))
+  const win = DOC.win
+  const ours = win.__ajScan
+  assert.equal(typeof ours, "function")
+
+  const d = Object.getOwnPropertyDescriptor(win, "__ajScan")
+  assert.equal(d.writable, false)
+  assert.equal(d.configurable, false)
+
+  // A later script cannot take it over. This file is a module, so the
+  // assignment throws here; page scripts are usually sloppy, where the same
+  // assignment fails SILENTLY instead. Either way it does not take effect,
+  // which is the property being pinned.
+  assert.throws(() => {
+    win.__ajScan = () => ({ fields: [{ labelExact: true }] })
+  }, /read only|read-only/i)
+  assert.equal(win.__ajScan, ours)
+  assert.throws(() =>
+    Object.defineProperty(win, "__ajScan", { value: () => ({}) }),
+  )
+})
+
+test("the scanner still loads as a plain script and the slice marker holds", () => {
+  // The file is loaded three ways — addInitScript, addScriptTag and
+  // (0,eval)(src) — all of which run it as a SCRIPT, so the lock statement
+  // after the function must not break any of them. And scan-engine.mjs slices
+  // between the assignment and the marker; if the marker moves, the slice
+  // swallows the lock and the page-side eval gets two statements.
+  const marker = "// --- scanner ends here"
+  assert.ok(SRC.includes(marker), "the slice marker must exist")
+  const after = SRC.slice(SRC.indexOf(marker))
+  assert.ok(after.includes("Object.defineProperty"))
+  assert.ok(
+    !SRC.slice(0, SRC.indexOf(marker)).includes("Object.defineProperty"),
+    "nothing may sit between the function and the marker",
+  )
+  // ASI hazard: the statement after the arrow body must not start with a
+  // character that continues the expression.
+  const next = after.split(/\r?\n/).find((l) => /^\s*[^/\s]/.test(l))
+  assert.ok(!/^\s*[([`+\-/]/.test(next), `ASI hazard: ${next}`)
 })
 
 test("the harness itself can see a broken vouch (negative control)", async () => {

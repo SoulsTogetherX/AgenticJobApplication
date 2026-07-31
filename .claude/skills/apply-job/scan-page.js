@@ -208,13 +208,84 @@ window.__ajScan = async (PROBE = true) => {
   // to an accessibility tree and invisible to the person reading the form, so
   // they can label a field but can never VOUCH for one. Measured against the
   // document, not the viewport, so scroll position cannot change the answer.
+  //
+  // THE DECOUPLING ATTACK DOES NOT NEED JAVASCRIPT. Hiding text from the eye
+  // while leaving it in innerText is pure CSS, and an earlier version of this
+  // check caught almost none of it:
+  //   - color: transparent, or any colour with alpha 0
+  //   - font-size: 0
+  //   - opacity: 0 on an ANCESTOR — opacity does not inherit, so the element's
+  //     own computed opacity is still "1" and a check on the element alone
+  //     passes. This is the one that made the rest of the list reachable.
+  //   - another element painted over the top
+  // visibility and display are not on that list: visibility INHERITS, so
+  // getComputedStyle reports an ancestor's "hidden" on the child, and an
+  // ancestor's display:none leaves the child with no box at all.
+  const alpha0 = (c) => /^(transparent$|rgba\([^)]*,\s*0(\.0*)?\s*\))/i.test(c)
   const visibleToEye = (el) => {
     if (!vis(el)) return false
+    // checkVisibility does the ancestor-opacity walk natively where it exists
+    // (Chromium 105+, which is what this runs in); the loop below is the
+    // fallback and the thing the tests exercise.
+    if (typeof el.checkVisibility === "function") {
+      try {
+        if (
+          !el.checkVisibility({
+            checkOpacity: true,
+            checkVisibilityCSS: true,
+            contentVisibilityAuto: true,
+          })
+        ) {
+          return false
+        }
+      } catch {}
+    }
+    for (let p = el, i = 0; p && i < 30; p = p.parentElement, i++) {
+      let st
+      try {
+        st = getComputedStyle(p)
+      } catch {
+        return false
+      }
+      if (!st) return false
+      if (Number(st.opacity) === 0) return false
+    }
+    let own
+    try {
+      own = getComputedStyle(el)
+    } catch {
+      return false
+    }
+    if (alpha0(String(own.color || ""))) return false
+    if (parseFloat(own.fontSize || "16") < 6) return false
+
     const r = el.getBoundingClientRect()
     if (r.width < 8 || r.height < 8) return false
     const sx = window.scrollX || window.pageXOffset || 0
     const sy = window.scrollY || window.pageYOffset || 0
-    return r.right + sx > 0 && r.bottom + sy > 0
+    if (!(r.right + sx > 0 && r.bottom + sy > 0)) return false
+
+    // Occlusion. elementFromPoint is viewport-relative and returns null for a
+    // point that is not on screen, so this can only be checked for a label
+    // that happens to be in view — and the scanner will not scroll the user's
+    // page to find out. STATED LIMIT: a label below the fold is vouched
+    // without an occlusion check. Everything else above still applies to it.
+    const cx = r.left + r.width / 2
+    const cy = r.top + r.height / 2
+    const inView =
+      cx >= 0 &&
+      cy >= 0 &&
+      cx < (window.innerWidth || 0) &&
+      cy < (window.innerHeight || 0)
+    if (inView && document.elementFromPoint) {
+      let top = null
+      try {
+        top = document.elementFromPoint(cx, cy)
+      } catch {}
+      if (!top) return false
+      if (top !== el && !el.contains(top) && !top.contains(el)) return false
+    }
+    return true
   }
 
   // CSS ::before/::after content renders on screen and is absent from
@@ -559,9 +630,45 @@ window.__ajScan = async (PROBE = true) => {
 
   // --- probe custom dropdowns (batched) -----------------------------------
   if (PROBE) {
+    // WHAT THE PROBE IS ALLOWED TO CLICK. Mirrored from
+    // scripts/apply/scan-engine.mjs's probeRefusal(), the canonical copy, which
+    // carries the full reasoning; this file runs in page context and cannot
+    // import it. tests/apply/fill-page.test.mjs pins the copies identical.
+    // Shape alone cannot tell a country picker from a button a board decorated
+    // with role="combobox" and labelled "Withdraw my application", so: (1) a
+    // picker's name comes from OUTSIDE it, a button's name is its own text;
+    // (2) a word list as a named backstop, which is not the load-bearing half.
+    const KEY = (s) =>
+      String(s || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase()
+    const DESTRUCTIVE_LABEL =
+      /\b(withdraw|delete|deactivate|remove|revoke)\b|\bsubmit\b|\bsend (my |the )?applicat|\bconfirm and\b|\bclose (my )?(account|profile)\b/i
+    const probeRefusal = (f) => {
+      const name = KEY(f && f.l)
+      const own = KEY(f && f.v)
+      if (!name) return "no label to identify it as a picker"
+      if (
+        own &&
+        (name === own ||
+          (own.length >= 12 && (name.startsWith(own) || own.startsWith(name))))
+      ) {
+        return "its name is its own text, so it is a button, not a picker"
+      }
+      if (DESTRUCTIVE_LABEL.test(String((f && f.l) || ""))) {
+        return "label reads as an action on the application, not a choice"
+      }
+      return ""
+    }
     for (const f of combos.slice(0, MAX_PROBE)) {
       const el = elOf.get(f.k)
       if (!el || !el.isConnected) continue
+      const refusal = probeRefusal(f)
+      if (refusal) {
+        f.probe_refused = refusal
+        continue
+      }
       try {
         el.click()
         await sleep(200)
@@ -632,3 +739,24 @@ window.__ajScan = async (PROBE = true) => {
     signals: signals.length ? uniq(signals) : undefined,
   }
 }
+// --- scanner ends here; nothing below is part of the function ---------------
+// scan-engine.mjs's scannerExpression() slices between the assignment above and
+// this line, so that it can eval the function into a LOCAL binding instead of
+// calling it through window. Do not remove this marker, and do not put anything
+// between it and the closing brace.
+//
+// Lock the global. Not load-bearing — scan-engine.mjs never reads
+// window.__ajScan, and the MCP driver already strips every vouch precisely
+// because it has to. This removes a free move: after install, a script on the
+// page cannot quietly swap the scanner out, and an attempt to do so throws in
+// strict mode instead of succeeding in silence. If the page got there FIRST the
+// property is already non-configurable, this throws, and the catch leaves the
+// situation exactly as it was — no worse, and the driver's preOwned check is
+// what notices.
+try {
+  Object.defineProperty(window, "__ajScan", {
+    value: window.__ajScan,
+    writable: false,
+    configurable: false,
+  })
+} catch (e) {}

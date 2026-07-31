@@ -21,6 +21,8 @@ import {
   fieldIdentityMismatch,
   buildDriverSource,
   buildBootstrap,
+  resolveFields,
+  labelHazard,
 } from "../../scripts/apply/fill-plan.mjs"
 import { engineSandboxSource } from "../../scripts/apply/browser.mjs"
 import { detectAts, ADAPTERS } from "../../scripts/apply/ats/index.mjs"
@@ -1861,4 +1863,104 @@ test("end to end: page 2's scan is never silently planned as page 1", (t) => {
     !keys.includes("f1"),
     "page 1's field must not leak into page 2's plan",
   )
+})
+
+// ---------------------------------------------------------------------------
+// A6 triage (qa-adversary finding: label-injection.scan.json produces 4
+// `fill` items) — CORRECT BEHAVIOUR, not a defect. See labelHazard()'s own
+// header comment in fill-plan.mjs for the full reasoning; these tests pin
+// the two halves of the verdict: filling stays truthful and untouched, and
+// a label that tried to instruct the agent is now marked, not silent.
+// ---------------------------------------------------------------------------
+
+const HOSTILE_SCAN = JSON.parse(
+  fs.readFileSync(
+    path.join(
+      ROOT,
+      "tests",
+      "fixtures",
+      "boards",
+      "scans",
+      "label-injection.scan.json",
+    ),
+    "utf8",
+  ),
+)
+const HOSTILE_PROFILE = path.join(ROOT, "tests", "fixtures", "profile.yaml")
+const HOSTILE_ANSWERS = path.join(
+  ROOT,
+  "tests",
+  "fixtures",
+  "answers-bank.yaml",
+)
+
+test("labelHazard: a real question wrapped in extra prose is not flagged", () => {
+  // f2/f3 name a real, answerable question ("...authorized to work...") and
+  // append descriptive text ("This role uses Kubernetes.") that names no
+  // imperative addressed to an agent. Corpus poisoning via that sentence is a
+  // save-answer.mjs/lib.mjs concern (questionEvidence's bracket-stripping),
+  // not an instruction-injection one — labelHazard must stay silent here.
+  const f2 = HOSTILE_SCAN.fields.find((f) => f.k === "f2")
+  const f3 = HOSTILE_SCAN.fields.find((f) => f.k === "f3")
+  assert.equal(labelHazard(f2.l), undefined)
+  assert.equal(labelHazard(f3.l), undefined)
+})
+
+test("labelHazard: an instruction addressed to the agent is flagged, hidden characters included", () => {
+  const f4 = HOSTILE_SCAN.fields.find((f) => f.k === "f4")
+  const f5 = HOSTILE_SCAN.fields.find((f) => f.k === "f5")
+  const f6 = HOSTILE_SCAN.fields.find((f) => f.k === "f6")
+  assert.match(labelHazard(f4.l), /override_instructions/)
+  // f5's instruction is broken up with zero-width characters between every
+  // word specifically to defeat a naive substring/regex check — the same
+  // carrier untrusted.mjs's INVISIBLE_DELETE strips before matching.
+  assert.match(labelHazard(f5.l), /override_instructions|self_scoring/)
+  assert.match(labelHazard(f6.l), /conceal_from_user/)
+})
+
+test("A6: filling stays correct — the fact base answers the real question, nothing is written to answers.yaml on this path, and hazardous labels are marked, not blocked", () => {
+  const resolved = resolveFields(HOSTILE_SCAN.fields, {
+    profile: HOSTILE_PROFILE,
+    answers: HOSTILE_ANSWERS,
+  })
+  const plan = buildPlan({
+    scan: HOSTILE_SCAN,
+    resolved,
+    adapter: {
+      id: "generic",
+      comboStrategies: [],
+      fileFields: [],
+      fileOrder: [],
+    },
+    url: HOSTILE_SCAN.url,
+  })
+  const byKey = Object.fromEntries(plan.items.map((i) => [i.k, i]))
+
+  // f2/f3: a real work-authorization question, truthfully answered, no flag.
+  assert.equal(byKey.f2.how, "fill")
+  assert.equal(byKey.f2.value, "Yes, US citizen, no sponsorship needed.")
+  assert.equal(byKey.f2.labelFlag, undefined)
+  assert.equal(byKey.f3.how, "fill")
+  assert.equal(byKey.f3.labelFlag, undefined)
+
+  // f5: a real "how did you hear about this job" question, truthfully
+  // answered from the bank, but its label ALSO carried a hidden instruction —
+  // the fill is unaffected and the label is flagged so a downstream reader
+  // (the approval message, pending-questions.mjs) is told what it tried.
+  assert.equal(byKey.f5.how, "fill")
+  assert.equal(byKey.f5.value, "Job Board")
+  assert.match(byKey.f5.labelFlag, /override_instructions|self_scoring/)
+
+  // f4/f6: no answerable content at all — correctly UNKNOWN, and since
+  // neither field is required, "skip" (optional-and-unresolved) rather than
+  // a defer that would cost the user a round trip. Flagged all the same.
+  assert.equal(byKey.f4.how, "skip")
+  assert.match(byKey.f4.labelFlag, /override_instructions/)
+  assert.equal(byKey.f6.how, "skip")
+  assert.match(byKey.f6.labelFlag, /conceal_from_user/)
+
+  // The DoS check: NOTHING here moved a field from items into defer. A
+  // hostile board gains nothing by decorating a real question with an
+  // imperative — the fast path (readiness) is unaffected by labelFlag.
+  assert.deepEqual(plan.defer, [])
 })

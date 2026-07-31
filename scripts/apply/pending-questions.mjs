@@ -28,7 +28,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { isTerse } from "../lib/lib.mjs"
 import { detectAts } from "./ats/index.mjs"
 import { loadCache } from "./field-cache.mjs"
-import { isConsent, resolveFields } from "./fill-plan.mjs"
+import { isConsent, resolveFields, labelHazard } from "./fill-plan.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -64,6 +64,13 @@ export function mergeQuestions(found) {
     if (!key) continue
     let entry = byLabel.get(key)
     if (!entry) {
+      // Computed here, once, regardless of source (a live plan's defer OR a
+      // remembered field-cache entry, which stores the label VERBATIM — see
+      // field-cache.mjs's recordCache — and would otherwise re-serve a
+      // poisoned label to every future application with no marking at all).
+      // Same detection fill-plan.mjs's buildPlan uses; see labelHazard's own
+      // comment on why this is display-only.
+      const flag = labelHazard(q.label)
       entry = {
         label: q.label,
         why: q.why,
@@ -71,6 +78,7 @@ export function mergeQuestions(found) {
         slugs: [],
         options: [],
         ats: [],
+        ...(flag ? { labelFlag: flag } : {}),
       }
       byLabel.set(key, entry)
     }
@@ -262,6 +270,8 @@ function main() {
   }
   if (isTerse()) {
     for (const q of questions) {
+      // Trailing column, not inserted mid-record — see fill-plan.mjs's own
+      // comment on the same choice for `defer`/`skip` lines.
       console.log(
         [
           "q",
@@ -269,6 +279,7 @@ function main() {
           q.slugs.length ? q.slugs.join(",") : q.ats.join(",") || "-",
           q.why,
           q.label,
+          q.labelFlag ?? "",
         ].join("\t"),
       )
       if (q.options.length) {
@@ -298,7 +309,9 @@ function main() {
     const where = q.slugs.length
       ? q.slugs.join(", ")
       : `${q.ats.join(", ")} (predicted)`
-    console.log(`- ${q.label}\n    ${q.why} — ${where}`)
+    console.log(
+      `- ${q.label}${q.labelFlag ? ` [label flag: ${q.labelFlag}]` : ""}\n    ${q.why} — ${where}`,
+    )
     if (q.options.length) {
       console.log(
         `    options: ${q.options.slice(0, 12).join(" | ")}` +

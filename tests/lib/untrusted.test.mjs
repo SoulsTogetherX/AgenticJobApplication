@@ -25,6 +25,9 @@ import {
   DISQUALIFYING_KINDS,
   SANITIZER_LIMITS,
   REDACTION,
+  findSensitiveValues,
+  describeSensitive,
+  SENSITIVE_LIMITS,
 } from "../../scripts/lib/untrusted.mjs"
 import { textSnippet } from "../../scripts/lib/lib.mjs"
 import {
@@ -640,4 +643,98 @@ test("non-English instructions are NOT caught, and that is the documented limit"
   }
   assert.match(SANITIZER_LIMITS, /non-English/)
   assert.match(SANITIZER_LIMITS, /R6/)
+})
+
+// --- sensitive values: the OTHER direction -----------------------------------
+//
+// Everything above is third-party text coming IN. These are the user's own
+// credentials going OUT. The design constraint that matters is asymmetric: a
+// missed identifier is a bounded disclosure, but a refused HONEST answer gets
+// the guard bypassed by the user and then it protects nothing at all. So the
+// negative tests below are the load-bearing ones.
+
+test("neither the key nor the value leg refuses on its own", () => {
+  // This is the whole design. Key-only matching refuses "Do you have a valid
+  // driver's licence? -> No", which is on half the application forms in
+  // existence. Value-only matching misses an SSN typed without separators.
+  const keyOnly = [
+    ["Do you have a valid driver's license?", "No"],
+    ["Do you have a passport?", "Yes"],
+    ["Bank account set up for direct deposit?", "Yes"],
+    ["Date of birth", "Prefer not to answer"],
+    ["Have you ever been issued a different SSN?", "No"],
+  ]
+  const valueOnly = [
+    // A date, an id-shaped token and a nine-digit run with no naming key are
+    // a graduation date, an employee number and a case number.
+    ["When did you graduate?", "05/20/2023"],
+    ["Employee ID", "X12345678"],
+    ["Reference number", "021000021"],
+  ]
+  assert.deepEqual(
+    [...keyOnly, ...valueOnly].filter(
+      ([q, a]) => findSensitiveValues(q, a).length,
+    ),
+    [],
+  )
+})
+
+test("a self-identifying shape fires whatever the question claims to ask", () => {
+  // The attack innov-resilience named: a field's meaning is server-side, so the
+  // label is not evidence of anything. These shapes carry their own proof —
+  // 3-2-4 grouping, mod-97, Luhn plus a real issuer prefix.
+  const cases = [
+    ["What is your ID number?", "123-45-6789", "ssn"],
+    ["Phone number", "123 45 6789", "ssn spaced under a lying label"],
+    ["Anything else?", "GB82 WEST 1234 5698 7654 32", "iban mod-97"],
+    ["Comments", "4111 1111 1111 1111", "luhn + visa prefix"],
+  ]
+  assert.deepEqual(
+    cases
+      .filter(([q, a]) => !findSensitiveValues(q, a).length)
+      .map((c) => c[2]),
+    [],
+  )
+  // ...and a number of the same LENGTH that fails its own checksum does not.
+  assert.deepEqual(findSensitiveValues("Comments", "4111 1111 1111 1112"), [])
+  assert.deepEqual(
+    findSensitiveValues("Anything else?", "GB82 WEST 1234 5698 7654 33"),
+    [],
+  )
+})
+
+test("a sensitive finding never carries the value", () => {
+  // Same rule as makeFinding: the refusal is printed to a terminal and a
+  // transcript. Echoing the SSN back while refusing to store it would be the
+  // disclosure, performed by the defence.
+  const found = findSensitiveValues("SSN", "123-45-6789")
+  assert.equal(found.length, 1)
+  assert.deepEqual(Object.keys(found[0]).sort(), ["id", "label", "matched"])
+  assert.ok(!JSON.stringify(found).includes("6789"), JSON.stringify(found))
+  assert.ok(!describeSensitive(found).includes("6789"))
+})
+
+test("sanitising first is what defeats zero-width padding of an identifier", () => {
+  // Ordering, asserted rather than assumed: the raw string does not match,
+  // because the invisible characters break the 3-2-4 grouping. save-answer runs
+  // the sanitiser BEFORE this check, so what gets tested is what gets stored.
+  const padded = "1\u200B23-4\u00AD5-6789"
+  assert.deepEqual(findSensitiveValues("ID number", padded), [])
+  const cleaned = sanitizeUntrusted(padded).text
+  assert.equal(findSensitiveValues("ID number", cleaned).length, 1)
+})
+
+test("SENSITIVE_LIMITS states the hole rather than implying completeness", () => {
+  // A defence described as stronger than it is, is a documentation defect with
+  // teeth: it makes the next reader stop looking.
+  assert.match(SENSITIVE_LIMITS, /shape matching only/i)
+  assert.match(SENSITIVE_LIMITS, /never holds one/i)
+  // The named residual risk, asserted as UNCAUGHT on purpose. An undashed SSN
+  // under a question that does not name it is indistinguishable from an
+  // employee ID. If this ever starts being caught, check what else started
+  // being caught with it before deleting the assertion.
+  assert.deepEqual(
+    findSensitiveValues("What is your ID number?", "123456789"),
+    [],
+  )
 })

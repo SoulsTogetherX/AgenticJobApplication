@@ -68,6 +68,18 @@ export const SANITIZER_LIMITS =
 
 export const REDACTION = "[redacted: instruction-like text removed]"
 
+// TWO THREATS LIVE IN THIS FILE, and they point in opposite directions.
+//
+// Everything above and below THIS line until the "Sensitive values" section is
+// about text coming IN from a third party trying to act on the agent.
+//
+// The section at the bottom (findSensitiveValues) is the mirror image: the
+// user's OWN data going OUT into a third party's form. It shares this file
+// because both are the same architectural idea — a boundary that refuses
+// rather than a downstream reader that has to be clever — and because both the
+// save-answer write boundary and the (unbuilt) scripts/auto preflight need it.
+// It is NOT part of the injection defence and does not read the pattern list.
+
 // ---------------------------------------------------------------------------
 // Invisible carriers
 // ---------------------------------------------------------------------------
@@ -910,4 +922,256 @@ export function describeFindings(findings) {
   return Object.entries(counts)
     .map(([k, n]) => (n > 1 ? `${k}x${n}` : k))
     .join(", ")
+}
+
+// ===========================================================================
+// Sensitive values — the value-side boundary
+// ===========================================================================
+//
+// WHY THIS EXISTS, and why it is a REFUSAL rather than a warning.
+//
+// innov-resilience ruled on a live attack on 2026-07-31: a hostile form labels
+// a control "Phone number" while the input is really the SSN field. Every
+// field-level guard is permanently mitigation, because a field's MEANING is
+// decided server-side — an input named `phone`, labelled "Phone number", typed
+// `tel` can POST to a column called `ssn`, and that fact is nowhere in the
+// document. No scanner can recover it. The conclusion:
+//
+//   the blast radius of every label-lie routing attack is exactly the
+//   contents of the answer bank.
+//
+// So the load-bearing control is not the field guard. It is that the dangerous
+// value is never in the dangerous place. answers.yaml is permanent, global to
+// every future application, and read by a script that types it into third
+// party forms UNATTENDED. This pipeline must never be in a position to type a
+// government ID into someone else's form, so it must never hold one.
+//
+// -------------------------------------------------------------------------
+// THE FALSE-POSITIVE RULE, which is the hard part
+// -------------------------------------------------------------------------
+//
+// A guard that refuses honest answers gets bypassed by the user, and then it
+// protects nothing. That is not a hypothetical: the real answers.yaml holds
+//
+//   "Do you have a valid Nevada driver's license?" -> "No"
+//
+// A key-only matcher refuses that, and it is one of the most ordinary
+// questions on an application form. So detection is TWO-FACTOR:
+//
+//   value-alone  only for shapes that are self-identifying and carry their own
+//                proof — SSN's 3-2-4 grouping, a Luhn-valid card with a real
+//                issuer prefix, an IBAN that passes mod-97. These fire whatever
+//                the question says, which is the answer to "the user banked
+//                their SSN under 'What is your ID number?'".
+//
+//   key + value  everything with no distinguishing shape — DOB, passport,
+//                driver's licence, account numbers. The QUESTION must name the
+//                thing AND the ANSWER must actually carry a datum. "Do you
+//                have a valid driver's licence?" -> "No" fails the value leg
+//                and is stored, which is correct.
+//
+// Neither leg alone ever refuses. That is deliberate and is what keeps the
+// measured false-positive count on the real fact base at zero.
+//
+// -------------------------------------------------------------------------
+// WHAT IS DELIBERATELY NOT COVERED, and why
+// -------------------------------------------------------------------------
+//
+//   email, phone, street address, postal code   the pipeline exists to type
+//     these into forms. Refusing them removes the product.
+//   salary, compensation                        the user's own number, asked
+//     on nearly every form.
+//   EEO / demographic answers (race, gender, veteran, disability)  sensitive
+//     in law, but they are DESIGNED to be answered on an application form and
+//     the real fact base holds fourteen of them. This guard is about
+//     credentials that enable identity theft or financial fraud, not about
+//     "personal" data in general. Conflating the two would refuse a third of
+//     the store.
+//   a bare 9-digit number under a neutral key    indistinguishable from an
+//     employee ID or a case number. Refusing it is the "cries wolf" failure,
+//     so it is accepted as residual risk and named here rather than guarded.
+//
+// This is pattern matching and it has the same permanent holes as everything
+// else in this file: an SSN typed with no separators under a question that
+// does not name it gets through. It is a boundary, not a proof.
+export const SENSITIVE_LIMITS =
+  "shape matching only: an identifier with no distinguishing format, under a question that does not " +
+  "name it, is not detected. The control is that the answer bank never holds one, not that this list is complete."
+
+// A run of digits, longest first — used by the value legs below.
+function longestDigitRun(value) {
+  let best = 0
+  for (const run of String(value).match(/\d+/g) ?? [])
+    if (run.length > best) best = run.length
+  return best
+}
+
+// "Does this answer actually carry an identifier?" — the value leg for every
+// key-driven rule. A yes/no, a refusal, a country name and a job title all
+// return false, which is what keeps the honest-answer count intact.
+function idShaped(value) {
+  for (const tok of String(value).match(/[A-Za-z0-9]+/g) ?? []) {
+    if (tok.length < 5 || tok.length > 14) continue
+    const digits = (tok.match(/\d/g) ?? []).length
+    if (digits >= 5) return true
+    // Letter-prefixed identifier: X1234567, C09876543.
+    if (digits >= 4 && /[A-Za-z]/.test(tok)) return true
+  }
+  return false
+}
+
+function luhnOk(digits) {
+  let sum = 0
+  let alt = false
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = digits.charCodeAt(i) - 48
+    if (alt) {
+      d *= 2
+      if (d > 9) d -= 9
+    }
+    sum += d
+    alt = !alt
+  }
+  return sum % 10 === 0
+}
+
+// Luhn ALONE is a 1-in-10 coin flip on an arbitrary number, so the issuer
+// prefix carries equal weight. Both plus the length window is what makes this
+// safe to fire on the value with no key at all.
+const CARD_CANDIDATE = /(?<![\d-])(?:\d[ -]?){12,18}\d(?![\d-])/g
+function cardLike(digits) {
+  if (digits.length < 13 || digits.length > 19) return false
+  if (!luhnOk(digits)) return false
+  return (
+    /^4/.test(digits) || // Visa
+    /^5[1-5]/.test(digits) || // Mastercard
+    /^2(?:2[2-9]|[3-6]\d|7[01]|720)/.test(digits) || // Mastercard 2-series
+    /^3[47]/.test(digits) || // Amex
+    /^6(?:011|5|4[4-9])/.test(digits) || // Discover
+    /^35(?:2[89]|[3-8]\d)/.test(digits) // JCB
+  )
+}
+
+// mod-97 (ISO 13616). Self-proving, so no key is required.
+const IBAN_CANDIDATE = /\b[A-Z]{2}\d{2}[A-Z0-9 -]{11,34}\b/g
+function ibanValid(raw) {
+  const s = String(raw).toUpperCase().replace(/[\s-]/g, "")
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(s)) return false
+  let rem = 0
+  for (const ch of s.slice(4) + s.slice(0, 4)) {
+    const v =
+      ch >= "A" && ch <= "Z" ? ch.charCodeAt(0) - 55 : ch.charCodeAt(0) - 48
+    rem = (rem * (v > 9 ? 100 : 10) + v) % 97
+  }
+  return rem === 1
+}
+
+// 3-2-4 grouping. A US phone number is 3-3-4 and does not match; an ISO date
+// is 4-2-2 and does not match. The grouping IS the signal, which is why an
+// undashed nine-digit run is left to the key leg.
+const SSN_GROUPED = /(?<![\d-])\d{3}[-\s]\d{2}[-\s]\d{4}(?![\d-])/
+
+// A date carried in the ANSWER. Only consulted when the QUESTION names birth,
+// because "June 2023" is a graduation date in the real fact base twice over.
+const DATE_VALUE =
+  /(?<![\d/])(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}-\d{2}-\d{2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+\d{4})(?![\d/])/i
+const BIRTH_YEAR = /(?<!\d)(?:19\d{2}|20[01]\d)(?!\d)/
+
+// Values that answer the question without disclosing anything. Checked for the
+// credential rule, which has no value SHAPE to test — a password is any string.
+const NO_DATUM =
+  /^(?:y|n|yes|no|true|false|none|n\.?\/?a\.?|not applicable|unknown|other|prefer not[\s\w]*|decline[\s\w]*|i (?:don'?t|do not) (?:wish|want) to answer)[.!]?$/i
+
+const SENSITIVE_RULES = [
+  {
+    id: "ssn",
+    label: "Social Security or national tax number",
+    key: /\b(?:ssn|s\.s\.n\.?|social security(?:\s*(?:number|no\.?|#))?|social insurance number|national insurance number|taxpayer identification(?:\s*number)?|itin\b)/i,
+    valueAlone: (v) => SSN_GROUPED.test(v),
+    // "Last four of your SSN" is still an SSN fragment.
+    value: (v) => longestDigitRun(v) >= 4,
+  },
+  {
+    id: "date_of_birth",
+    label: "date of birth",
+    key: /\b(?:date of birth|birth\s*date|birthdate|birthday|dob\b|d\.o\.b|(?:date|day|year)\s+(?:you\s+were\s+)?born|were you born)/i,
+    value: (v) => DATE_VALUE.test(v) || BIRTH_YEAR.test(v),
+  },
+  {
+    id: "bank_account",
+    label: "bank account, routing or IBAN number",
+    key: /\b(?:bank account|account number|acct\.?\s*(?:number|no\.?|#)|routing(?:\s*(?:number|no\.?|#|transit))?|aba(?:\s*(?:number|routing))?|iban\b|sort code|swift\s*(?:code|bic)|bic code|direct deposit)/i,
+    valueAlone: (v) => {
+      for (const m of String(v).matchAll(IBAN_CANDIDATE))
+        if (ibanValid(m[0])) return true
+      return false
+    },
+    value: (v) => longestDigitRun(v) >= 4,
+  },
+  {
+    id: "payment_card",
+    label: "payment card number or verification code",
+    key: /\b(?:credit card|debit card|card\s*(?:number|no\.?|#)|cvv|cvc|cid code|card verification|expiry date|expiration date)/i,
+    valueAlone: (v) => {
+      for (const m of String(v).matchAll(CARD_CANDIDATE))
+        if (cardLike(m[0].replace(/[ -]/g, ""))) return true
+      return false
+    },
+    value: (v) => longestDigitRun(v) >= 3,
+  },
+  {
+    id: "passport",
+    label: "passport number",
+    key: /\bpassport/i,
+    value: idShaped,
+  },
+  {
+    id: "drivers_license",
+    label: "driver's licence or state ID number",
+    key: /\b(?:driver'?s?\s*licen[cs]e|driving licen[cs]e|\bdl\s*(?:number|no\.?|#)|licen[cs]e\s*(?:number|no\.?|#)|state\s*id\s*(?:number|no\.?|#)?)/i,
+    value: idShaped,
+  },
+  {
+    id: "credential",
+    label: "password, PIN or knowledge-based secret",
+    key: /\b(?:password|passcode|pass\s*phrase|\bpin\s*(?:number|code|#)?\b|security answer|security question|mother'?s maiden name|maiden name)/i,
+    // No shape exists for a secret, so the only test is "did they answer with
+    // something rather than decline". "Password requirements met? -> Yes" is
+    // stored; "Account password -> hunter2" is not.
+    value: (v) => !NO_DATUM.test(String(v).trim()),
+  },
+]
+
+// Returns [{ id, label, matched }] — NEVER the value. `matched` is "value"
+// (self-identifying shape, question irrelevant) or "question+value" (the
+// question named it and the answer carried it).
+//
+// A finding here carries no payload for the same reason makeFinding does not:
+// the refusal is printed to a terminal, into a transcript, and possibly into a
+// log. Echoing the SSN back while refusing to store it would be the whole
+// attack, performed by the defence.
+export function findSensitiveValues(question, answer) {
+  const q = String(question ?? "")
+  const a = String(answer ?? "")
+  if (!q && !a) return []
+  // The value leg reads the answer AND the question: a form that pre-fills a
+  // label with the datum ("Confirm SSN 123-45-6789") is still a disclosure.
+  const both = `${q}\n${a}`
+  const out = []
+  for (const rule of SENSITIVE_RULES) {
+    if (rule.valueAlone?.(both)) {
+      out.push({ id: rule.id, label: rule.label, matched: "value" })
+      continue
+    }
+    if (rule.key.test(q) && rule.value(a))
+      out.push({ id: rule.id, label: rule.label, matched: "question+value" })
+  }
+  return out
+}
+
+// One line for a refusal message. Labels only — there is nothing else in a
+// sensitive finding to print, by construction.
+export function describeSensitive(findings) {
+  if (!findings?.length) return null
+  return [...new Set(findings.map((f) => f.label))].join(", ")
 }

@@ -19,7 +19,8 @@ a human.
    skills, employers, dates, metrics, or tech.
 2. Never edit `profile/` — a hook blocks it. New info goes to the
    orchestrator, which asks the user.
-3. `node scripts/verify-claims.mjs` must pass before any document is final.
+3. `node scripts/documents/verify-claims.mjs` must pass before any document is
+   final.
 4. Never render final PDFs (needs user approval) and NEVER submit an
    application. The user always clicks Submit.
 5. Write only inside `jobs/<slug>/`.

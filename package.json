@@ -12,11 +12,11 @@
   },
   "testGate": {
     "full": {
-      "floor": 719,
+      "floor": 946,
       "maxTodo": 0
     },
     "security": {
-      "floor": 29,
+      "floor": 147,
       "maxTodo": 0,
       "requireDirs": [
         "tests/security"

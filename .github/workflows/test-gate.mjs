@@ -159,6 +159,37 @@ function collectDirectives(tap) {
   return out
 }
 
+// Failing tests, split into "named and owned" and "unexpected".
+//
+// qa-adversary's convention is `FINDING (<owner>): <what is broken>` for a
+// test that pins a live defect and is committed RED on purpose (see 147eb68:
+// this repo learned that a green suite can read as "RCE closed" while the hole
+// is open). During a phase, several of those are red at once, and a NEW
+// failure would otherwise be one line among many.
+//
+// This classification is REPORTING ONLY. It cannot make a red run green: the
+// verdict below is `counts.fail > 0 → fail`, with no exemption of any kind. A
+// regression renamed to look like a FINDING would still fail the build; the
+// only thing it could corrupt is which bucket it is printed in.
+const FAILURE_RE = /^[ \t]*not ok \d+ - (.*)$/gm
+const OWNED_RE = /^FINDING \(([^)]+)\)/
+
+function collectFailures(tap) {
+  const seen = new Set()
+  const out = []
+  for (const m of tap.matchAll(FAILURE_RE)) {
+    let name = m[1].trim()
+    // A failing test can also carry a directive; keep the name only.
+    const hash = name.indexOf(" # ")
+    if (hash !== -1) name = name.slice(0, hash).trim()
+    if (seen.has(name)) continue
+    seen.add(name)
+    const owner = OWNED_RE.exec(name)?.[1] ?? null
+    out.push({ name, owner })
+  }
+  return out
+}
+
 const opts = parseArgs(process.argv.slice(2))
 const cfg = opts.gate ? loadGateConfig(opts.gate) : {}
 const floor = opts.floor ?? cfg.floor
@@ -249,6 +280,9 @@ const counts = {
   duration_ms: tapCount(tap, "duration_ms"),
 }
 const directives = collectDirectives(tap)
+const failures = collectFailures(tap)
+const unexpected = failures.filter((f) => !f.owner)
+const owned = failures.filter((f) => f.owner)
 
 if (problems.length === 0) {
   if (counts.tests === null) {
@@ -256,7 +290,16 @@ if (problems.length === 0) {
       `the runner produced no TAP summary (exit code ${child.status}). A run that did not report its counts is not evidence that anything ran.`,
     )
   } else {
-    if (counts.fail > 0) problems.push(`${counts.fail} test(s) FAILED`)
+    // No exemption for owned failures: any failure fails the gate. The split
+    // exists so a NEW failure is visible among the known-red ones, not so the
+    // known-red ones can be waved through.
+    if (counts.fail > 0) {
+      problems.push(
+        unexpected.length
+          ? `${counts.fail} test(s) FAILED — ${unexpected.length} UNEXPECTED, ${owned.length} named FINDING with an owner`
+          : `${counts.fail} test(s) FAILED (all ${owned.length} are named FINDING with an owner — still a failing build)`,
+      )
+    }
     if (counts.cancelled > 0)
       problems.push(
         `${counts.cancelled} test(s) were CANCELLED (timeout or crash)`,
@@ -310,6 +353,20 @@ if (directives.length) {
     lines.push(`    [${d.kind}] ${d.name} — ${d.reason || "NO REASON GIVEN"}`)
   }
 }
+// Unexpected first: during a phase several FINDING tests are red on purpose,
+// and a new failure must not be one line among many.
+if (unexpected.length) {
+  lines.push(
+    `  UNEXPECTED failures (${unexpected.length}) — nobody owns these:`,
+  )
+  for (const f of unexpected) lines.push(`    ${f.name}`)
+}
+if (owned.length) {
+  lines.push(
+    `  known-red, named and owned (${owned.length}) — still failing the build:`,
+  )
+  for (const f of owned) lines.push(`    [${f.owner}] ${f.name}`)
+}
 if (counts.tests != null && counts.tests >= floor + 25) {
   lines.push(
     `  NOTE: ${counts.tests - floor} tests above the floor. Raise "testGate.${opts.gate ?? "<gate>"}.floor" in package.json to ${counts.tests} so deletions below today's count are caught.`,
@@ -342,6 +399,22 @@ if (process.env.GITHUB_STEP_SUMMARY) {
           "",
         ]
       : ["No tests were skipped on this leg.", ""]),
+    ...(unexpected.length
+      ? [
+          `**UNEXPECTED failures (${unexpected.length}) — nobody owns these:**`,
+          "",
+          ...unexpected.map((f) => `- ${f.name}`),
+          "",
+        ]
+      : []),
+    ...(owned.length
+      ? [
+          `**Known-red, named and owned (${owned.length}) — still failing the build:**`,
+          "",
+          ...owned.map((f) => `- \`${f.owner}\` ${f.name}`),
+          "",
+        ]
+      : []),
     ...problems.map((p) => `- **ERROR:** ${p}`),
     "",
   ].join("\n")

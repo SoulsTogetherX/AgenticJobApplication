@@ -64,6 +64,138 @@ function currentBranch(cwd) {
   return name || null // null = branch unknown (detached/not a repo) → allow
 }
 
+// ------------------------------------------------------------ heredoc bodies
+// A heredoc body is DATA, not commands — the same distinction the over-match
+// fix was about, one layer down.
+//
+// 2026-07-31, found by the build-manager when this hook denied their own
+// commit: newline is a clause separator, so every line of
+//
+//     cat > /tmp/msg.txt <<'EOF'
+//     ...prose quoting `git checkout -B main` as an example...
+//     EOF
+//     git commit -F /tmp/msg.txt -- <paths>
+//
+// was analysed as if it were a command, and the quoted PROSE tripped the
+// branch rule. This repo's commit messages quote commands as a matter of
+// style, so it would have recurred on nearly every commit.
+//
+// Bodies are therefore blanked before tokenizing. Two rules keep that from
+// becoming a bypass, both erring towards over-denial:
+//   1. If the terminator never appears, nothing is skipped — an unterminated
+//      heredoc is not a runnable command anyway, so analysing its lines as
+//      commands costs nothing and skipping them would hide everything after.
+//   2. If the line opening the heredoc runs an INTERPRETER (`bash <<'EOF'`,
+//      `ssh host <<EOF`), the body IS commands and is left alone.
+// The terminator is matched on the TRIMMED line, which ends a body at the
+// earliest plausible point; ending late would swallow real commands.
+const INTERPRETERS =
+  /(^|[\s;&|(])(bash|sh|zsh|ksh|dash|ash|pwsh|powershell|ssh|su|sudo|env|xargs|eval|source|iex|Invoke-Expression)([\s;&|(]|$)/i
+
+function consumeBodies(cmd, start, pending) {
+  let pos = start
+  for (const { delim, stripTabs } of pending) {
+    let closed = false
+    while (pos <= cmd.length) {
+      const nl = cmd.indexOf("\n", pos)
+      const lineEnd = nl === -1 ? cmd.length : nl
+      const line = cmd.slice(pos, lineEnd)
+      const cmp = stripTabs ? line.replace(/^\t+/, "") : line
+      pos = nl === -1 ? cmd.length : nl + 1
+      if (cmp.trim() === delim) {
+        closed = true
+        break
+      }
+      if (nl === -1) break
+    }
+    if (!closed) return null // unterminated → fail closed, skip nothing
+  }
+  return pos
+}
+
+// Replace heredoc / PowerShell here-string bodies with blanks, preserving
+// newlines so line structure (and therefore clause splitting) is unchanged.
+function maskHeredocs(cmd) {
+  let out = ""
+  let quote = null
+  let pending = []
+  let lineStart = 0
+  const n = cmd.length
+  let i = 0
+  while (i < n) {
+    const ch = cmd[i]
+    if (quote) {
+      out += ch
+      if (ch === quote) quote = null
+      i++
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      out += ch
+      i++
+      continue
+    }
+    // PowerShell here-string: @' or @" must sit at the end of its line.
+    if (ch === "@" && (cmd[i + 1] === "'" || cmd[i + 1] === '"')) {
+      const rest = cmd.slice(
+        i + 2,
+        cmd.indexOf("\n", i) === -1 ? n : cmd.indexOf("\n", i),
+      )
+      if (rest.trim() === "") {
+        pending.push({ delim: cmd[i + 1] + "@", stripTabs: false })
+        out += cmd.slice(i, i + 2)
+        i += 2
+        continue
+      }
+    }
+    if (ch === "<" && cmd[i + 1] === "<" && cmd[i + 2] !== "<") {
+      let j = i + 2
+      let stripTabs = false
+      if (cmd[j] === "-") {
+        stripTabs = true
+        j++
+      }
+      while (j < n && (cmd[j] === " " || cmd[j] === "\t")) j++
+      let delim = ""
+      if (cmd[j] === "'" || cmd[j] === '"') {
+        const q = cmd[j++]
+        while (j < n && cmd[j] !== q) delim += cmd[j++]
+        j++
+      } else {
+        while (j < n && /[^\s;&|<>()]/.test(cmd[j])) {
+          if (cmd[j] === "\\") j++
+          if (j < n) delim += cmd[j++]
+        }
+      }
+      if (delim) pending.push({ delim, stripTabs })
+      out += cmd.slice(i, j)
+      i = j
+      continue
+    }
+    if (ch === "\n") {
+      out += "\n"
+      i++
+      if (pending.length) {
+        const opener = cmd.slice(lineStart, i)
+        const end = INTERPRETERS.test(opener)
+          ? null
+          : consumeBodies(cmd, i, pending)
+        if (end !== null) {
+          out += cmd.slice(i, end).replace(/[^\n]/g, " ")
+          i = end
+        }
+        pending = []
+      }
+      lineStart = i
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 // ---------------------------------------------------------------- tokenizer
 // Split a command line into clauses at UNQUOTED separators, and each clause
 // into tokens with quotes stripped. Newline is a separator: a multi-line Bash
@@ -297,7 +429,7 @@ function fallbackDecision(cmd) {
 }
 
 function decide(cmd, cwd) {
-  const clauses = splitClauses(cmd)
+  const clauses = splitClauses(maskHeredocs(cmd))
   let switchedToDev = false
   let headBranch // resolved lazily, at most once
   for (const tokens of clauses) {

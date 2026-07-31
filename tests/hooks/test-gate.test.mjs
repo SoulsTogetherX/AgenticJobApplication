@@ -140,6 +140,54 @@ test("three", () => {})
   assert.match(out, /1 test\(s\) FAILED/)
 })
 
+// The whole point of the known-red split: it is REPORTING, never tolerance.
+// If this test ever passes with status 0, the gate has started hiding
+// failures and is worthless.
+test("a failure named FINDING (<owner>) still fails the build", (t) => {
+  const dir = fixture({
+    "suite/a.test.mjs": `import test from "node:test"
+import assert from "node:assert/strict"
+test("one", () => {})
+test("two", () => {})
+test("FINDING (w3-resolution): a reworded consent box is not recognised", () =>
+  assert.equal(1, 2))
+`,
+  })
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+
+  const { status, out } = runGate(["--floor", "3", "--path", "suite/"], dir)
+  assert.equal(status, 1, "an owned, expected failure is still a failure")
+  assert.match(
+    out,
+    /all 1 are named FINDING with an owner — still a failing build/,
+  )
+  assert.match(out, /known-red, named and owned \(1\)/)
+  assert.match(out, /\[w3-resolution\] FINDING \(w3-resolution\)/)
+})
+
+test("an unowned failure is reported separately and first", (t) => {
+  const dir = fixture({
+    "suite/a.test.mjs": `import test from "node:test"
+import assert from "node:assert/strict"
+test("one", () => {})
+test("FINDING (w3-resolution): known and owned", () => assert.equal(1, 2))
+test("a regression nobody expected", () => assert.equal(1, 2))
+`,
+  })
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+
+  const { status, out } = runGate(["--floor", "3", "--path", "suite/"], dir)
+  assert.equal(status, 1)
+  assert.match(out, /2 test\(s\) FAILED — 1 UNEXPECTED, 1 named FINDING/)
+  assert.match(out, /UNEXPECTED failures \(1\)/)
+  assert.match(out, /a regression nobody expected/)
+  // Unexpected must be printed above the known-red block.
+  assert.ok(
+    out.indexOf("UNEXPECTED failures") < out.indexOf("known-red, named"),
+    "a new failure must not be buried under the known-red list",
+  )
+})
+
 // A skip is legitimate — ubuntu runners have no Edge/Chrome, so the PDF tests
 // cannot run there — but it must say why, or it is indistinguishable from a
 // test that silently stopped running.
@@ -294,15 +342,19 @@ test("package.json pins the Phase 1 gate to the plan's exact paths", () => {
     "tests/documents/verify-claims.test.mjs",
   ])
   assert.deepEqual(sec.requireDirs, ["tests/security"])
+  // Floors ratchet UP only. Re-measured 2026-07-31 after the merge window for
+  // w1-security, ci-engineer, w2-engine and qa-adversary closed:
+  // `npm run test:security` reported 147 over 8 files (3 samples) and
+  // `npm test` reported 946 (2 samples).
   assert.ok(
-    sec.floor >= 29,
+    sec.floor >= 147,
     `security floor must not be lowered (${sec.floor})`,
   )
   assert.equal(sec.maxTodo, 0)
 
   const full = pkg.testGate?.full
   assert.ok(full, "package.json must define testGate.full")
-  assert.ok(full.floor >= 719, `full floor must not be lowered (${full.floor})`)
+  assert.ok(full.floor >= 946, `full floor must not be lowered (${full.floor})`)
   assert.equal(full.maxTodo, 0)
 
   assert.equal(pkg.scripts.test, "node .github/workflows/test-gate.mjs full")

@@ -294,6 +294,75 @@ test("guard-bash: branch names inside quoted arguments are arguments, not refs",
   }
 })
 
+// A heredoc BODY is data, not commands. Found by the build-manager on
+// 2026-07-31 when this hook denied their own commit: the message quoted the
+// very bypasses this hook had just been fixed to block, and every line of the
+// body was analysed as a command. This repo's commit messages quote commands
+// as a matter of style, so it would have recurred constantly.
+test("guard-bash reads a heredoc body as data, not as commands", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-git-"))
+  try {
+    assert.equal(spawnSync("git", ["init", "-b", "dev", dir]).status, 0)
+    const payload = (command) =>
+      JSON.stringify({ tool_name: "Bash", cwd: dir, tool_input: { command } })
+
+    const allowed = [
+      // The manager's exact shape.
+      [
+        "cat > /tmp/ci.txt <<'EOF'",
+        "Three bypasses existed: git checkout -B main was allowed, and so",
+        "was git -C . checkout main. Both now deny.",
+        "EOF",
+        "git commit -F /tmp/ci.txt -- scripts/hooks/guard-bash.mjs",
+      ].join("\n"),
+      // Unquoted delimiter.
+      "cat > f <<EOF\ngit checkout main\nEOF\ngit commit -F f",
+      // <<- form, terminator indented with tabs.
+      "cat > f <<-EOF\n\tgit switch master\n\tEOF\ngit status",
+      // Two heredocs queued on one line, consumed in order.
+      "cat <<A <<B > f\ngit checkout main\nA\ngit branch -D dev\nB\ngit commit -F f",
+      // PowerShell here-string: this is a Windows-primary repo.
+      "$m = @'\ngit checkout main\n'@\ngit commit -F msg.txt",
+      // `<<<` is a herestring, not a heredoc, and its word is an argument.
+      'cat <<< "git checkout main"',
+    ]
+    for (const command of allowed) {
+      assert.equal(
+        runHook(GUARD_BASH, payload(command)).decision,
+        null,
+        `expected allow for:\n${command}`,
+      )
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// The half that matters more. Skipping a body must not become a way to hide a
+// command, so: anything outside the body is still analysed, an unterminated
+// heredoc skips nothing, and a body fed to an INTERPRETER really is commands.
+test("guard-bash still denies forbidden commands around and inside heredocs", () => {
+  const blocked = [
+    // The case that makes this non-trivial: after the terminator.
+    "cat > f <<'EOF'\nharmless prose\nEOF\ngit checkout main",
+    // Before the heredoc.
+    "git checkout main\ncat > f <<'EOF'\nprose\nEOF",
+    // On the opener line itself, after a separator.
+    "cat <<EOF > f ; git checkout main\nbody\nEOF",
+    "git push origin main <<EOF\nbody\nEOF",
+    // `bash <<EOF` EXECUTES its body — never blanked.
+    "bash <<'EOF'\ngit checkout main\nEOF",
+    "ssh host <<EOF\ngit push origin main\nEOF",
+    "sudo sh <<EOF\ngit branch -D dev\nEOF",
+    // No terminator: nothing is skipped, so the body is read as commands.
+    "cat > f <<EOF\ngit checkout main",
+  ]
+  for (const c of blocked) {
+    const { decision } = runHook(GUARD_BASH, bash(c))
+    assert.equal(decision, "deny", `expected deny for:\n${c}`)
+  }
+})
+
 test("guard-bash lets a command switch to dev first, then change state", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-git-"))
   try {

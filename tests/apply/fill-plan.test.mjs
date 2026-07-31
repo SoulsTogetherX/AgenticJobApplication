@@ -465,6 +465,119 @@ test("isHardConsent identifies exactly the legally-weighted categories", () => {
   )
 })
 
+// --- FINDING (w3-resolution + innov-resilience, hostile-forms.test.mjs:419):
+// a topic pattern list cannot be the load-bearing control — the 26th
+// rewording is free. looksLikeAgreementProse() is the structural, topic-
+// agnostic door into the SAME protected branch: a long single tickbox ending
+// like a sentence, whether or not any word on the pattern list appears in it.
+// These pin the mechanism directly, with a label engineered to defeat every
+// CONSENT_PATTERNS entry on purpose (no "agree/accept/consent/certify/...",
+// no "arbitration", no "background check", no "signature").
+
+test("a wording that defeats every topic pattern still defers as consent, never auto-checks via the ordinary path", () => {
+  const label =
+    "By checking this box you grant the reviewing party unlimited rights to use, retain, and share every fact stated above with any third party they select."
+  assert.equal(
+    isConsent(label),
+    false,
+    "the label must defeat the topic list for this test to mean anything",
+  )
+  const scan = scanOf([checkboxConsent(label)])
+  const plan = buildPlan({
+    scan,
+    // A bank hit exists for the EXACT label text (as a saved literal answer
+    // would), so the ordinary checkbox path COULD auto-check it if nothing
+    // routed this into the protected branch.
+    resolved: [
+      { k: "g1", status: "OK", value: label, pick: "f0", pickSel: "#c0" },
+    ],
+    adapter: greenhouse,
+    files,
+    // No allowlist, no vouch — the honest default state.
+  })
+  assert.equal(
+    plan.items.some((i) => i.how === "check"),
+    false,
+    "a topic-pattern-defeating agreement must never silently auto-check",
+  )
+  assert.equal(plan.defer[0]?.why, "consent")
+})
+
+test("the same defeating wording DOES auto-tick once vouched and allowlisted — the door works both ways", () => {
+  const label =
+    "By checking this box you grant the reviewing party unlimited rights to use, retain, and share every fact stated above with any third party they select."
+  const scan = scanOf([checkboxConsent(label)])
+  const plan = buildPlan({
+    scan,
+    resolved: [],
+    adapter: greenhouse,
+    files,
+    consentAllowlist: new Set([label.toLowerCase()]),
+    vouchedLabels: [label],
+  })
+  assert.equal(plan.items.length, 1)
+  assert.equal(plan.items[0].how, "check")
+  assert.equal(plan.items[0].why, "consent:allowlisted")
+})
+
+test("looksLikeAgreementProse ignores short, ordinary checkboxes — 'Current role' stays on the normal path", () => {
+  const scan = scanOf([
+    {
+      k: "g1",
+      t: "checkbox",
+      l: "Current role",
+      o: [{ k: "f9", l: "Current role", sel: "#cr" }],
+    },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [
+      {
+        k: "g1",
+        status: "OK",
+        value: "Current role",
+        pick: "f9",
+        pickSel: "#cr",
+      },
+    ],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(
+    plan.items[0].how,
+    "check",
+    "a short factual toggle must not be swept into consent",
+  )
+  assert.equal(plan.defer.length, 0)
+})
+
+test("looksLikeAgreementProse requires BOTH length and sentence shape — a long question is not consent-shaped", () => {
+  // Ends in "?", not "." or "!" — a factual question, not a clause an
+  // agreement is stating. Length alone must not be sufficient.
+  const scan = scanOf([
+    {
+      k: "g1",
+      t: "checkbox",
+      l: "Are you legally authorized to work in the United States of America right now?",
+      o: [{ k: "f9", l: "authorized", sel: "#auth" }],
+    },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [
+      { k: "g1", status: "OK", value: "Yes", pick: "f9", pickSel: "#auth" },
+    ],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(
+    plan.items[0].how,
+    "check",
+    "a factual question must not be swept into consent by length alone",
+  )
+  assert.equal(plan.defer.length, 0)
+})
+
 test("the allowlist match is exact text, never a pattern — even when vouched", () => {
   const trueLabel = "I agree to the Updated Terms and Conditions"
   const scan = scanOf([checkboxConsent(trueLabel)])
@@ -694,6 +807,66 @@ test("item.label carries no matchedLabel at all when there is nothing to disagre
     false,
     "absent rather than redundant, so JSON.stringify drops it",
   )
+})
+
+// --- lNone: no readable label exists on the control at all ------------------
+//
+// The residual w2-engine flagged rather than acting on unilaterally: lSeen
+// covers "the page shows DIFFERENT text than what matched" but has nothing to
+// report when the page shows NO text at all (an input with only an
+// aria-label, no visible <label>). Requested by w3-resolution; consumed here
+// so it is not dead code the moment the producer side lands.
+
+test("f.lNone: the approval message says plainly that no visible label exists, instead of showing attribute text as if it were on screen", () => {
+  const scan = scanOf([
+    { k: "f1", t: "text", l: "Referral source code", lNone: true },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "abc123")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.match(plan.items[0].label, /no visible label/i)
+  assert.doesNotMatch(
+    plan.items[0].label,
+    /^Referral source code$/,
+    "the attribute string must not be presented as page text",
+  )
+  assert.equal(plan.items[0].matchedLabel, "Referral source code")
+  assert.equal(plan.items[0].noVisibleLabel, true)
+})
+
+test("f.lNone is ignored once lSeen supplies a real visible alternative", () => {
+  const scan = scanOf([
+    {
+      k: "f1",
+      t: "text",
+      l: "Emergency contact phone",
+      lSeen: "Email",
+      lNone: true, // producer bug or stale flag; lSeen must win regardless
+    },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "jane@test.example")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.items[0].label, "Email")
+  assert.equal("noVisibleLabel" in plan.items[0], false)
+})
+
+test("f.lNone false or absent changes nothing", () => {
+  const scan = scanOf([{ k: "f1", t: "text", l: "First Name", lNone: false }])
+  const plan = buildPlan({
+    scan,
+    resolved: [ok("f1", "Jane")],
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.items[0].label, "First Name")
+  assert.equal("noVisibleLabel" in plan.items[0], false)
 })
 
 test("a deferred field also shows the visible label, not the matched one", () => {

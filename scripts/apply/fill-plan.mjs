@@ -6,15 +6,18 @@
 // every field through scripts/apply/answer-bank.mjs (profile + answer bank only), and
 // writes:
 //   jobs/<slug>/fill-plan.js    -- a self-contained bootstrap: this job's plan
-//                                  AND the fill-page.js engine source (read off
-//                                  disk here, in an ordinary Node process, NOT
-//                                  inside the browser_run_code_unsafe sandbox)
-//                                  embedded as strings. Loaded whole via
-//                                  `filename` and injected into the page with
-//                                  page.evaluate + eval — never addScriptTag,
-//                                  which a nonce-based CSP (Ashby) blocks
-//                                  outright. See buildDriverSource() below and
-//                                  the header comment in fill-page.js.
+//                                  AND the scripts/apply/fill-engine.mjs source
+//                                  (read off disk here, in an ordinary Node
+//                                  process, NOT inside the
+//                                  browser_run_code_unsafe sandbox) embedded
+//                                  as strings. Loaded whole via `filename` and
+//                                  injected into the page with page.evaluate +
+//                                  eval — never addScriptTag, which a
+//                                  nonce-based CSP (Ashby) blocks outright.
+//                                  See buildDriverSource() below and the
+//                                  header comment in fill-engine.mjs
+//                                  (.claude/skills/apply-job/fill-page.js no
+//                                  longer exists — that logic lives there now).
 //   jobs/<slug>/fill-plan.json  -- the plan data alone, for tests and for the
 //                                  user to read
 //
@@ -118,17 +121,39 @@ const ROOT = path.resolve(
 // isHardConsent below for what actually gates the dangerous auto-tick path;
 // this list's job is only to make sure a legal-shaped box is never silently
 // treated as a plain fact question.
+//
+// FINDING (w3-resolution + innov-resilience, tests/security/hostile-forms.test.mjs
+// :419): four MORE real-world wordings — the FCRA consumer-report authorisation
+// (near-verbatim from the standard US form), a jury-trial waiver in plain
+// English, a typed-name-as-legal-mark e-signature idiom, and "permit an
+// inquiry into my history" as a background check — walked past this list too.
+// Patterns were added below for exactly these four, and the same test proved
+// in the same run that adding patterns is not what makes this SAFE: it only
+// ever closes the wordings someone thought to try, and the 26th rewording is
+// free. THE STRUCTURAL FIX IS NOT HERE — it is that buildPlan no longer uses
+// isConsent as the ONLY door into the protected branch. A single tickbox
+// (f.o.length===1) whose text is shaped like a legal sentence — long, and
+// ending the way a clause does — routes into the SAME vouch/allowlist/
+// hard-exclusion gate below via looksLikeAgreementProse(), whether or not any
+// topic word here matches. That signal is structural (sentence shape), not
+// topical, so it does not need to have seen a wording before: it is what
+// makes "adding four more patterns" no longer load-bearing, only convenient
+// (a recognised topic still labels the approval message correctly as
+// "consent" up front instead of falling through to prose-shape alone). See
+// looksLikeAgreementProse() below and its use at the isConsent(...) call
+// site for the actual gate.
 const CONSENT_PATTERNS = [
   /\barbitrat/i,
   /\bdispute resolution\b/i,
   /\bterms (and|&) conditions\b/i,
   /\bprivacy (notice|policy|statement)\b/i,
   /\bconfirm receipt\b/i,
-  /\bi (agree|accept|consent|acknowledge|understand|certify|affirm|attest)\b/i,
-  /\be-?sign(ature|ed)?\b|\b(electronic|digital)(al)?ly? sign(ature|ed)?\b|\bsignature\b|\badopt(ing|ed)?\s+this\s+(document|application|form)\b/i,
-  /\bbackground (check|screening|investigation)\b/i,
+  /\bi (agree|accept|consent|acknowledge|understand|certify|affirm|attest|authorize|authorise|waive|permit)\b/i,
+  /\be-?sign(ature|ed)?\b|\b(electronic|digital)(al)?ly? sign(ature|ed)?\b|\bsignature\b|\badopt(ing|ed)?\s+this\s+(document|application|form)\b|\blegal mark\b/i,
+  /\bbackground (check|screening|investigation)\b|\bconsumer report\b|\binquiry into my (history|background)\b/i,
   /\bconsent to\b/i,
   /\bcode of conduct\b/i,
+  /\btrial by jury\b|\bjury trial\b/i,
 ]
 
 export function isConsent(label) {
@@ -157,15 +182,66 @@ export function isConsent(label) {
 // Same asymmetry as isConsent's own comment: a false positive here just
 // keeps one more box out of the allowlist path (defer, cheap); a false
 // negative lets exactly the thing this list exists to stop through.
+//
+// FINDING (w3-resolution + innov-resilience, tests/security/hostile-forms.test.mjs
+// :419) — SAME FOUR REAL-WORLD WORDINGS AS isConsent's comment above, added
+// here too: "consumer report" (FCRA background check), "trial by jury"/"jury
+// trial" (arbitration's plain-English form), "legal mark" (typed-name
+// e-signature), "inquiry into my history" (background check). Adding these
+// four patterns is still not the control — it closes exactly these four
+// wordings and the 26th rewording is free, which is the whole finding.
+// isHardConsent's REAL job, unchanged by this list, is the exclusion inside
+// the allowed-to-autotick check below: even a box that DID enter the
+// protected branch (via isConsent OR looksLikeAgreementProse — see there)
+// never auto-ticks if isHardConsent recognises it, allowlisted or not. This
+// list staying incomplete is tolerable specifically BECAUSE entry to the
+// branch no longer depends on any topic list at all — a box that reaches
+// here without matching a single word on this list still defers by default
+// (the `allowed` check requires the label on the user's OWN allowlist, which
+// nothing here can forge), it just is not EXCLUDED from being allowlisted in
+// the first place. Widening this list is what upgrades "safe by needing an
+// unlikely allowlist entry" to "provably excluded no matter what the
+// allowlist says" for a wording someone actually thought to name.
 const HARD_CONSENT_PATTERNS = [
   /\barbitrat/i,
   /\bdispute resolution\b/i,
-  /\bbackground (check|screening|investigation)\b/i,
-  /\be-?sign(ature|ed)?\b|\b(electronic|digital)(al)?ly? sign(ature|ed)?\b|\bsignature\b|\badopt(ing|ed)?\s+this\s+(document|application|form)\b/i,
+  /\bbackground (check|screening|investigation)\b|\bconsumer report\b|\binquiry into my (history|background)\b/i,
+  /\be-?sign(ature|ed)?\b|\b(electronic|digital)(al)?ly? sign(ature|ed)?\b|\bsignature\b|\badopt(ing|ed)?\s+this\s+(document|application|form)\b|\blegal mark\b/i,
+  /\btrial by jury\b|\bjury trial\b/i,
 ]
 
 export function isHardConsent(label) {
   return HARD_CONSENT_PATTERNS.some((re) => re.test(String(label ?? "")))
+}
+
+// The structural half of the FINDING above: SHAPE, not topic. A legal
+// agreement — however it is worded, including a wording nobody on this team
+// has thought to add a pattern for yet — is written as a full sentence
+// stating what is being agreed to, because that is what makes it legally
+// meaningful at all: "I authorize...", "I waive my right to...", "My typed
+// name...constitutes...". An ordinary checkbox toggle is not: "Current
+// role", "Subscribe to job alerts", "I am at least 18 years old" are short
+// and/or lack terminal sentence punctuation. Two independent, cheap,
+// topic-agnostic signals, BOTH required so a false positive costs one extra
+// defer and nothing legitimate is swept in by either alone:
+//   - length: at least MIN_WORDS words — a real toggle label is rarely this
+//     long; a legal clause almost always is.
+//   - shape: ends in terminal sentence punctuation (. or !) — a factual
+//     yes/no question ends in "?" or nothing, a clause ends the way English
+//     sentences do.
+// This is deliberately generous in the SAME direction as isConsent's own
+// comment: false positives are cheap (one more defer), false negatives are
+// what this exists to stop. It only gates ENTRY to the SAME protected branch
+// isConsent already guards (vouch + allowlist + !isHardConsent still all
+// apply below) — it never auto-ticks anything by itself.
+const MIN_AGREEMENT_WORDS = 8
+export function looksLikeAgreementProse(field, label) {
+  if (field?.t !== "checkbox") return false
+  if (!Array.isArray(field?.o) || field.o.length !== 1) return false
+  const text = String(label ?? "").trim()
+  if (!text) return false
+  const words = text.split(/\s+/).filter(Boolean)
+  return words.length >= MIN_AGREEMENT_WORDS && /[.!]$/.test(text)
 }
 
 // --consent-allowlist <path>: a JSON array of the user's OWN exact consent-box
@@ -440,10 +516,32 @@ export function buildPlan({
     // differs, so field-cache.mjs's recordVia() can still find the field it
     // cached under the matched text (see mLabel() below) and a human
     // auditing the plan can see both strings, not just one.
+    // FINDING (residual, w2-engine -> w3-resolution): lSeen covers "the page
+    // shows DIFFERENT text than what matched" — this covers "the page shows
+    // NO text at all", which lSeen cannot express because there is nothing to
+    // report as the visible string. Without this, a control with only an
+    // aria-label and no visible <label> falls through to `label` below, and
+    // the approval message shows attribute text as though it were printed on
+    // the form — the exact thing lSeen exists to stop, just for the case
+    // where there is no alternative to fall back to instead of none at all.
+    // `f.lNone` is w2-engine's own scan output (present only when it looked
+    // for a visible alternative and genuinely found none); requested by
+    // w3-resolution rather than invented here, so it is producer-owned like
+    // lSeen. `matchedLabel` still carries the raw string via mLabel() below —
+    // nothing is lost, only the primary label a human reads stops claiming
+    // to be on-screen text it is not.
     const label = String(r.label ?? f.l ?? "")
     const seenLabel = typeof f.lSeen === "string" ? f.lSeen.trim() : ""
-    const displayLabel = seenLabel || label
-    const mLabel = () => (displayLabel !== label ? { matchedLabel: label } : {})
+    const noVisibleLabel = !seenLabel && f.lNone === true
+    const displayLabel = seenLabel
+      ? seenLabel
+      : noVisibleLabel
+        ? `(no visible label on the page for this control${label ? ` — matched by "${label}"` : ""})`
+        : label
+    const mLabel = () => ({
+      ...(displayLabel !== label ? { matchedLabel: label } : {}),
+      ...(noVisibleLabel ? { noVisibleLabel: true } : {}),
+    })
     const verb = VERB[f.t]
 
     // Agreements first — this outranks whatever the bank resolved. A consent
@@ -526,7 +624,17 @@ export function buildPlan({
     // too. What IS closed is the page choosing WHICH FUNCTION answers, and
     // the remaining floor is the allowlist itself: the attacker has to
     // reproduce text the user typed into their OWN file.
-    if (isConsent(label)) {
+    //
+    // ENTRY TO THIS BRANCH IS TWO DOORS, NOT ONE (FINDING, w3-resolution +
+    // innov-resilience, hostile-forms.test.mjs:419). isConsent(label) is a
+    // TOPIC match and cannot be exhaustive — the 26th rewording is free.
+    // looksLikeAgreementProse(f, label) is a SHAPE match (a long single
+    // tickbox ending like a sentence) and needs no topic word at all, so a
+    // wording nobody has pattern-matched yet still lands here instead of
+    // falling through to the ordinary checkbox branch below, where nothing
+    // past this point would ever run again. Either door leads to the SAME
+    // gate: vouch + allowlist + !isHardConsent, never a bypass of its own.
+    if (isConsent(label) || looksLikeAgreementProse(f, label)) {
       const allowed =
         vouchedSet.has(normalizeQuestion(label)) &&
         !isHardConsent(label) &&
@@ -831,9 +939,9 @@ export function submitReadiness(plan) {
 //
 // Why the engine source is embedded HERE rather than read inside the
 // generated driver: the browser_run_code_unsafe vm context has no fs, no
-// require, and no working dynamic import (see fill-page.js's sandbox notes)
-// — so the only place that CAN do this read is an ordinary Node process, i.e.
-// this file, before any of it is handed to the browser.
+// require, and no working dynamic import (see fill-engine.mjs's sandbox
+// notes) — so the only place that CAN do this read is an ordinary Node
+// process, i.e. this file, before any of it is handed to the browser.
 //
 // THE ENGINE NEVER GOES INTO THE PAGE, AND NOTHING IS EVER READ BACK OUT OF IT.
 //

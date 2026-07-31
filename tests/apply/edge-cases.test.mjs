@@ -506,8 +506,16 @@ test("E8 BREAKS [w2-engine]: the label is all the scanner reports; the heading a
   }
   // The consequence is already visible in the fixture: the only thing telling
   // the two apart is their index.
+  // STALE: this used to pin the literal keys ("f5","f6"), which is a scanner
+  // STAMPING detail (combos are stamped before file inputs), not the
+  // property this test is about. qa-adversary regenerating the fixture from
+  // the real scanner (2184cc1) shifted the numbering to f6/f7 and broke a
+  // pin that was never the point — fixed to assert what actually matters:
+  // exactly two distinct file inputs, indistinguishable by anything but
+  // document order, which is the whole defect this test exists to show.
   const keys = scan.fields.filter((f) => f.t === "file").map((f) => f.k)
-  assert.deepEqual(keys, ["f5", "f6"])
+  assert.equal(keys.length, 2, "both file inputs must still be present")
+  assert.equal(new Set(keys).size, 2, "the two file inputs must be distinct")
 })
 
 // ---------------------------------------------------------------------------

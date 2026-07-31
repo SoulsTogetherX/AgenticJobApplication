@@ -59,11 +59,25 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
 - Prune `.render.html` intermediates (dry run by default):
   `node scripts/maintenance/prune-jobs.mjs [--apply]`
 - Archive/restore job workspaces (files while live, rows once closed):
-  `node scripts/maintenance/archive.mjs list|show <slug>|archive <slug>|archive --closed|restore <slug> [--to <dir>]`
+  `node scripts/maintenance/archive.mjs list|show <slug>|archive <slug>|archive --closed|restore <slug> [--to <dir>]|purge [--days N] [--apply] [--force]`
   — `archive --closed` only touches applications with a **recorded** closed
   outcome; `archive <slug>` is the manual path and refuses a still-live
   application without `--force`. Restore is byte-identical; PDFs are recorded
   as regenerable and rebuilt with `render-pdf.mjs`.
+  — `purge` permanently deletes ARCHIVED `documents` rows whose **job posting's**
+  date is older than `--days` (default: `docs/application-limits.yaml`'s
+  `freshness.max_age_days`, currently 30) — never the archive date, never the
+  application date. Dry run by default like `prune-jobs.mjs`; **irreversible**
+  once `--apply` runs, because `documents` has no on-disk backup. Three things
+  it refuses to delete: a record whose posting date cannot be resolved (checked
+  on the archived job.json, then the matching lead by URL, then by exact
+  company+title — an unknown date is not an old date), anything in
+  `applications`, and any live `jobs/<slug>/`. It also **skips a slug whose
+  application is still live** — including one with no recorded outcome at all,
+  which is the normal state of a submitted application — because the age
+  threshold reads the POSTING's clock while the thing being deleted is the
+  tailored resume for an application that may still get a reply. `--force`
+  overrides that guard but never the unresolvable-date skip.
 - Apply a reviewed profile update: `node scripts/profile/apply-profile.mjs [--allow-edits] [--allow-removals]`
 - Render PDF: `node scripts/documents/render-pdf.mjs <input.md> <output.pdf> [--letter]`
 - Find job leads: `node scripts/leads/find-jobs.mjs search|import|list|mark ...`
@@ -416,6 +430,40 @@ keywords in `docs/application-limits.yaml` are the authoritative list.
   pass R6 — including Spring, which the user explicitly did not select. Use
   `evidenceText()` in `lib.mjs`: an answer always counts, a question only counts
   when the answer is an unambiguous yes.
+- **A fuzzy-matched yes/no answer can find the right CONCEPT and still return the
+  wrong TRUTH VALUE.** `answer-bank.mjs`'s `CONCEPTS` guard stops a question
+  being answered out of the wrong bucket, but a label can name the right concept
+  and still negate it. Ramp asks "are you authorized to work in the U.S.
+  **without** company sponsorship?"; that shares nearly every token with the
+  banked "Will you now or in the future require sponsorship?" -> `No`, so the
+  matcher copied `No` verbatim at 0.75 and reported **OK** — asserting the
+  opposite of the truth on the highest-stakes field on the form. The polarity
+  guard (`NEGATION_RE` / `isNegated` / `polarityMismatch`, just above `resolve`)
+  compares negation between the field label and the matched bank question; a
+  mismatch on a yes/no-shaped answer defers to `NEEDS-CHOICE`. It never
+  auto-inverts — a double negative would flip straight back, so deferring is
+  strictly preferred. This guards the FUZZY tier only; saving an exact-label
+  answer (`save-answer.mjs`) still resolves `OK` and is the permanent fix.
+- **The fill bootstrap loads by `filename`, never `addScriptTag`.**
+  `page.addScriptTag({ path })` injects a real inline `<script>`, which a
+  nonce-based CSP board (Ashby) refuses outright — this broke the fill step on a
+  live application. `fill-plan.mjs`'s `buildDriverSource()` now reads
+  `fill-page.js` off disk itself and embeds the engine and the plan as strings
+  into `jobs/<slug>/fill-plan.js`, loaded via `browser_run_code_unsafe
+{ filename }` and injected with `page.evaluate((s) => { (0, eval)(s) }, s)` —
+  CDP evaluation is not gated by the page's CSP the way a `<script>` tag is.
+  Related: that vm context can never use dynamic `import()` (playwright-core's
+  `runCode.ts` wires up no `importModuleDynamically` callback, so `await
+import("node:fs")` throws `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`), and
+  `require` is undefined — file reads for the browser side must happen in
+  ordinary Node, never inside the injected driver.
+- **Non-upload fills retry once on a stale/detached locator.** Ashby's
+  resume-autofill remounts the form ASYNCHRONOUSLY, after the upload settle
+  delay, so the remount can land between `locate()` and the interaction that
+  follows — a live run logged `f3` as failed while its value had in fact
+  landed. `fill-page.js`'s loop (`actOn` / `isStaleError`) re-resolves and
+  replays that one item once before recording a failure; safe because
+  fill/select/check are idempotent.
 - **`textSnippet` preserves block boundaries.** It used to collapse every run of
   whitespace including newlines, so a Greenhouse body arrived as one
   4,000-character line and the L2 fit stage found a requirements heading in 0 of

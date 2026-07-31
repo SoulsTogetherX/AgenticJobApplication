@@ -18,6 +18,12 @@
 //   node scripts/maintenance/archive.mjs archive <slug> [--force]
 //   node scripts/maintenance/archive.mjs archive --closed [--dry-run]
 //   node scripts/maintenance/archive.mjs restore <slug> [--to <dir>] [--force]
+//   node scripts/maintenance/archive.mjs purge [--days N] [--apply] [--json]
+//     Deletes ARCHIVED `documents` rows whose JOB POSTING (not the archive
+//     date, not the application date) is older than --days — default is
+//     docs/application-limits.yaml's freshness.max_age_days, else 30. Dry
+//     run unless --apply is passed: this is IRREVERSIBLE (see the
+//     `documents` table comment in scripts/lib/db.mjs).
 //   ... plus [--jobs-dir <path>] [--db <path>] [--applications <path>]
 //
 // Exit codes: 0 ok, 1 refused / nothing to do, 2 usage.
@@ -32,8 +38,11 @@ import {
   writeDocuments,
   readDocuments,
   listDocuments,
+  deleteDocuments,
+  rowToLead,
   DB_PATH,
 } from "../lib/db.mjs"
+import { loadLimits } from "../leads/find-jobs.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -111,6 +120,179 @@ export function planArchive(
     }
   }
   return { archive, refuse }
+}
+
+// --- purge --------------------------------------------------------------
+//
+// Every posting that reaches this pipeline was already filtered by
+// docs/application-limits.yaml's freshness.max_age_days at ingest, so an
+// archived workspace whose posting is stale by that same measure would be
+// rejected again if it resurfaced — the user's own justification for this
+// command. It is still irreversible (see the `documents` table comment
+// above), so it gets the same dry-run-by-default posture as
+// prune-jobs.mjs: nothing is deleted without --apply.
+
+// Same trailing-slash/query/fragment normalization new-job.mjs uses to
+// match a --from-lead URL against the lead store, reused here so an
+// archived job.json's source_url matches a lead's url the same way.
+function normalizeUrl(u) {
+  const s = String(u ?? "").trim()
+  if (!s) return ""
+  return s
+    .replace(/[?#].*$/, "")
+    .replace(/\/+$/, "")
+    .toLowerCase()
+}
+
+// Resolve the JOB POSTING'S OWN posted date for an archived slug. Deliberately
+// NOT documents.archived_at (when the workspace was folded away) and NOT
+// applications.applied_at (when the user applied) — three different moments
+// about three different things, and confusing them is exactly how this
+// command would delete the wrong records.
+//
+// job.json as scaffolded by new-job.mjs today carries no posted_at of its
+// own — only the lead does — so most real archives resolve through the
+// lookup below rather than the direct field. The direct field is still
+// checked first: it costs nothing, it lets a future job.json carry one
+// verbatim, and it lets a test hand one over without also faking a
+// matching lead.
+//
+// Checked in order:
+//   1. The archived job.json's own `posted_at`.
+//   2. The stored lead whose `url` matches job.json's `source_url`
+//      (normalized).
+//   3. The stored lead whose company + title match EXACTLY — only when
+//      that names exactly one lead. More than one (a repost, say) is
+//      ambiguous, which this treats the same as unknown rather than
+//      guessing which one the archive actually was.
+// Whatever resolves nothing gets posted_at: null, which planPurge below
+// always skips rather than ever treating as old.
+export function resolvePostedAt(files, leads = []) {
+  const jobFile = files.find((f) => f.name === "job.json")
+  let job = null
+  if (jobFile && jobFile.content != null) {
+    try {
+      job = JSON.parse(Buffer.from(jobFile.content).toString("utf8"))
+    } catch {
+      job = null
+    }
+  }
+  const company = job?.company ?? null
+  const title = job?.title ?? null
+  const base = { company, title }
+
+  if (job?.posted_at) {
+    return { ...base, posted_at: job.posted_at, source: "job.json" }
+  }
+
+  if (job?.source_url) {
+    const norm = normalizeUrl(job.source_url)
+    const lead = norm
+      ? (leads.find((l) => l.url && normalizeUrl(l.url) === norm) ?? null)
+      : null
+    if (lead) {
+      return { ...base, posted_at: lead.posted_at ?? null, source: "lead:url" }
+    }
+  }
+
+  if (company && title) {
+    const cLower = company.toLowerCase()
+    const tLower = title.toLowerCase()
+    const matches = leads.filter(
+      (l) =>
+        String(l.company ?? "").toLowerCase() === cLower &&
+        String(l.title ?? "").toLowerCase() === tLower,
+    )
+    if (matches.length === 1) {
+      return {
+        ...base,
+        posted_at: matches[0].posted_at ?? null,
+        source: "lead:company+title",
+      }
+    }
+  }
+
+  return { ...base, posted_at: null, source: null }
+}
+
+// --days wins outright when given. Otherwise docs/application-limits.yaml's
+// freshness.max_age_days is the same number find-jobs.mjs already rejects
+// stale LEADS on — reusing it is what makes "all jobs past 30 days old are
+// rejected anyway" true for archives too. 30 only if even that file is
+// unreadable.
+export function resolveDays(explicitDays, limitsPath) {
+  if (explicitDays != null && explicitDays !== "") {
+    const n = Number(explicitDays)
+    if (!Number.isFinite(n) || n < 0) {
+      throw new Error(
+        `--days must be a non-negative number, got "${explicitDays}"`,
+      )
+    }
+    return n
+  }
+  const limits = fs.existsSync(limitsPath) ? loadLimits(limitsPath) : {}
+  return Number(limits.freshness?.max_age_days ?? 30)
+}
+
+// Pure core (exported for tests): given already-resolved
+// { slug, posted_at, ... } records, which are old enough to purge, which are
+// kept, and which cannot be judged at all. A record with no usable posted_at
+// is SKIPPED, never purged — an unknown date is not an old date. Matches
+// find-jobs.mjs's own freshness gate: strictly greater than the threshold,
+// so a record exactly at N days is kept, not purged.
+//
+// WHY a live application is skipped: the threshold reads the JOB POSTING'S
+// date, but the thing being deleted is the tailored resume and cover letter
+// for an application the user actually submitted. Those are different clocks.
+// A posting can be 40 days old and have been applied to yesterday — purging it
+// would destroy the documents for a live application right when a recruiter
+// might call about it, and `documents` has no on-disk backup. The freshness
+// rationale ("stale postings are rejected anyway") is about LEADS, and does
+// not transfer to applications already sent. Same posture as
+// `archive --closed`, which only touches recorded closed outcomes.
+export function planPurge(
+  records,
+  { days, now = new Date(), force = false } = {},
+) {
+  const purge = []
+  const keep = []
+  const skip = []
+  for (const r of records) {
+    if (!r.posted_at) {
+      skip.push({
+        ...r,
+        reason:
+          "no posted_at — none on the archived job.json and no lead matched it",
+      })
+      continue
+    }
+    const posted = new Date(r.posted_at)
+    if (Number.isNaN(posted.getTime())) {
+      skip.push({ ...r, reason: `unparseable posted_at "${r.posted_at}"` })
+      continue
+    }
+    const ageDays = (now.getTime() - posted.getTime()) / 86400000
+    const rec = { ...r, age_days: Math.round(ageDays) }
+    if (ageDays <= days) {
+      keep.push(rec)
+      continue
+    }
+    // An application with NO recorded outcome is still live — that is the
+    // whole point of the `applications` record, and it is not the same as
+    // closed (planArchive makes the same distinction). Only a slug with no
+    // application at all, or one with a recorded closed outcome, is purgeable.
+    if (!force && r.has_application && !CLOSED.has(r.application_status)) {
+      skip.push({
+        ...rec,
+        reason: r.application_status
+          ? `application still live ("${r.application_status}") — the posting is old but the application is not; --force to override`
+          : "applied, no outcome recorded yet — the posting is old but the application is live; --force to override",
+      })
+      continue
+    }
+    purge.push(rec)
+  }
+  return { purge, keep, skip }
 }
 
 function readWorkspace(jobsDir, slug) {
@@ -251,6 +433,7 @@ function main() {
   const force = has("--force")
   const dryRun = has("--dry-run")
   const closedOnly = has("--closed")
+  const applyFlag = has("--apply")
 
   const [cmd, ...rest] = args.filter((a) => !a.startsWith("--"))
   const applications = readApplications(
@@ -377,12 +560,117 @@ function main() {
     return
   }
 
+  if (cmd === "purge") {
+    const limitsPath =
+      flag("--limits") || path.join(ROOT, "docs", "application-limits.yaml")
+    let days
+    try {
+      days = resolveDays(flag("--days"), limitsPath)
+    } catch (e) {
+      console.error(e.message)
+      process.exitCode = 2
+      return
+    }
+
+    const db = openDb(dbFile)
+    try {
+      const slugs = listDocuments(db).map((r) => r.slug)
+      // Read straight off the already-open connection — documents and leads
+      // are the same file, so there is no second store to point at, only a
+      // second table. Only paid for on this path, never on
+      // list/show/archive/restore, which have no use for it.
+      const leads = db.prepare("SELECT * FROM leads").all().map(rowToLead)
+      // The application's own status, not the posting's age, is what decides
+      // whether deleting its documents is safe. See planPurge's comment.
+      const appBySlug = new Map(applications.map((a) => [a.slug, a]))
+      const records = slugs.map((slug) => ({
+        slug,
+        has_application: appBySlug.has(slug),
+        application_status: appBySlug.get(slug)?.status ?? null,
+        ...resolvePostedAt(readDocuments(db, slug), leads),
+      }))
+      const { purge, keep, skip } = planPurge(records, { days, force })
+
+      if (wantJson) {
+        const result = {
+          days,
+          apply: applyFlag,
+          purge,
+          kept: keep.length,
+          skip,
+        }
+        if (applyFlag) {
+          for (const r of purge) deleteDocuments(db, r.slug)
+          result.deleted = purge.length
+        }
+        console.log(JSON.stringify(result, null, 2))
+        return
+      }
+
+      for (const s of skip) console.log(`skip\t${s.slug}\t${s.reason}`)
+
+      if (!purge.length) {
+        console.log(
+          isTerse()
+            ? `purge=0 kept=${keep.length} skipped=${skip.length}`
+            : `\nNothing archived is past ${days} days old — nothing to purge.\n`,
+        )
+        return
+      }
+
+      if (!applyFlag) {
+        if (isTerse()) {
+          for (const r of purge) {
+            console.log(
+              `would-purge\t${r.slug}\t${r.company ?? "?"}\t${r.title ?? "?"}\t${r.posted_at}\tage=${r.age_days}`,
+            )
+          }
+          console.log(
+            `purge=${purge.length} kept=${keep.length} skipped=${skip.length} dry-run`,
+          )
+        } else {
+          console.log(
+            `\nWould permanently delete ${purge.length} archived workspace(s) ` +
+              `whose posting is older than ${days} days:\n`,
+          )
+          for (const r of purge) {
+            console.log(
+              `  ${r.slug} — ${r.company ?? "?"}, ${r.title ?? "?"}\n` +
+                `    posted ${r.posted_at} (${r.age_days} days ago)`,
+            )
+          }
+          console.log(
+            `\nDry run — nothing was deleted. Re-run with --apply to delete them.\n` +
+              `This is IRREVERSIBLE: documents has no on-disk copy once the row is gone.\n`,
+          )
+        }
+        return
+      }
+
+      let deleted = 0
+      for (const r of purge) {
+        deleteDocuments(db, r.slug)
+        console.log(
+          `purged\t${r.slug}\t${r.company ?? "?"}\t${r.title ?? "?"}\t${r.posted_at}\tage=${r.age_days}`,
+        )
+        deleted++
+      }
+      console.log(
+        `purge=${deleted} kept=${keep.length} skipped=${skip.length} applied=yes`,
+      )
+    } finally {
+      db.close()
+    }
+    return
+  }
+
   usage()
 }
 
 function usage() {
   console.error(
-    "usage: archive.mjs list | show <slug> | archive <slug>... | archive --closed | restore <slug> [--to <dir>]",
+    "usage: archive.mjs list | show <slug> | archive <slug>... | archive --closed | " +
+      "restore <slug> [--to <dir>] | purge [--days N] [--apply] [--json]",
   )
   process.exitCode = 2
 }

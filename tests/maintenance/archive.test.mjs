@@ -9,8 +9,20 @@ import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { planArchive, classify } from "../../scripts/maintenance/archive.mjs"
-import { openDb, upsertApplications } from "../../scripts/lib/db.mjs"
+import {
+  planArchive,
+  classify,
+  sha256,
+  resolvePostedAt,
+  resolveDays,
+  planPurge,
+  CLOSED,
+} from "../../scripts/maintenance/archive.mjs"
+import {
+  openDb,
+  upsertApplications,
+  writeDocuments,
+} from "../../scripts/lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -61,6 +73,35 @@ function run(argsArr, { jobsDir, dbFile }) {
     { cwd: ROOT, encoding: "utf8" },
   )
 }
+
+// Writes a `documents` row for `slug` directly — an archived workspace whose
+// only file is job.json, which is all purge's resolution logic ever reads.
+// Bypasses the live-workspace + `archive` round trip on purpose: these tests
+// are about purge, not about archiving, and this is faster and keeps each
+// fixture's job.json content (company/title/posted_at/source_url) explicit.
+function seedDocument(dbFile, slug, job, archivedAt) {
+  const db = openDb(dbFile)
+  try {
+    const content = Buffer.from(JSON.stringify(job, null, 2) + "\n", "utf8")
+    writeDocuments(
+      db,
+      slug,
+      [
+        {
+          name: "job.json",
+          content,
+          bytes: content.length,
+          sha256: sha256(content),
+        },
+      ],
+      archivedAt,
+    )
+  } finally {
+    db.close()
+  }
+}
+
+const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString()
 
 // --- classification ---------------------------------------------------------
 
@@ -309,4 +350,568 @@ test("the end-to-end closed path archives exactly the closed application", (t) =
   assert.match(res.stdout, /refused\twidgetco-swe/)
   assert.equal(fs.existsSync(path.join(fx.jobsDir, "acme-swe")), false)
   assert.ok(fs.existsSync(path.join(fx.jobsDir, "widgetco-swe", "resume.md")))
+})
+
+// --- purge: pure resolution logic -------------------------------------------
+// (no db, no CLI — just the functions the command is built from)
+
+test("resolvePostedAt prefers job.json's own posted_at over any lead", () => {
+  const job = {
+    company: "Acme",
+    title: "Full-Stack Engineer",
+    posted_at: "2026-01-01",
+  }
+  const files = [
+    { name: "job.json", content: Buffer.from(JSON.stringify(job)) },
+  ]
+  const leads = [
+    {
+      company: "Acme",
+      title: "Full-Stack Engineer",
+      url: "https://x",
+      posted_at: "2020-01-01",
+    },
+  ]
+  const r = resolvePostedAt(files, leads)
+  assert.equal(r.posted_at, "2026-01-01")
+  assert.equal(r.source, "job.json")
+})
+
+test("resolvePostedAt falls back to the lead matched by normalized URL", () => {
+  // Real job.json workspaces never carry posted_at themselves (only the lead
+  // does), so this is the path real archives resolve through. Query string
+  // and trailing slash must not defeat the match, same as new-job.mjs's own
+  // --from-lead lookup.
+  const job = {
+    company: "Acme",
+    title: "Full-Stack Engineer",
+    source_url: "https://boards.example.com/acme/123?utm=abc",
+  }
+  const files = [
+    { name: "job.json", content: Buffer.from(JSON.stringify(job)) },
+  ]
+  const leads = [
+    {
+      company: "Acme",
+      title: "Full-Stack Engineer",
+      url: "https://boards.example.com/acme/123/",
+      posted_at: "2026-06-01",
+    },
+  ]
+  const r = resolvePostedAt(files, leads)
+  assert.equal(r.posted_at, "2026-06-01")
+  assert.equal(r.source, "lead:url")
+})
+
+test("resolvePostedAt falls back to company+title only when exactly one lead matches", () => {
+  const job = { company: "Acme", title: "Full-Stack Engineer" }
+  const files = [
+    { name: "job.json", content: Buffer.from(JSON.stringify(job)) },
+  ]
+
+  const oneMatch = [
+    { company: "Acme", title: "Full-Stack Engineer", posted_at: "2026-05-01" },
+  ]
+  const resolved = resolvePostedAt(files, oneMatch)
+  assert.equal(resolved.posted_at, "2026-05-01")
+  assert.equal(resolved.source, "lead:company+title")
+
+  // A repost (or any duplicate) makes the match ambiguous. Guessing which
+  // one the archive actually was is exactly the kind of guess that deletes
+  // the wrong record, so this must resolve to nothing instead.
+  const ambiguous = [
+    { company: "Acme", title: "Full-Stack Engineer", posted_at: "2026-05-01" },
+    { company: "Acme", title: "Full-Stack Engineer", posted_at: "2026-06-01" },
+  ]
+  assert.equal(resolvePostedAt(files, ambiguous).posted_at, null)
+})
+
+test("resolvePostedAt resolves nothing when job.json is missing or unparseable", () => {
+  assert.equal(resolvePostedAt([], []).posted_at, null)
+  const bad = [{ name: "job.json", content: Buffer.from("{ not json") }]
+  assert.equal(resolvePostedAt(bad, []).posted_at, null)
+})
+
+test("resolveDays: --days wins outright, else the limits file, else 30", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "purge-limits-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const limitsFile = path.join(dir, "limits.yaml")
+  fs.writeFileSync(limitsFile, "freshness:\n  max_age_days: 10\n")
+
+  assert.equal(resolveDays("45", limitsFile), 45)
+  assert.equal(resolveDays(null, limitsFile), 10)
+  assert.equal(resolveDays(null, path.join(dir, "missing.yaml")), 30)
+})
+
+test("resolveDays rejects a non-numeric --days rather than silently using it", () => {
+  assert.throws(
+    () =>
+      resolveDays("soon", path.join(ROOT, "docs", "application-limits.yaml")),
+    /non-negative number/,
+  )
+})
+
+test("planPurge keeps a record exactly at the threshold, purges the day after", () => {
+  const now = new Date("2026-07-30T00:00:00Z")
+  const at30 = {
+    slug: "a",
+    posted_at: new Date(now.getTime() - 30 * 86400000).toISOString(),
+  }
+  const at31 = {
+    slug: "b",
+    posted_at: new Date(now.getTime() - 31 * 86400000).toISOString(),
+  }
+  const { purge, keep } = planPurge([at30, at31], { days: 30, now })
+  assert.deepEqual(
+    keep.map((r) => r.slug),
+    ["a"],
+  )
+  assert.deepEqual(
+    purge.map((r) => r.slug),
+    ["b"],
+  )
+})
+
+test("planPurge skips missing and unparseable posted_at instead of purging them", () => {
+  const now = new Date("2026-07-30T00:00:00Z")
+  const records = [
+    { slug: "no-date", posted_at: null },
+    { slug: "bad-date", posted_at: "not-a-real-date" },
+    {
+      slug: "old-enough",
+      posted_at: new Date(now.getTime() - 90 * 86400000).toISOString(),
+    },
+  ]
+  const { purge, skip } = planPurge(records, { days: 30, now })
+  assert.deepEqual(
+    purge.map((r) => r.slug),
+    ["old-enough"],
+  )
+  const reasons = new Map(skip.map((s) => [s.slug, s.reason]))
+  assert.match(reasons.get("no-date"), /no posted_at/)
+  assert.match(reasons.get("bad-date"), /unparseable/)
+})
+
+// --- purge: the live-application guard ---------------------------------------
+//
+// The threshold reads the JOB POSTING'S date; what gets deleted is the
+// tailored documents for an application the user actually submitted. These
+// pin the rule down at the planPurge level, independent of the CLI and the
+// database, since it is the part most likely to regress silently (see the
+// null-status case below, which is the regression that motivated the guard).
+
+test("planPurge purges an old record with no application at all", () => {
+  const now = new Date("2026-07-30T00:00:00Z")
+  const records = [
+    {
+      slug: "old-no-app",
+      posted_at: new Date(now.getTime() - 45 * 86400000).toISOString(),
+      has_application: false,
+      application_status: null,
+    },
+  ]
+  const { purge, keep, skip } = planPurge(records, { days: 30, now })
+  assert.deepEqual(
+    purge.map((r) => r.slug),
+    ["old-no-app"],
+  )
+  assert.deepEqual(keep, [])
+  assert.deepEqual(skip, [])
+})
+
+test("planPurge skips a live application with no outcome recorded yet (status absent, not just falsy)", () => {
+  // Real application records carry no `status` key at all until an outcome
+  // is reported — main() turns that into application_status: null via
+  // `?.status ?? null`. This is the exact shape that motivated the guard: a
+  // check for a falsy-but-present status would have missed it.
+  const now = new Date("2026-07-30T00:00:00Z")
+  const records = [
+    {
+      slug: "old-applied",
+      posted_at: new Date(now.getTime() - 45 * 86400000).toISOString(),
+      has_application: true,
+      application_status: null,
+    },
+  ]
+  const { purge, skip } = planPurge(records, { days: 30, now })
+  assert.deepEqual(purge, [])
+  assert.equal(skip.length, 1)
+  assert.equal(skip[0].slug, "old-applied")
+  assert.match(skip[0].reason, /no outcome recorded/)
+})
+
+test("planPurge purges a live application whose outcome is a CLOSED status", () => {
+  const now = new Date("2026-07-30T00:00:00Z")
+  const records = [
+    {
+      slug: "old-rejected",
+      posted_at: new Date(now.getTime() - 45 * 86400000).toISOString(),
+      has_application: true,
+      application_status: "rejected",
+    },
+  ]
+  const { purge, skip } = planPurge(records, { days: 30, now })
+  assert.deepEqual(
+    purge.map((r) => r.slug),
+    ["old-rejected"],
+  )
+  assert.deepEqual(skip, [])
+})
+
+test("planPurge purges a live application for every status in the exported CLOSED set", () => {
+  // Boundary check on the set itself, not just the "rejected" example above —
+  // closed, withdrawn and no_response must all clear the guard too.
+  const now = new Date("2026-07-30T00:00:00Z")
+  const posted_at = new Date(now.getTime() - 45 * 86400000).toISOString()
+  const records = [...CLOSED].map((application_status) => ({
+    slug: `old-${application_status}`,
+    posted_at,
+    has_application: true,
+    application_status,
+  }))
+  const { purge, skip } = planPurge(records, { days: 30, now })
+  assert.deepEqual(
+    purge.map((r) => r.slug).sort(),
+    records.map((r) => r.slug).sort(),
+  )
+  assert.deepEqual(skip, [])
+})
+
+test("planPurge skips a live application with a non-closed status", () => {
+  const now = new Date("2026-07-30T00:00:00Z")
+  const records = [
+    {
+      slug: "old-interviewing",
+      posted_at: new Date(now.getTime() - 45 * 86400000).toISOString(),
+      has_application: true,
+      application_status: "interviewing",
+    },
+  ]
+  const { purge, skip } = planPurge(records, { days: 30, now })
+  assert.deepEqual(purge, [])
+  assert.equal(skip.length, 1)
+  assert.match(skip[0].reason, /application still live \("interviewing"\)/)
+})
+
+test("planPurge: force overrides the live-application guard", () => {
+  const now = new Date("2026-07-30T00:00:00Z")
+  const records = [
+    {
+      slug: "old-applied",
+      posted_at: new Date(now.getTime() - 45 * 86400000).toISOString(),
+      has_application: true,
+      application_status: null,
+    },
+  ]
+  const { purge, skip } = planPurge(records, { days: 30, now, force: true })
+  assert.deepEqual(
+    purge.map((r) => r.slug),
+    ["old-applied"],
+  )
+  assert.deepEqual(skip, [])
+})
+
+test("planPurge: force does not override the missing/unparseable posted_at skip", () => {
+  // The two guards are independent and checked in a fixed order — force must
+  // not accidentally short-circuit the date check just because it happens to
+  // also be a live application.
+  const now = new Date("2026-07-30T00:00:00Z")
+  const records = [
+    {
+      slug: "no-date",
+      posted_at: null,
+      has_application: true,
+      application_status: null,
+    },
+    {
+      slug: "bad-date",
+      posted_at: "not-a-real-date",
+      has_application: true,
+      application_status: null,
+    },
+  ]
+  const { purge, skip } = planPurge(records, { days: 30, now, force: true })
+  assert.deepEqual(purge, [])
+  assert.equal(skip.length, 2)
+  const reasons = new Map(skip.map((s) => [s.slug, s.reason]))
+  assert.match(reasons.get("no-date"), /no posted_at/)
+  assert.match(reasons.get("bad-date"), /unparseable/)
+})
+
+// --- purge: the CLI end to end ----------------------------------------------
+
+test("purge dry-run reports candidates but deletes nothing", (t) => {
+  const fx = fixture(t, { slugs: [] })
+  seedDocument(fx.dbFile, "old-swe", {
+    company: "Acme",
+    title: "Full-Stack Engineer",
+    posted_at: daysAgo(45),
+  })
+  seedDocument(fx.dbFile, "fresh-swe", {
+    company: "Beta",
+    title: "Full-Stack Engineer",
+    posted_at: daysAgo(5),
+  })
+
+  const res = run(["purge", "--days", "30", "--json"], fx)
+  assert.equal(res.status, 0, res.stderr)
+  const out = JSON.parse(res.stdout)
+  assert.equal(out.apply, false)
+  assert.deepEqual(
+    out.purge.map((r) => r.slug),
+    ["old-swe"],
+  )
+  assert.equal(out.kept, 1)
+  assert.equal(out.deleted, undefined)
+
+  // Dry run means dry run — both archived workspaces are still there.
+  const after = JSON.parse(run(["list", "--json"], fx).stdout)
+  assert.deepEqual(after.map((r) => r.slug).sort(), ["fresh-swe", "old-swe"])
+})
+
+test("dry-run prose tells the human nothing was deleted and --apply is required", (t) => {
+  const fx = fixture(t, { slugs: [] })
+  seedDocument(fx.dbFile, "old-swe", {
+    company: "Acme",
+    title: "Full-Stack Engineer",
+    posted_at: daysAgo(45),
+  })
+  const res = run(["purge", "--days", "30", "--verbose"], fx)
+  assert.equal(res.status, 0, res.stderr)
+  assert.match(res.stdout, /Dry run — nothing was deleted/)
+  assert.match(res.stdout, /--apply/)
+  assert.match(res.stdout, /IRREVERSIBLE/)
+})
+
+test("purge --apply deletes only records past the threshold; fresher ones survive", (t) => {
+  const fx = fixture(t, { slugs: [] })
+  seedDocument(fx.dbFile, "old-swe", {
+    company: "Acme",
+    title: "Full-Stack Engineer",
+    posted_at: daysAgo(45),
+  })
+  seedDocument(fx.dbFile, "fresh-swe", {
+    company: "Beta",
+    title: "Full-Stack Engineer",
+    posted_at: daysAgo(5),
+  })
+
+  const res = run(["purge", "--days", "30", "--apply", "--json"], fx)
+  assert.equal(res.status, 0, res.stderr)
+  const out = JSON.parse(res.stdout)
+  assert.equal(out.deleted, 1)
+  assert.deepEqual(
+    out.purge.map((r) => r.slug),
+    ["old-swe"],
+  )
+
+  const after = JSON.parse(run(["list", "--json"], fx).stdout)
+  assert.deepEqual(
+    after.map((r) => r.slug),
+    ["fresh-swe"],
+  )
+})
+
+test("a record with no resolvable posted_at is skipped, never deleted", (t) => {
+  const fx = fixture(t, { slugs: [] })
+  seedDocument(fx.dbFile, "no-date", {
+    company: "Acme",
+    title: "Full-Stack Engineer",
+  })
+
+  const res = run(["purge", "--days", "30", "--apply", "--json"], fx)
+  assert.equal(res.status, 0, res.stderr)
+  const out = JSON.parse(res.stdout)
+  assert.equal(out.purge.length, 0)
+  assert.equal(out.deleted, 0)
+  assert.equal(out.skip.length, 1)
+  assert.match(out.skip[0].reason, /no posted_at/)
+
+  const after = JSON.parse(run(["list", "--json"], fx).stdout)
+  assert.deepEqual(
+    after.map((r) => r.slug),
+    ["no-date"],
+  )
+})
+
+test("an unparseable posted_at is skipped, never deleted", (t) => {
+  const fx = fixture(t, { slugs: [] })
+  seedDocument(fx.dbFile, "bad-date", {
+    company: "Acme",
+    title: "Full-Stack Engineer",
+    posted_at: "not-a-real-date",
+  })
+
+  const res = run(["purge", "--days", "30", "--apply", "--json"], fx)
+  const out = JSON.parse(res.stdout)
+  assert.equal(out.purge.length, 0)
+  assert.match(out.skip[0].reason, /unparseable/)
+
+  const after = JSON.parse(run(["list", "--json"], fx).stdout)
+  assert.deepEqual(
+    after.map((r) => r.slug),
+    ["bad-date"],
+  )
+})
+
+test("purge never touches the applications table", (t) => {
+  const fx = fixture(t, {
+    slugs: [],
+    applications: [
+      {
+        slug: "old-swe",
+        company: "Acme",
+        title: "Full-Stack Engineer",
+        applied_at: "2026-01-01",
+        status: "rejected",
+      },
+    ],
+  })
+  seedDocument(fx.dbFile, "old-swe", {
+    company: "Acme",
+    title: "Full-Stack Engineer",
+    posted_at: daysAgo(45),
+  })
+
+  const res = run(["purge", "--days", "30", "--apply", "--json"], fx)
+  assert.equal(JSON.parse(res.stdout).deleted, 1)
+
+  // The archived workspace is gone...
+  assert.deepEqual(JSON.parse(run(["list", "--json"], fx).stdout), [])
+
+  // ...but the fact that the user applied is untouched. A purged workspace
+  // must never erase application history.
+  const db = openDb(fx.dbFile)
+  try {
+    const row = db
+      .prepare("SELECT * FROM applications WHERE slug = ?")
+      .get("old-swe")
+    assert.ok(row, "the application record must survive purging its archive")
+    assert.equal(row.status, "rejected")
+  } finally {
+    db.close()
+  }
+})
+
+test("a live application's documents survive a default purge --apply even though the posting is old", (t) => {
+  const fx = fixture(t, {
+    slugs: [],
+    applications: [
+      {
+        slug: "acme-swe",
+        company: "Acme",
+        title: "Full-Stack Engineer",
+        applied_at: daysAgo(2),
+        source_url: "https://example.com/acme/123",
+        notes: "",
+        // status intentionally absent — a real submitted application has no
+        // `status` key until an outcome is reported. This is the regression
+        // this guard exists for.
+      },
+    ],
+  })
+  seedDocument(fx.dbFile, "acme-swe", {
+    company: "Acme",
+    title: "Full-Stack Engineer",
+    posted_at: daysAgo(45),
+  })
+
+  const res = run(["purge", "--days", "30", "--apply", "--json"], fx)
+  assert.equal(res.status, 0, res.stderr)
+  const out = JSON.parse(res.stdout)
+  assert.equal(out.deleted, 0)
+  assert.deepEqual(out.purge, [])
+  assert.equal(out.skip.length, 1)
+  assert.equal(out.skip[0].slug, "acme-swe")
+  assert.match(out.skip[0].reason, /no outcome recorded/)
+
+  // The archived documents are still there...
+  const after = JSON.parse(run(["list", "--json"], fx).stdout)
+  assert.deepEqual(
+    after.map((r) => r.slug),
+    ["acme-swe"],
+  )
+
+  // ...and the application record itself was never touched.
+  const db = openDb(fx.dbFile)
+  try {
+    const row = db
+      .prepare("SELECT * FROM applications WHERE slug = ?")
+      .get("acme-swe")
+    assert.ok(row, "the application record must still exist")
+    assert.equal(row.status, null)
+    assert.equal(row.company, "Acme")
+  } finally {
+    db.close()
+  }
+})
+
+test("purge never touches a live workspace directory, even one sharing a slug with an archived record", (t) => {
+  const fx = fixture(t, { slugs: ["old-swe"] })
+  seedDocument(fx.dbFile, "old-swe", {
+    company: "Acme",
+    title: "Full-Stack Engineer",
+    posted_at: daysAgo(45),
+  })
+
+  const res = run(["purge", "--days", "30", "--apply", "--json"], fx)
+  assert.equal(JSON.parse(res.stdout).deleted, 1)
+
+  // The archived `documents` row is gone...
+  assert.deepEqual(JSON.parse(run(["list", "--json"], fx).stdout), [])
+  // ...but purge only ever reads/deletes from `documents`, so a LIVE
+  // jobs/<slug>/ directory that happens to share the name is never touched.
+  assert.ok(fs.existsSync(path.join(fx.jobsDir, "old-swe", "resume.md")))
+})
+
+test("--days overrides the default threshold", (t) => {
+  const fx = fixture(t, { slugs: [] })
+  seedDocument(fx.dbFile, "mid-age", {
+    company: "Acme",
+    title: "Full-Stack Engineer",
+    posted_at: daysAgo(15),
+  })
+
+  const strict = JSON.parse(run(["purge", "--days", "10", "--json"], fx).stdout)
+  assert.deepEqual(
+    strict.purge.map((r) => r.slug),
+    ["mid-age"],
+  )
+
+  const lenient = JSON.parse(
+    run(["purge", "--days", "30", "--json"], fx).stdout,
+  )
+  assert.deepEqual(lenient.purge, [])
+  assert.equal(lenient.kept, 1)
+})
+
+test("with no --days, the threshold comes from --limits' freshness.max_age_days", (t) => {
+  const fx = fixture(t, { slugs: [] })
+  seedDocument(fx.dbFile, "mid-age", {
+    company: "Acme",
+    title: "Full-Stack Engineer",
+    posted_at: daysAgo(15),
+  })
+  const limitsFile = path.join(fx.dir, "limits.yaml")
+  fs.writeFileSync(limitsFile, "freshness:\n  max_age_days: 10\n")
+
+  const res = run(["purge", "--limits", limitsFile, "--json"], fx)
+  assert.equal(res.status, 0, res.stderr)
+  const out = JSON.parse(res.stdout)
+  assert.equal(out.days, 10)
+  assert.deepEqual(
+    out.purge.map((r) => r.slug),
+    ["mid-age"],
+  )
+})
+
+test("purge usage lists the subcommand and its flags", (t) => {
+  // Routed through the same isolated fixture as every other test here (never
+  // the real jobs/leads.db) even though an unrecognized subcommand never
+  // reaches purge's own logic — main() still reads --applications/--db up
+  // front for every command, this one included.
+  const fx = fixture(t, { slugs: [] })
+  const res = run(["bogus-command"], fx)
+  assert.equal(res.status, 2)
+  assert.match(res.stderr, /purge \[--days N\] \[--apply\] \[--json\]/)
 })

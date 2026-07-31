@@ -265,13 +265,21 @@ names what is still outstanding. Then run the bootstrap it printed:
 
 ```
 mcp__playwright__browser_run_code_unsafe
-  { code: "<the bootstrap from fill-plan.mjs>" }
+  { filename: "jobs/<slug>/fill-plan.js" }
 ```
 
-`addScriptTag` loads the engine and the plan off disk, so nothing but those six
-lines enters your context regardless of how big the form is. The engine does
+`fill-plan.mjs` embeds both the engine source and this job's plan into that one
+file and loads it whole via `filename` — a real, unrestricted filesystem read
+on the MCP server, so nothing but that one path enters your context regardless
+of how big the form or the plan is. This is deliberately **not**
+`{ code: "..." }` with an `addScriptTag`-based loader: that inserts the engine
+and plan into the page as an inline `<script>`, which any board with a
+nonce-based CSP (Ashby) refuses to execute outright — `page.evaluate` instead
+drives the page over CDP, which the page's CSP does not gate. The engine does
 uploads first (they remount the form and invalidate every `data-aj`), then
-fills, then verifies — and returns only what is not right:
+fills — retrying once on a stale/detached-element error, since a React remount
+can land between locating a field and interacting with it — then verifies, and
+returns only what is not right:
 
 ```json
 { "ok": 24, "failed": 0, "deferred": 12, "ms": 5100,

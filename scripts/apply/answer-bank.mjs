@@ -465,6 +465,12 @@ function similarity(a, b) {
 //
 // Order matters: a label naming both ("...sponsorship... to maintain
 // authorization to work...") is about sponsorship.
+//
+// Concept alone is not enough: a label can name the sponsorship concept while
+// actually negating it ("...authorized to work WITHOUT sponsorship..."). That
+// is a polarity problem, not a concept problem — see the polarity guard
+// further down, which runs after this match and can still defer a same-concept
+// hit rather than copy its answer verbatim.
 const CONCEPTS = [
   ["sponsorship", /\bsponsor(ship|ed|s)?\b|\bvisa\b/i],
   [
@@ -572,6 +578,48 @@ function matchOption(value, opts) {
   }
   return { value: first, needsChoice: true }
 }
+
+// ---------------------------------------------------------------------------
+// polarity guard
+// ---------------------------------------------------------------------------
+// A fuzzy match can land on the right CONCEPT and still hand back the wrong
+// TRUTH VALUE. "Are you authorized to work in the U.S. WITHOUT company
+// sponsorship?" shares almost every token with a banked "Will you require
+// sponsorship for employment visa status?" and both fall in the sponsorship
+// concept bucket above — but "without sponsorship" inverts what the form is
+// actually asking. The question's real subject is work authorization, using
+// the sponsorship clause as a negated qualifier, not as its subject. Copying
+// that bank entry's literal "No" verbatim would assert the OPPOSITE of the
+// truth on the single highest-stakes field on the form.
+//
+// Below exact-label confidence there is no reliable way to tell a genuine
+// restatement from an inverted one apart, so a polarity mismatch on a yes/no
+// answer defers instead of guessing (2026-07-30). Auto-inverting was
+// considered and rejected: "are you unable to work without sponsorship" is a
+// double negative, and getting that flip subtly wrong is no safer than the
+// bug this guards against — one extra question beats a silently flipped
+// answer. The exact-question lookup above is untouched: identical text cannot
+// be mismatched in polarity with itself.
+const NEGATION_RE =
+  /\bwithout\b|\bunable\b|\bcannot\b|\bcan'?t\b|\bnever\b|\bdon'?t\b|\bdoesn'?t\b|\bwon'?t\b|\bnot\b|\bno\b/i
+const isNegated = (text) => NEGATION_RE.test(String(text ?? ""))
+
+// The guard only applies to answers that are themselves a yes/no fact — a
+// negation mismatch on a free-text answer (an employer name, a discipline)
+// is not a truth value that inverting could flip, so there is nothing to
+// protect against.
+const isYesNoAnswer = (text) => {
+  const t = String(text ?? "").trim()
+  return YES_LONG.test(t) || NO_LONG.test(t)
+}
+
+// True when copying `match.answer` onto a field asking `label` risks stating
+// the opposite of the truth: the stored answer is yes/no shaped, and exactly
+// one side of the label/bank-question pair reads as negated.
+const polarityMismatch = (label, match) =>
+  !!match &&
+  isYesNoAnswer(match.answer) &&
+  isNegated(label) !== isNegated(match.question)
 
 // ---------------------------------------------------------------------------
 // resolve
@@ -689,13 +737,25 @@ for (const f of fields) {
   }
 
   const best = bestAnswer(label)
-  if (best && best.score >= 0.7) {
+  const mismatch = polarityMismatch(label, best)
+  if (best && best.score >= 0.7 && !mismatch) {
     const m = matchOption(best.answer, opts)
     push(
       m.needsChoice ? "NEEDS-CHOICE" : "OK",
       `${best.id}@${best.score.toFixed(2)}`,
       m.value,
       m.needsChoice ? `options: ${opts.join(" | ")}` : undefined,
+    )
+  } else if (mismatch && best.score >= 0.45) {
+    // Prefer deferring over auto-inverting (see the polarity guard above): one
+    // extra question to the user beats a silently flipped work-authorization
+    // answer. Leave value blank rather than surface the untrustworthy literal.
+    push(
+      "NEEDS-CHOICE",
+      `${best.id}@${best.score.toFixed(2)}`,
+      "",
+      `bank question may be opposite polarity — confirm by hand: "${best.question}" -> ${best.answer}` +
+        (opts && opts.length ? `; options: ${opts.join(" | ")}` : ""),
     )
   } else if (best && best.score >= 0.45) {
     push(

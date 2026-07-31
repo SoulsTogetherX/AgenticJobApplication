@@ -14,7 +14,11 @@ import path from "node:path"
 import vm from "node:vm"
 import { fileURLToPath } from "node:url"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 const ENGINE = path.join(ROOT, ".claude", "skills", "apply-job", "fill-page.js")
 const SRC = fs.readFileSync(ENGINE, "utf8")
 
@@ -43,7 +47,19 @@ function fakePage({ url = "https://ats.test/apply", elements = {} } = {}) {
       async count() {
         return spec ? 1 : 0
       },
-      async scrollIntoViewIfNeeded() {},
+      async scrollIntoViewIfNeeded() {
+        log.push(["scroll", sel])
+        // Fires once then clears itself: models a locator whose element goes
+        // stale on first touch (a remount raced it) and is fine on the next
+        // re-resolution, exactly like Ashby's async resume-autofill remount.
+        if (spec && spec.throwOnScrollOnce) {
+          const msg = spec.throwOnScrollOnce
+          spec.throwOnScrollOnce = null
+          throw new Error(msg)
+        }
+        // Fires every time: a genuine, persistent detachment.
+        if (spec && spec.throwOnScroll) throw new Error(spec.throwOnScroll)
+      },
       async click() {
         log.push(["click", sel])
         if (spec && spec.throwOnClick) throw new Error(spec.throwOnClick)
@@ -71,7 +87,12 @@ function fakePage({ url = "https://ats.test/apply", elements = {} } = {}) {
       },
       async evaluate(fn) {
         // kindOf vs shownValue, told apart by their source.
-        return String(fn).includes("forbidden:")
+        const isKindOf = String(fn).includes("forbidden:")
+        if (isKindOf && spec && spec.throwOnEvaluateOnce) {
+          spec.throwOnEvaluateOnce = false
+          throw new Error("Element is not attached to the DOM")
+        }
+        return isKindOf
           ? (spec && spec.kind) || "input"
           : (spec && spec.value) || ""
       },
@@ -374,4 +395,143 @@ test("skip items are never touched", async () => {
   assert.equal(out.ok, 0)
   assert.equal(out.failed, 0)
   assert.equal(page.log.filter((e) => e[0] !== "verify").length, 0)
+})
+
+// --- stale-locator retry (Ashby's async resume-autofill remount) ----------
+//
+// The engine's per-item locate() runs right before each fill, but on Ashby
+// the resume-autofill parses the uploaded PDF and remounts the form
+// ASYNCHRONOUSLY, after the upload settle delay — so the remount can land
+// between locate() and the interaction that follows it, detaching the
+// element mid-action. Playwright reports that as "Element is not attached to
+// the DOM". A stale hit is retried once with a freshly re-resolved locator;
+// anything else fails immediately, and a second stale hit is still reported.
+
+test("a stale locator is re-resolved once and the retry recovers", async () => {
+  const fn = loadEngine()
+  const page = fakePage({
+    elements: {
+      "#_systemfield_email": {
+        kind: "input",
+        throwOnScrollOnce: "Element is not attached to the DOM",
+      },
+    },
+  })
+  const out = await fn(
+    page,
+    plan([
+      {
+        k: "f3",
+        sel: "#_systemfield_email",
+        how: "fill",
+        value: "xavier@example.com",
+      },
+    ]),
+  )
+  assert.equal(
+    out.failed,
+    0,
+    "one retry must recover from a transient stale hit",
+  )
+  assert.equal(out.ok, 1)
+  assert.deepEqual(plain(out.failures), [])
+  const scrolls = page.log.filter((e) => e[0] === "scroll")
+  assert.equal(scrolls.length, 2, "the retry re-ran scrollIntoViewIfNeeded")
+  const fills = page.log.filter((e) => e[0] === "fill")
+  assert.equal(fills.length, 1, "fill only runs after a successful scroll")
+  assert.equal(fills[0][2], "xavier@example.com")
+})
+
+test("a non-stale error is reported immediately, never retried", async () => {
+  const fn = loadEngine()
+  const page = fakePage({
+    elements: { "#a": { kind: "input", throwOnFill: "boom" } },
+  })
+  const out = await fn(
+    page,
+    plan([{ k: "f1", sel: "#a", how: "fill", value: "x" }]),
+  )
+  assert.equal(out.failed, 1)
+  assert.equal(out.ok, 0)
+  assert.equal(out.failures[0].why, "boom")
+  const fills = page.log.filter((e) => e[0] === "fill")
+  assert.equal(fills.length, 1, "a non-stale failure must not be retried")
+})
+
+test("a persistent stale error survives the retry and is reported, not swallowed", async () => {
+  const fn = loadEngine()
+  const page = fakePage({
+    elements: {
+      "#a": {
+        kind: "input",
+        throwOnScroll: "Element is not attached to the DOM",
+      },
+    },
+  })
+  const out = await fn(
+    page,
+    plan([{ k: "f1", sel: "#a", how: "fill", value: "x" }]),
+  )
+  assert.equal(
+    out.failed,
+    1,
+    "a genuine, persistent failure must still surface",
+  )
+  assert.equal(out.ok, 0)
+  assert.match(out.failures[0].why, /not attached to the dom/i)
+  const scrolls = page.log.filter((e) => e[0] === "scroll")
+  assert.equal(scrolls.length, 2, "exactly one retry — not an infinite loop")
+  assert.equal(
+    page.log.filter((e) => e[0] === "fill").length,
+    0,
+    "a scroll that never succeeds must never reach fill",
+  )
+})
+
+test("a stale hit inside kindOf is retried too, not just scrollIntoViewIfNeeded", async () => {
+  // The remount can land anywhere between locate() and the interaction that
+  // follows it — kindOf's own evaluate() runs in that same window.
+  const fn = loadEngine()
+  const page = fakePage({
+    elements: { "#a": { kind: "input", throwOnEvaluateOnce: true } },
+  })
+  const out = await fn(
+    page,
+    plan([{ k: "f1", sel: "#a", how: "fill", value: "x" }]),
+  )
+  assert.equal(out.ok, 1)
+  assert.equal(out.failed, 0)
+})
+
+test("the retry gives up cleanly if the element is gone for good", async () => {
+  // locate() itself comes back empty on the retry — the field was removed,
+  // not merely remounted. Must not throw; must report a clear failure.
+  const fn = loadEngine()
+  const page = fakePage({
+    elements: {
+      "#a": {
+        kind: "input",
+        throwOnScrollOnce: "Element is not attached to the DOM",
+      },
+    },
+  })
+  // Remove the element out from under the retry's locate() call by making
+  // count() report zero from here on.
+  const originalLocator = page.locator
+  let calls = 0
+  page.locator = (sel) => {
+    calls++
+    const loc = originalLocator(sel)
+    if (sel === "#a" && calls > 1) {
+      return { ...loc, count: async () => 0 }
+    }
+    return loc
+  }
+  const out = await fn(
+    page,
+    plan([{ k: "f1", sel: "#a", how: "fill", value: "x" }]),
+  )
+  assert.equal(out.ok, 0)
+  assert.equal(out.failed, 1)
+  assert.match(out.failures[0].why, /no unique element/)
 })

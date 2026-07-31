@@ -1,16 +1,52 @@
 // Deterministic form filler. Executes a plan built by scripts/apply/fill-plan.mjs;
 // makes no decisions of its own, so the model is not in this loop.
 //
-// It is written as a real function and shipped as SOURCE: the driver loads this
-// file into the page via addScriptTag (which costs nothing in agent context),
-// reads the string back out, and eval's it Playwright-side where `page` and
-// real locators exist. Everything must therefore be self-contained — no closure
-// over module scope, no imports.
+// It is written as a real function and shipped as SOURCE: scripts/apply/
+// fill-plan.mjs reads this file's text off disk (an ordinary Node process,
+// outside any sandbox) and embeds it as a string in the generated
+// jobs/<slug>/fill-plan.js bootstrap, loaded whole via
+// `browser_run_code_unsafe { filename }`. That bootstrap injects the embedded
+// string into the page with page.evaluate((s) => { (0, eval)(s); }, s), reads
+// window.__ajFillSrc back out, and eval's it Playwright-side where `page` and
+// real locators exist. Everything here must therefore be self-contained — no
+// closure over module scope, no imports.
 //
-// Sandbox notes: the Playwright MCP vm context has `page` and the standard
-// built-ins, but NO setTimeout, console, or require. Use page.waitForTimeout.
-// There is also no default action timeout in that context (stock 30s applies),
-// so every locator call passes an explicit one.
+// NOT page.addScriptTag({ path }): that inserts a real inline <script>
+// element, which a nonce-based CSP board refuses to execute outright (Ashby:
+// "Executing inline script violates the following Content Security Policy
+// directive 'script-src 'nonce-...' https://cdn.ashbyprd.com ...'").
+// page.evaluate instead drives the page over CDP (Runtime.evaluate), which is
+// not a script the page itself loaded, so the page's CSP does not gate it —
+// the same reason a browser's own DevTools console can run arbitrary code on
+// a CSP-locked page. Verified live: this loads on both Greenhouse (addScriptTag
+// happened to work there too) and Ashby (addScriptTag fails outright; this
+// does not). Do not "fix" the loading path back to addScriptTag/addInitScript
+// — see scripts/apply/fill-plan.mjs's buildDriverSource() for the other half.
+//
+// Sandbox notes: the Playwright MCP vm context (browser_run_code_unsafe) has
+// `page` and the standard built-ins, but NO setTimeout, console, or require.
+// Use page.waitForTimeout. There is also no default action timeout in that
+// context (stock 30s applies), so every locator call passes an explicit one.
+//
+// Dynamic import is not a usable substitute for the missing `require`, and
+// this was verified rather than assumed: reading playwright-core's own
+// runCode.ts (packages/playwright-core/src/tools/backend/runCode.ts, bundled
+// into playwright-core/lib/coreBundle.js) shows it calling
+// `vm.runInContext("(" + code + ")", context2)` with no third argument, so no
+// `importModuleDynamically` callback is ever supplied. Reproducing that exact
+// call confirms a bare `await import("node:fs")` at the top level compiles
+// fine but THROWS AT CALL TIME with ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING —
+// unconditionally, and identically whether the code arrived via the tool's
+// `code` parameter or its `filename` parameter, since both converge on that
+// same call (`filename` only changes how the `code` string is populated —
+// via a real, unrestricted `fs.readFile` done by the MCP server BEFORE this
+// point, which is a one-time read of whatever single file `filename` names,
+// not something the driver can invoke a second time for another file). There
+// is no in-sandbox fix for this; it is fixed behavior of the installed
+// @playwright/mcp version. The actual fix is to keep file I/O OUTSIDE this vm
+// entirely — fill-plan.mjs (an ordinary, unrestricted Node process) reads
+// this file and the plan and embeds both as strings in the generated
+// bootstrap, so nothing in here ever needs fs/require/import.
 //
 // WHY the odd interaction choices (learned the hard way on Greenhouse):
 //   - dispatchEvent(new MouseEvent(...)) does NOT register in React state; the
@@ -23,6 +59,12 @@
 //     waitForEvent in here never fires and stalls the call as a pending modal.
 //   - Uploads remount the form, and data-aj stamps do not survive that; hence
 //     uploads first, and sel-first resolution everywhere else.
+//   - A stale/detached-element error right after locate() (seen on Ashby:
+//     resume-autofill parses the uploaded PDF and remounts the form
+//     asynchronously, after the upload settle delay already waited for the
+//     upload itself) is retried ONCE with a freshly re-resolved locator before
+//     it counts as a real failure — see isStaleError below. fill/select/check
+//     are idempotent, so replaying one item is safe.
 //
 // SAFETY: there is deliberately no verb that clicks a button. "Never click
 // submit" is not a rule this engine follows — it is a thing it cannot express.
@@ -260,6 +302,57 @@ window.__ajFillSrc = String(async (page, plan) => {
   }
 
   // --- everything else -----------------------------------------------------
+  // kindOf + the verb-specific action for ONE item against a given locator,
+  // pulled out so the stale-element retry below can replay the exact same
+  // sequence against a freshly re-resolved locator without duplicating the
+  // verb dispatch. Throws on any failure; the caller decides what to do
+  // about it (fail outright, or retry once).
+  const actOn = async (loc, item) => {
+    let kind
+    try {
+      kind = await kindOf(loc)
+    } catch (e) {
+      throw new Error("unreadable element: " + e.message)
+    }
+    if (String(kind).startsWith("forbidden:")) {
+      throw new Error(
+        "refusing to touch a <" + kind.split(":")[1] + "> — not a form control",
+      )
+    }
+    await loc.scrollIntoViewIfNeeded({ timeout: 2500 })
+    if (item.how === "fill") {
+      await loc.fill(String(item.value), { timeout: 2500 })
+    } else if (item.how === "select") {
+      await loc.selectOption({ label: String(item.value) }, { timeout: 2500 })
+    } else if (item.how === "check") {
+      const on = item.value === false || item.value === "false" ? false : true
+      if (on) await loc.check({ timeout: 2500 })
+      else await loc.uncheck({ timeout: 2500 })
+    } else if (item.how === "type") {
+      await loc.click({ timeout: 2500 })
+      await page.keyboard.type(String(item.value), { delay: 15 })
+    } else if (item.how === "combo") {
+      const r = await setCombo(loc, item)
+      if (!r.ok) throw new Error(r.why)
+    } else {
+      throw new Error("unknown verb " + item.how)
+    }
+  }
+
+  // Ashby's resume-autofill parses the uploaded PDF and remounts the form
+  // ASYNCHRONOUSLY, well after the upload's own settle delay — so this can
+  // land between locate() and the interaction that follows it, detaching the
+  // element mid-action. Playwright reports that as "Element is not attached
+  // to the DOM" on whichever call was in flight (kindOf's evaluate,
+  // scrollIntoViewIfNeeded, or the fill/select/check/combo itself) — a value
+  // can therefore land correctly (the remount's own re-render, or a later
+  // scan) while this exact call still throws. Re-resolving once and replaying
+  // the same item is safe: fill/select/check are idempotent, and a genuine
+  // (non-stale) failure still reaches `fail` after the retry rather than
+  // being retried forever.
+  const isStaleError = (e) =>
+    /not attached to the dom/i.test(String((e && e.message) || e))
+
   for (const item of items) {
     if (item.how === "upload" || item.how === "skip") continue
     const loc = await locate(item)
@@ -268,47 +361,33 @@ window.__ajFillSrc = String(async (page, plan) => {
       continue
     }
 
-    let kind
     try {
-      kind = await kindOf(loc)
-    } catch (e) {
-      fail(item, "unreadable element: " + e.message)
-      continue
-    }
-    if (String(kind).startsWith("forbidden:")) {
-      fail(
-        item,
-        "refusing to touch a <" + kind.split(":")[1] + "> — not a form control",
-      )
-      continue
-    }
-
-    try {
-      await loc.scrollIntoViewIfNeeded({ timeout: 2500 })
-      if (item.how === "fill") {
-        await loc.fill(String(item.value), { timeout: 2500 })
-      } else if (item.how === "select") {
-        await loc.selectOption({ label: String(item.value) }, { timeout: 2500 })
-      } else if (item.how === "check") {
-        const on = item.value === false || item.value === "false" ? false : true
-        if (on) await loc.check({ timeout: 2500 })
-        else await loc.uncheck({ timeout: 2500 })
-      } else if (item.how === "type") {
-        await loc.click({ timeout: 2500 })
-        await page.keyboard.type(String(item.value), { delay: 15 })
-      } else if (item.how === "combo") {
-        const r = await setCombo(loc, item)
-        if (!r.ok) {
-          fail(item, r.why)
-          continue
-        }
-      } else {
-        fail(item, "unknown verb " + item.how)
-        continue
-      }
+      await actOn(loc, item)
       out.ok++
     } catch (e) {
-      fail(item, e.message)
+      if (!isStaleError(e)) {
+        fail(item, e.message)
+        continue
+      }
+      // Give an in-flight remount a moment to finish, then re-resolve and
+      // retry this one item exactly once.
+      await page.waitForTimeout(200)
+      const retryLoc = await locate(item)
+      if (!retryLoc) {
+        fail(
+          item,
+          "no unique element for " +
+            (item.sel || item.k) +
+            " after a stale-locator retry",
+        )
+        continue
+      }
+      try {
+        await actOn(retryLoc, item)
+        out.ok++
+      } catch (e2) {
+        fail(item, e2.message)
+      }
     }
   }
 

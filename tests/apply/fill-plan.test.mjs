@@ -3,13 +3,27 @@
 // never guessed, and a question is never mistaken for a profile field.
 import test from "node:test"
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import vm from "node:vm"
+import { spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
 import {
   buildPlan,
   isConsent,
   readiness,
+  buildDriverSource,
+  buildBootstrap,
 } from "../../scripts/apply/fill-plan.mjs"
 import { detectAts, ADAPTERS } from "../../scripts/apply/ats/index.mjs"
 import greenhouse from "../../scripts/apply/ats/greenhouse.mjs"
+
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 
 const files = {
   resume: "C:\\jobs\\x\\resume.pdf",
@@ -411,4 +425,179 @@ test("the plan carries the url guard and the adapter's strategy order", () => {
   assert.deepEqual(plan.comboStrategies, greenhouse.comboStrategies)
   assert.equal(plan.ats, "greenhouse")
   assert.equal(plan.v, 1)
+})
+
+// --- the CSP-safe bootstrap ------------------------------------------------
+//
+// addScriptTag inserts a real inline <script> element, which any board with a
+// nonce-based CSP (Ashby) refuses to run outright — that broke the fill step
+// live. The fix embeds the engine source and the plan as strings in the file
+// fill-plan.mjs writes, loaded whole via `filename` and injected with
+// page.evaluate + eval, which is not gated by the page's CSP the way an
+// injected <script> tag is. These tests cover what does not need a browser:
+// the generated text's shape, and that it is valid, self-installing JS.
+
+test("buildBootstrap points at the plan file by filename, never inline code", () => {
+  const bootstrap = buildBootstrap("jobs/acme-swe/fill-plan.js")
+  assert.match(bootstrap, /browser_run_code_unsafe/)
+  assert.match(bootstrap, /filename/)
+  assert.match(bootstrap, /jobs\/acme-swe\/fill-plan\.js/)
+  assert.ok(
+    !bootstrap.includes("code:"),
+    "must not fall back to the inline-code form",
+  )
+})
+
+test("buildDriverSource never regresses to the CSP-broken loader", () => {
+  const driverSrc = buildDriverSource(
+    { v: 1, slug: "x", items: [], defer: [] },
+    "window.__ajFillSrc = String(async (page, plan) => plan)",
+  )
+  // "addScriptTag" legitimately appears in this file's own warning comments
+  // ("do not fix this back to addScriptTag") — that is the point, so check
+  // for the FUNCTIONAL CALL, not the word, ignoring comment lines the same
+  // way fill-page.test.mjs's own sandbox-timeout test does.
+  const code = driverSrc
+    .split(/\r?\n/)
+    .filter((l) => !/^\s*\/\//.test(l))
+    .join("\n")
+  assert.ok(
+    !/\.addScriptTag\(/.test(code),
+    "addScriptTag inserts an inline <script> — nonce-based CSP boards block it",
+  )
+  assert.ok(!/\.addInitScript\(/.test(code))
+  assert.match(driverSrc, /page\.evaluate/)
+  assert.match(driverSrc, /\(0,\s*eval\)/)
+})
+
+test("buildDriverSource embeds the exact engine source and plan as strings", () => {
+  const plan = { v: 1, slug: "acme", items: [], defer: [] }
+  const engineSrc = 'window.__ajFillSrc = String(async () => "hi")'
+  const driverSrc = buildDriverSource(plan, engineSrc)
+  assert.ok(
+    driverSrc.includes(JSON.stringify(engineSrc)),
+    "the engine text must appear verbatim, not paraphrased or truncated",
+  )
+  assert.ok(
+    driverSrc.includes(
+      JSON.stringify("window.__ajPlan = " + JSON.stringify(plan)),
+    ),
+    "the plan must appear verbatim as a window.__ajPlan assignment string",
+  )
+})
+
+test("buildDriverSource output is valid JS wrapped exactly as browser_run_code_unsafe wraps it", () => {
+  // packages/playwright-core/src/tools/backend/runCode.ts (bundled into
+  // playwright-core/lib/coreBundle.js) does
+  // `vm.runInContext("(" + code + ")", context2)` — verified by reading that
+  // bundle directly, not assumed. Reproduce the exact expression shape.
+  const driverSrc = buildDriverSource(
+    { v: 1, slug: "x", items: [], defer: [] },
+    "window.__ajFillSrc = String(async (page, plan) => plan)",
+  )
+  assert.doesNotThrow(() => new Function("(" + driverSrc + ")"))
+})
+
+test("buildDriverSource: the generated driver actually installs and runs the engine end to end", async () => {
+  // A full semantic round-trip using Node's own vm module — no real browser
+  // needed for THIS part, because it exercises plain JS scoping/eval
+  // semantics, not Playwright/CDP/CSP behavior (which this repo has no
+  // browser to verify — see fill-page.test.mjs's own header note).
+  const engineSrc =
+    "window.__ajFillSrc = String(async (page, plan) => ({ ok: 1, sawSlug: plan.slug }))"
+  const plan = { v: 1, slug: "acme-swe", items: [], defer: [] }
+  const driverSrc = buildDriverSource(plan, engineSrc)
+
+  // Mirrors runCode.ts's own vm.createContext({ page, ... }) +
+  // vm.runInContext("(" + code + ")", ctx). `window` is added here only so
+  // the injected window.__ajFillSrc/__ajPlan assignments have somewhere to
+  // land for inspection — in production that object is the real browser
+  // page, reached over CDP, not this process.
+  const ctx = {
+    window: {},
+    page: { evaluate: async (fn, arg) => fn(arg) },
+  }
+  vm.createContext(ctx)
+  const driverFn = vm.runInContext("(" + driverSrc + ")", ctx)
+  const result = await driverFn(ctx.page)
+
+  assert.equal(result.ok, 1)
+  assert.equal(result.sawSlug, "acme-swe")
+})
+
+test("end to end: the CLI embeds the real engine and points the bootstrap at the written file", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fill-plan-bootstrap-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const slug = "ashby-co"
+  const jobDir = path.join(dir, slug)
+  fs.mkdirSync(jobDir, { recursive: true })
+
+  const scan = {
+    url: "https://jobs.ashbyhq.com/acme/11111111-2222-3333-4444-555555555555",
+    fields: [
+      {
+        k: "f1",
+        t: "text",
+        l: "First Name",
+        req: true,
+        sel: "#_systemfield_name",
+      },
+    ],
+  }
+  fs.writeFileSync(path.join(jobDir, "scan-p1.json"), JSON.stringify(scan))
+
+  const res = spawnSync(
+    process.execPath,
+    [
+      path.join(ROOT, "scripts", "apply", "fill-plan.mjs"),
+      slug,
+      "--jobs-dir",
+      dir,
+      "--profile",
+      path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+      "--answers",
+      path.join(ROOT, "tests", "fixtures", "answers-bank.yaml"),
+      "--json",
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  )
+  assert.equal(res.status, 0, res.stderr)
+  const out = JSON.parse(res.stdout)
+  assert.equal(out.plan.ats, "ashby")
+
+  const jsPath = path.join(jobDir, "fill-plan.js")
+  assert.ok(fs.existsSync(jsPath))
+  const written = fs.readFileSync(jsPath, "utf8")
+
+  // The REAL fill-page.js, not a stand-in, must be what got embedded.
+  const engineOnDisk = fs.readFileSync(
+    path.join(ROOT, ".claude", "skills", "apply-job", "fill-page.js"),
+    "utf8",
+  )
+  assert.ok(
+    written.includes(JSON.stringify(engineOnDisk)),
+    "the generated bootstrap must embed the real engine source verbatim",
+  )
+  // The embedded engine source legitimately mentions "addScriptTag" in its
+  // own warning comments (escaped onto one long line by JSON.stringify) — so
+  // check the DRIVER'S OWN orchestration code for a live call by dropping
+  // that one giant embedded-content line rather than string-matching the
+  // whole file.
+  const templateOnly = written
+    .split(/\r?\n/)
+    .filter((l) => l.length < 500)
+    .join("\n")
+  assert.ok(
+    !/\.addScriptTag\(/.test(templateOnly),
+    "the driver's own orchestration code must never call addScriptTag",
+  )
+
+  // The printed bootstrap must point at exactly this file.
+  const relJs = path.relative(ROOT, jsPath).replace(/\\/g, "/")
+  assert.equal(out.bootstrap, buildBootstrap(relJs))
+  assert.match(out.bootstrap, /filename/)
+
+  // And the whole written file must parse as the single expression
+  // browser_run_code_unsafe requires.
+  assert.doesNotThrow(() => new Function("(" + written + ")"))
 })

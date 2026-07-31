@@ -613,6 +613,19 @@ costs milliseconds).
 
 ## Phase 3 — Autonomy
 
+> **Reading note added 2026-07-31 (`doc-scribe`). Nothing in this phase is
+> built.** `scripts/auto/` does not exist; neither do `lib/lock.mjs`,
+> `apply/automatability.mjs` or `apply/apply-machine.mjs`. Several paragraphs
+> below describe them in the **indicative** — "`lock.mjs` gives single-flight
+> via `fs.openSync(path, "wx")`", "`auto-apply.mjs` launches Chromium
+> directly" — because that is how a specification reads. Read every one of them
+> as _shall_, not _does_. §3.4 already had to be corrected for exactly this
+> confusion, and there the wording was not merely premature but **specified the
+> control wrongly**; see the dated correction there.
+>
+> The single check: run `ls scripts/auto`. If it errors, nothing in this phase
+> is protecting anyone yet.
+
 ### 3.1 Substrate: local Playwright, no model on the path
 
 Add `playwright-core` (not `playwright` — no 150MB postinstall across four CI
@@ -760,9 +773,63 @@ and the tier evidence.
 **Guardrails move into the code**, because PreToolUse hooks don't apply to a
 scheduled process: the runner never shells to git, every write goes through an
 `assertInsideJobs()` check, profile files are read-only and hashed at both ends
-of the run, and a preflight **refuses to run at all** if `answers.yaml` has keys
-matching SSN / DOB / bank / passport patterns. The auto path must never be in a
-position to type a government ID into a form.
+of the run, and ~~a preflight **refuses to run at all** if `answers.yaml` has
+keys matching SSN / DOB / bank / passport patterns~~. The auto path must never be
+in a position to type a government ID into a form.
+
+> **Corrected 2026-07-31 — `doc-scribe`, recording `w1-security`'s shipped
+> design. Two defects in the struck clause: it was written in the indicative for
+> a control that does not exist, and it specified the wrong matching rule.**
+>
+> **Tense.** `scripts/auto/` has not been built — the directory is absent and
+> nothing in the tree creates it, so nothing runs this preflight. Every other
+> sentence in §3.4 describes work to be done; this one read as shipped, which is
+> how a control gets believed in instead of built.
+>
+> **The specification was wrong, and that is the serious half.** Key-only
+> matching refuses honest answers. Measured against the real fact base: `a-002`,
+> _"Do you have a valid Nevada driver's license?" → "No"_, matches the licence
+> **key** and a key-only guard throws it out. A guard that refuses a truthful
+> "No" gets bypassed, and a bypassed guard protects nothing. That entry is now
+> pinned as a named test for exactly this reason.
+>
+> **What shipped instead** — `findSensitiveValues` in `scripts/lib/untrusted.mjs`,
+> called from `scripts/profile/save-answer.mjs` — is **two-factor, and neither
+> leg refuses alone**:
+>
+> - **Value alone** fires only for shapes carrying their own proof: SSN's 3-2-4
+>   grouping, an IBAN that passes mod-97, a Luhn-valid number with a real card
+>   issuer prefix. Those refuse whatever the question says, which is what catches
+>   an SSN banked under _"What is your ID number?"_.
+> - **Question + value** for everything shapeless — DOB, passport, driver's
+>   licence, account number. The question must name the thing **and** the answer
+>   must carry a datum.
+>
+> Measured: 198 real question labels × 30 plausible values = 5940 pairs → 5
+> refusals, all the same implausible pairing (a yes/no licence question crossed
+> with a ZIP or a routing number); 0 of the 49 entries in the real `answers.yaml`
+> refused.
+>
+> **The control also moved.** `innov-resilience` ruled that a field's meaning is
+> decided server-side — an input named `phone`, labelled "Phone number", typed
+> `tel`, can POST into a column called `ssn`, and that fact is not in the
+> document — so every field-level guard against a lying label is permanently
+> mitigation, and the blast radius of a label lie is exactly the contents of the
+> answer bank. The guard therefore sits where a value **enters** the bank:
+> `save-answer.mjs` refuses with **exit 4**, ahead of both the append and the
+> `--replace` branch, and the refusal never echoes the value back. Exit codes
+> there are now: 0 saved, 1 conflict, 2 usage, 3 instruction-shaped, 4 sensitive.
+>
+> **Binding on whoever builds `scripts/auto/`:** the preflight calls
+> `findSensitiveValues`; it does not re-implement key matching. Its job is the
+> one thing a write boundary cannot do — rescan entries stored **before** the
+> guard existed, and catch a hand-edit of `answers.yaml`, which bypasses the
+> script and is correct to bypass it, because rule 2 makes that file the user's.
+> So the shipped invariant is "this script never puts one there", not "the bank
+> never holds one". Residuals, stated here rather than discovered later: an
+> undashed 9-digit number under a neutral key is indistinguishable from an
+> employee ID and passes; non-US identifiers are caught only via the key leg.
+> This is a boundary, not a proof.
 
 ### 3.5 The honest limitation
 
@@ -852,6 +919,23 @@ convention — not silent overrides:
   deterministically from an already-verified resume; approval moved earlier, to
   the tailoring batch.
 - **Rule 10 / L2** → fit rejection becomes ranking-only on the auto path.
+
+> **Sequencing, `doc-scribe` 2026-07-31 — the amendments have NOT been written
+> into `CLAUDE.md`, deliberately, and this records why rather than leaving a
+> silent gap.** The user's decision to amend rule 6 is on the record in
+> "Decisions taken" above and is not in doubt. What is not on the record is the
+> **preconditions**, because they do not exist yet: no `auto_apply` block in
+> `docs/application-limits.yaml`, no caps, no `jobs/.auto/STOP`, no tier
+> classifier, no runner. Writing "green tier may submit unattended" into the
+> hard rules today would put a permission in force with nothing behind it — an
+> agent reads `CLAUDE.md` every turn and reads it as current, and the failure
+> mode is an application sent under the user's name.
+>
+> So the amendments land **with** the code that implements them, in the same
+> change, with the preconditions as the replacement text — `w4-autonomy`'s work,
+> not a documentation task done ahead of it. Until then rule 6 stands unamended
+> and the user is on the submit button. If anyone wants them written earlier,
+> that is the user's call to make explicitly, not an inference from this plan.
 
 ---
 

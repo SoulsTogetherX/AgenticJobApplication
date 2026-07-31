@@ -25,6 +25,13 @@ deterministically and renders ATS-friendly PDFs.
   4. A PreToolUse hook blocks the agent from editing the profile fact base directly.
 - **Privacy**: `profile/` (except the example) and `jobs/` are gitignored — real
   personal data never leaves this machine via git.
+- **Government and financial identifiers stay out of the answer bank.**
+  `scripts/profile/save-answer.mjs` refuses (exit 4) to store an SSN, DOB,
+  passport, driver's licence, bank or card number, because whatever is in that
+  bank is what the pipeline types into other people's forms. There is no
+  override: if a form genuinely needs one, the user types it in the browser.
+  Ordinary application data — name, email, phone, address, salary, EEO answers —
+  is unaffected; that is what the pipeline is for.
 
 ## Layout
 

@@ -1,15 +1,39 @@
 # 08 — The test suite, and what it does not cover
 
 ```bash
-npm test                                  # node --test, recurses
-node --test tests/leads/fit.test.mjs      # while iterating
+npm test                                  # the count-asserting gate — NOT `node --test`
+npm run test:security                     # the same gate over the Phase 1 set
+node --test tests/leads/fit.test.mjs      # a single file, while iterating
+node --test "tests/**/*.test.mjs"         # a quoted glob — never a bare directory
 ```
 
-**Current state: 597 tests, 597 pass, 0 fail, ~28 s.** Verified during this audit.
+> **Corrected 2026-07-31 (`doc-scribe`). The two sentences struck below were the
+> exact belief the gotcha exists to kill, sitting in the doc about testing.**
+>
+> - ~~`npm test` is `node --test`, recurses~~ — it is
+>   `node .github/workflows/test-gate.mjs full`. `node --test` **exits 0 on an
+>   empty run**, so an exit code alone is not evidence that anything executed.
+>   The gate expands directories itself, asserts the test count against
+>   `package.json`'s `testGate` floor, caps `todo` at 0, and fails any skip that
+>   carries no reason.
+> - ~~`node --test` recurses, so nested files are discovered automatically~~ —
+>   **on Node 24 it does not recurse.** It tries to load the directory as a
+>   module and reports `Cannot find module`, which reads as a test failure, and
+>   the obvious "fix" (dropping the argument) gives a green run over zero tests.
+>   Node 20 and 22 do recurse, so the same command means different things across
+>   the CI matrix. See [09-gotchas.md](09-gotchas.md).
+>
+> **The test total is deliberately not restated here.** It was "597 tests, 597
+> pass, 0 fail, ~28 s" at the 2026-07-29 audit and it has moved several times
+> since. The number that is actually enforced lives in `package.json`'s
+> `testGate` block — currently a floor of 946 full / 147 security — and a count
+> copied into prose goes stale the day someone adds a test. The per-file counts
+> in the tables below are from the snapshot and are indicative, not current.
 
 `tests/` mirrors `scripts/` one for one, with shared fixtures in
-`tests/fixtures/`. `node --test` recurses, so nested files are discovered
-automatically — no manifest to keep in sync.
+`tests/fixtures/`. Discovery is the gate's job: `.github/workflows/test-gate.mjs`
+walks the directories itself, so there is no manifest to keep in sync — but also
+no version of `node --test <dir>` you can rely on.
 
 **Tests never touch the real profile.** `profile/` is gitignored personal data;
 every test points `--profile` / `--answers` / `--leads` / `--file` at a fixture. That
@@ -19,7 +43,12 @@ constraint, not a convenience.
 
 ---
 
-## The 36 test files, by area
+## The test files, by area
+
+_36 files at the 2026-07-29 snapshot; **66** as of 2026-07-31
+(`find tests -name '*.test.mjs'`). The tables below cover the original 36. The
+directories added since — `tests/security/` (8, the Phase 1 gate) and
+`tests/dev/` (1) — are not listed, and `tests/apply/` has grown from 8 files to 13._
 
 ### `tests/lib/` (4 files, ~1064 lines)
 

@@ -253,7 +253,9 @@ Changing this file needs a session restart.
 
 > **Concern:** `-y @latest` auto-installs whatever is newest, unreviewed, with access
 > to that cookie-bearing profile — and this project depends on precise Playwright
-> behaviours documented at length in `fill-page.js`. AUDIT **M13**.
+> behaviours documented at length in `scripts/apply/fill-engine.mjs`
+> (`fill-page.js`, named here originally, was deleted on 2026-07-31 — corrected
+> 2026-07-31). AUDIT **M13**.
 
 ### `.gitignore`
 

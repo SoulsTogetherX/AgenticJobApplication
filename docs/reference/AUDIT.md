@@ -11,16 +11,26 @@ suite being green is why these matter — every one of them is invisible to it.
 > **Closed since, verified by reading the code on 2026-07-31 rather than by
 > reading a report:**
 >
-> | #       | closed by            | evidence                                                                                                                  |
-> | ------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-> | **C5**  | `a3a99fc`            | `package.json`'s `verify` and `.claude/agents/job-worker.md:22` both name `scripts/documents/verify-claims.mjs`           |
-> | **C6**  | `fc645f5`, `1cc7d9b` | `fill-plan.mjs`'s `buildDriverSource()` embeds engine text read off our own disk; nothing reads `window.__ajFillSrc` back |
-> | **H11** | `859ef9b`            | every regex in `untrusted.mjs`'s `INJECTION_PATTERNS` now carries `g`                                                     |
+> | #       | closed by            | evidence                                                                                                                                                 |
+> | ------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | **C1**  | `147eb68`            | `matchOption`'s longer-option branch now requires `remainderIsGrounded(remainder, label)`; the value-longer branch requires a word boundary              |
+> | **C2**  | `147eb68`            | `none\b` removed from `NO_LONG`, stated in the source comment as AUDIT C2; "None of the above" no longer matches a resolved "No"                         |
+> | **C5**  | `a3a99fc`            | `package.json`'s `verify` and `.claude/agents/job-worker.md:22` both name `scripts/documents/verify-claims.mjs`                                          |
+> | **C6**  | `fc645f5`, `1cc7d9b` | `fill-plan.mjs`'s `buildDriverSource()` embeds engine text read off our own disk; nothing reads `window.__ajFillSrc` back                                |
+> | **H10** | `58d89b6`            | `readiness()` filters `d.why !== "consent"`, so a consent-only defer no longer blocks `ready`; the stricter `submitReadiness()` still counts every defer |
+> | **H11** | `859ef9b`            | every regex in `untrusted.mjs`'s `INJECTION_PATTERNS` now carries `g`                                                                                    |
 >
 > Everything else here should be assumed **open until someone checks the file**.
-> In particular **H10** (`ready=true` unreachable) is open, and §"The bootstrap
-> it prints" in [05-apply.md](05-apply.md) explains why the obvious fix for it
-> was withdrawn.
+>
+> **H10 was not closed the way this audit expected, and the difference matters.**
+> The entry below proposes one filter predicate. What was rejected first is the
+> other obvious repair — auto-ticking allowlisted consent boxes — because the
+> allowlist, `isHardConsent` and the scanner's `labelExact` vouch all read one
+> page-supplied string, so they are one control wearing three hats. What shipped
+> is a **redefinition**: `ready` means "no model turn is needed", not "nothing is
+> deferred", and **nothing ticks a consent box**. See §"`readiness(plan)` and
+> `submitReadiness(plan)`" in [05-apply.md](05-apply.md) and the dated
+> corrections in `docs/autonomy-plan.md` §3.3.
 
 Severity is judged by **what reaches the outside world**. A bug that puts a false
 claim on a submitted application outranks a bug that wastes tokens.

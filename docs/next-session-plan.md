@@ -9,6 +9,19 @@ the conversation that produced it.
 **Working preference from the user: plan before acting.** Investigate, produce a
 concrete plan, get sign-off, then implement. Do not commit unless asked.
 
+> **Status note added 2026-07-31 (`doc-scribe`). This is a dated plan, not a
+> to-do list, and several items below have since shipped — do not build them
+> twice.** Verified by opening the files rather than by reading a report:
+> **§1.2** `save-answer.mjs` takes `--source user|model` and `--replace`;
+> **§1.3** `fill-plan.mjs` prints `ready=` (and `submitReady=`), though `ready`
+> was **redefined** afterwards to mean "no model turn is needed" rather than
+> "nothing is deferred" — a consent-only defer no longer blocks it, and nothing
+> auto-ticks consent; **§1.4** `scripts/apply/pending-questions.mjs` exists and
+> batches across jobs; **§1.5** the `screens` table is in `db.mjs`'s schema with
+> a `(lead_id, source)` key. Everything else here is **unverified** by this note
+> and should be checked against the code before acting on it. The live plan is
+> `docs/autonomy-plan.md`.
+
 ---
 
 ## 0. Where the project stands (2026-07-29)

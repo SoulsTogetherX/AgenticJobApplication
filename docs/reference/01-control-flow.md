@@ -206,14 +206,25 @@ PHASE 2  read the form BEFORE tailoring
       │     fuzzy bank match ≥0.70 → OK, ≥0.45 → MAYBE
       │     nothing  →  UNKNOWN
       ├─ buildPlan()
-      │     isConsent(label)          → ALWAYS defer (never agree for the user)
+      │     isConsent(label)          → defer (never agree for the user)
+      │       OR looksLikeAgreementProse(f, label)   ← SHAPE, no topic word
+      │                                  needed, so a rewording nobody has
+      │                                  pattern-matched still lands here
       │     file field                → upload, matched by label then order
       │     UNKNOWN/NEEDS-CHOICE/MAYBE→ defer if required, skip if optional
       │     otherwise                 → { how: fill|select|check|combo|type }
       ├─ recordCache()                remember this form for next time
-      └─ writes fill-plan.js (window.__ajPlan = …) + fill-plan.json
-         prints  ready=true|false  reason=…  items=N defer=N cache=H/T
+      └─ writes fill-plan.js — a SELF-CONTAINED bootstrap with the engine
+         text and the plan embedded as string literals (it does NOT set
+         window.__ajPlan; nothing is put into the page) + fill-plan.json
+         prints  ready=…  submitReady=…  reason=…  items=N defer=N cache=H/T
          and the exact browser bootstrap for step D
+
+         ready       = "does a MODEL need to think before the engine runs?"
+                       A consent-only defer does NOT block it (H10, closed
+                       2026-07-31) — the user ticks the box in the browser.
+         submitReady = "is anything at all left undecided?" Any defer blocks
+                       it, consent included.
 
    C. decide (0 calls)  cover letter needed? PDFs needed? reuse an existing resume?
       node scripts/apply/pending-questions.mjs   ← every unanswerable question,

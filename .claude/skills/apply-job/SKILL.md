@@ -262,13 +262,15 @@ B, so this message does not repeat unless a later page asks something new.
 Re-run `node scripts/apply/fill-plan.mjs <slug>` after rendering PDFs and saving any
 new answers. The `reason=` names what is still outstanding.
 
-**Expect `ready=false` on a real form, and do not treat that as a problem to
-solve.** Consent checkboxes count as blocking defers and nearly every board has
-one, so `ready=true` has never fired on a live application. Fill anyway; the
-consent boxes are the user's to tick in the browser, which is hard rule 6. (This
-is AUDIT **H10**, and the fix is a redefinition of `ready` — see the dated
-correction in `docs/autonomy-plan.md` §3.3. Do **not** "fix" it by auto-ticking
-consent.)
+**A consent checkbox on its own no longer makes `ready=false`** (changed
+2026-07-31, AUDIT **H10** closed). Until then, consent defers counted as blocking
+and nearly every board has one, so `ready=true` had never fired on a live
+application — the fast path this skill documents had never once executed.
+`readiness()` now asks only "does a **model** need to think before the engine can
+run?", and a consent box does not, because the user ticks it in the browser they
+are already reviewing. **Nothing ticks it for them** — that is hard rule 6, and
+do **not** "fix" this by auto-ticking consent. So still expect `ready=false`
+whenever a real question is unanswered, and fill either way.
 
 Then run the bootstrap it printed:
 

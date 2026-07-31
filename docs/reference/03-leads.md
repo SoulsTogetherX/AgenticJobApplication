@@ -302,8 +302,32 @@ lead).
 
 Other checks: `EVERGREEN` phrasing (only `no_current_opening` and `pipeline_req`
 reject — the posting telling you outright), `duplicate_body`, a
-**boilerplate-to-substance ratio** on descriptions ≥600 chars, and an
-`injection_attempt` flag from `sanitizeUntrusted`.
+**boilerplate-to-substance ratio** on descriptions ≥600 chars, and
+`injection_attempt` from `sanitizeUntrusted`.
+
+**`injection_attempt` is no longer only a flag** (corrected 2026-07-31; it was
+described here as a flag and that is now half the story). Every finding still
+becomes an `injection:<kind>` signal, but the findings `isDisqualifying()`
+recognises — the eight instruction-shaped kinds — go into `reasons`, which
+**rejects** the lead. `isDisqualifying` is what draws that line, not a list
+inside `risk.mjs`: `hidden_html`, `hidden_attr_text`, `invisible_characters`,
+`homoglyph_text` and `encoded_blob` never disqualify on their own, because a CMS
+emits comments and a logo has alt text — those alone are messy, not hostile, and
+they still merely flag.
+
+Why reject at all, when everything else in L3 leans toward flagging: the flag was
+written for the human-facing flow, where a person reads the approval message. The
+autonomy plan's auto-apply runner would call `evaluateStages(…, ["l0","l1","l3"])`
+— skipping L2 fit, still running L3 — and nobody reads an approval message there,
+so "flag it and hope a human notices" would not be a control. **That runner does
+not exist yet**: `evaluateStages` has exactly two callers today, `screen.mjs` and
+`gate-audit.mjs`. The reject, however, is live on both of them right now, because
+a `reasons` entry rejects on whatever path runs the stage. A posting carrying
+instructions aimed at an AI is telling you something about whoever wrote it.
+
+> Because this changed a gate's verdict, `gate-audit.mjs` is the check that says
+> whether the reject list grew — see the discipline stated in `CLAUDE.md`. Newly
+> rejected leads are jobs the user never sees.
 
 `EVERGREEN` is deliberately narrow: "ongoing recruitment" and "we are growing
 fast" are **not** here, because plenty of real postings say them.

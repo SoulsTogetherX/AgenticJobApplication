@@ -17,23 +17,32 @@ Written to be read top to bottom the first time, and dipped into afterwards.
 | 05  | [`scripts/apply/`](05-apply.md)                    | the browser path: scanner, answer bank, fill plan, fill engine                    |
 | 06  | [Record & feedback](06-record-and-feedback.md)     | applications, follow-ups, profile tools, store maintenance                        |
 | 07  | [Guardrails & config](07-guardrails-and-config.md) | hooks, the 11 skills, the subagent, every config and policy file                  |
-| 08  | [Tests](08-tests.md)                               | 36 test files, and — importantly — what they do not cover                         |
+| 08  | [Tests](08-tests.md)                               | the test suite, and — importantly — what it does not cover                        |
 | 09  | [Gotchas](09-gotchas.md)                           | the incident record — every trap that cost this project a real failure            |
 | —   | **[AUDIT](AUDIT.md)**                              | **54 findings, each with a reproduction and a fix direction**                     |
 
 > **This reference is a snapshot taken 2026-07-29.** Phase 1 of
 > `docs/autonomy-plan.md` landed on 2026-07-30/31 and changed several of the
 > files described here — most sharply `scripts/lib/untrusted.mjs` (rewritten,
-> 171 → 913 lines) and the browser path (`fill-page.js` deleted, the
+> 171 → 1177 lines) and the browser path (`fill-page.js` deleted, the
 > `addScriptTag` round-trip closed). Corrections are marked inline in the
-> affected sections. **The file manifest below has not been re-derived** and
-> under-lists everything added since; use it to find the doc for a file, not as
-> a census.
+> affected sections.
+>
+> **The manifest's `lines` column was re-derived with `wc -l` on 2026-07-31**
+> (`doc-scribe`) — 24 entries were wrong, several by an order of magnitude
+> (`untrusted.mjs` 171 → 1177, `fill-plan.mjs` 459 → 1389, `guard-bash.mjs`
+> 94 → 504). The **rows themselves** have not been re-derived: the manifest still
+> under-lists files added since 2026-07-29 — `scan-engine.mjs`,
+> `fill-engine.mjs`, `browser.mjs`, `scripts/dev/`, `.github/workflows/test-gate.mjs`
+> and the `docs/` files written during this build are all absent. Use it to find
+> the doc for a file, not as a census.
 
 ## If you only read one thing
 
-[AUDIT.md](AUDIT.md), and specifically **C1** and **C3**. The test suite is green
-(597/597) and both of those put wrong information into things you send to employers.
+[AUDIT.md](AUDIT.md), and specifically **C3** — `keyword-plan` proposing terms
+that `verify-claims` R6 then rejects. **C1 is closed** (`147eb68`); it is worth
+reading anyway, because it is the clearest example in this file of a green test
+suite over a defect that put a false claim on a real application.
 
 ## Audit summary
 
@@ -44,9 +53,11 @@ Written to be read top to bottom the first time, and dipped into afterwards.
 | **Medium**   | 16    | wrong behaviour with a workaround, or a defence that does not hold         |
 | **Low**      | 18    | correctness nits, dead code, documentation drift                           |
 
-The three highest-value one-line fixes: **C5** (a stale script path that disables the
-truthfulness gate inside the tailoring subagent), **H10** (one filter predicate that
-makes the apply fast-path reachable), **M6** (one `".."`).
+The three highest-value one-line fixes named on 2026-07-29 were **C5** (a stale
+script path that disabled the truthfulness gate inside the tailoring subagent),
+**H10** (the apply fast-path unreachable), and **M6** (one `".."`). **C5 and H10
+are now closed** — see the table at the top of [AUDIT.md](AUDIT.md); M6 should be
+assumed open until someone opens `status.mjs`.
 
 ---
 
@@ -58,10 +69,10 @@ All 156 tracked files, with the doc that explains each.
 
 | file                       | lines | purpose                                                                 | doc                               |
 | -------------------------- | ----- | ----------------------------------------------------------------------- | --------------------------------- |
-| `CLAUDE.md`                | 429   | the project's own operating manual, loaded every session                | [07](07-guardrails-and-config.md) |
-| `README.md`                | 69    | public-facing summary                                                   | [07](07-guardrails-and-config.md) |
+| `CLAUDE.md`                | 420   | the project's own operating manual, loaded every session                | [07](07-guardrails-and-config.md) |
+| `README.md`                | 74    | public-facing summary                                                   | [07](07-guardrails-and-config.md) |
 | `LICENSE`                  | 201   | Apache License 2.0                                                      | —                                 |
-| `package.json`             | 18    | `type: module`; deps `js-yaml` + `marked`; `npm test` = the count gate  | [07](07-guardrails-and-config.md) |
+| `package.json`             | 39    | `type: module`; deps `js-yaml` + `marked`; `npm test` = the count gate  | [07](07-guardrails-and-config.md) |
 | `package-lock.json`        | 75    | lockfile                                                                | —                                 |
 | `.gitignore`               | 21    | `profile/*` (not `profile/`), `jobs/`, `.env`, `.playwright-mcp/`       | [07](07-guardrails-and-config.md) |
 | `.gitattributes`           | 5     | `* text=auto eol=lf` — load-bearing for template-literal tests          | [07](07-guardrails-and-config.md) |
@@ -69,7 +80,7 @@ All 156 tracked files, with the doc that explains each.
 | `.prettierignore`          | 16    | two documented exceptions: the eval'd browser files, `job-sources.yaml` | [07](07-guardrails-and-config.md) |
 | `.env.example`             | 12    | Adzuna credential template                                              | [07](07-guardrails-and-config.md) |
 | `.mcp.json`                | 17    | the Playwright MCP server, with a persistent browser profile            | [07](07-guardrails-and-config.md) |
-| `.github/workflows/ci.yml` | 28    | `npm ci && npm test` × {ubuntu, windows} × {node 20, 22}                | [07](07-guardrails-and-config.md) |
+| `.github/workflows/ci.yml` | 135   | security gate first, then `npm test` × {ubuntu, windows} × {node 20, 22} | [07](07-guardrails-and-config.md) |
 
 ## `.claude/` — agent configuration
 
@@ -77,10 +88,10 @@ All 156 tracked files, with the doc that explains each.
 | ------------------------------------- | ----- | --------------------------------------------------------------------- | -------------------------------------------------------- |
 | `settings.json`                       | 50    | permissions + the four hook registrations                             | [07](07-guardrails-and-config.md)                        |
 | `hooks/protect-profile.js`            | 41    | PreToolUse: deny writes to the fact base                              | [07](07-guardrails-and-config.md)                        |
-| `agents/job-worker.md`                | 58    | the Sonnet-pinned per-job worker and its JSON contract                | [07](07-guardrails-and-config.md)                        |
-| `skills/apply-job/SKILL.md`           | 326   | the full browser application flow                                     | [05](05-apply.md), [07](07-guardrails-and-config.md)     |
-| `skills/apply-job/scan-page.js`       | 364   | the page scanner (runs in the page; eval'd, not a module)             | [05](05-apply.md)                                        |
-| `skills/apply-job/scan.driver.mjs`    | 83    | installs + runs the scanner and probes dropdowns Playwright-side      | [05](05-apply.md)                                        |
+| `agents/job-worker.md`                | 59    | the Sonnet-pinned per-job worker and its JSON contract                | [07](07-guardrails-and-config.md)                        |
+| `skills/apply-job/SKILL.md`           | 345   | the full browser application flow                                     | [05](05-apply.md), [07](07-guardrails-and-config.md)     |
+| `skills/apply-job/scan-page.js`       | 863   | the page scanner (runs in the page; eval'd, not a module)             | [05](05-apply.md)                                        |
+| `skills/apply-job/scan.driver.mjs`    | 198   | installs + runs the scanner and probes dropdowns Playwright-side      | [05](05-apply.md)                                        |
 | ~~`skills/apply-job/fill-page.js`~~   | —     | **DELETED 2026-07-31**; the engine is `scripts/apply/fill-engine.mjs` | [05](05-apply.md)                                        |
 | `skills/pipeline-jobs/SKILL.md`       | 190   | batch processing, one subagent per lead                               | [07](07-guardrails-and-config.md)                        |
 | `skills/find-jobs/SKILL.md`           | 103   | the sweep + four ways to ingest a user-supplied source                | [07](07-guardrails-and-config.md)                        |
@@ -120,23 +131,23 @@ All 156 tracked files, with the doc that explains each.
 
 | file            | lines | purpose                                                                                           | doc             |
 | --------------- | ----- | ------------------------------------------------------------------------------------------------- | --------------- |
-| `lib.mjs`       | 416   | output mode, `mapPool`, HTTP/HTML, fact index, `evidenceText`, `techTermsIn`, jaccard, validators | [02](02-lib.md) |
+| `lib.mjs`       | 480   | output mode, `mapPool`, HTTP/HTML, fact index, `evidenceText`, `techTermsIn`, jaccard, validators | [02](02-lib.md) |
 | `db.mjs`        | 651   | the whole SQLite schema and every accessor                                                        | [02](02-lib.md) |
 | `keywords.mjs`  | 468   | **the one skill lexicon**; `surface` vs `aliases`; written-form checks                            | [02](02-lib.md) |
-| `untrusted.mjs` | 171   | rule 0 in code — strip injection carriers from postings                                           | [02](02-lib.md) |
+| `untrusted.mjs` | 1177  | rule 0 in code — strip injection carriers from postings                                           | [02](02-lib.md) |
 
 ## `scripts/leads/` — discovery and screening
 
 | file                  | lines | purpose                                                              | doc               |
 | --------------------- | ----- | -------------------------------------------------------------------- | ----------------- |
-| `find-jobs.mjs`       | 1553  | 13 board fetchers, both ingest gates, dedupe/repost, the CLI         | [03](03-leads.md) |
+| `find-jobs.mjs`       | 1554  | 13 board fetchers, both ingest gates, dedupe/repost, the CLI         | [03](03-leads.md) |
 | `screen.mjs`          | 517   | scam/blocker/seniority/culture patterns over the four stages         | [03](03-leads.md) |
 | `fit.mjs`             | 268   | L2 — required-vs-preferred split, stack overlap, senior scope        | [03](03-leads.md) |
-| `enrich.mjs`          | 273   | per-posting description fetchers for the four ATS types without them | [03](03-leads.md) |
+| `enrich.mjs`          | 287   | per-posting description fetchers for the four ATS types without them | [03](03-leads.md) |
 | `prep-queue.mjs`      | 263   | which leads to tailor ahead of time                                  | [03](03-leads.md) |
 | `manage-sources.mjs`  | 250   | line-by-line editor for `job-sources.yaml`, with a live prescreen    | [03](03-leads.md) |
 | `gate-audit.mjs`      | 240   | re-run every stage, diff against the baseline, exit 1 on regression  | [03](03-leads.md) |
-| `risk.mjs`            | 227   | L3 — repost, evergreen, duplicate body, boilerplate ratio, injection | [03](03-leads.md) |
+| `risk.mjs`            | 242   | L3 — repost, evergreen, duplicate body, boilerplate ratio, injection | [03](03-leads.md) |
 | `recommend.mjs`       | 214   | deterministic ranking against the profile                            | [03](03-leads.md) |
 | `board-yield.mjs`     | 202   | which boards actually produce reachable roles                        | [03](03-leads.md) |
 | `cluster.mjs`         | 195   | group near-duplicate postings so one resume serves several           | [03](03-leads.md) |
@@ -148,10 +159,10 @@ All 156 tracked files, with the doc that explains each.
 
 | file                | lines | purpose                                                            | doc                   |
 | ------------------- | ----- | ------------------------------------------------------------------ | --------------------- |
-| `keyword-plan.mjs`  | 292   | `must_use` / `blocked` / placement / title mirror, before drafting | [04](04-documents.md) |
+| `keyword-plan.mjs`  | 419   | `must_use` / `blocked` / placement / title mirror, before drafting | [04](04-documents.md) |
 | `ats-lint.mjs`      | 287   | will an ATS read the rendered PDF?                                 | [04](04-documents.md) |
-| `verify-claims.mjs` | 242   | **R1–R8, the load-bearing truthfulness gate**                      | [04](04-documents.md) |
-| `new-job.mjs`       | 149   | scaffold `jobs/<slug>/`, preferably from the lead store            | [04](04-documents.md) |
+| `verify-claims.mjs` | 263   | **R1–R8, the load-bearing truthfulness gate**                      | [04](04-documents.md) |
+| `new-job.mjs`       | 279   | scaffold `jobs/<slug>/`, preferably from the lead store            | [04](04-documents.md) |
 | `render-pdf.mjs`    | 142   | markdown → PDF via local Edge/Chrome headless                      | [04](04-documents.md) |
 | `reuse-check.mjs`   | 127   | can an existing tailored resume be reused?                         | [04](04-documents.md) |
 
@@ -159,11 +170,11 @@ All 156 tracked files, with the doc that explains each.
 
 | file                    | lines | purpose                                                       | doc               |
 | ----------------------- | ----- | ------------------------------------------------------------- | ----------------- |
-| `answer-bank.mjs`       | 746   | scan fields → answers, from the fact base only; never invents | [05](05-apply.md) |
-| `fill-plan.mjs`         | 459   | where the decisions happen; writes the plan and the bootstrap | [05](05-apply.md) |
-| `pending-questions.mjs` | 301   | every unanswerable question, across all prepped jobs, once    | [05](05-apply.md) |
-| `field-cache.mjs`       | 119   | remember the SHAPE of forms already seen (never the answers)  | [05](05-apply.md) |
-| `ats/index.mjs`         | 37    | `detectAts` + the Workday hand-off list                       | [05](05-apply.md) |
+| `answer-bank.mjs`       | 950   | scan fields → answers, from the fact base only; never invents | [05](05-apply.md) |
+| `fill-plan.mjs`         | 1389  | where the decisions happen; writes the plan and the bootstrap | [05](05-apply.md) |
+| `pending-questions.mjs` | 317   | every unanswerable question, across all prepped jobs, once    | [05](05-apply.md) |
+| `field-cache.mjs`       | 216   | remember the SHAPE of forms already seen (never the answers)  | [05](05-apply.md) |
+| `ats/index.mjs`         | 65    | `detectAts` + the Workday hand-off list                       | [05](05-apply.md) |
 | `ats/greenhouse.mjs`    | 35    | combo order, file fields, the country-picker alias            | [05](05-apply.md) |
 | `ats/lever.mjs`         | 21    | mostly native selects                                         | [05](05-apply.md) |
 | `ats/ashby.mjs`         | 19    | react-style dropdowns                                         | [05](05-apply.md) |
@@ -183,16 +194,16 @@ All 156 tracked files, with the doc that explains each.
 
 | file                   | lines | purpose                                                            | doc                             |
 | ---------------------- | ----- | ------------------------------------------------------------------ | ------------------------------- |
-| `keyword-coverage.mjs` | 364   | covered / **ask** / gap — "you have this and never wrote it down"  | [06](06-record-and-feedback.md) |
+| `keyword-coverage.mjs` | 368   | covered / **ask** / gap — "you have this and never wrote it down"  | [06](06-record-and-feedback.md) |
 | `profile-gaps.mjs`     | 222   | demand vs evidence, weighted toward rejections                     | [06](06-record-and-feedback.md) |
 | `apply-profile.mjs`    | 117   | install a reviewed profile, refusing silent deletions and rewrites | [06](06-record-and-feedback.md) |
-| `save-answer.mjs`      | 112   | the only sanctioned write into the fact base; records provenance   | [06](06-record-and-feedback.md) |
+| `save-answer.mjs`      | 234   | the only sanctioned write into the fact base; records provenance   | [06](06-record-and-feedback.md) |
 
 ## `scripts/maintenance/` + root script
 
 | file                         | lines | purpose                                                         | doc                             |
 | ---------------------------- | ----- | --------------------------------------------------------------- | ------------------------------- |
-| `maintenance/archive.mjs`    | 393   | fold closed workspaces into `documents`, verified byte-for-byte | [06](06-record-and-feedback.md) |
+| `maintenance/archive.mjs`    | 681   | fold closed workspaces into `documents`, verified byte-for-byte | [06](06-record-and-feedback.md) |
 | `maintenance/migrate.mjs`    | 205   | flat, idempotent rebuild + keyword re-index                     | [06](06-record-and-feedback.md) |
 | `maintenance/prune-jobs.mjs` | 151   | drop `.render.html` intermediates, dry-run by default           | [06](06-record-and-feedback.md) |
 | `status.mjs`                 | 100   | the whole-pipeline digest in one call                           | [06](06-record-and-feedback.md) |
@@ -201,16 +212,24 @@ All 156 tracked files, with the doc that explains each.
 
 | file              | lines | purpose                                   | doc                               |
 | ----------------- | ----- | ----------------------------------------- | --------------------------------- |
-| `guard-bash.mjs`  | 94    | git: `dev` branch only                    | [07](07-guardrails-and-config.md) |
+| `guard-bash.mjs`  | 504   | git: `dev` branch only                    | [07](07-guardrails-and-config.md) |
 | `prettify.mjs`    | 71    | prettier on every edited document         | [07](07-guardrails-and-config.md) |
 | `guard-files.mjs` | 60    | never write outside the project directory | [07](07-guardrails-and-config.md) |
 
-## `tests/` — 36 files, 597 tests
+## `tests/`
 
-Every file is listed with what it covers in [08-tests.md](08-tests.md). Structure
-mirrors `scripts/` one for one: `tests/lib/` (4), `tests/leads/` (19),
-`tests/documents/` (7), `tests/apply/` (8), `tests/applications/` (3),
-`tests/profile/` (5), `tests/maintenance/` (2), `tests/hooks/` (2).
+[08-tests.md](08-tests.md) lists what each file covers, as of the 2026-07-29
+snapshot — **36 files then, 66 now** (counted 2026-07-31 with
+`find tests -name '*.test.mjs'`). Structure mirrors `scripts/` one for one, plus
+two directories that did not exist at snapshot time: `tests/leads/` (19),
+`tests/apply/` (13), `tests/security/` (8, the Phase 1 gate), `tests/documents/`
+(7), `tests/profile/` (5), `tests/lib/` (4), `tests/hooks/` (4),
+`tests/applications/` (3), `tests/maintenance/` (2), `tests/dev/` (1).
+
+**The test total is not restated here on purpose.** `package.json`'s `testGate`
+block holds the floor the gate asserts against — currently 946 full / 147
+security — and a number copied into prose goes stale the day someone adds a test.
+Read the floor, or run `npm test`.
 
 ### `tests/fixtures/` — 15 shared fixtures
 

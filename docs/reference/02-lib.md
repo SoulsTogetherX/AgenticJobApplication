@@ -363,7 +363,7 @@ the pairs it was trying to catch.
 
 ---
 
-## `scripts/lib/untrusted.mjs` (913 lines)
+## `scripts/lib/untrusted.mjs` (1177 lines)
 
 > **Rewritten 2026-07-31** (commit `859ef9b`, `w1-security`). Everything this
 > section said before that — 171 lines, 8 patterns, a `sample` field, and a
@@ -538,3 +538,64 @@ pattern list.
 If a payload gets through, adding a tenth pattern is usually the wrong fix. Ask
 whether the **carrier** can be removed structurally — that is what the markup
 pass does.
+
+### `findSensitiveValues(question, answer)` — the other direction
+
+_Added 2026-07-31, commit `2935568` (`w1-security`)._ Everything above is about
+hostile text getting **in**. This is about a government or financial identifier
+getting **out**.
+
+`innov-resilience`'s reframe is what put the control here rather than at the
+form: a field's **meaning is decided server-side**, so an input named `phone`,
+labelled "Phone number" and typed `tel` can POST into a column called `ssn`, and
+that fact is not in the document at all. No scanner can see it. Therefore every
+field-level guard against a lying label is permanently mitigation, and **the
+blast radius of every label-lie routing attack is exactly the contents of the
+answer bank**. So the guard belongs at the boundary where a value _enters_ the
+bank — `save-answer.mjs`, which refuses with **exit 4**.
+
+**Two-factor, and neither leg refuses alone:**
+
+| leg                | fires for                                                        | test                                                            |
+| ------------------ | ---------------------------------------------------------------- | --------------------------------------------------------------- |
+| **value alone**    | shapes carrying their own proof — SSN, IBAN, payment card        | 3-2-4 grouping; IBAN mod-97; Luhn **plus** a real issuer prefix |
+| **question+value** | everything shapeless — DOB, passport, licence, account, password | the question must name it **and** the answer must carry a datum |
+
+The value leg reads question **and** answer concatenated, because a form that
+pre-fills a label with the datum ("Confirm SSN 123-45-6789") is still a
+disclosure. The value-alone leg is what answers _"the user banked their SSN under
+'What is your ID number?'"_.
+
+**Why two factors rather than key matching.** A key-only guard refuses honest
+answers, and a guard that refuses honest answers gets bypassed. Measured on the
+real fact base: `a-002` — _"Do you have a valid Nevada driver's license?" →
+"No"_ — matches the licence key, and key-only matching throws it out. It is
+pinned as a named test. Over 198 real question labels × 30 plausible values =
+5940 pairs there were **5 refusals**, all the same implausible pairing (a yes/no
+licence question crossed with a ZIP or routing number), and **0 of the 49 real
+`answers.yaml` entries** refused.
+
+**No override flag, deliberately.** The danger is not that a value is saved once;
+it is that saving it makes the value available to an unattended filler on every
+future application. A `--force` would be requested by the agent and approved by a
+user answering a different question — "do you want to save this?" rather than
+"may this be typed into arbitrary forms forever?" The refusal message says the
+user should type it in the browser instead of offering a way round, and **never
+echoes the value back** — printing the SSN while refusing to store it would be
+the attack, performed by the defence.
+
+**What it deliberately does not cover**, because conflating "credentials that
+enable identity theft" with "personal data" would refuse a third of the store:
+email, phone, street address, postal code (the pipeline exists to type these),
+salary, and EEO/demographic answers — sensitive in law, but designed to be
+answered on an application form, and the real fact base holds fourteen of them.
+
+**Residuals, stated rather than discovered later.** An undashed 9-digit number
+under a neutral key is indistinguishable from an employee ID and passes —
+asserted as uncaught in a test, because refusing it is the cries-wolf failure.
+Non-US identifiers are caught only via the key leg. And the guard is on the
+**script**, not the file: hand-editing `answers.yaml` bypasses it, which is
+correct under rule 2 (that file is the user's), but it means the invariant is
+"this script never puts one there", not "the bank never holds one". Nothing
+rescans entries stored before the guard existed. `SENSITIVE_LIMITS` is exported
+for the same reason `SANITIZER_LIMITS` is: **this is a boundary, not a proof.**

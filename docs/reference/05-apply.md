@@ -15,6 +15,14 @@ once to hand the user the submit button.
 > engine" below, both corrected. The `scan-page.js` / `scan.driver.mjs` sections
 > describe files that `w2-engine` is still changing; treat their line counts and
 > step lists as approximate and read the file.
+>
+> **Second sweep, 2026-07-31 (`doc-scribe`).** Four more sections had gone stale
+> against code that landed the same day, each corrected inline below: the scan
+> output no longer has only the nine short keys (`n` / `ac` / `lSeen` were
+> added), `readiness()` no longer counts a consent defer (**H10 is closed**),
+> `buildPlan` no longer reads `scan.fields[].labelExact` at all, and
+> `matchOption`'s prefix rule now has a grounding check (**C1 / C2 closed**).
+> Line counts throughout were re-derived on 2026-07-31 with `wc -l`.
 
 ---
 
@@ -40,7 +48,7 @@ scripts/apply/pending-questions.mjs        every open question, across all jobs
 
 ---
 
-## `scan-page.js` (364 lines) — the page scanner
+## `scan-page.js` (863 lines) — the page scanner
 
 **Not a module.** It is eval'd as a bare function expression, so no imports, no
 exports, and no leading semicolon — which is why it lives in `.prettierignore`
@@ -59,6 +67,37 @@ Returns `{ url, heading, kind, fields[], btns[], iframes?, signals? }`.
 `k`=key, `t`=type, `l`=label, `req`=required, `v`=current value, `opts`=choices,
 `o`=stamped sub-options, `h`=help text, `sel`=stable selector. Every byte of this
 lands in agent context.
+
+Four more, added 2026-07-31 by `w2-engine` and absent from the list above until
+this correction:
+
+| key        | on                    | what it is                                                                                                |
+| ---------- | --------------------- | --------------------------------------------------------------------------------------------------------- |
+| `n`        | any field             | the element's `name` attribute, verbatim                                                                  |
+| `ac`       | any field             | the element's `autocomplete`, verbatim, minus the reserved `on`/`off`                                     |
+| `lSeen`    | any field             | the **visible** label, present only when `l` is text the user cannot read and something visible disagrees |
+| `labelWhy` | checkbox/radio groups | why the `labelExact` vouch was refused — advisory, for a human reading a defer; nothing decides on it     |
+
+`n` and `ac` exist because a consumer was reverse-engineering identity back out
+of the `sel` **selector** string, and `stableSel()` tries `#id` first, so on any
+page whose inputs have ids — most pages — `sel` carried the id and nothing else.
+
+> **Do not describe `n` / `ac` / `t` as a defence against a lying label.**
+> `scan-page.js`'s own header says so in as many words, and it is right: the
+> page chooses all three, so renaming `name` to agree with the lie defeats the
+> comparison in one line with nothing a user could see changing. Measured by
+> `innov-resilience` on 2026-07-31, running the real scanner over a variant of
+> the mislabelled fixture with `id`, `name` and `autocomplete` all renamed to
+> match: **3 of 4 hostile fields undetected.** `autocomplete` in particular
+> appears on **zero** of the four honest board pages in
+> `tests/fixtures/boards/pages/`, and only on hostile fixtures under
+> `tests/fixtures/hostile/forms/` (verified by `grep` on 2026-07-31); a signal only an attacker supplies is not a guard input. What
+> these keys are legitimately for is choosing the **verb** (`t` decides type /
+> tick / upload) and making a substitution **non-silent** — showing a target's
+> real `name` beside its label in an approval message means a swapped field is
+> visible to the user even when no check caught it. The real control against a
+> government ID reaching a form is value-side: such a value never enters the
+> answer bank (`findSensitiveValues`, see [02-lib.md](02-lib.md)).
 
 ### `data-aj` vs `sel` — why both exist
 
@@ -124,7 +163,7 @@ probe lives in `scan.driver.mjs`, where Playwright's click is a real input event
 
 ---
 
-## `scan.driver.mjs` (83 lines) — one tool call, no pasted code
+## `scan.driver.mjs` (198 lines) — one tool call, no pasted code
 
 ```
 mcp__playwright__browser_run_code_unsafe
@@ -155,14 +194,14 @@ context.
 
 ---
 
-## `field-cache.mjs` (119 lines) — remember the shape, never the answers
+## `field-cache.mjs` (216 lines) — remember the shape, never the answers
 
 The expensive half of a page scan is probing custom dropdowns — up to 15 of them,
 in the browser, every time. Everything it learns is identical on the next
 application to the same board.
 
 ```js
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 fingerprint(scan, atsId)   // sha1 of atsId + sorted REQUIRED labels, 16 hex chars
 loadCache / saveCache
 applyCache(scan, entry)    // fill gaps; a fresh probe always wins
@@ -194,7 +233,7 @@ as `0/0` and there is no way to tell them apart.
 
 ---
 
-## `answer-bank.mjs` (746 lines) — fields → answers, from facts only
+## `answer-bank.mjs` (950 lines) — fields → answers, from facts only
 
 ```bash
 cat scan-p1.json | node scripts/apply/answer-bank.mjs
@@ -274,18 +313,35 @@ sponsorship.
 
 ### `matchOption(value, opts)`
 
-Tries: exact (case-insensitive) → **prefix either way** → long-form Yes/No
-(`YES_LONG`/`NO_LONG`). Accepts an ordered list of acceptable answers; the first the
-form actually offers wins. Forms rarely offer a bare Yes/No — Affirm's
+Tries: exact (case-insensitive) → **prefix either way, grounded** → long-form
+Yes/No (`YES_LONG`/`NO_LONG`). Accepts an ordered list of acceptable answers; the
+first the form actually offers wins. Forms rarely offer a bare Yes/No — Affirm's
 prior-employment question offers _"I have not previously been employed at
 Affirm"_ — which is what the long-form patterns are for.
 
-> **Defect — the most serious in the project.** The prefix rule silently upgrades a
-> generic answer into a specific claim and marks it `OK`: a banked "Yes" plus
-> options `["Yes, 5+ years professionally", …]` resolves to _"Yes, 5+ years
-> professionally"_. That is a false claim on a real job application, produced
-> deterministically, with no human review. It also picks "None of the above" for a
-> resolved "No". AUDIT **C1**, **C2**.
+The two prefix directions are **not** symmetric, and that asymmetry is the fix:
+
+- **The option is longer** and merely starts with the banked value — the option
+  may be asserting something new, so it is accepted only when
+  `remainderIsGrounded()` finds every surviving token already present in the
+  **field's own label** (negation cues excepted).
+- **The value is longer** and starts with the option — the option is a clean
+  truncation of a more detailed true statement ("Yes, US citizen, no sponsorship
+  needed." → "Yes"). Truncation can only drop detail, never invent it, so no
+  grounding is needed; only a real word boundary, so "November" cannot truncate
+  to "No" on a two-letter coincidence.
+
+> **AUDIT C1 / C2 — CLOSED**, verified 2026-07-31 by reading
+> `answer-bank.mjs`'s `matchOption` / `remainderIsGrounded`. The original entry,
+> kept because it is what the guard exists to stop: the prefix rule silently
+> upgraded a generic answer into a specific claim and marked it `OK` — a banked
+> "Yes" plus options `["Yes, 5+ years professionally", …]` resolved to _"Yes, 5+
+> years professionally"_. **That is a false claim on a real job application,
+> produced deterministically, with no human review.** It also picked "None of the
+> above" for a resolved "No", inventing a list-negation the label never offered.
+> `none\b` is now deliberately absent from `NO_LONG`, because the pattern cannot
+> tell a two-option form from a multi-select by option text alone, and one extra
+> defer beats guessing wrong on a form the engine cannot re-ask.
 
 ### The rule tables
 
@@ -353,7 +409,7 @@ creating an account, which the agent is not permitted to do. `fill-plan.mjs` exi
 
 ---
 
-## `fill-plan.mjs` (459 lines) — where the decisions happen
+## `fill-plan.mjs` (1389 lines) — where the decisions happen
 
 ```bash
 node scripts/apply/fill-plan.mjs <slug> [--scan p] [--url u] [--resume pdf]
@@ -362,19 +418,71 @@ node scripts/apply/fill-plan.mjs <slug> [--scan p] [--url u] [--resume pdf]
 
 Exit **0** ok, **2** usage/missing scan, **3** the ATS needs a human.
 
-### `isConsent(label)` — always defer
+### The consent branch — two doors, one gate
 
-Arbitration, terms and conditions, privacy notice, confirm receipt,
-"I agree/consent/acknowledge/understand/certify", e-signature, background check,
-"consent to", code of conduct. These are the user's to accept, so they **never**
-become plan items no matter how confidently the bank resolves them.
+`isConsent(label)` matches arbitration, terms and conditions, privacy notice,
+confirm receipt, "I agree/consent/acknowledge/understand/certify", e-signature,
+background check, "consent to", code of conduct. These are the user's to accept,
+so they **never** become plan items no matter how confidently the bank resolves
+them. It deliberately does **not** match "Are you legally authorized to work…" —
+that is a fact about the user, not a promise being extracted from them.
 
-Deliberately does **not** match "Are you legally authorized to work…" — that is a
-fact about the user, not a promise being extracted from them.
+**A topic list cannot be exhaustive, and that is the finding it was rebuilt
+around** (`w3-resolution` + `innov-resilience`, pinned in
+`tests/security/hostile-forms.test.mjs`): whatever wordings you add, the 26th rewording is
+free, and a consent box that matched nothing fell through to the ordinary
+checkbox branch where none of these controls run again. So entry to the
+protected branch is now **two doors**:
+
+- `isConsent(label)` — a **topic** match.
+- `looksLikeAgreementProse(field, label)` — a **shape** match, needing no topic
+  word at all: a single-option checkbox whose label is ≥ 8 words and ends in `.`
+  or `!`. A legal clause is written as a full sentence stating what is agreed to,
+  because that is what makes it legally meaningful; an ordinary toggle ("Current
+  role", "Subscribe to job alerts") is short and does not end like a sentence.
+  Both signals are required, so a false positive costs exactly one extra defer.
+
+Either door leads to the **same** gate — never a bypass of its own. A box only
+becomes a `check` item when **all** of: our own scanner vouched for the exact
+text, the exact normalized label is on the user's `--consent-allowlist`,
+`isHardConsent` does **not** recognise it (arbitration / dispute resolution /
+background check / e-signature / jury-trial waiver are excluded _regardless_ of
+the allowlist), and it is a single-option checkbox. Otherwise it defers.
+
+> **Nothing auto-ticks on any path that runs today, and this is a fact about
+> plumbing rather than about the gate.** The vouch is the in-process
+> `vouchedLabels` argument (below), and it has **no producer on this CLI's
+> scan-file path** — so `vouchedSet` is empty and every consent box defers,
+> allowlist or not. Since H10 closed, that costs nothing: a consent defer does
+> not block `ready`.
+
+### `labelExact` is no longer a control — the vouch travels out of band
+
+`scan-page.js` computes `labelExact` to mean "`l` is the complete, visible text
+of this control's label". It used to travel as a **boolean field inside the
+scan**, and a boolean inside a JSON document is only worth the document's own
+trustworthiness — a hand-written scan with `labelExact: true` on truncated
+wording was indistinguishable from a real one.
+
+So, as of `58d89b6`:
+
+- `scan-engine.mjs` returns `{ scan, vouchedLabels }` — the vouch is a **second
+  return value**, in-process, never serialised and never stashed in the page.
+- `buildPlan` takes `vouchedLabels` as a parameter and **ignores
+  `scan.fields[].labelExact` entirely**, with a belt-and-braces `delete` of the
+  flag on every field and option.
+- It **fails closed**: with no vouch, every consent box defers.
+
+The honest limit, which `scan-engine.mjs` states about itself: `labelExact` says
+the text is complete and visible, not that it is _honest_. A board can display a
+short, complete, entirely misleading clause. The floor under the vouch is the
+allowlist — the attacker has to reproduce text the user typed into their own
+file.
 
 ### `buildPlan` decisions, in order
 
-1. `isConsent` → defer. Outranks everything.
+1. `isConsent(label) || looksLikeAgreementProse(f, label)` → the consent branch
+   above. Outranks everything.
 2. `duplicateCombo` → skip. intl-tel-input exposes a picker **and** a text input
    under the same label; filling both puts the phone number into the country
    selector, which then fails every strategy and reports a bogus failure. The
@@ -396,10 +504,11 @@ Then a post-pass: a ticked "current role" box disables the end-date pair on ever
 one of these boards, so those defers are converted to `skip` rather than being
 asked about.
 
-### `readiness(plan)`
+### `readiness(plan)` and `submitReadiness(plan)`
 
 ```js
-{ ready: false, reason: "N deferred field(s) need a human" }  // any defer
+// readiness — "does a MODEL need to think before the engine can run?"
+{ ready: false, reason: "N deferred field(s) need a human" }  // any NON-consent defer
 { ready: false, reason: "nothing to fill" }                   // no fillable items
 { ready: true,  reason: null }
 ```
@@ -409,17 +518,35 @@ anything is left to fill. Emitting a boolean means the caller branches on a flag
 instead of reading the plan and forming an opinion. On `ready=true` the path is
 scan → fill → hand over, with **no model step in between**.
 
-> **Defect, still open:** consent defers count against `ready`, and consent boxes
-> are universal, so `ready=true` is effectively unreachable — the documented fast
-> path has never once executed. `pending-questions.mjs` excludes consent for
-> exactly this reason, so the two scripts disagree. AUDIT **H10**.
+> **AUDIT H10 — CLOSED 2026-07-31 (`w3-resolution`, `58d89b6`).** The text below
+> is the entry as written, kept because it records why the obvious fix was
+> refused; only its "still open" status changed.
+>
+> ~~**Defect, still open:** consent defers count against `ready`, and consent
+> boxes are universal, so `ready=true` is effectively unreachable — the
+> documented fast path has never once executed. `pending-questions.mjs` excludes
+> consent for exactly this reason, so the two scripts disagree.~~
 >
 > **Do not close this by auto-ticking consent.** That was tried and withdrawn:
 > the allowlist, `isHardConsent` and the scanner's `labelExact` vouch all read
-> one page-supplied string, so they are one control wearing three hats. The
-> agreed direction is to redefine `ready=true` as **"no model turn is needed"**
-> rather than "nothing is deferred" — a box the user ticks in the browser costs
-> no model turn. See the dated correction in `docs/autonomy-plan.md` §3.3.
+> one page-supplied string, so they are one control wearing three hats.
+>
+> **What shipped is the redefinition, not an auto-tick.** `readiness()` now
+> filters `d.why !== "consent"`, so a consent-only defer no longer blocks
+> `ready`, and the two scripts agree with `pending-questions.mjs` at last. The
+> question `ready` answers is "does a **model** need to think before the engine
+> can run?" — and a consent box does not change that answer, because the user
+> ticks it in a browser they are already looking at, reviewing the filled form
+> before clicking Submit themselves. **Nothing ticks a consent box.** Hard rule
+> 6 is untouched by what either function returns.
+>
+> The stricter twin `submitReadiness(plan)` answers a different question —
+> "is there anything at all left undecided, consent included?" — and **any**
+> defer blocks it, consent included. It is the plan-side half of the two-key
+> pre-submit gate in `docs/autonomy-plan.md` §3.3; the fuller gate needs the
+> fill **report** (verify mismatches, required-empty fields, which button is
+> submit-shaped) and so cannot exist until Phase 3 builds it. The CLI prints
+> both: `ready=… submitReady=…`.
 
 ### The bootstrap it prints
 
@@ -532,7 +659,7 @@ bootstrap read its own engine back out of an untrusted page.
 
 ---
 
-## `pending-questions.mjs` (301 lines) — ask once, for everything
+## `pending-questions.mjs` (317 lines) — ask once, for everything
 
 ```bash
 node scripts/apply/pending-questions.mjs [<slug> …] [--no-predict] [--json]

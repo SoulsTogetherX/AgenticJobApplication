@@ -83,6 +83,43 @@ Firing releases the file set back to the pool. A rollback is not a verdict on an
 agent; firing follows these rules and this log, never a single reverted commit
 and never a single finding from a checker.
 
+## Clearing a full agent between jobs
+
+**The manager clears an agent's context between jobs when it has grown too
+full** (user decision 2026-07-31). Resuming an agent keeps its accumulated
+context, which is exactly what you want _inside_ a job — an innovator that
+already knows the codebase should not re-derive it, and a worker mid-task must
+not lose why it made a choice. Between jobs it inverts: every later turn
+re-reads the whole history, which is the single biggest cost driver in
+`CLAUDE.md`'s token discipline, and a context near its ceiling **dies mid-job**
+rather than degrading gracefully. That is not hypothetical here — on
+2026-07-31 four agents were lost to session limits at once, one of them
+(`w3-resolution`) partway through an owned file set, and the partial work had to
+be assessed and committed by hand.
+
+The mechanics: **resuming** an agent (`SendMessage`) keeps its context;
+**dispatching a fresh one** of the same type starts clean. So clearing is not a
+command — it is the choice to start a new agent instead of resuming the old one.
+
+| Situation                                         | Do                                                |
+| ------------------------------------------------- | ------------------------------------------------- |
+| Mid-job: a correction, a spec, a tie-break ruling | **Resume.** Losing the working context costs more |
+| Between jobs, context modest                      | Resume — continuity is free                       |
+| Between jobs, context large                       | **Fresh agent + a written handoff**               |
+| Agent died on a session limit                     | **Always fresh.** Its context is what killed it   |
+| New job in a different area of the codebase       | Fresh, regardless of size                         |
+
+**A cleared agent is owed a handoff**, because it is genuinely a new agent that
+knows nothing: what landed and where, what is still open, which decisions were
+already made and must not be relitigated, and which findings are waiting on it.
+Its file set is unchanged — ownership belongs to the **role**, not to a
+particular instance. Without that handoff, clearing an agent throws away the
+judgement that produced the work, and the replacement re-derives it or, worse,
+re-opens a settled question.
+
+This never applies to the manager's own context, which is cleared only by the
+user starting a new session.
+
 ## Current roster
 
 | Agent              | Role           | Model   | Owns (exclusive)                                                                                                                     |
@@ -186,3 +223,4 @@ everything else, and the manager re-staffs on the numbers.
 | 2026-07-31 | Hired `researcher` as a **seventh role**; role floor 6 → 7         | User decision. Every other non-manager role reads this repository; nobody was reading the market it operates in. Owns the new `docs/research/`, so no file set was taken from anyone                                                                                                            |
 | 2026-07-31 | `qa-breaker` took `tests/dev/` and `scripts/dev/flake-rate.mjs`    | Previously unowned and flagged by its author. Flake rate measures test reliability, a QA property, so it is not an `innov-perf` `bench-*` file                                                                                                                                                  |
 | 2026-07-31 | **Hire request from `qa-breaker`: browser-leg agent — DEFERRED**   | Need is real (6 quantities and 2 fixtures need a browser) but blocked three ways: no `playwright-core` until Phase 3.1, the agent registry is fixed at session start, and "no non-manager gets Playwright" is a plan-level rule the user must amend. File set pre-approved for when it unblocks |
+| 2026-07-31 | Manager **clears a full agent's context between jobs**             | User decision. Resuming keeps context, which is right mid-job and wrong between jobs; four agents died on session limits at once, one partway through an owned file set. A cleared agent is owed a handoff — ownership belongs to the role, not the instance                                    |

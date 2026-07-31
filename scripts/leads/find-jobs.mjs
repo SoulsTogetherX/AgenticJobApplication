@@ -24,6 +24,7 @@ import {
   textSnippet,
   SNIPPET_MAX,
 } from "../lib/lib.mjs"
+import { untrustedSnippet } from "../lib/untrusted.mjs"
 import { enrichDescriptions } from "./enrich.mjs"
 import {
   readLeadStore,
@@ -598,7 +599,7 @@ async function fetchGreenhouse(board) {
     location: j.location?.name ?? "",
     url: j.absolute_url,
     posted_at: j.first_published || j.updated_at || null,
-    description: textSnippet(j.content),
+    ...untrustedSnippet(j.content),
   }))
 }
 
@@ -616,7 +617,7 @@ async function fetchLever(board) {
     url: j.hostedUrl,
     posted_at: j.createdAt ? new Date(j.createdAt).toISOString() : null,
     salary_max: j.salaryRange?.max ?? null,
-    description: textSnippet(
+    ...untrustedSnippet(
       j.descriptionPlain ?? j.description,
       (j.lists ?? []).map((l) => `${l.text}: ${l.content}`).join("\n"),
     ),
@@ -644,7 +645,7 @@ async function fetchAshby(board) {
       url: j.jobUrl || j.applyUrl,
       posted_at: j.publishedAt ?? null,
       salary_max: parseSalaryMax(j.compensation?.compensationTierSummary),
-      description: textSnippet(j.descriptionPlain ?? j.descriptionHtml),
+      ...untrustedSnippet(j.descriptionPlain ?? j.descriptionHtml),
     }))
 }
 
@@ -707,7 +708,7 @@ async function fetchRecruitee(board) {
     remote: j.remote === true,
     url: j.careers_url,
     posted_at: j.published_at ?? j.created_at ?? null,
-    description: textSnippet(j.description, j.requirements),
+    ...untrustedSnippet(j.description, j.requirements),
   }))
 }
 
@@ -801,7 +802,7 @@ async function fetchOracleCloud(board) {
         remote: /remote/i.test(j.WorkplaceType ?? j.WorkplaceTypeCode ?? ""),
         url: `https://${board.host}/hcmUI/CandidateExperience/en/sites/${board.site}/job/${j.Id}`,
         posted_at: j.PostedDate ?? null,
-        description: textSnippet(
+        ...untrustedSnippet(
           j.ShortDescriptionStr,
           j.ExternalResponsibilitiesStr,
           j.ExternalQualificationsStr,
@@ -871,7 +872,7 @@ export function parseJobviteFeed(xml, board) {
       location: tag("location"),
       url: tag("detail-url") || tag("apply-url"),
       posted_at: parseUsDate(tag("date")),
-      description: textSnippet(tag("briefdescription"), tag("description")),
+      ...untrustedSnippet(tag("briefdescription"), tag("description")),
     })
   }
   return out
@@ -979,7 +980,7 @@ export function normalizeAdzunaJob(j) {
     salary_max: j.salary_max ?? null,
     // Adzuna only returns a teaser, so this is deliberately partial — see the
     // partial_description handling in screen.mjs.
-    description: textSnippet(j.description),
+    ...untrustedSnippet(j.description),
   }
 }
 
@@ -1070,7 +1071,7 @@ async function fetchJobicy(board) {
     url: j.url,
     posted_at: j.pubDate ?? null,
     salary_max: j.salaryMax ? Number(j.salaryMax) : null,
-    description: textSnippet(j.jobDescription ?? j.jobExcerpt),
+    ...untrustedSnippet(j.jobDescription ?? j.jobExcerpt),
   }))
 }
 
@@ -1090,7 +1091,7 @@ async function fetchRemotive(board) {
     url: j.url,
     posted_at: j.publication_date ?? null,
     salary_max: parseSalaryMax(j.salary),
-    description: textSnippet(j.description),
+    ...untrustedSnippet(j.description),
   }))
 }
 
@@ -1108,7 +1109,7 @@ async function fetchRemoteOk() {
     url: j.url || j.apply_url,
     posted_at: j.date ?? null,
     salary_max: j.salary_max ? Number(j.salary_max) : null,
-    description: textSnippet(j.description),
+    ...untrustedSnippet(j.description),
   }))
 }
 

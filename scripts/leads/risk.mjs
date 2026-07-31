@@ -24,7 +24,7 @@
 // Like L2 this only ever rejects on unambiguous evidence. A ghost job costs an
 // application; a false reject costs a job. They are not symmetric.
 
-import { sanitizeUntrusted } from "../lib/untrusted.mjs"
+import { sanitizeUntrusted, isDisqualifying } from "../lib/untrusted.mjs"
 
 // Deliberately narrow. "Ongoing recruitment" and "we are growing fast" are NOT
 // here — plenty of real postings say them.
@@ -195,15 +195,30 @@ export function scoreRisk(job, history = null, opts = {}) {
   //
   // A posting carrying instructions aimed at an AI is telling you something
   // about whoever wrote it, so it is a screening signal in its own right, not
-  // just something to strip. Flagged rather than rejected: these patterns are
-  // regexes over someone else's prose and a false reject is a job the user
-  // never sees. The actual protection is that the text is sanitised before any
-  // model reads it, and that verify-claims R6 cannot be talked into a claim the
-  // fact base does not back.
+  // just something to strip. On the human-facing recommendation flow this only
+  // ever flags: these patterns are regexes over someone else's prose and a
+  // false reject is a job the user never sees.
+  //
+  // On the auto-apply path (w4-autonomy's `evaluateStages(..., ["l0","l1","l3"])`
+  // call, which skips l2 fit but still runs l3) an ACTUAL injection attempt has
+  // to be disqualifying — nobody is reading the approval message before that
+  // path fires, so "flag it and hope a human notices" is not a control there.
+  // `isDisqualifying` draws the line, not a hardcoded list here: it rejects the
+  // eight instruction-shaped kinds and never `hidden_html` / `hidden_attr_text`
+  // / `invisible_characters` / `homoglyph_text` / `encoded_blob` on their own —
+  // a CMS emits comments and a logo has alt text, and those alone are messy,
+  // not hostile.
   const scan = sanitizeUntrusted(text)
   if (!scan.clean) {
     for (const f of scan.findings) signals.push(`injection:${f.kind}`)
-    flags.push("injection_attempt")
+    const hostile = scan.findings.filter(isDisqualifying)
+    if (hostile.length) {
+      reasons.push(
+        `injection_attempt:${[...new Set(hostile.map((f) => f.kind))].sort().join("+")}`,
+      )
+    } else {
+      flags.push("injection_attempt")
+    }
   }
 
   // --- boilerplate ratio ----------------------------------------------------

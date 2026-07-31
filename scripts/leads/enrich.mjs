@@ -24,13 +24,15 @@
 
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import {
-  fetchJson,
-  fetchText,
-  mapPool,
-  textSnippet,
-  decodeEntities,
-} from "../lib/lib.mjs"
+import { fetchJson, fetchText, mapPool, decodeEntities } from "../lib/lib.mjs"
+import { sanitizeHtmlSnippet } from "../lib/untrusted.mjs"
+
+// A detail payload with no derivable URL or no matching markup is "nothing to
+// enrich", not "clean text found" — both are `{ text: null, ... }`, but this
+// constant is what every early-return path shares, so the fill loop below can
+// treat every fetcher's result as the same three-field shape without a
+// null-check of its own.
+const NOTHING = { text: null, findings: [], clean: true }
 
 // --- URL derivation ----------------------------------------------------------
 // Deliberately derived from the stored lead's own url/id rather than from
@@ -79,9 +81,17 @@ export function workdayDetailUrl(url, id = "") {
 // Oracle splits a posting across four fields and only some are populated per
 // tenant, so all of them are concatenated. Qualifications matter most: that is
 // where the years-of-experience bar and the degree demand live.
+//
+// These four functions used to return textSnippet(...)'s plain string. They
+// now return sanitizeHtmlSnippet(...)'s { text, findings, clean } — this is a
+// detail-page fetch, i.e. RAW HTML from a third party, reaching the pipeline
+// for the first time here, and it needs the same markup-aware scrub the list
+// endpoints get in find-jobs.mjs (untrustedSnippet). Returning textSnippet's
+// flattened string first would destroy the display:none the scrubber needs to
+// see, exactly the ordering bug 1.3 exists to close.
 export function oracleDescription(payload) {
   const it = payload?.items?.[0] ?? {}
-  return textSnippet(
+  return sanitizeHtmlSnippet(
     it.ShortDescriptionStr,
     it.ExternalDescriptionStr,
     it.ExternalResponsibilitiesStr,
@@ -94,7 +104,7 @@ export function oracleDescription(payload) {
 // snippet cap with boilerplate that says nothing about the role.
 export function smartRecruitersDescription(payload) {
   const s = payload?.jobAd?.sections ?? {}
-  return textSnippet(
+  return sanitizeHtmlSnippet(
     s.jobDescription?.text,
     s.qualifications?.text,
     s.additionalInformation?.text,
@@ -108,16 +118,16 @@ export function successFactorsDescription(html) {
   const m = /<span[^>]*class="[^"]*jobdescription[^"]*"[^>]*>([\s\S]*?)$/i.exec(
     String(html ?? ""),
   )
-  if (!m) return null
+  if (!m) return NOTHING
   // The span is not reliably closed before the footer, so cut at the first
   // structural marker that follows every posting body.
   const body = m[1].split(/<\/div>\s*<div[^>]*class="[^"]*jobFooter/i)[0]
-  return textSnippet(body)
+  return sanitizeHtmlSnippet(body)
 }
 
 export function workdayDescription(payload) {
   const info = payload?.jobPostingInfo ?? {}
-  return textSnippet(
+  return sanitizeHtmlSnippet(
     info.jobDescription,
     info.jobRequisitionLocation?.descriptor,
   )
@@ -130,19 +140,19 @@ export function workdayDescription(payload) {
 const FETCHERS = {
   oracle_cloud: async (lead) => {
     const u = oracleDetailUrl(lead.url)
-    return u ? oracleDescription(await fetchJson(u)) : null
+    return u ? oracleDescription(await fetchJson(u)) : NOTHING
   },
   smartrecruiters: async (lead) => {
     const u = smartRecruitersDetailUrl(lead.url)
-    return u ? smartRecruitersDescription(await fetchJson(u)) : null
+    return u ? smartRecruitersDescription(await fetchJson(u)) : NOTHING
   },
   successfactors: async (lead) => {
-    if (!lead.url) return null
+    if (!lead.url) return NOTHING
     return successFactorsDescription(await fetchText(lead.url))
   },
   workday: async (lead) => {
     const u = workdayDetailUrl(lead.url, lead.id)
-    return u ? workdayDescription(await fetchJson(u)) : null
+    return u ? workdayDescription(await fetchJson(u)) : NOTHING
   },
 }
 
@@ -169,9 +179,13 @@ export async function enrichDescriptions(
   await mapPool(targets, concurrency, async (lead) => {
     const kind = String(lead.source ?? lead.id ?? "").split(":")[0]
     try {
-      const text = await fetchers[kind](lead)
-      if (text) {
-        lead.description = text
+      const res = await fetchers[kind](lead) // { text, findings, clean }
+      if (res.text) {
+        lead.description = res.text
+        // Omitted when clean, same convention as untrustedSnippet in
+        // find-jobs.mjs — an honest lead's stored doc does not grow an empty
+        // array just because it went through a detail fetch.
+        if (!res.clean) lead.untrusted_findings = res.findings
         filled++
       } else {
         // Reached the endpoint but found no body: the parse is stale or the

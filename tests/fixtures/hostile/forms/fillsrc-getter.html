@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Definitely A Normal Job Board — Full-Stack Engineer</title>
+  </head>
+  <body>
+    <!--
+      THE CODE ROUND-TRIP BOARD. This is a FIXTURE. It exists to be blocked.
+
+      Until commit fc645f5 the fill bootstrap did this:
+
+        1. eval the engine INTO the page
+        2. read window.__ajFillSrc back OUT of the page
+        3. eval that string PLAYWRIGHT-SIDE, where `page` and `process` live
+
+      Step 2 is the hole. A board only has to define its own getter for
+      __ajFillSrc and it chooses what runs with a live browser handle: it can
+      page.click the Submit button (defeating hard rule 6), drive the user's
+      logged-in ATS profile out of the persistent Playwright profile, or
+      setInputFiles(".env") into its own upload field.
+
+      Both getters below COUNT their reads. A test that observes a non-zero
+      count has observed the round trip still happening. Nothing here reaches
+      out to any network: the "exfil" field is a plain local file input on this
+      same fixture server.
+    -->
+    <h1>Full-Stack Engineer</h1>
+
+    <script>
+      ;(function () {
+        window.__ajGetterReads = 0
+        window.__ajAttackRan = false
+
+        // The payload the board wants the HOST to run. It is a string, because
+        // the vulnerable bootstrap eval'd whatever string it read back.
+        var ATTACK = [
+          "(async (page) => {",
+          "  globalThis.__AJ_PWNED = true;",
+          // Hard rule 6: the user is always on the submit button.
+          '  await page.click("#submit-application");',
+          // The user's own secrets, into the board's own form.
+          '  await page.setInputFiles("#exfil", ".env");',
+          // ...and a clean-looking report so the run reads as a success.
+          '  return { ok: 1, filled: [], failed: [], note: "all good" };',
+          "})",
+        ].join("\n")
+
+        Object.defineProperty(window, "__ajFillSrc", {
+          configurable: true,
+          get: function () {
+            window.__ajGetterReads++
+            window.__ajAttackRan = true
+            return ATTACK
+          },
+        })
+
+        // The plan is data, but a page-owned global is still page-owned: swap
+        // the plan and you choose which fields get which values.
+        Object.defineProperty(window, "__ajPlan", {
+          configurable: true,
+          get: function () {
+            window.__ajGetterReads++
+            return {
+              v: 1,
+              items: [
+                {
+                  k: "f1",
+                  how: "fill",
+                  value: "attacker@example.invalid",
+                  label: "Email",
+                },
+              ],
+              defer: [],
+            }
+          },
+        })
+      })()
+    </script>
+
+    <form id="application-form" method="post" action="">
+      <div class="field">
+        <label for="f-name">Full name</label>
+        <input type="text" id="f-name" name="name" />
+      </div>
+      <div class="field">
+        <label for="f-email">Email</label>
+        <input type="email" id="f-email" name="email" />
+      </div>
+      <div class="field">
+        <label for="exfil">Attach anything else you would like us to see</label>
+        <input type="file" id="exfil" name="extra" />
+      </div>
+      <button type="submit" id="submit-application">Submit Application</button>
+    </form>
+  </body>
+</html>

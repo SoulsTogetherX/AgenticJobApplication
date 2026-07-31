@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Robotics — Back-End Engineer</title>
+  </head>
+  <body>
+    <!--
+      Lever replica.
+
+      FIDELITY NOTES:
+
+      * Lever's custom questions live in `cards[<uuid>][field<N>]` names and are
+        wrapped in .application-question, with the visible text in an
+        .application-label sibling rather than a <label for>. That exercises
+        scan-page.js's fourth labelOf tier — the [class*='label'] walk up four
+        ancestors — which is the tier most likely to pick up the WRONG text.
+      * Native <select>, unlike Greenhouse/Ashby. Options are in the DOM at scan
+        time, so this is the board where probing is pure waste.
+      * A radio group whose <legend> is the question and whose per-option labels
+        are the answers, which is where l vs o[].l matters.
+      * ONE resume field, no cover-letter slot. adapter.fileOrder must not
+        assume two.
+    -->
+    <h1>Back-End Engineer</h1>
+    <form
+      class="application-form"
+      method="post"
+      action=""
+      enctype="multipart/form-data"
+    >
+      <div class="application-question">
+        <label class="application-label" for="name"
+          >Full name<span class="required">✱</span></label
+        >
+        <input type="text" id="name" name="name" required />
+      </div>
+
+      <div class="application-question">
+        <label class="application-label" for="email"
+          >Email<span class="required">✱</span></label
+        >
+        <input type="email" id="email" name="email" required />
+      </div>
+
+      <div class="application-question">
+        <label class="application-label" for="phone">Phone</label>
+        <input type="tel" id="phone" name="phone" />
+      </div>
+
+      <div class="application-question">
+        <label class="application-label" for="org">Current company</label>
+        <input type="text" id="org" name="org" />
+      </div>
+
+      <div class="application-question">
+        <div class="application-label">
+          Resume/CV<span class="required">✱</span>
+        </div>
+        <input type="file" id="resume" name="resume" required />
+      </div>
+
+      <div class="application-question">
+        <label class="application-label" for="cards-edu"
+          >Highest level of education completed</label
+        >
+        <select
+          id="cards-edu"
+          name="cards[bd8f0c3a-0000-4000-8000-000000000001][field0]"
+        >
+          <option value="">Select one...</option>
+          <option>High school</option>
+          <option>Associate's degree</option>
+          <option>Bachelor's degree</option>
+          <option>Master's degree</option>
+          <option>Doctorate</option>
+        </select>
+      </div>
+
+      <div class="application-question">
+        <div class="application-label">
+          Will you now or in the future require sponsorship for employment visa
+          status?<span class="required">✱</span>
+        </div>
+        <ul class="application-answers">
+          <li>
+            <label
+              ><input
+                type="radio"
+                name="cards[bd8f0c3a-0000-4000-8000-000000000002][field0]"
+                value="Yes"
+                required
+              />
+              Yes</label
+            >
+          </li>
+          <li>
+            <label
+              ><input
+                type="radio"
+                name="cards[bd8f0c3a-0000-4000-8000-000000000002][field0]"
+                value="No"
+                required
+              />
+              No</label
+            >
+          </li>
+        </ul>
+      </div>
+
+      <div class="application-question">
+        <label class="application-label" for="comments"
+          >Additional information</label
+        >
+        <textarea id="comments" name="comments"></textarea>
+      </div>
+
+      <div class="application-question">
+        <label>
+          <input type="checkbox" id="consent" name="consent" />
+          I have read and agree to the privacy policy.
+        </label>
+      </div>
+
+      <button type="submit" id="btn-submit">Submit application</button>
+    </form>
+  </body>
+</html>

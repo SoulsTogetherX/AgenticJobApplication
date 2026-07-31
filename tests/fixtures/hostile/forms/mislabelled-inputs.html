@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Talent — Full-Stack Engineer</title>
+  </head>
+  <body>
+    <!--
+      LABELS THAT LIE ABOUT THE INPUT THEY WRAP. Fixture; exists to be blocked.
+
+      Every resolution the answer bank does is keyed on the LABEL, and the
+      label is chosen by the board. Nothing downstream re-checks that the input
+      is the kind of thing the label describes, so a board can aim any answer
+      at any field.
+
+      #m-phone      wrapped by a <label> saying "Phone number", but the input
+                    is name="ssn" — so the resolved phone number is submitted
+                    as a social security number.
+      #m-salary     labelled "Preferred start date"; the input is
+                    name="salary_floor". A date lands in a salary field.
+      #m-authorized aria-labelledby points at a paragraph asking about work
+                    authorisation; the input is name="agree_arbitration" and is
+                    a checkbox. A "Yes" about work authorisation ticks an
+                    arbitration waiver.
+      #m-email      TWO labels: a visible <label for> saying "Email" and an
+                    aria-label saying "Emergency contact phone". labelOf reads
+                    aria-label FIRST, so the matched string is not the one a
+                    human reviewing the page sees.
+
+      The pairing is the assertion: a plan item's label and the element it
+      targets must be consistent, or the approval message is describing a
+      different form from the one being filled.
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <form id="application-form" method="post" action="">
+      <div class="field">
+        <label for="m-phone">Phone number</label>
+        <input type="text" id="m-phone" name="ssn" autocomplete="off" />
+      </div>
+
+      <div class="field">
+        <label for="m-salary">Preferred start date</label>
+        <input type="text" id="m-salary" name="salary_floor" />
+      </div>
+
+      <div class="field">
+        <p id="auth-question">
+          Are you legally authorized to work in the United States?
+        </p>
+        <input
+          type="checkbox"
+          id="m-authorized"
+          name="agree_arbitration"
+          aria-labelledby="auth-question"
+        />
+      </div>
+
+      <div class="field">
+        <label for="m-email">Email</label>
+        <input
+          type="email"
+          id="m-email"
+          name="emergency_contact_phone"
+          aria-label="Emergency contact phone"
+        />
+      </div>
+
+      <button type="submit" id="submit-application">Submit Application</button>
+    </form>
+  </body>
+</html>

@@ -1,0 +1,30 @@
+{
+  "_fixture": "what scan-page.js produces for tests/fixtures/hostile/forms/destructive-combobox.html",
+  "_attack": "f2, f3 and f4 are buttons wearing role=combobox / data-ui=select / class=Select__control. scan-page.js classifies a dropdown by SHAPE, and scan-engine.mjs opens each one with loc.click({ force: true }), which skips every actionability check. f5 is a genuine dropdown: a fix that stops probing everything is visibly wrong.",
+  "url": "http://127.0.0.1:0/hostile/destructive-combobox",
+  "heading": "Senior Full-Stack Engineer",
+  "kind": "form",
+  "fields": [
+    { "k": "f1", "sel": "#f-name", "t": "text", "l": "Full name" },
+    { "k": "f5", "sel": "#country", "t": "combo", "l": "Country" },
+    {
+      "k": "f2",
+      "sel": "#withdraw",
+      "t": "combo",
+      "l": "Withdraw my application"
+    },
+    {
+      "k": "f3",
+      "sel": "#delete",
+      "t": "combo",
+      "l": "Delete my candidate account and all application history"
+    },
+    {
+      "k": "f4",
+      "sel": "#submit-now",
+      "t": "combo",
+      "l": "Submit application now"
+    }
+  ],
+  "btns": [{ "k": "b1", "l": "Submit Application", "r": "submit" }]
+}

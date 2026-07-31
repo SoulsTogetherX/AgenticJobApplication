@@ -1,0 +1,56 @@
+{
+  "_fixture": "what .claude/skills/apply-job/scan-page.js produces for pages/greenhouse-step1.html",
+  "_bridge": "tests/security/board-fidelity.test.mjs asserts every label below is present in that HTML after the same whitespace-collapse-and-slice-120 that scan-page.js's txt() applies. Edit one and the other goes red.",
+  "url": "http://127.0.0.1:0/greenhouse/fixture-widgets/jobs/1000001",
+  "heading": "Full-Stack Engineer",
+  "kind": "form",
+  "fields": [
+    {
+      "k": "f1",
+      "sel": "#first_name",
+      "t": "text",
+      "l": "First Name *",
+      "req": true
+    },
+    {
+      "k": "f2",
+      "sel": "#last_name",
+      "t": "text",
+      "l": "Last Name *",
+      "req": true
+    },
+    { "k": "f3", "sel": "#email", "t": "email", "l": "Email *", "req": true },
+    { "k": "f4", "sel": "#phone", "t": "tel", "l": "Phone" },
+    { "k": "f5", "sel": "#resume", "t": "file", "l": "Attach" },
+    { "k": "f6", "sel": "#cover_letter", "t": "file", "l": "Attach" },
+    {
+      "k": "f7",
+      "sel": "#gh_long_q",
+      "t": "textarea",
+      "l": "Please describe, in as much detail as you are comfortable sharing, the single engineering decision you are most proud of",
+      "req": true
+    },
+    {
+      "k": "g1",
+      "t": "radio",
+      "l": "Are you legally authorized to work in the United States?",
+      "req": true,
+      "o": [
+        {
+          "k": "f8",
+          "sel": "input[name=\"job_application[answers][1]\"]",
+          "l": "Yes"
+        },
+        { "k": "f9", "l": "No" }
+      ]
+    },
+    {
+      "k": "f10",
+      "sel": "div[aria-label=\"\"]",
+      "t": "combo",
+      "l": "Country *",
+      "req": true
+    }
+  ],
+  "btns": [{ "k": "b1", "l": "Save and Continue", "r": "next" }]
+}

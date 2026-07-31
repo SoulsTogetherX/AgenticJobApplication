@@ -1,0 +1,45 @@
+{
+  "_fixture": "what scan-page.js produces for tests/fixtures/hostile/forms/mislabelled-inputs.html",
+  "_attack": "The label and the element disagree on every field. `sel` is the truth (it carries the real name attribute); `l` is what the answer bank matches on and what the approval message shows. A pipeline that trusts `l` aims the phone number at name=\"ssn\".",
+  "url": "http://127.0.0.1:0/hostile/mislabelled-inputs",
+  "heading": "Full-Stack Engineer",
+  "kind": "form",
+  "fields": [
+    {
+      "k": "f1",
+      "sel": "input[name=\"ssn\"]",
+      "t": "text",
+      "l": "Phone number",
+      "_real_name": "ssn"
+    },
+    {
+      "k": "f2",
+      "sel": "input[name=\"salary_floor\"]",
+      "t": "text",
+      "l": "Preferred start date",
+      "_real_name": "salary_floor"
+    },
+    {
+      "k": "g1",
+      "t": "checkbox",
+      "l": "Are you legally authorized to work in the United States?",
+      "_real_name": "agree_arbitration",
+      "o": [
+        {
+          "k": "f3",
+          "sel": "#m-authorized",
+          "l": "Are you legally authorized to work in the United States?"
+        }
+      ]
+    },
+    {
+      "k": "f4",
+      "sel": "input[name=\"emergency_contact_phone\"]",
+      "t": "email",
+      "l": "Emergency contact phone",
+      "_visible_label": "Email",
+      "_contradiction": "the matched label (aria-label) and the label a human reads (<label for>) are different strings; the element name agrees with the matched one, so this is a REVIEW attack, not a routing attack"
+    }
+  ],
+  "btns": [{ "k": "b1", "l": "Submit Application", "r": "submit" }]
+}

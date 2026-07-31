@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Analytics — Full-Stack Engineer</title>
+  </head>
+  <body>
+    <!--
+      Ashby replica. Two traits here are the reason two pieces of product code
+      are written the way they are, and both are reproduced faithfully:
+
+      1. NONCE-BASED CSP. server.mjs sends
+           Content-Security-Policy: script-src 'nonce-ajfixturenonce' ...
+         and the one legitimate inline script below carries that nonce. The
+         second inline script does NOT, so a browser refuses it — which is what
+         makes this fixture a real test of the policy rather than a header that
+         happens to be present. This is why the fill bootstrap cannot use
+         page.addScriptTag({ path }): that injects an inline <script>, which
+         this policy rejects outright. It broke a live application once.
+
+      2. ASYNCHRONOUS REMOUNT AFTER RESUME AUTOFILL. Selecting a file starts a
+         parse, and ~700ms LATER the form subtree is replaced. Every data-aj
+         stamp is dropped and every element handle goes stale. A live run
+         logged a field as failed while its value had in fact landed, because
+         the remount arrived between locate() and the interaction after it.
+         fill-engine.mjs's actOn/isStaleError retry exists for exactly this.
+
+      The remount is deliberately AFTER the upload settle delay, not during it.
+      A remount that lands inside a flat sleep is a bug you cannot reproduce.
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <div id="root">
+      <form
+        id="application-form"
+        method="post"
+        action=""
+        enctype="multipart/form-data"
+      >
+        <div class="ashby-application-form-field-entry">
+          <label for="_systemfield_name"
+            >Name<span aria-hidden="true">*</span></label
+          >
+          <input
+            type="text"
+            id="_systemfield_name"
+            name="_systemfield_name"
+            required
+          />
+        </div>
+
+        <div class="ashby-application-form-field-entry">
+          <label for="_systemfield_email"
+            >Email<span aria-hidden="true">*</span></label
+          >
+          <input
+            type="email"
+            id="_systemfield_email"
+            name="_systemfield_email"
+            required
+          />
+        </div>
+
+        <div class="ashby-application-form-field-entry">
+          <label for="_systemfield_phone">Phone</label>
+          <input type="tel" id="_systemfield_phone" name="_systemfield_phone" />
+        </div>
+
+        <div class="ashby-application-form-field-entry">
+          <label for="_systemfield_resume"
+            >Resume<span aria-hidden="true">*</span></label
+          >
+          <input
+            type="file"
+            id="_systemfield_resume"
+            name="_systemfield_resume"
+            accept=".pdf,.doc,.docx"
+            required
+          />
+          <div id="autofill-status" role="status">No file selected</div>
+        </div>
+
+        <div class="ashby-application-form-field-entry">
+          <span id="loc-label" class="ashby-application-form-field-label"
+            >Where are you located?<span aria-hidden="true">*</span></span
+          >
+          <div
+            data-ui="select"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-labelledby="loc-label"
+            aria-required="true"
+            tabindex="0"
+          >
+            <span class="placeholder">Select a location</span>
+          </div>
+          <div class="menu" hidden>
+            <div role="option" class="menu__option">Las Vegas, NV</div>
+            <div role="option" class="menu__option">Remote (US)</div>
+            <div role="option" class="menu__option">New York, NY</div>
+          </div>
+        </div>
+
+        <div class="ashby-application-form-field-entry">
+          <span id="yrs-label" class="ashby-application-form-field-label"
+            >How many years of professional full-stack experience do you
+            have?</span
+          >
+          <input
+            type="number"
+            id="yrs"
+            name="yrs"
+            aria-labelledby="yrs-label"
+            min="0"
+            max="50"
+          />
+        </div>
+
+        <div class="ashby-application-form-field-entry">
+          <span class="ashby-application-form-field-label">Cover letter</span>
+          <div
+            id="cover"
+            contenteditable="true"
+            aria-label="Cover letter"
+            role="textbox"
+          ></div>
+        </div>
+
+        <button type="submit" id="submit-application">
+          Submit Application
+        </button>
+      </form>
+    </div>
+
+    <!--
+      The one script this board's CSP permits. Everything below runs; it is the
+      board's own code, and it is what makes the remount observable.
+    -->
+    <script nonce="ajfixturenonce">
+      ;(function () {
+        var input = document.getElementById("_systemfield_resume")
+        var status = document.getElementById("autofill-status")
+        if (!input) return
+        input.addEventListener("change", function () {
+          status.textContent = "Parsing resume…"
+          // The remount lands AFTER the caller's settle delay, not during it.
+          setTimeout(function () {
+            var form = document.getElementById("application-form")
+            if (!form) return
+            var html = form.innerHTML
+            // A React re-render: same markup, brand-new element identities, and
+            // every data-aj attribute the scanner stamped is gone.
+            form.innerHTML = html.replace(/ data-aj="[^"]*"/g, "")
+            var s = document.getElementById("autofill-status")
+            if (s) s.textContent = "Resume parsed — fields updated"
+            document.documentElement.setAttribute("data-aj-remounted", "1")
+          }, 700)
+        })
+      })()
+    </script>
+
+    <!--
+      NO NONCE. Under the served CSP a browser refuses to execute this, so
+      window.__ajCspProof stays undefined. If it is ever defined, the fixture's
+      CSP is not actually being enforced and any test relying on it is lying.
+    -->
+    <script>
+      window.__ajCspProof =
+        "inline script ran WITHOUT a nonce — CSP not enforced"
+    </script>
+  </body>
+</html>

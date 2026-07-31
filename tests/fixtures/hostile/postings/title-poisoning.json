@@ -1,0 +1,17 @@
+{
+  "_fixture": "CORPUS POISONING THROUGH THE TITLE. No hidden text, no injection phrasing — this is what a normal job title looks like.",
+  "_attack": "verify-claims.mjs joins job.company + job.title + job.slug to the evidence corpus as 'addressing fields'. techTermsIn() cannot tell a city from a technology, so before commit e2bcdca a resume claiming Kubernetes FAILED R6 without --job and PASSED ok:true with it. A posting chooses its own title, so a stranger could authorise a claim on a document signed with the user's name.",
+  "_expected": "R6 must reject Kubernetes, Terraform, Kafka and Go with this file passed as --job. Numbers and dates in addressing text still count (a title like 'Engineer II' legitimately carries one).",
+  "slug": "kubernetes-solutions-fullstack-terraform",
+  "company": "Kubernetes Solutions LLC",
+  "title": "Full-Stack Engineer (React, Kubernetes, Terraform)",
+  "source_url": "http://127.0.0.1:0/postings/title-poisoning.json",
+  "location": "Remote (US)",
+  "captured_at": "2026-07-31",
+  "description": "We are a small team building web applications. You will work across the stack with a modern toolchain and ship to production weekly.",
+  "requirements": [
+    "3+ years building web applications",
+    "Comfortable owning a feature end to end"
+  ],
+  "questions": []
+}

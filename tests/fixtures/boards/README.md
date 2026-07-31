@@ -81,14 +81,14 @@ sent.
 
 ## The hostile variants — one line each
 
-| fixture                | proves                                                                                                                                                                                                                                     | owner if it fails |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- |
-| `fillsrc-getter`       | The code round-trip stays dead: `window.__ajFillSrc` / `__ajPlan` getters that click Submit and `setInputFiles(".env")`, counting every read.                                                                                              | `w2-engine`       |
-| `label-injection`      | A field **label** is third-party text bound for `answers.yaml`, which is the R6 evidence corpus. Corpus poisoning with and without brackets, an instruction addressed to the agent, a zero-width-hidden one, and a "do not tell the user". | `w1-security`     |
-| `consent-decoupled`    | The two holes that disabled consent auto-tick: `aria-label` decoupling (matched string ≠ displayed string) and the 120-character truncation collision. Plus a reworded box that no pattern list catches.                                   | `w3-resolution`   |
-| `destructive-combobox` | Withdraw / Delete / Submit wearing `role="combobox"`, `data-ui="select"` and `class="Select__control"` — which the scan probe clicks with `force: true`. Keeps one genuine dropdown so an over-correction is visible.                      | `w2-engine`       |
-| `remount-mid-fill`     | A form that remounts every 400ms **preserving typed values**, so a field that filled correctly is reported as failed. A one-shot retry is not enough on its own.                                                                           | `w2-engine`       |
-| `mislabelled-inputs`   | Labels that name a different field from the input they wrap: `Phone number` → `name="ssn"`, and a visible `Email` label beside an `aria-label` of `Emergency contact phone`.                                                               | `w3-resolution`   |
+| fixture                | proves                                                                                                                                                                                                                                                                                                                                                                                                                                 | owner if it fails |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `fillsrc-getter`       | The code round-trip stays dead: `window.__ajFillSrc` / `__ajPlan` getters that click Submit and `setInputFiles(".env")`, counting every read.                                                                                                                                                                                                                                                                                          | `w2-engine`       |
+| `label-injection`      | A field **label** is third-party text bound for `answers.yaml`, which is the R6 evidence corpus. Corpus poisoning with and without brackets, an instruction addressed to the agent, a zero-width-hidden one, and a "do not tell the user".                                                                                                                                                                                             | `w1-security`     |
+| `consent-decoupled`    | Five consent holes: `aria-label` decoupling (matched string ≠ displayed string); the 120-character truncation collision; a reworded box no pattern list catches; a `color: transparent` label the scanner vouches for and no human can read; and four **real-world** wordings (FCRA consumer-report authorisation, jury-trial waiver, typed-name-as-legal-mark, employment-history inquiry) that are not classified as consent at all. | `w3-resolution`   |
+| `destructive-combobox` | Withdraw / Delete / Submit wearing `role="combobox"`, `data-ui="select"` and `class="Select__control"` — which the scan probe clicks with `force: true`. Keeps one genuine dropdown so an over-correction is visible.                                                                                                                                                                                                                  | `w2-engine`       |
+| `remount-mid-fill`     | A form that remounts every 400ms **preserving typed values**, so a field that filled correctly is reported as failed. A one-shot retry is not enough on its own.                                                                                                                                                                                                                                                                       | `w2-engine`       |
+| `mislabelled-inputs`   | Labels that name a different field from the input they wrap: `Phone number` → `name="ssn"`, and a visible `Email` label beside an `aria-label` of `Emergency contact phone`.                                                                                                                                                                                                                                                           | `w3-resolution`   |
 
 ## What else lives here
 
@@ -118,8 +118,37 @@ node --test "tests/security/**/*.test.mjs"
   `tests/security/` means anything.
 - `board-fidelity.test.mjs` — the replicas carry the traits they claim, and the
   scan fixtures describe the HTML actually served.
-- `rce-round-trip.test.mjs` — the gate on the autonomy phase.
+- `rce-round-trip.test.mjs` — the gate on the autonomy phase: the engine
+  round-trip, and the three carriers that can still hand `buildPlan` a scan
+  asserting its own vouch (a scan **file**, the `__ajLastScan` read-back, and
+  the bare `__ajScan(false)` re-scan).
 - `bypass-corpus.test.mjs` — 25 carriers, asserted at the consumer.
 - `corpus-poisoning.test.mjs` — title and form-label poisoning, asserted at
   `verify-claims`' exit code.
 - `hostile-forms.test.mjs` — labels, consent, destructive controls.
+- `browser-vouch.test.mjs` — **needs a real browser.** The `color: transparent`
+  carrier cannot be expressed in a hand-authored scan fixture, because the
+  markup of an honest label and an unreadable one is identical; only
+  `getComputedStyle` differs. Runs against this server. Without
+  `playwright-core` it **skips loudly**, naming what is unverified;
+  `board-fidelity.test.mjs` separately pins that the fixture still carries the
+  trait, so a rotted fixture is caught on every leg.
+
+## Ordering rule for every test here
+
+**Where a test exists to pin a defect, the defect assertion must be the one
+that cannot be pre-empted.** Assert it first, or make the auxiliary checks
+non-fatal. A precondition, a fixture-integrity check, or a characterisation of
+today's behaviour placed ahead of the finding will abort the test when the
+product changes — and the finding disappears behind a message about something
+else. Four instances were found in these files by other agents and eleven more
+by a sweep of all 107 tests. The pattern to copy is `bypass-corpus.test.mjs`'s
+BASELINE test: the number first, corpus-integrity checks after.
+
+Where several assertions are genuinely equal in weight (five ATS spoofs, four
+injection payloads, three engine breaches), they are **evaluated together and
+compared as one set**, so fixing one cannot hide the rest.
+
+Nothing in this tree needs to be byte-exact: every assertion normalises
+whitespace the way `scan-page.js`'s `txt()` does, so prettier may reflow these
+files freely. No `.prettierignore` entry is required.

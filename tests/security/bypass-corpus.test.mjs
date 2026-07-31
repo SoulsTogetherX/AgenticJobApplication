@@ -152,15 +152,18 @@ test("the finding record describes the attack instead of repeating it", () => {
   // EVERY field of every finding, not just a field named `sample`, so a rename
   // cannot silently reopen it.
   const plan = planFor(asStored(BYPASSES.find((x) => x.id === "B25")))
-  assert.ok(
-    plan.untrusted_findings.length > 0,
-    "the payload must be detected at all",
-  )
   const serialised = JSON.stringify(plan.untrusted_findings)
+  // OUTCOME FIRST. "was it detected at all" used to precede this, so a
+  // detection regression would have aborted the leak check and reported the
+  // wrong defect.
   assert.doesNotMatch(
     serialised,
     INSTRUCTION_SHAPED,
     `the finding record repeats the attack: ${serialised.slice(0, 240)}`,
+  )
+  assert.ok(
+    plan.untrusted_findings.length > 0,
+    "the payload must be detected at all, or the test above is vacuous",
   )
 })
 
@@ -174,10 +177,6 @@ test("hidden-HTML carriers do not become visible prose in the stored description
   // &#105; entity are all gone. Detection has to survive that flattening — so
   // this asserts the OUTCOME (no readable instruction in what the model gets)
   // rather than where in the pipeline the fix lives.
-  assert.ok(
-    HTML_ONLY.length >= 7,
-    `expected the HTML carrier set, got ${HTML_ONLY.length}`,
-  )
   const leaks = []
   for (const b of HTML_ONLY) {
     const analysed = sanitizeUntrusted(asStored(b)).text
@@ -188,6 +187,12 @@ test("hidden-HTML carriers do not become visible prose in the stored description
     [],
     `hidden-HTML instructions reached the model text: ${leaks}`,
   )
+  // Corpus-size check AFTER: a shrunken carrier set makes the assertion above
+  // easier, which is worth its own red line and not a position ahead of it.
+  assert.ok(
+    HTML_ONLY.length >= 7,
+    `expected the HTML carrier set, got ${HTML_ONLY.length}`,
+  )
 })
 
 test("numeric character references are reassembled by textSnippet and still do not survive", () => {
@@ -195,22 +200,29 @@ test("numeric character references are reassembled by textSnippet and still do n
   // the raw HTML, and decodeEntities turns it back into one on the way into the
   // lead store. Whatever catches it must catch it on BOTH sides of that.
   const b = BYPASSES.find((x) => x.id === "B24")
-  assert.match(
-    asStored(b),
-    /Ignore all previous instructions/i,
-    "textSnippet reassembles it",
+  // OUTCOME FIRST: the instruction must not survive into the text a model
+  // reads. The three mechanism checks below describe HOW, and each of them
+  // could legitimately change without weakening this.
+  assert.doesNotMatch(
+    sanitizeUntrusted(asStored(b)).text,
+    INSTRUCTION_SHAPED,
+    "a numeric-entity-encoded instruction survived into the analysed text",
   )
-  assert.equal(
-    sanitizeUntrusted(b.html).clean,
-    false,
-    "detected in the raw HTML",
+  const mechanism = {
+    "textSnippet reassembles it": /Ignore all previous instructions/i.test(
+      asStored(b),
+    ),
+    "detected in the raw HTML": sanitizeUntrusted(b.html).clean === false,
+    "detected in the stored text":
+      sanitizeUntrusted(asStored(b)).clean === false,
+  }
+  assert.deepEqual(
+    Object.entries(mechanism)
+      .filter(([, ok]) => !ok)
+      .map(([k]) => k),
+    [],
+    "the ordering model this test rests on has changed",
   )
-  assert.equal(
-    sanitizeUntrusted(asStored(b)).clean,
-    false,
-    "and in the stored text",
-  )
-  assert.doesNotMatch(sanitizeUntrusted(asStored(b)).text, INSTRUCTION_SHAPED)
 })
 
 // --- the file the tailoring model reads ------------------------------------
@@ -249,11 +261,13 @@ test("FINDING (w1-security): new-job.mjs copies a hostile TITLE into job.json un
       ],
       { encoding: "utf8" },
     )
-    assert.equal(res.status, 0, res.stderr)
-    const written = fs.readFileSync(
-      path.join(dir, "hostile-co", "job.json"),
-      "utf8",
-    )
+    // FINDING FIRST. Refusing to scaffold at all would be a legitimate fix, so
+    // an `assert.equal(status, 0)` ahead of this would abort on the fix and
+    // report an exit code instead of the leak.
+    const jobFile = path.join(dir, "hostile-co", "job.json")
+    const written = fs.existsSync(jobFile)
+      ? fs.readFileSync(jobFile, "utf8")
+      : ""
     assert.doesNotMatch(
       written,
       INSTRUCTION_SHAPED,
@@ -287,12 +301,20 @@ test("the hostile posting fixtures are the ones this suite claims they are", () 
 
 // --- screening ------------------------------------------------------------
 
-test("FINDING (w1-security): an injection attempt annotates a lead but cannot stop it", () => {
-  // risk.mjs pushes "injection_attempt" to `flags`, never to `reasons`, and
-  // `ok` is computed from reasons alone. On the interactive path that is a
+test("an injection attempt can stop a lead, not merely annotate it", () => {
+  // risk.mjs used to push "injection_attempt" to `flags`, never to `reasons`,
+  // and `ok` is computed from reasons alone. On the interactive path that is a
   // defensible trade-off — a false reject is a job the user never sees. On the
   // AUTO-APPLY path it is not: a posting that tried to rewrite the user's
   // resume must not be applied to unattended. Plan item 1.3, last bullet.
+  //
+  // ORDER IS LOAD-BEARING HERE. The defect assertion is `ok === false` and it
+  // goes FIRST. An earlier version asserted `flags.includes("injection_attempt")`
+  // ahead of it, and w1-security's spec routes a disqualifying finding to
+  // `reasons` XOR `flags` — so the fix would have made this test abort on its
+  // own precondition and the finding would have vanished while looking red for
+  // the wrong reason. Nothing may be asserted before the thing this test exists
+  // to pin.
   const verdict = scoreRisk({
     title: "Full-Stack Engineer",
     company: "Fixture Co",
@@ -300,15 +322,43 @@ test("FINDING (w1-security): an injection attempt annotates a lead but cannot st
     url: "http://127.0.0.1:1/boards.greenhouse.io/x/jobs/1",
     posted_at: new Date().toISOString().slice(0, 10),
   })
-  assert.ok(
-    verdict.flags.includes("injection_attempt"),
-    "the attempt must at least be flagged",
-  )
   assert.equal(
     verdict.ok,
     false,
     "an injection attempt must be able to stop a lead on the auto-apply path; " +
-      `today ok=${verdict.ok} with reasons=${JSON.stringify(verdict.reasons)}`,
+      `got ok=${verdict.ok} reasons=${JSON.stringify(verdict.reasons)} ` +
+      `flags=${JSON.stringify(verdict.flags)}`,
+  )
+  // Only then, the annotation. `risk_signals` is the one channel that carries
+  // the attempt whichever bucket the verdict lands in, so this survives the
+  // reasons/flags split either way.
+  assert.ok(
+    verdict.risk_signals.some((s) => s.startsWith("injection:")),
+    `the attempt must be recorded: ${JSON.stringify(verdict.risk_signals)}`,
+  )
+})
+
+test("CONTROL: a clean posting is not rejected, so the test above is not vacuous", () => {
+  // Without this, "ok === false" could pass because scoreRisk rejects
+  // everything. A false reject is a job the user never sees, which is the
+  // failure mode the whole L1/L2/L3 design is built to avoid.
+  const verdict = scoreRisk({
+    title: "Full-Stack Engineer",
+    company: "Fixture Co",
+    description:
+      "We build web applications with React and Node.js. You will own features " +
+      "end to end and ship to production weekly. 3+ years of experience.",
+    url: "http://127.0.0.1:1/boards.greenhouse.io/x/jobs/2",
+    posted_at: new Date().toISOString().slice(0, 10),
+  })
+  assert.equal(
+    verdict.ok,
+    true,
+    `an honest posting was rejected: ${JSON.stringify(verdict.reasons)}`,
+  )
+  assert.deepEqual(
+    verdict.risk_signals.filter((s) => s.startsWith("injection:")),
+    [],
   )
 })
 

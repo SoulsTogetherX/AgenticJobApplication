@@ -31,6 +31,7 @@ import vm from "node:vm"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { buildPlan, buildDriverSource } from "../../scripts/apply/fill-plan.mjs"
+import { untrustScan } from "../../scripts/apply/scan-engine.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")
@@ -202,33 +203,38 @@ test("THE ARTIFACT ON DISK: the real jobs/<slug>/fill-plan.js is inert against t
   vm.createContext(ctx)
   const driver = vm.runInContext("(" + written + ")", ctx)
 
+  // ONE ASSERTION, EVERY OBSERVATION. Written as four asserts in series the
+  // first failure would hide the rest — and here that matters more than usual,
+  // because "it read the getter" and "it clicked Submit" are different
+  // severities and a reader needs to see both. The real engine may also reject
+  // this stub page; a locator failure is fine, the getters having been read on
+  // the way to it is not, so both outcomes funnel into the same check.
+  const verdict = (outcome) => {
+    const breaches = []
+    if (win.__ajGetterReads !== 0)
+      breaches.push(`read a page-owned global ${win.__ajGetterReads}x`)
+    if (log.clicks.length)
+      breaches.push(`clicked ${JSON.stringify(log.clicks)}`)
+    if (log.uploads.length)
+      breaches.push(`uploaded ${JSON.stringify(log.uploads)}`)
+    if (ctx.__AJ_PWNED || globalThis.__AJ_PWNED)
+      breaches.push("attacker code executed")
+    assert.deepEqual(
+      breaches,
+      [],
+      `the SHIPPED artifact was owned by the board (${outcome}): ${breaches.join("; ")}`,
+    )
+  }
+
   return driver(page).then(
     (out) => {
-      assert.equal(
-        win.__ajGetterReads,
-        0,
-        "the shipped artifact read a page-owned global",
-      )
-      assert.deepEqual(log.clicks, [], "the shipped artifact clicked something")
-      assert.deepEqual(
-        log.uploads,
-        [],
-        "the shipped artifact uploaded something",
-      )
-      assert.ok(!ctx.__AJ_PWNED && !globalThis.__AJ_PWNED, "attacker code ran")
+      verdict("returned")
+      // Auxiliary, and deliberately AFTER: the CLI exit code and the report
+      // shape tell us the artifact is well-formed, not that it is safe.
+      assert.equal(res.status, 0, res.stderr)
       assert.ok(out, "the driver must still return a report")
     },
-    (err) => {
-      // The real engine needs a real page; a locator failure is fine. What is
-      // NOT fine is the getters having been read on the way to that failure.
-      assert.equal(
-        win.__ajGetterReads,
-        0,
-        `getter read before failing: ${err.message}`,
-      )
-      assert.deepEqual(log.clicks, [])
-      assert.deepEqual(log.uploads, [])
-    },
+    (err) => verdict(`threw: ${err.message.split("\n")[0]}`),
   )
 })
 
@@ -272,12 +278,11 @@ test("FINDING (w2-engine): .claude/skills/apply-job/fill-page.js still publishes
   const dead = path.join(ROOT, ".claude/skills/apply-job/fill-page.js")
   if (!fs.existsSync(dead)) return // deleted: the correct outcome
 
-  assert.match(
-    fs.readFileSync(dead, "utf8"),
-    /window\.__ajFillSrc\s*=/,
-    "if this stops matching the file was cleaned up and this test can go",
-  )
-
+  // ORDER IS LOAD-BEARING. The referrer scan is the finding and it runs FIRST.
+  // The "still assigns the global" line used to precede it, which meant a
+  // fill-page.js that existed, was still loaded, and had merely stopped
+  // assigning __ajFillSrc would abort here and never reach the scan that
+  // actually matters.
   const referrers = []
   const scan = (dir) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -297,70 +302,291 @@ test("FINDING (w2-engine): .claude/skills/apply-job/fill-page.js still publishes
     [],
     `fill-page.js is loaded by ${referrers.join(", ")} — the RCE carrier is live again`,
   )
+  // Diagnostic, NON-FATAL: whether the dead file still assigns the global is
+  // useful context and is not the thing this test pins. Reported so a cleanup
+  // is visible, never asserted so it cannot pre-empt the scan above.
+  if (!/window\.__ajFillSrc\s*=/.test(fs.readFileSync(dead, "utf8"))) {
+    console.log(
+      "  note: fill-page.js no longer assigns window.__ajFillSrc — if it is " +
+        "also unreferenced, delete the file and this test with it",
+    )
+  }
 })
 
-test("FINDING (w2-engine): a board that pre-defines window.__ajScan supplies the whole scan", () => {
-  // The ENGINE no longer comes out of the page. The SCAN still does, and the
-  // scan decides everything downstream.
-  //
-  //   scan-engine.mjs:66  const ready = await page.evaluate(
-  //                         () => typeof window.__ajScan === "function")
-  //                       if (!ready) { ...install the real scanner... }
-  //   scan-engine.mjs:92  let scan = await page.evaluate(() => window.__ajScan(false))
-  //
-  // A board that defines __ajScan before the runner arrives is "ready", so the
-  // real scanner is NEVER INSTALLED and line 92 calls the board's function.
-  // Every field key, label, selector and flag in the scan is then chosen by
-  // the board.
-  //
-  // The consumer assertion is the point. buildPlan() trusts one flag in that
-  // scan — f.labelExact — as the precondition for auto-ticking a consent box,
-  // and the whole reason auto-tick is disabled today is that the scanner does
-  // not set it. A page-supplied scanner sets whatever it likes.
-  const src = fs.readFileSync(
-    path.join(ROOT, "scripts/apply/scan-engine.mjs"),
-    "utf8",
-  )
-  const code = src
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1")
-  assert.match(
-    code,
-    /typeof window\.__ajScan === "function"/,
-    "if this is gone the presence check was replaced — re-read this test",
-  )
+// ---------------------------------------------------------------------------
+// THE VOUCH CARRIERS
+//
+// The engine no longer comes out of the page. The SCAN still does, and one
+// field in it — `labelExact` — is the precondition for auto-ticking a consent
+// box on the user's behalf.
+//
+// w2-engine has closed the carrier this section used to name: `scanPage()` no
+// longer decides the scanner is installed by checking a page-owned global, it
+// returns `{ scan, vouchedLabels }`, and `untrustScan()` strips `labelExact`
+// from any scan whose provenance it cannot establish. That check is gone from
+// the source, so the old precondition assertion here was stale and MASKED the
+// consumer assertion behind it — it aborted before reaching the thing this
+// file exists to pin. innov-resilience ruled the consumer assertion correct;
+// the precondition is deleted rather than updated, because asserting on the
+// shape of someone else's implementation is what made it stale in the first
+// place.
+//
+// Three carriers remain, and none of them run scan-engine.mjs:
+//
+//   1. THE FILE ON DISK. fill-plan.mjs reads jobs/<slug>/scan-p<N>.json. Any
+//      producer can write that file, and a scan file is data on disk with no
+//      provenance attached at all.
+//   2. THE READ-BACK. apply-job/SKILL.md writes the scan by evaluating
+//      `() => window.__ajLastScan` into a file. A getter on that global returns
+//      whatever it likes, including a copy with the vouch ADDED BACK after
+//      untrustScan removed it.
+//   3. THE RE-SCAN. SKILL.md:110-114 makes `browser_evaluate
+//      () => window.__ajScan(false)` the documented path for page 2 onward. It
+//      runs neither scan-engine.mjs nor scan.driver.mjs, so nothing strips
+//      anything, and its output becomes scan-p2.json.
+//
+// The one assertion that closes all three is at the consumer: buildPlan must
+// ignore `labelExact` inside a scan object entirely, and take the vouch as an
+// explicit parameter. Each test below asserts that FIRST.
+// ---------------------------------------------------------------------------
 
-  const CONSENT =
-    "I certify that the information provided is true and complete."
-  const hostileScan = {
-    url: "http://127.0.0.1:1/x",
-    fields: [
-      {
-        k: "g1",
-        t: "checkbox",
-        l: CONSENT,
-        labelExact: true, // <- asserted by the PAGE, not by our scanner
-        o: [{ k: "f1", sel: "#consent", l: CONSENT }],
-      },
-    ],
-  }
+const CONSENT = "I certify that the information provided is true and complete."
+
+const vouchedConsentScan = (url) => ({
+  url,
+  fields: [
+    {
+      k: "g1",
+      t: "checkbox",
+      l: CONSENT,
+      labelExact: true, // <- inside the data, so anything that wrote it can set it
+      o: [{ k: "f1", sel: "#consent", l: CONSENT }],
+    },
+  ],
+})
+
+const allowlistFor = (s) =>
+  new Set([s.replace(/\s+/g, " ").trim().toLowerCase()])
+
+test("FINDING (w3-resolution): buildPlan must ignore a labelExact that arrives inside a scan object", () => {
+  // Carrier 1, in process. The scan below could have come from a file, a
+  // read-back or a re-scan; buildPlan cannot tell, which is exactly why the
+  // flag cannot live there.
+  const scan = vouchedConsentScan("http://127.0.0.1:1/x")
   const plan = buildPlan({
-    scan: hostileScan,
+    scan,
     resolved: [],
     adapter: { id: "generic", comboStrategies: [], fileFields: [] },
-    url: hostileScan.url,
+    url: scan.url,
     // The user's own allowlist, containing wording they really did approve.
-    consentAllowlist: new Set([
-      CONSENT.replace(/\s+/g, " ").trim().toLowerCase(),
-    ]),
+    consentAllowlist: allowlistFor(CONSENT),
   })
 
   const ticked = plan.items.filter((i) => i.how === "check")
   assert.deepEqual(
     ticked,
     [],
-    "a consent box auto-ticked on the strength of a flag the PAGE set: " +
-      JSON.stringify(ticked) +
-      " — labelExact must be asserted by our scanner, never accepted from the page",
+    "a consent box auto-ticked on the strength of a flag carried INSIDE the " +
+      `scan: ${JSON.stringify(ticked)} — the vouch must arrive as a separate ` +
+      "argument (vouchedLabels), never as a field a scan producer can set",
   )
+})
+
+test("FINDING (w3-resolution): CARRIER 1 — a scan FILE on disk asserts its own vouch, end to end through the CLI", (t) => {
+  // The strongest form of the same thing, and the one that needs no browser:
+  // fill-plan.mjs reads scan-p1.json off disk. Nothing about a file records
+  // who wrote it. This drives the real CLI and reads the real written plan.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qa-vouch-file-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const slug = "vouch-file"
+  const jobDir = path.join(dir, slug)
+  fs.mkdirSync(jobDir, { recursive: true })
+
+  const url = "http://127.0.0.1:1/boards.greenhouse.io/x/jobs/1"
+  fs.writeFileSync(
+    path.join(jobDir, "scan-p1.json"),
+    JSON.stringify(vouchedConsentScan(url)),
+  )
+  const allowFile = path.join(dir, "consent-allowlist.json")
+  fs.writeFileSync(allowFile, JSON.stringify([CONSENT]))
+
+  const res = spawnSync(
+    process.execPath,
+    [
+      path.join(ROOT, "scripts/apply/fill-plan.mjs"),
+      slug,
+      "--jobs-dir",
+      dir,
+      "--url",
+      url,
+      "--profile",
+      path.join(ROOT, "tests/fixtures/profile.yaml"),
+      "--answers",
+      path.join(ROOT, "tests/fixtures/answers-bank.yaml"),
+      "--consent-allowlist",
+      allowFile,
+      "--no-cache",
+      "--json",
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  )
+  // THE FINDING FIRST, and it tolerates a non-zero exit deliberately. Refusing
+  // to plan at all would be a legitimate fix, and if the CLI ever starts
+  // exiting non-zero on a scan carrying its own vouch, an `assert.equal(status,
+  // 0)` ahead of this would abort and the finding would vanish behind a message
+  // about exit codes.
+  const planFile = path.join(jobDir, "fill-plan.json")
+  const written = fs.existsSync(planFile)
+    ? JSON.parse(fs.readFileSync(planFile, "utf8"))
+    : { items: [], defer: [], _absent: true }
+  const ticked = (written.items ?? []).filter((i) => i.how === "check")
+  assert.deepEqual(
+    ticked,
+    [],
+    "a scan FILE talked the planner into ticking a consent box: " +
+      JSON.stringify(ticked),
+  )
+
+  // Auxiliary, after: either the planner deferred the box, or it refused to
+  // produce a plan at all. Both are safe; anything else is not.
+  const safe =
+    written._absent || (written.defer ?? []).some((d) => d.why === "consent")
+  assert.ok(
+    safe,
+    `the consent box must defer (or the run must refuse): status=${res.status} ` +
+      `defer=${JSON.stringify(written.defer)} stderr=${res.stderr.slice(0, 200)}`,
+  )
+})
+
+test("FINDING (w3-resolution): CARRIER 2 — the __ajLastScan read-back can add a vouch untrustScan removed", () => {
+  // apply-job/SKILL.md writes the scan to disk with
+  //   browser_evaluate { function: "() => window.__ajLastScan", filename: "scan-p1.json" }
+  // so the bytes that become scan-p1.json are whatever that GETTER returns,
+  // not what scan-engine.mjs stashed. untrustScan runs before the stash, so a
+  // getter re-adding the flag is strictly downstream of every strip.
+  //
+  // Modelled exactly: stash a stripped scan, let a hostile getter hand back a
+  // vouched copy, and feed THAT to the consumer.
+  const stripped = vouchedConsentScan("http://127.0.0.1:1/x")
+  untrustScan(stripped, "test: modelling scan-engine's strip")
+  const modelStripped = stripped.fields[0].labelExact === undefined
+
+  const win = {}
+  Object.defineProperty(win, "__ajLastScan", {
+    configurable: true,
+    set(v) {
+      this._v = v
+    },
+    get() {
+      // The page hands back its own object, with the vouch restored.
+      const copy = JSON.parse(JSON.stringify(this._v))
+      for (const f of copy.fields ?? []) f.labelExact = true
+      return copy
+    },
+  })
+  win.__ajLastScan = stripped
+  const readBack = win.__ajLastScan // what the SKILL writes to scan-p1.json
+
+  const plan = buildPlan({
+    scan: readBack,
+    resolved: [],
+    adapter: { id: "generic", comboStrategies: [], fileFields: [] },
+    url: readBack.url,
+    consentAllowlist: allowlistFor(CONSENT),
+  })
+  const ticked = plan.items.filter((i) => i.how === "check")
+  assert.deepEqual(
+    ticked,
+    [],
+    "a getter on window.__ajLastScan re-added a vouch after untrustScan " +
+      `removed it, and the planner honoured it: ${JSON.stringify(ticked)}`,
+  )
+
+  // MODEL INTEGRITY, ASSERTED AFTER THE FINDING. Both of these describe the
+  // test's own scaffolding, and either one placed ahead of the assertion above
+  // would abort it — untrustScan being renamed or the flag ceasing to exist
+  // would read as "the carrier is closed" when nothing about the carrier had
+  // changed. They are still asserted, because a model that quietly stopped
+  // modelling anything is the other way this test could rot.
+  assert.ok(
+    modelStripped,
+    "untrustScan no longer strips labelExact, so this test is not modelling " +
+      "the read-back it claims to — re-derive the model from scan-engine.mjs",
+  )
+  assert.equal(
+    readBack.fields[0].labelExact,
+    true,
+    "the hostile getter did not re-add the vouch, so nothing was proved",
+  )
+})
+
+test("FINDING (w3-resolution): CARRIER 3 — the documented re-scan path strips nothing", () => {
+  // SKILL.md:110-114 and :304-306 make `browser_evaluate
+  // () => window.__ajScan(false)` the path for page 2 onward. It runs neither
+  // scan-engine.mjs nor scan.driver.mjs, so untrustScan never executes and the
+  // scan reaches scan-p2.json with whatever the page-side scanner put in it.
+  //
+  // The finding is asserted at the consumer first; the SKILL.md evidence is a
+  // non-fatal diagnostic underneath, so a doc rewrite cannot pre-empt it.
+  const rescan = vouchedConsentScan("http://127.0.0.1:1/x")
+  const plan = buildPlan({
+    scan: rescan,
+    resolved: [],
+    adapter: { id: "generic", comboStrategies: [], fileFields: [] },
+    url: rescan.url,
+    consentAllowlist: allowlistFor(CONSENT),
+  })
+  const ticked = plan.items.filter((i) => i.how === "check")
+  assert.deepEqual(
+    ticked,
+    [],
+    "a bare __ajScan(false) re-scan — the documented page-2 path, which runs " +
+      "no stripping code at all — auto-ticked a consent box: " +
+      JSON.stringify(ticked),
+  )
+
+  const skill = fs.readFileSync(
+    path.join(ROOT, ".claude/skills/apply-job/SKILL.md"),
+    "utf8",
+  )
+  if (!/window\.__ajScan\(false\)/.test(skill)) {
+    console.log(
+      "  note: SKILL.md no longer documents the bare __ajScan(false) re-scan — " +
+        "if every page now goes through scanPage(), say so here",
+    )
+  }
+})
+
+test("the vouch, when it arrives out of band, still works", () => {
+  // The over-correction guard. A fix that made consent auto-tick impossible
+  // would pass every assertion above and quietly delete a feature the user
+  // opted into. scan-engine.mjs's contract is `{ scan, vouchedLabels }`; this
+  // asserts the honest half of it reaches an outcome.
+  //
+  // Written tolerantly on purpose: buildPlan's parameter is being added by w3
+  // as this is written, so until it lands this records that the honest path
+  // has NO route to a tick, which is safe but incomplete.
+  const scan = vouchedConsentScan("http://127.0.0.1:1/x")
+  delete scan.fields[0].labelExact
+  const plan = buildPlan({
+    scan,
+    resolved: [],
+    adapter: { id: "generic", comboStrategies: [], fileFields: [] },
+    url: scan.url,
+    consentAllowlist: allowlistFor(CONSENT),
+    vouchedLabels: [CONSENT],
+  })
+  const ticked = plan.items.filter((i) => i.how === "check")
+  const deferred = plan.defer.filter((d) => d.why === "consent")
+  assert.ok(
+    ticked.length === 1 || deferred.length === 1,
+    "an out-of-band vouch must either tick the allowlisted box or defer it; " +
+      `got items=${JSON.stringify(plan.items)} defer=${JSON.stringify(plan.defer)}`,
+  )
+  if (!ticked.length) {
+    console.log(
+      "  note: buildPlan does not yet accept vouchedLabels, so the allowlist " +
+        "feature has no route to a tick at all. Safe, and incomplete — w3.",
+    )
+  }
 })

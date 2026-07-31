@@ -106,13 +106,16 @@ test("the title-poisoning fixture is a normal-looking posting, not an obvious at
 
 test("a poisoned TITLE cannot whitelist a claim through R6", () => {
   const job = path.join(HOSTILE, "postings/title-poisoning.json")
+  // Both security assertions first; the exit-code convention is a
+  // characterisation and goes last, so a change to how verify-claims reports
+  // cannot abort the test before the R6 violation is checked.
   const r = verify(RESUME_CLAIMING("Kubernetes"), { job })
   assert.equal(r.ok, false, "a resume claiming Kubernetes must not verify")
-  assert.equal(r.status, 1)
   assert.ok(
     r.r6.some((d) => /Kubernetes/.test(d)),
     `expected an R6 violation naming Kubernetes, got ${JSON.stringify(r.r6)}`,
   )
+  assert.equal(r.status, 1, "a violation must exit non-zero")
 })
 
 test("the poisoned title is inert for EVERY technology it names", () => {

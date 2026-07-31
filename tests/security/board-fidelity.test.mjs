@@ -250,6 +250,30 @@ test("the consent decoupling is real: the matched string and the shown string di
   assert.doesNotMatch(aria[1], /arbitration|jury/)
 })
 
+test("the color:transparent consent trait is present, even on a leg with no browser", () => {
+  // tests/security/browser-vouch.test.mjs asserts the BEHAVIOUR and skips when
+  // there is no browser. This asserts the FIXTURE, unconditionally, so a
+  // deleted or reformatted trait is caught on every leg rather than hiding
+  // behind three loud skips.
+  const html = pages["hostile-consent"]
+  const flat = txt(html, 1e9)
+  assert.match(
+    flat,
+    /for="consent-transparent" style="color: transparent"/,
+    "the transparent-label carrier must be on the page",
+  )
+  assert.equal(
+    labelFor(html, "consent-transparent"),
+    "I certify that the information in this application is accurate.",
+    "the vouched string must be exactly the wording a user would allowlist",
+  )
+  const shown = flat.match(/id="consent-transparent-visible" ?>([^<]*)</)
+  assert.ok(shown, "and the sentence the human actually reads must be present")
+  assert.match(shown[1], /binding arbitration/)
+  // The two must differ, or there is no decoupling to detect.
+  assert.notEqual(labelFor(html, "consent-transparent"), shown[1].trim())
+})
+
 test("the destructive combobox fixture keeps one GENUINE dropdown", () => {
   // A fix that stops probing every combobox is visibly wrong: the country
   // picker still has to be probed or every form defers its dropdowns.

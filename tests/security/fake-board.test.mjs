@@ -89,22 +89,77 @@ test("FINDING (w2-engine): detectAts matches a substring of the WHOLE URL, so an
   // Not a high-severity hole on its own (an adapter contributes knowledge, not
   // behaviour), but it is a third party choosing a code path, and it is
   // recorded here rather than left as folklore.
+  // FIVE INDEPENDENT SPOOFS, EVALUATED TOGETHER. Written as five assert.equal
+  // calls in series — which is what this was — fixing the first would abort the
+  // test and hide the other four, and a reader would believe the class was
+  // closed when one instance was.
+  //
+  // This one is a CHARACTERISATION test and says so: it pins the complete
+  // current surface rather than a wanted behaviour, because the fake board
+  // itself depends on this property (see the note in server.mjs — a loopback
+  // fixture can only select a real adapter by carrying the host token in its
+  // path). A partial fix therefore goes red and NAMES which spoofs changed,
+  // which is the prompt to finish the job and re-cut the fixture URLs. A test
+  // that quietly kept passing through a partial fix would be the masking this
+  // is here to remove.
+  // BASELINE re-measured 2026-07-31 after w2-engine narrowed HANDOFF to match
+  // the URL's HOSTNAME. Both Workday spoofs are now dead; the three adapter
+  // spoofs remain, because ADAPTERS still match the whole URL — which is what
+  // lets this fake board select a real adapter from 127.0.0.1 at all.
+  //
+  // This test caught that change and named it, which is the point of writing
+  // it as one set comparison instead of five serial asserts.
+  const spoofs = [
+    ["https://evil.example/apply?ref=boards.greenhouse.io", "greenhouse"],
+    ["https://evil.example/jobs.lever.co/apply", "lever"],
+    ["https://evil.example/#jobs.ashbyhq.com", "ashby"],
+    // Dead since the HANDOFF narrowing. Kept so a regression is visible.
+    ["https://evil.example/x?q=myworkdayjobs.com", "workday"],
+    ["https://boards.greenhouse.io/x/jobs/1?utm=myworkdayjobs.com", "workday"],
+  ]
+  const EXPECTED_WORKING = [
+    "greenhouse <- https://evil.example/apply?ref=boards.greenhouse.io",
+    "lever <- https://evil.example/jobs.lever.co/apply",
+    "ashby <- https://evil.example/#jobs.ashbyhq.com",
+  ]
+  const working = spoofs
+    .filter(([url, impersonated]) => detectAts(url).id === impersonated)
+    .map(([url, impersonated]) => `${impersonated} <- ${url}`)
+
+  assert.deepEqual(
+    working,
+    EXPECTED_WORKING,
+    "the set of working ATS impersonations changed. If a HANDOFF spoof came " +
+      "back, that is a regression. If an ADAPTER spoof was fixed, " +
+      "tests/fixtures/boards/server.mjs must stop putting the host token in " +
+      "its route paths and the fixtures must select adapters another way",
+  )
+})
+
+test("FINDING (w2-engine): a hostile board can force a Workday hand-off on a REAL posting", () => {
+  // The one spoof above with a consequence, split out so it can be fixed
+  // WITHOUT the fake board having to change: HANDOFF is checked before every
+  // adapter, and it matches a substring of the whole URL. So any board — or
+  // any tracking parameter appended to a genuine Greenhouse link — makes the
+  // pipeline refuse to apply and tell the user to go do it themselves.
+  //
+  // Fail-safe rather than fail-dangerous, which is why it is one finding and
+  // not five. It is still a third party deciding that an application does not
+  // happen, and on the unattended path that is a silent denial of service
+  // against the user's own job search.
+  //
+  // Narrow fix that does not touch adapter selection: match HANDOFF against
+  // the URL's HOSTNAME only. The fake board's routes carry no Workday token,
+  // so nothing here has to move.
+  const real = detectAts(
+    "https://boards.greenhouse.io/fixtureco/jobs/1?utm_source=myworkdayjobs.com",
+  )
   assert.equal(
-    detectAts("https://evil.example/apply?ref=boards.greenhouse.io").id,
+    real.id,
     "greenhouse",
+    `a query parameter turned a Greenhouse posting into a ${real.id} hand-off` +
+      (real.handoff ? " — the pipeline will refuse to apply" : ""),
   )
-  assert.equal(
-    detectAts("https://evil.example/jobs.lever.co/apply").id,
-    "lever",
-  )
-  assert.equal(detectAts("https://evil.example/#jobs.ashbyhq.com").id, "ashby")
-  // Worse: the handoff list is checked FIRST, so any board can make the
-  // pipeline refuse to apply by naming Workday in a query string.
-  const spoofed = detectAts(
-    "https://boards.greenhouse.io/x/jobs/1?utm=myworkdayjobs.com",
-  )
-  assert.equal(spoofed.id, "workday")
-  assert.equal(spoofed.handoff, true)
 })
 
 test("same URL, same bytes", async () => {

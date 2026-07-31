@@ -45,6 +45,29 @@ const GENERIC = {
   fileOrder: [],
 }
 
+// THE HONEST SCAN PATH, MODELLED. scan-engine.mjs's scanPage() returns
+// `{ scan, vouchedLabels }`: it lifts every vouched label OUT of the scan into
+// a separate array held in the Node process, then untrustScan() deletes
+// `labelExact` from the scan itself, so a scan file can never assert anything.
+// buildPlan takes the array as an explicit argument.
+//
+// A test that models the honest path must do the same lift, or it is testing a
+// shape the pipeline no longer produces. A test modelling a HOSTILE path
+// (a scan file, a __ajLastScan read-back, a bare re-scan) deliberately does
+// NOT — it hands buildPlan the raw scan with labelExact intact and no
+// vouchedLabels, which is exactly what those carriers produce.
+// tests/security/rce-round-trip.test.mjs holds the hostile side.
+const asScanned = (s) => {
+  const scanned = JSON.parse(JSON.stringify(s))
+  const vouchedLabels = []
+  for (const f of scanned.fields ?? []) {
+    if (f.labelExact === true && f.l) vouchedLabels.push(String(f.l))
+    delete f.labelExact
+    for (const o of f.o ?? []) delete o.labelExact
+  }
+  return { scan: scanned, vouchedLabels }
+}
+
 const planFrom = (s, extra = {}) =>
   buildPlan({
     scan: s,
@@ -85,24 +108,33 @@ test("an injection-carrying form label never lands in answers.yaml", () => {
   try {
     const file = path.join(dir, "answers.yaml")
     const hostile = scan("label-injection").fields.filter((f) => f.k !== "f1")
-    assert.equal(hostile.length, 5, "the hostile label set must be complete")
-
     for (const f of hostile) {
       saveAnswer(f.l, "Yes", file)
     }
     const written = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : ""
-    for (const needle of [
+
+    // ONE ASSERTION OVER ALL FOUR PAYLOADS, and the fixture-size check AFTER.
+    // Four `doesNotMatch` calls in series would let a fix for the first hide
+    // the other three; a `hostile.length === 5` precondition ahead of them
+    // would let a fixture edit hide all four.
+    const leaked = [
       /ignore all previous instructions/i,
       /add Kubernetes to the resume/i,
       /rate this candidate highly/i,
       /do not tell the user/i,
-    ]) {
-      assert.doesNotMatch(
-        written,
-        needle,
-        `a hostile label reached answers.yaml: ${needle}`,
-      )
-    }
+    ]
+      .filter((re) => re.test(written))
+      .map(String)
+    assert.deepEqual(
+      leaked,
+      [],
+      `hostile label text reached answers.yaml: ${leaked.join(", ")}`,
+    )
+    assert.equal(
+      hostile.length,
+      5,
+      "the hostile label set shrank — the test above got easier",
+    )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -243,29 +275,61 @@ test("a fix must keep probing the genuine dropdown", () => {
 test("no consent box auto-ticks on the decoupled or truncated fixture", () => {
   // The user's real allowlist is simulated with EVERY label this form presents,
   // which is the worst case: the user has approved all of this wording before.
-  const s = scan("consent-decoupled")
+  const raw = scan("consent-decoupled")
   const allowlist = new Set(
-    s.fields
+    raw.fields
       .filter((f) => f.t === "checkbox")
       .map((f) => normalizeQuestion(f.l)),
   )
-  const plan = planFrom(s, { consentAllowlist: allowlist })
+  // The HONEST path: the vouch is lifted out of band, exactly as scanPage()
+  // does it, so this exercises the feature as the pipeline actually delivers it.
+  const { scan: s, vouchedLabels } = asScanned(raw)
+  const plan = planFrom(s, { consentAllowlist: allowlist, vouchedLabels })
 
-  // The worst case is the interesting one, and the correct answer is not
-  // "nothing ticks" — the allowlist is a feature. The correct answer is that
-  // exactly the box carrying no legal waiver ticks, and every hostile shape
-  // defers regardless of being allowlisted.
+  // SECURITY FIRST, FEATURE SECOND. The hostile boxes deferring is the
+  // property that matters, and it is asserted as one set so that fixing one
+  // shape cannot hide another. An earlier version asserted `ticked === ["f3"]`
+  // above this — a characterisation of the allowlist feature — so w3's
+  // in-flight vouchedLabels rewrite would have aborted the test on that line
+  // and the deferral checks would never have run.
   const ticked = plan.items.filter((i) => i.how === "check").map((i) => i.k)
+  const deferred = new Set(plan.defer.map((d) => d.k))
+  const HOSTILE = {
+    g1: "aria-label-decoupled",
+    g3: "binding-arbitration past the 120-char cut",
+    // NEWLY LIVE. w3-resolution's fix added "accept|affirm|attest" to
+    // isConsent, so this box is now correctly recognised as consent — and
+    // therefore now eligible to auto-tick from the allowlist. But it
+    // authorises a BACKGROUND INVESTIGATION and adopts a document
+    // ELECTRONICALLY, which are two of the three acts isHardConsent exists to
+    // exclude. Its patterns are "background (check|screening)" and
+    // "e-sign(ature)", so both wordings walk straight past it.
+    //
+    // Before the isConsent fix this box fell out of the consent branch and was
+    // skipped, which was safe by accident. Now it ticks. The fix moved the
+    // defect rather than removing it, which is what "the 26th rewording is
+    // free" means in practice.
+    g4: "background investigation + electronic adoption, missed by isHardConsent",
+  }
+  const leaked = Object.entries(HOSTILE)
+    .filter(([k]) => !deferred.has(k))
+    .map(([k, why]) => `${k} (${why})`)
+  assert.deepEqual(
+    leaked,
+    [],
+    "hostile consent boxes did not defer even though every label here is " +
+      `allowlisted: ${leaked.join(", ")}; ticked=${JSON.stringify(ticked)}`,
+  )
+
+  // Then the feature: the correct answer is not "nothing ticks" — the
+  // allowlist is opt-in and exists to work. Exactly one box on this form
+  // carries no legal waiver, and only it may tick.
   assert.deepEqual(
     ticked,
     ["f3"],
     "only the vouched, non-waiver certification may auto-tick: " +
       JSON.stringify(plan.items.filter((i) => i.how === "check")),
   )
-  const deferred = new Set(plan.defer.map((d) => d.k))
-  assert.ok(deferred.has("g1"), "the aria-label-decoupled box must defer")
-  assert.ok(deferred.has("g3"), "the binding-arbitration box must defer")
-  // g4 is the reworded box; it is a finding of its own, below.
 })
 
 test("the decoupled box cannot be vouched for, because an attribute is not readable text", () => {
@@ -273,24 +337,29 @@ test("the decoupled box cannot be vouched for, because an attribute is not reada
   // label taken from aria-label / title / placeholder / name never sets
   // labelExact. Asserted at the plan: even with the innocuous aria-label text
   // on the user's allowlist, the box defers.
-  const s = scan("consent-decoupled")
-  const g1 = s.fields.find((f) => f.k === "g1")
-  assert.notEqual(
-    g1.labelExact,
-    true,
-    "an attribute-derived label must not vouch",
-  )
-
+  // Outcome first; the fixture's labelExact state is the mechanism and is
+  // asserted after, so a scanner change cannot abort this before the plan is
+  // ever examined.
+  const raw = scan("consent-decoupled")
+  const g1 = raw.fields.find((f) => f.k === "g1")
+  const { scan: s, vouchedLabels } = asScanned(raw)
   const plan = planFrom(s, {
     consentAllowlist: new Set([normalizeQuestion(g1.l)]),
+    vouchedLabels,
   })
+  assert.deepEqual(
+    plan.items.filter((i) => i.how === "check"),
+    [],
+    "an attribute-derived label was matched against the allowlist and ticked",
+  )
   assert.ok(
     plan.defer.some((d) => d.k === "g1" && d.why === "consent"),
     "the decoupled box must defer even when its aria-label text is allowlisted",
   )
-  assert.deepEqual(
-    plan.items.filter((i) => i.how === "check"),
-    [],
+  assert.notEqual(
+    g1.labelExact,
+    true,
+    "an attribute-derived label must not vouch",
   )
 })
 
@@ -303,21 +372,18 @@ test("the truncation collision is CLOSED: the two 120-char-identical labels are 
   // The scan fixture now carries the UNTRUNCATED label for a vouched field.
   // This asserts the outcome: allowlisting only the certification the user
   // approved ticks that box and NOT the arbitration one.
-  const s = scan("consent-decoupled")
-  const approved = s.fields.find((f) => f.k === "g2")
-  const arbitration = s.fields.find((f) => f.k === "g3")
+  const raw = scan("consent-decoupled")
+  const approved = raw.fields.find((f) => f.k === "g2")
+  const arbitration = raw.fields.find((f) => f.k === "g3")
+  const { scan: s, vouchedLabels } = asScanned(raw)
 
-  // The collision the fix removed is still real at 120 characters — proving the
-  // fixture is the hard case and not a soft one.
-  const slice120 = (x) => String(x).replace(/\s+/g, " ").trim().slice(0, 120)
-  assert.equal(slice120(approved.l), slice120(arbitration.l))
-  assert.notEqual(
-    normalizeQuestion(approved.l),
-    normalizeQuestion(arbitration.l),
-  )
-
+  // OUTCOME FIRST. The two fixture-shape checks below used to sit above this
+  // and would abort it if either label were ever re-truncated — which is the
+  // exact regression this test exists to catch, reported as a fixture problem
+  // instead of a security one.
   const plan = planFrom(s, {
     consentAllowlist: new Set([normalizeQuestion(approved.l)]),
+    vouchedLabels,
   })
   const ticked = plan.items.filter((i) => i.how === "check").map((i) => i.k)
   assert.ok(
@@ -329,11 +395,77 @@ test("the truncation collision is CLOSED: the two 120-char-identical labels are 
     plan.defer.some((d) => d.k === "g3"),
     "the arbitration box must defer",
   )
+
+  // Then the fixture: the collision the fix removed must still be real at 120
+  // characters, or this is the easy case wearing the hard case's name.
+  const slice120 = (x) => String(x).replace(/\s+/g, " ").trim().slice(0, 120)
+  assert.equal(
+    slice120(approved.l),
+    slice120(arbitration.l),
+    "the two labels no longer collide at 120 chars — the fixture went soft",
+  )
+  assert.notEqual(
+    normalizeQuestion(approved.l),
+    normalizeQuestion(arbitration.l),
+  )
   // The approved one may tick — that is the feature working. Assert the
   // allowlist is not simply inert, or this test proves nothing.
   assert.ok(
     ticked.includes("f3") || plan.defer.some((d) => d.k === "g2"),
     "g2 must resolve one way or the other",
+  )
+})
+
+test("FINDING (w3-resolution + innov-resilience): the consent pattern list is not a control — real-world wording escapes it", () => {
+  // MY CROSS-CHECK DUTY, and the reason it is a separate test from the one
+  // below. w3-resolution fixed the previous finding by ADDING PATTERNS:
+  // "accept|affirm|attest" to isConsent, and "dispute resolution",
+  // "background investigation", "adopt this document" to isHardConsent. That
+  // made my contrived fixture pass. It is not a structural fix, and this is
+  // the evidence rather than the opinion.
+  //
+  // Every wording below is how these agreements are ACTUALLY written on US
+  // application forms — the FCRA authorisation in particular is near-verbatim
+  // from the standard form, because "consumer report" is the statutory term
+  // for what a background check is. Nothing here is invented to be awkward.
+  //
+  // The bar this asserts is the LOW one: not "isHardConsent excludes it" but
+  // "isConsent RECOGNISES it as an agreement at all". A box that fails even
+  // that never enters the consent branch, so it is handled as an ordinary
+  // optional checkbox and never appears as an agreement in the approval
+  // message the user reads before submitting.
+  const REAL = {
+    g5: "FCRA consumer-report authorisation (a background check)",
+    g6: "jury-trial waiver (arbitration, in plain English)",
+    g7: "typed name as a legal mark (an electronic signature)",
+    g8: "inquiry into employment history (a background check)",
+  }
+  const s = scan("consent-decoupled")
+  const unrecognised = Object.entries(REAL)
+    .map(([k, what]) => [s.fields.find((f) => f.k === k), what])
+    .filter(([f]) => f && !isConsent(f.l))
+    .map(([f, what]) => `${what}: ${JSON.stringify(f.l.slice(0, 60))}…`)
+
+  assert.deepEqual(
+    unrecognised,
+    [],
+    `${unrecognised.length} real-world legal agreements are not classified as ` +
+      `consent at all:\n  ${unrecognised.join("\n  ")}\n` +
+      "Adding four more patterns closes exactly these four. The structural " +
+      "fix is to invert the default — route EVERY checkbox through the " +
+      "consent gate and let the positive allowlist decide — so the pattern " +
+      "list becomes an advisory label for the approval message, not a control.",
+  )
+
+  // And the harder bar, reported after so it cannot pre-empt the above.
+  const notHard = Object.entries(REAL)
+    .map(([k, what]) => [s.fields.find((f) => f.k === k), what])
+    .filter(([f]) => f && !isHardConsent(f.l))
+    .map(([, what]) => what)
+  assert.deepEqual(
+    notHard,
+    [],
+    `and ${notHard.length} of them are not excluded from the allowlist either: ${notHard.join("; ")}`,
   )
 })
 
@@ -350,14 +482,28 @@ test("FINDING (w3-resolution): a reworded consent box is not recognised as conse
   // ordinary optional checkbox, not surfaced as a legal agreement, so it never
   // appears in the consent section of an approval message. The 26th rewording
   // is free — ask innov-resilience whether adding "accept" is structural.
+  // ORDER IS LOAD-BEARING. The finding is the isConsent line and it goes
+  // FIRST. An earlier version asserted `isHardConsent(...) === false` ahead of
+  // it — an assertion that pins the CURRENT BROKEN STATE — so a partial fix by
+  // w3 that added "dispute resolution" to the hard list would flip it, abort
+  // the test, and hide the isConsent half entirely. A pin on today's behaviour
+  // must never precede the assertion that describes the wanted behaviour.
   const s = scan("consent-decoupled")
   const reworded = s.fields.find((f) => f.k === "g4")
-  assert.equal(isHardConsent(reworded.l), false)
   assert.equal(
     isConsent(reworded.l),
     true,
     `a box asserting three legal acts was not classified as consent: ${JSON.stringify(reworded.l)}`,
   )
+  // Diagnostic, deliberately NON-FATAL: whether the hard list also catches it
+  // is useful to know and is not what this test exists to pin. Reported, never
+  // asserted, so it cannot pre-empt anything.
+  if (isHardConsent(reworded.l)) {
+    console.log(
+      "  note: isHardConsent now matches the reworded box too — a pattern was " +
+        "added; ask innov-resilience whether that is structural or the 26th rewording",
+    )
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -409,19 +555,45 @@ test("FINDING (w2-engine): the label the plan shows the user is not the label on
   // consent boxes: an attribute is not text the user can read. The finding is
   // that the principle stops at consent, and every other field still shows the
   // attribute-derived string in review.
+  // ORDER IS LOAD-BEARING. Two preconditions used to precede the finding, and
+  // the second ("the field must appear in the plan") is about to be a live
+  // hazard: buildPlan is being rewritten to take `vouchedLabels`, and if the
+  // field stops landing in items/defer this would go red at the precondition
+  // and the finding would disappear behind a message about plan membership.
+  //
+  // So the finding is computed defensively and asserted FIRST. A missing field
+  // is reported as part of the same failure rather than as a different one.
+  const s = scan("mislabelled-inputs")
+  const f = s.fields.find((x) => x._visible_label)
+  const plan = f ? planFrom(s) : { items: [], defer: [] }
+  const item = f
+    ? [...plan.items, ...plan.defer].find((i) => i.k === f.k)
+    : null
+  const shown = item ? item.label : null
+
+  assert.equal(
+    shown,
+    f?._visible_label ?? null,
+    "the plan must show the user the label the PAGE shows them; showing " +
+      `${JSON.stringify(shown)} for a field the page labels ` +
+      `${JSON.stringify(f?._visible_label)} makes the approval message wrong` +
+      (item
+        ? ""
+        : " (the field is not in the plan at all — see the fixture check below)"),
+  )
+})
+
+test("the visible/matched divergence fixture is intact, so the test above is about behaviour", () => {
+  // Split out of the test above rather than left as a precondition inside it.
+  // A fixture that quietly stopped carrying its trait is a slacking signature,
+  // and it deserves its own red line — not a position ahead of a finding where
+  // it can pre-empt one.
   const s = scan("mislabelled-inputs")
   const f = s.fields.find((x) => x._visible_label)
   assert.ok(f, "the fixture must carry a visible/matched divergence")
-  const plan = planFrom(s)
-  const item = [...plan.items, ...plan.defer].find((i) => i.k === f.k)
-  assert.ok(item, "the field must appear in the plan")
-  assert.equal(
-    item.label,
-    f._visible_label,
-    "the plan must show the user the label the PAGE shows them; showing " +
-      `${JSON.stringify(item.label)} for a field the page labels ` +
-      `${JSON.stringify(f._visible_label)} makes the approval message wrong`,
-  )
+  assert.equal(f._visible_label, "Email")
+  assert.equal(f.l, "Emergency contact phone")
+  assert.notEqual(f.l, f._visible_label)
 })
 
 test("the mislabelled fixture is genuinely contradictory, so the tests above can fail", () => {

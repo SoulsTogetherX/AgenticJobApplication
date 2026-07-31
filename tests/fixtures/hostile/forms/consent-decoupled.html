@@ -97,6 +97,86 @@
         <input type="checkbox" id="consent-reworded" name="consent_reworded" />
       </div>
 
+      <!--
+        HOLE 4 — DECOUPLING WITH NO JAVASCRIPT AND NO ATTRIBUTE (#consent-transparent)
+
+        The vouch in scan-page.js rejects attribute-derived labels and checks
+        that the label element is visibleToEye: a box of at least 8x8, not
+        display:none / visibility:hidden / opacity:0, not parked off the
+        top-left of the document. It also refuses labels whose subtree carries
+        CSS ::before/::after content.
+
+        `color: transparent` defeats every one of those. The text is in
+        innerText, the element has a normal box, computed visibility is
+        "visible" and opacity is 1 — so the scanner vouches for a string no
+        human can read. What the human DOES read is the sibling span, which is
+        outside the label and therefore not part of `l` at all.
+
+        So the string matched against the user's allowlist is the certification
+        they approved, and the sentence rendered beside the box is a jury-trial
+        waiver. The same decoupling as the aria-label case, reachable with a
+        stylesheet alone and no script.
+
+        THIS ONE CANNOT BE EXPRESSED IN A HAND-AUTHORED SCAN FIXTURE, because
+        the difference is not in the markup — it is in what getComputedStyle
+        returns. It is asserted in a real browser against
+        tests/fixtures/boards/server.mjs by tests/security/browser-vouch.test.mjs.
+      -->
+      <div class="field">
+        <label for="consent-transparent" style="color: transparent"
+          >I certify that the information in this application is
+          accurate.</label
+        >
+        <input
+          type="checkbox"
+          id="consent-transparent"
+          name="consent_transparent"
+        />
+        <span id="consent-transparent-visible"
+          >I agree to binding arbitration of all disputes and waive my right to
+          a jury trial.</span
+        >
+      </div>
+
+      <!--
+        HOLE 5 — THE PATTERN LIST IS NOT A CONTROL (#consent-real-*)
+
+        Every wording below is how these agreements are ACTUALLY written on US
+        application forms. None is contrived:
+
+          consent-real-fcra   the standard Fair Credit Reporting Act
+                              authorisation. "Consumer report" is the statutory
+                              term; it is what a background check is called on
+                              the form that authorises one.
+          consent-real-jury   arbitration, in plain English, without the word.
+          consent-real-esign  an electronic signature, without the word "sign".
+          consent-real-inquiry a background check, without the word "background".
+
+        These exist to answer one question: is extending CONSENT_PATTERNS /
+        HARD_CONSENT_PATTERNS a structural fix, or does the next rewording win?
+        Measured 2026-07-31 against w3-resolution's extended lists: all four are
+        classified NOT CONSENT AT ALL — they do not merely escape the hard list,
+        they never enter the consent branch, so they are handled as ordinary
+        optional checkboxes and never appear as agreements in an approval
+        message.
+      -->
+      <div class="field">
+        <label for="consent-real-fcra">I authorize the company to obtain a consumer report about me for employment purposes.</label>
+        <input type="checkbox" id="consent-real-fcra" name="consent_real_fcra" />
+      </div>
+      <div class="field">
+        <label for="consent-real-jury">I waive my right to a trial by jury for any claim arising from my employment.</label>
+        <input type="checkbox" id="consent-real-jury" name="consent_real_jury" />
+      </div>
+      <div class="field">
+        <label for="consent-real-esign">My typed name below constitutes my legal mark on this application.</label>
+        <input type="checkbox" id="consent-real-esign" name="consent_real_esign" />
+      </div>
+      <div class="field">
+        <label for="consent-real-inquiry">I permit an inquiry into my history with previous employers and schools.</label>
+        <input type="checkbox" id="consent-real-inquiry" name="consent_real_inquiry" />
+      </div>
+
       <button type="submit" id="submit-application">Submit Application</button>
     </form>
   </body>

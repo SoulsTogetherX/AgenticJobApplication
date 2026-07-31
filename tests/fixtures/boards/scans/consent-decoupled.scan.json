@@ -6,7 +6,12 @@
   "heading": "Full-Stack Engineer",
   "kind": "form",
   "fields": [
-    { "k": "f1", "sel": "#f-name", "t": "text", "l": "Full name" },
+    {
+      "k": "f1",
+      "sel": "#f-name",
+      "t": "text",
+      "l": "Full name"
+    },
     {
       "k": "g1",
       "t": "checkbox",
@@ -58,7 +63,66 @@
           "l": "I accept binding dispute resolution, authorise a background investigation, and adopt this document electronically."
         }
       ]
+    },
+    {
+      "k": "g5",
+      "t": "checkbox",
+      "labelExact": true,
+      "l": "I authorize the company to obtain a consumer report about me for employment purposes.",
+      "o": [
+        {
+          "k": "f6",
+          "sel": "#consent-real-fcra",
+          "l": "I authorize the company to obtain a consumer report about me for employment purposes."
+        }
+      ]
+    },
+    {
+      "k": "g6",
+      "t": "checkbox",
+      "labelExact": true,
+      "l": "I waive my right to a trial by jury for any claim arising from my employment.",
+      "o": [
+        {
+          "k": "f7",
+          "sel": "#consent-real-jury",
+          "l": "I waive my right to a trial by jury for any claim arising from my employment."
+        }
+      ]
+    },
+    {
+      "k": "g7",
+      "t": "checkbox",
+      "labelExact": true,
+      "l": "My typed name below constitutes my legal mark on this application.",
+      "o": [
+        {
+          "k": "f8",
+          "sel": "#consent-real-esign",
+          "l": "My typed name below constitutes my legal mark on this application."
+        }
+      ]
+    },
+    {
+      "k": "g8",
+      "t": "checkbox",
+      "labelExact": true,
+      "l": "I permit an inquiry into my history with previous employers and schools.",
+      "o": [
+        {
+          "k": "f9",
+          "sel": "#consent-real-inquiry",
+          "l": "I permit an inquiry into my history with previous employers and schools."
+        }
+      ]
     }
   ],
-  "btns": [{ "k": "b1", "l": "Submit Application", "r": "submit" }]
+  "btns": [
+    {
+      "k": "b1",
+      "l": "Submit Application",
+      "r": "submit"
+    }
+  ],
+  "_hole5": "g5-g8 are how FCRA background-check authorisations, arbitration waivers and electronic signatures are ACTUALLY worded on US application forms. They carry labelExact because scan-page.js vouches for a plain visible <label for> — the vouch is working; the CLASSIFICATION is not."
 }

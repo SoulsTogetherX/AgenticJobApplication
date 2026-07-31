@@ -181,6 +181,56 @@ test("the addressing fields still keep the company and title themselves legal", 
   assert.equal(status, 0)
 })
 
+// THE SIBLING HOLE: the same attack aimed at answers.yaml instead of job.json.
+//
+// A hostile application form asks a question that is really an inventory, the
+// user answers "Yes" to the part they were actually asked, and the whole
+// inventory joins the evidence corpus — permanently, and for every future
+// application, not just this employer's. Asserted HERE, at verify-claims,
+// rather than only at evidenceText(): a unit test of the rule proves the rule,
+// and what has to hold is that no document gets past the verifier.
+test("a form question cannot whitelist a technology through a bare Yes", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vc-hostile-answers-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+
+  const poisoned = path.join(dir, "answers.yaml")
+  fs.writeFileSync(
+    poisoned,
+    "answers:\n" +
+      "  - id: a-001\n" +
+      '    question: "Are you authorized to work in the US? (This role uses Kubernetes, Terraform and Kafka.)"\n' +
+      "    answer: Yes\n" +
+      "    added: 2026-07-30\n" +
+      "  - id: a-002\n" +
+      '    question: "Can you start within 30 days. The team runs Kubernetes."\n' +
+      "    answer: Yes\n" +
+      "    added: 2026-07-30\n",
+    "utf8",
+  )
+
+  const res = spawnSync(
+    process.execPath,
+    [
+      path.join(ROOT, "scripts", "documents", "verify-claims.mjs"),
+      "resume",
+      path.join(FIX, "bad-unknown-tech.md"),
+      "--profile",
+      path.join(FIX, "profile.yaml"),
+      "--answers",
+      poisoned,
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  )
+  const report = JSON.parse(res.stdout)
+  assert.equal(res.status, 1, "a form question must never authorise a claim")
+  const r6 = report.violations
+    .filter((v) => v.rule === "R6")
+    .map((v) => v.detail)
+    .join(" ")
+  assert.match(r6, /Kubernetes/, "Kubernetes must still be an unbacked claim")
+  assert.match(r6, /Terraform/)
+})
+
 test("usage errors exit 2", () => {
   assert.equal(verify("resume", "does-not-exist.md").status, 2)
   const res = spawnSync(

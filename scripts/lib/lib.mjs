@@ -341,11 +341,38 @@ const AFFIRMATIVE = /^\s*(yes|y|true|yes\.|yes,? i (do|have|am))\s*$/i
 // the term-counter so lib.mjs would not have to reach for the lexicon — but
 // techTermsIn lives in this same file, so there was never a cycle to avoid, and
 // an optional guard is a guard a future caller forgets. Safe by default.
+//
+//   3. THE HOLE THE FIRST TWO LEFT. Both narrowings above are about how MUCH a
+//      label mentions; neither is about WHAT WAS ASKED. Drop the brackets and
+//      name exactly one technology, and a single "Yes" still whitelists it:
+//
+//        question: "Authorized to work in the US? This role uses Kubernetes."
+//        answer:   "Yes"
+//
+//      One tech term, no parentheses, both earlier guards satisfied, and
+//      Kubernetes is evidence for every document from then on. The employer
+//      writes the label and can put any sentence they like after the question
+//      mark.
+//
+//      So a bare "Yes" now evidences only the CLAUSE THAT WAS ASKED: the text
+//      up to the first question mark, or up to the first sentence break when
+//      there is no question mark at all. Anything the employer appended after
+//      it is not something the user said yes to.
+//
+//      The sentence break is "period, space, capital" rather than just a
+//      period, because "Do you have experience with Node.js?" must not lose
+//      its own subject to the dot in the middle of a tech term.
 const ASIDE = /[([{][^)\]}]*[)\]}]/g
+const SENTENCE_BREAK = /(?<=\.)\s+(?=[A-Z])/
 
 export function questionEvidence(question) {
   const stripped = String(question ?? "").replace(ASIDE, " ")
-  return techTermsIn(stripped).length > 1 ? "" : stripped
+  const mark = stripped.indexOf("?")
+  const asked =
+    mark === -1
+      ? stripped.split(SENTENCE_BREAK)[0].trim()
+      : stripped.slice(0, mark + 1).trim()
+  return techTermsIn(asked).length > 1 ? "" : asked
 }
 
 export function evidenceText(profileRaw, answersDoc) {

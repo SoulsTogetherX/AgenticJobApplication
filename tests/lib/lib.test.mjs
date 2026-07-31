@@ -8,6 +8,9 @@ import {
   extractNumbers,
   extractMonthYears,
   techTermsIn,
+  textSnippet,
+  evidenceText,
+  questionEvidence,
   validateContext,
   validateJob,
 } from "../../scripts/lib/lib.mjs"
@@ -57,6 +60,106 @@ test("techTermsIn does not match terms inside larger words", () => {
   assert.ok(!found.includes("Git"))
   assert.ok(!found.includes("React"))
   assert.ok(!found.includes("Java"))
+})
+
+// --- what may be treated as EVIDENCE ----------------------------------------
+//
+// This is the corpus verify-claims R6 checks a document's tech terms against,
+// so anything that gets in here is a claim the user's resume is allowed to
+// make. answers.yaml stores the employer's QUESTION beside the user's answer,
+// and the employer writes the question.
+
+test("an answer's own text is always evidence", () => {
+  const ev = evidenceText("profile text", {
+    answers: [{ question: "What do you use?", answer: "React and PostgreSQL" }],
+  })
+  assert.ok(techTermsIn(ev).includes("React"))
+  assert.ok(techTermsIn(ev).includes("PostgreSQL"))
+})
+
+test("a question only becomes evidence when the answer is an unambiguous yes", () => {
+  const enumerated = evidenceText("", {
+    answers: [
+      {
+        question:
+          "Which of these do you have experience with? [1 = REST APIs; 4 = Spring / Spring Boot; 5 = Cloud (AWS, Azure, or GCP)]",
+        answer: "1, 2, 3, 5",
+      },
+    ],
+  })
+  // The bug this rule exists for: "1, 2, 3, 5" evidences nothing but itself,
+  // and Spring was a box the user explicitly did NOT tick.
+  for (const t of ["Spring", "Azure", "GCP", "AWS"]) {
+    assert.ok(!techTermsIn(enumerated).includes(t), `${t} leaked into evidence`)
+  }
+
+  const plain = evidenceText("", {
+    answers: [
+      { question: "Do you have experience with React?", answer: "Yes" },
+    ],
+  })
+  assert.ok(techTermsIn(plain).includes("React"))
+})
+
+test("a yes never evidences more than one technology at a time", () => {
+  // "all three? any one?" — an ambiguous yes must not become evidence. The
+  // user can always record each skill outright with save-answer.mjs.
+  const ev = evidenceText("", {
+    answers: [
+      { question: "Experience with React, Vue and Angular?", answer: "Yes" },
+    ],
+  })
+  for (const t of ["React", "Vue", "Angular"])
+    assert.ok(!techTermsIn(ev).includes(t))
+})
+
+test("a yes evidences the question that was ASKED, not what follows it", () => {
+  // The hole the parenthetical rule left open. Drop the brackets, name exactly
+  // one technology, and both earlier guards are satisfied — so a single "Yes"
+  // about work authorisation whitelists Kubernetes permanently, for every
+  // future application, on a document signed with the user's name.
+  const hostile = [
+    "Authorized to work in the US? This role uses Kubernetes.",
+    "Are you legally authorized to work in the United States? (Our stack is Kubernetes, Terraform and Rust.)",
+    "Can you start within 30 days. The team runs Kubernetes.",
+  ]
+  for (const question of hostile) {
+    const ev = evidenceText("", { answers: [{ question, answer: "Yes" }] })
+    assert.ok(
+      !techTermsIn(ev).includes("Kubernetes"),
+      `"${question}" whitelisted Kubernetes`,
+    )
+  }
+})
+
+test("questionEvidence keeps an honest single-subject question intact", () => {
+  // The narrowing must not cost the legitimate case, which is the exact shape
+  // keyword-coverage.mjs tells the user to run.
+  assert.match(
+    questionEvidence("Do you have hands-on experience with Docker?"),
+    /Docker/,
+  )
+  // A dot inside a tech term is not a sentence break.
+  assert.match(
+    questionEvidence("Do you have hands-on experience with Node.js"),
+    /Node\.js/,
+  )
+  // A number in the asked clause is still evidence — "Engineer II" and "5
+  // years" are legitimately carried by a question.
+  assert.match(questionEvidence("Do you have 5 years of experience?"), /5/)
+})
+
+test("textSnippet still preserves block boundaries", () => {
+  // Pinned here as well as in tests/leads/, because untrusted.mjs now calls
+  // textSnippet at ingest and a regression would be blamed on the sanitiser.
+  // The L2 fit stage found a requirements heading in 0 of 92 stored leads when
+  // this was wrong.
+  assert.equal(
+    textSnippet("<p>About us.</p><h3>Requirements</h3><ul><li>React</li></ul>"),
+    "About us.\nRequirements\nReact",
+  )
+  assert.equal(textSnippet("the <b>fast</b> path"), "the fast path")
+  assert.equal(textSnippet("one<br>two"), "one\ntwo")
 })
 
 test("buildFactIndex indexes every fixture fact id uniquely", () => {

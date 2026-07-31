@@ -125,3 +125,35 @@ Repeated confirmed slacking is a staffing matter under the roster's rules. **A
 single reverted commit is never that** — a rollback is a cheap experiment
 ending, and treating it as a failure teaches agents to hide problems, which is
 the opposite of what this file is for.
+
+## Routing, and the manager's duty to announce
+
+Agents mostly **cannot reach each other**: `SendMessage` by name fails once an
+agent has finished, so a cross-agent finding travels through the manager. Two
+duties follow, and both are the manager's.
+
+**Announce every hire and every fire to all active agents** (user decision
+2026-07-31) — who joined or left, which file set moved, and who owns it now. A
+roster change made silently leaves workers holding a stale map: they send to an
+agent that no longer exists, duplicate work that was just reassigned, or file a
+finding against an owner who cannot act on it. If a live agent's scope changes,
+it gets the correction directly rather than finishing on a superseded brief.
+
+**Any agent may ask for a teammate to be hired** (user decision 2026-07-31).
+When your work is blocked or bounded by something outside your file set, say so
+rather than working around it or leaving it quietly undone. Name what is
+blocked, which file set the new agent would own, and why it cannot be you —
+ownership or capability, never effort. The manager adjudicates, may consult an
+innovator when the request is really an architecture question, and **owes an
+answer either way**: hired, declined, reassigned, or deferred, with the reason.
+A request that vanishes is a manager failure. The same route carries the
+opposite report: a file set with no owner, or an owner nobody can reach.
+
+**Name the file set when relaying, not just the agent.** The recipient verifies
+ownership against `team-roster.md` rather than trusting the relay. **Refusing
+work outside your owned set is correct behaviour**, not obstruction — return it
+as a request and say which roster line makes it someone else's. This happened on
+2026-07-31: two messages meant for `qa-adversary` were misrouted to
+`w1-security`, which proved from the roster that every artifact named was
+outside its set and filed the work back rather than touching it. That is the
+protocol working, and the cost of the error was the manager's to absorb.

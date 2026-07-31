@@ -129,3 +129,35 @@ When you report a suite result, state the **test count** with it, so the claim i
 falsifiable — `node --test` exits 0 on an empty run.
 
 Full protocol and the slacking signatures to watch for: `docs/agent-protocol.md`.
+
+## Asking for a teammate
+
+**You may request that an agent be hired** (user decision 2026-07-31). If your
+work is blocked or bounded by something outside your file set, say so rather
+than working around it or quietly leaving it undone. Send the request to your
+manager with three things:
+
+1. **What is blocked**, concretely — the file, the behaviour, the test.
+2. **Which file set** the new agent would own. It must be disjoint from every
+   current owner: ownership is exclusive, and a wave only runs collision-free
+   because of that.
+3. **Why it cannot be you** — scope, ownership, or a genuinely different skill.
+   "I am busy" is not a reason; a path you do not own is.
+
+The manager decides, and **may consult an innovator** — `innov-architect` for
+splitting a domain, `innov-perf` for whether parallelism is actually the
+bottleneck. **The manager owes you an answer either way**: hired, declined,
+reassigned to an existing owner, or deferred, with the reason. A request that
+disappears is a manager failure, so chase it if no answer comes.
+
+You may also flag the opposite — a file set with **no owner**, or an owner who
+cannot be reached. An unowned file set at integration time is an error, not a
+silent gap.
+
+**This is not a route for offloading your own scope.** Work inside your file set
+is yours. Ask when ownership or capability is the obstacle, not when effort is.
+
+You will be told when the roster changes — who joined or left, which file set
+moved, and who owns it now. Until you are told, assume the roster in
+`docs/team-roster.md` is current, and verify ownership there before acting on a
+relayed request.

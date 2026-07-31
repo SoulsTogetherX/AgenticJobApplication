@@ -37,6 +37,33 @@ than aspirational.
 3. **Ceiling: 16 concurrent agents**, plus a token budget the manager tracks.
 4. Consult an innovator before restructuring the roster — `innov-architect` for
    splitting a domain, `innov-perf` for whether parallelism is the bottleneck.
+5. **Announce every hire and every fire to all active agents** (user decision
+   2026-07-31). A manager that changes the roster silently leaves workers
+   holding a stale map: they send to an agent that no longer exists, they
+   duplicate work that was just reassigned, or they file a finding against an
+   owner who cannot act on it. The announcement states **who joined or left,
+   which file set moved, and who owns it now** — a fire is only complete when
+   its paths have a new owner, because an unowned file set at integration time
+   is an error, not a silent gap. Update this file in the same breath; the log
+   below is the durable record and the message is the live one.
+
+6. **Any agent may request a hire** (user decision 2026-07-31). A valid request
+   names what is blocked, which file set the new agent would own, and why the
+   requester cannot do it themselves. The manager adjudicates on whether the
+   obstacle is **ownership or capability rather than effort**, whether the
+   proposed file set is disjoint from every current owner, and whether the
+   constraints above still hold — and **may consult an innovator** when the
+   request is really an architecture question. **The manager owes an answer
+   either way**: hired, declined, reassigned, or deferred, with the reason, and
+   logged below whether or not anyone was hired. A request that disappears
+   teaches agents to route around the manager. Agents may equally flag a file
+   set with **no owner** or an owner who cannot be reached.
+
+Routing is the manager's job precisely because agents cannot always reach each
+other — `SendMessage` by name fails once an agent has finished, and a misrouted
+message costs a worker a full turn establishing that the work is not theirs.
+Name the agent AND its file set when relaying, so the recipient can verify
+ownership against this file rather than trusting the manager.
 
 Firing releases the file set back to the pool. A rollback is not a verdict on an
 agent; firing follows these rules and this log, never a single reverted commit
@@ -116,13 +143,16 @@ everything else, and the manager re-staffs on the numbers.
 
 ## Log
 
-| Date       | Change                                                           | Reason                                                                                                                                                                                    |
-| ---------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-07-30 | Hired the initial 11 (3 innovators, 6 workers, 2 QA)             | Autonomy build kickoff; file sets carved disjoint from the plan's phases                                                                                                                  |
-| 2026-07-30 | Added `cicd` and `scribe` as **distinct roles**                  | User decision: CI/CD and documentation are their own disciplines, not worker sidelines                                                                                                    |
-| 2026-07-30 | `w6-documents` gave up `docs/` and `.claude/skills/`             | Collided with `doc-scribe`. w6 keeps the user's résumé pipeline; the scribe takes the prose                                                                                               |
-| 2026-07-30 | `ci-engineer` took `package.json` and `.gitignore`               | Previously unowned. Single owner because uncoordinated edits leak personal data                                                                                                           |
-| 2026-07-30 | Adopted the cross-check protocol                                 | User decision: agents keep each other in check. Prompted by a run reporting `completed` over six errored agents                                                                           |
-| 2026-07-31 | `w2-engine` took the three `apply-job/*.js` files                | Unowned in the original carve-up. They are eval'd browser code, not docs; `doc-scribe` keeps `SKILL.md` there                                                                             |
-| 2026-07-31 | **`w2-engine` runs BEFORE `w3-resolution`**, not beside it       | User decision. 147eb68 is the evidence: run concurrently, w2's spec cannot reach w3 in time and the RCE survived a green suite                                                            |
-| 2026-07-31 | Tie-break invoked: `w2-engine` vs `qa-adversary` on `labelExact` | First use of the third-lens rule. `innov-resilience` ruled **patch, not structural**, and proved it by running `buildPlan` rather than arguing. Neither side was overruled by the manager |
+| Date       | Change                                                             | Reason                                                                                                                                                                                    |
+| ---------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-07-30 | Hired the initial 11 (3 innovators, 6 workers, 2 QA)               | Autonomy build kickoff; file sets carved disjoint from the plan's phases                                                                                                                  |
+| 2026-07-30 | Added `cicd` and `scribe` as **distinct roles**                    | User decision: CI/CD and documentation are their own disciplines, not worker sidelines                                                                                                    |
+| 2026-07-30 | `w6-documents` gave up `docs/` and `.claude/skills/`               | Collided with `doc-scribe`. w6 keeps the user's résumé pipeline; the scribe takes the prose                                                                                               |
+| 2026-07-30 | `ci-engineer` took `package.json` and `.gitignore`                 | Previously unowned. Single owner because uncoordinated edits leak personal data                                                                                                           |
+| 2026-07-30 | Adopted the cross-check protocol                                   | User decision: agents keep each other in check. Prompted by a run reporting `completed` over six errored agents                                                                           |
+| 2026-07-31 | `w2-engine` took the three `apply-job/*.js` files                  | Unowned in the original carve-up. They are eval'd browser code, not docs; `doc-scribe` keeps `SKILL.md` there                                                                             |
+| 2026-07-31 | **`w2-engine` runs BEFORE `w3-resolution`**, not beside it         | User decision. 147eb68 is the evidence: run concurrently, w2's spec cannot reach w3 in time and the RCE survived a green suite                                                            |
+| 2026-07-31 | Tie-break invoked: `w2-engine` vs `qa-adversary` on `labelExact`   | First use of the third-lens rule. `innov-resilience` ruled **patch, not structural**, and proved it by running `buildPlan` rather than arguing. Neither side was overruled by the manager |
+| 2026-07-31 | Hired `innov-resilience` mid-wave                                  | Worker-vs-QA disagreement needed a third lens; announced late, which is the gap the announce rule now closes                                                                              |
+| 2026-07-31 | Hired `doc-scribe` mid-wave                                        | Three documents had begun describing behaviour the code no longer had, and drift is invisible to its author                                                                               |
+| 2026-07-31 | Roster changes must be **announced**; agents may **request hires** | User decisions. A silent change leaves workers with a stale map; a worker blocked outside its file set had no route but to work around it                                                 |

@@ -6,117 +6,177 @@ Paste everything below the line into a fresh session.
 
 Continue implementing `docs/autonomy-plan.md`. It is **already approved — implement it, do not re-plan it.**
 
-You are `build-manager`. Delegate per `docs/team-roster.md` ownership. **Only the manager commits, to `dev` only.** Read `docs/agent-protocol.md` and `docs/team-roster.md` first — they are earned from real incidents, not preferences.
+You are `build-manager`. Read `docs/agent-protocol.md` and `docs/team-roster.md`
+first (both were cut roughly in half on 2026-07-31; the history moved to
+`docs/roster-log.md` and the command catalogue to
+`docs/reference/10-commands.md`).
 
-## READ THIS FIRST: the tree is RED and that is expected
+## Two standing rules from the user, 2026-07-31 — follow these from turn one
 
-Three agents died simultaneously on a session limit, two of them **mid-edit**. Their partial work is **deliberately left uncommitted** — do not revert it, and do not "clean up" the working tree.
+1. **Staff the smallest team that can do the work.** A twelve-agent wave cost
+   ~1.38M tokens. The 16-agent ceiling is a limit, not a target. Prefer
+   widening an existing brief to hiring, and never spawn a fresh agent for a
+   follow-up small enough that rebuilding its context costs more than the fix.
+2. **Verify at PHASE BOUNDARIES, not after every agent.** Agents still
+   cross-check each other continuously — that is where the expensive defects
+   were found. What is cut is the manager re-running, a third time, a claim two
+   agents already confirmed. **Exception:** anything touching `profile/`, the
+   submit path, or a guardrail is checked immediately.
+
+## The tree: HEAD is `718a0f0`, and TWO files are deliberately uncommitted
 
 ```
- M scripts/apply/fill-plan.mjs        (+62)   w3-resolution, value-carrying-act rule
- M tests/apply/fill-plan.test.mjs     (+51)   w3-resolution — NOT ITS FILE, see below
- M scripts/profile/save-answer.mjs    (+265)  w1-security, locking. HALF DONE
+?? scripts/lib/lock.mjs        DEFECTIVE — do not commit, do not adopt
+?? tests/lib/lock.test.mjs     green at 17/17 and cannot fail on its own subject
+ M docs/application-limits.yaml  THE USER'S FILE — see below
 ```
 
-All three **parse**. Test state as left:
+`npm test` → **1325 tests, 1323 pass, 1 fail, 1 reasoned skip** (floor 1324).
 
-| file                                 | result                                   |
-| ------------------------------------ | ---------------------------------------- |
-| `tests/profile/save-answer.test.mjs` | 35 tests, **18 fail** — genuinely broken |
-| `tests/apply/fill-plan.test.mjs`     | 98 tests, 6 fail — fails SAFE, see below |
-| `tests/security/**`                  | 138 tests, 2 fail                        |
+**The one failure is a real open finding, not a broken test.** `E8 BREAKS` asserts
+no scanned field carries a `section`. The scanner now emits one — and
+`grep -rn "section" scripts/apply/` returns **zero hits**. So the heading is
+captured and _nothing consumes it_; two inputs both labelled "Attach" are still
+told apart by document order alone. Owner: `qa-breaker` rewrites the assertion,
+`w3-resolution` consumes the field. `ci-engineer` also filed that the test's
+name uses `[owner]` where the gate's `OWNED_RE` expects `FINDING (owner):`, so
+an owned red is mis-bucketed as unowned — `qa-adversary`'s file.
 
-**Why the tree was not reverted.** `SendMessage` to a dead agent resumes it from its transcript. Reverting would leave a resumed agent working from the false belief that its edits exist. The partial work is worth more than a green `git status`.
+## `scripts/lib/lock.mjs` — why it is held
 
-**The `fill-plan` failures are the rule working, not breaking.** Tests 26/27/59/68 encode the PRE-rule policy ("ordinary checkboxes stay on the normal path", "end dates are dropped once the current-role box is ticked") and fail because checkboxes now defer. 97/98 pin the pre-rule numbers. Those belong to `qa-breaker` and need updating, not reverting.
+`innov-resilience` proved by execution (A/B on one variable, four reps,
+20 writers × 5 trials) that its **pid-liveness stale test is destructive**:
 
-**One failure is a WIN and must not be "fixed" back.** `tests/security` #111 —
-`LANDS (shapes B/C, reworded)` — asserts the reworded-assertion attack
-_succeeds_. It now FAILS, meaning the value-carrying-act rule closes the hole
-`innov-resilience` proved reclassification could never close. The rule reads no
-words, so a wording the pattern list misses cannot get past it. Have
-`qa-adversary` rewrite it to pin the fix.
+```
+verbatim                          LOST 7,2,13,9   MUTEX-VIOLATIONS 43,28,25,33
+identical, holderIsGone -> false  LOST 0,0,0,0    MUTEX-VIOLATIONS  0, 0, 0, 0
+```
 
-**`save-answer.mjs` is the dangerous one.** Half-inserted locking in the writer
-for the user's fact base. The shell guard denies it without
-`--file` / `--user-approved` / `--rescan`, so accidental real-bank writes are
-blocked — but do not run it against anything real until `w1-security` finishes.
+Instrumented at the moment of every break, 112 breaks: the pid leg fired
+**112/112**, the age leg **0**, and `sameLock: false` **112/112** — every single
+break destroyed a **different, live** holder's lock, with `ageMs: 0`. The age
+check was saying "do not break" and the pid leg overrode it, because the legs
+are `||` and there is no identity re-check between the read and the rename.
 
-**Ownership violation to resolve:** `w3-resolution` edited
-`tests/apply/fill-plan.test.mjs`, which is `qa-breaker`'s, contrary to its brief.
-Assess the edit on merit; do not assume it is wrong. Then re-state the boundary.
+Four rulings, all binding:
 
-## Where things stand
+- **Delete the pid probe entirely.** Not gate it, not add a third test. The
+  inference _"the pid that wrote this record is dead" ⟹ "this lockfile is
+  abandoned"_ is **invalid for short-lived processes** — a healthy CLI writer's
+  pid dies milliseconds after acquiring, and the lockfile you are looking at may
+  no longer be its. Guarding an invalid inference does not repair it.
+- **Keep the mtime age test ON as the primary leg.** Verified to recover all
+  three orphan classes (dead local pid, foreign host, empty record).
+- **Assert `timeoutMs > staleMs` at `acquire()`.** Shipped defaults are
+  `timeout 10s` / `stale 30s`, so **a default caller can never reach the
+  staleness window** — measured `ELOCKTIMEOUT after 10153ms` with the orphan
+  still present. That inversion is _why_ the destructive leg looked
+  load-bearing. The fact-base writer already gets this right (20s > 10s).
+- **`heartbeatMs` is inert on `withLock`.** It is a `setInterval`; `withLock` is
+  synchronous by design and a sync body blocks the event loop. Measured: mtime
+  advanced **0ms** over a 1500ms hold. Either delete it or make `withLock`
+  refuse it — a mitigation that silently does nothing is worse than an absent
+  one, because it gets budgeted on.
 
-Branch `dev`, HEAD `fa97436`, **5 commits this session**:
+**Convergence direction: `lock.mjs` adopts the fact-base writer's semantics,
+never the reverse.** `scripts/profile/save-answer.mjs:708-740` renames,
+**re-ages what it actually took**, and restores if it turned out fresh;
+`lock.mjs:157-170` does not. That difference is the entire 43-vs-0 result.
+Adopting `lock.mjs` today would import the defect into the fact-base writer and
+undo the fix committed at `fc05da5`.
 
-| commit    | what                                                      |
-| --------- | --------------------------------------------------------- |
-| `e19e87e` | Guardrails sealed on the shell path, not just Edit/Write  |
-| `9a3eaef` | `--rescan`: audit the fact base already stored            |
-| `d945871` | The consent gate wired at the consumer                    |
-| `3f67326` | An unrun browser test is now a failure; reaper wired      |
-| `fa97436` | Hard rule 6 replaced: auto-submit allowed, off by default |
+`tests/lib/lock.test.mjs` passes 17/17 **and is a test that cannot fail on its
+own subject**: it holds the critical section 60ms and polls at 5ms, so a
+waiter's read/kill pair never straddles a holder's exit. The one real consumer
+holds it for single-digit ms and does file I/O inside. Independently, both
+`qa-adversary` and `ci-engineer` saw it **flake** on Windows. Rewrite it around
+a short, I/O-heavy critical section.
 
-Last green gate, on a quiet tree: **1186 tests, 1185 pass, 0 fail, 1 reasoned skip.** Floors are set to 1186 / 224.
+## Also open: an EPERM defect in COMMITTED code
 
-**Chromium is installed** (~701MB, `%LOCALAPPDATA%\ms-playwright`). All three browser legs run and pass, including Ashby's nonce CSP — previously an assumption. **The user wants it uninstalled when the build work is done**: `node node_modules/playwright-core/cli.js uninstall`. Removing it sends those three back to skipping, so it is a real trade, not just cleanup.
+On win32, `openSync(path,"wx")` returns **EPERM**, not EEXIST, when the path is
+delete-pending — i.e. during a normal release. Both lock implementations
+special-case only `EEXIST` and rethrow: measured **8.0% of attempts**, and 3 raw
+stack traces out of 100 live writer processes. `EPERM`/`EACCES`/`EBUSY` all mean
+"could not create exclusively right now" and belong on the poll path. Committed
+at `fc05da5` (the fact-base writer, ~line 764) and present in the held
+`lock.mjs:217`. It fails loudly rather than losing data, so it is a defect and
+not an emergency. **The user chose to defer this to this session.**
 
-## The finding that dominates everything else
+Two more from the same review: **`AUTO_RUN_LOCK` and `LEADS_LOCK` have zero call
+sites**, so the measured `upsertLeads` lost update is still live in the tree;
+and `recordSubmission` runs _after_ the click, so a crash in between undercounts
+every cap — write the intent row in `preSubmitCheck` instead, which the existing
+`PRIMARY KEY (run_id, slug)` already supports.
 
-`innov-resilience`, verified by execution against the real 49-entry bank:
+## `docs/application-limits.yaml` — ASK THE USER FIRST
 
-> **A `datum` classification licenses the agent to tick a control the BOARD owns, and a tick carries no value — it carries assent.**
+It carries an uncommitted `auto_apply` block (`enabled: false`, `dry_run: true`,
+`per_run_max: 999`, `per_day_max: 999`, `per_company_max_per_week: 5`). **Nobody
+established whether the user wrote it or an agent did.** The file is the user's
+and no agent may edit it, so if an agent wrote it that is a guardrail breach to
+revert; if the user wrote it, reverting destroys their work. **Do not touch it
+until they say which.**
 
-On a page whose labels are all wordings the user banked, wired to `agree_arbitration`: **34 of 49 entries auto-tick, `ready: true`, no model step.** The class gate that shipped in `d945871` removed 14 of 48 (29%) — a real gain — and reclassifying answers closes **none** of the remaining 34.
+## The trust gate: `innov-resilience` overturned the question
 
-The fix, mid-implementation in the working tree: **a checkbox or radio group never auto-acts unattended, whatever the answer's class.** Measured 34 → 0.
+Rule 6 permits auto-submit on a board passing a _mechanical_ trust gate. The
+board-identity half is constructible and sound — an allowlist keyed on
+`detectAts(url)` + `boardKey(url)` reads the **URL we navigated to**, from
+`leads.db`, not from the page's content. That is a genuine second key.
 
-**Two things about it that must not be re-derived or weakened:**
+**But rule 6's real predicate is "did anything here require a judgement?", and
+that resolves to the page's own DOM.** Every blocking predicate — confirm-widget
+defer, consent tickbox, UNKNOWN field — reads the widget type, and
+`scan-page.js:606` computes it as `el.type`: the attacker's attribute. A board
+serving `<input type="text" name="agree_arbitration" aria-label="Full name">`,
+styled as a checkbox and read server-side as assent, defeats the
+widget-never-auto-acts rule **without rewording anything**. Same shape as the
+consent allowlist, one layer down.
 
-1. **Its defers MUST use a distinct `why` — `"confirm-widget"`, not `"confirm"`.** `innov-resilience` nearly shipped a readiness exemption keyed on `why === "confirm"`, which is the class gate's own marker; it re-marked the arbitration pages as `ready: true`. Only `confirm-widget` defers on **non-required** fields are non-blocking.
-2. **Do NOT narrow it to "groups with fewer than 3 options carry a value."** Defeated by a board adding two decoy options. `innov-resilience` pre-rejected this and said it would file against it.
+So: **build the board allowlist, and do not let it carry the weight of "nothing
+needed a judgement."** State plainly that auto-submit cannot be made safe
+against a hostile board by inspecting the board — the load-bearing control is a
+list of boards the user typed, and everything downstream is defence in depth.
 
-Latency cost, measured: **0** added model turns on both real Greenhouse fixtures, 0 on an optional EEO block, 0 on selects, **1** on a form with a required radio/checkbox group the bank can answer.
+## Smaller open items, with owners
 
-## User decisions from this session
+| item                                                                                                                                                        | owner                                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Consume `section` in `scripts/apply/`; rewrite `E8 BREAKS`                                                                                                  | `w3-resolution` / `qa-breaker`                                |
+| Shape F: `role=menuitemcheckbox`, `role=option`, bare `span[tabindex]` return to blindness                                                                  | `w2-engine`, pending an `innov-resilience` ruling on the axis |
+| `SKILL.md` step C gates 3 scan-derived decisions on a defer-derived flag (`ready`) — same class as `readiness()` counting consent defers                    | `doc-scribe`                                                  |
+| 11 of 15 `PROTOCOL` citations stale (+4 to +34)                                                                                                             | `qa-breaker`                                                  |
+| `preflight.mjs` unbuilt — nothing rescans the bank for sensitive values already stored. Must call `findSensitiveValues`, must NOT re-implement key matching | `w4-autonomy`                                                 |
+| `auth-sync.mjs` unbuilt — no profile isolation between MCP and auto Chromium                                                                                | `w4-autonomy`                                                 |
+| Two comments in `scripts/auto/` claim `recordSubmission` **refuses** an unchecked submit; it records anyway and raises STOP. Code right, comments wrong     | `w4-autonomy`                                                 |
+| Chromium uninstall when build work ends (`node node_modules/playwright-core/cli.js uninstall`) — sends 3 browser legs back to skipping                      | user's call                                                   |
 
-- **Hard rule 6 is rewritten** (`fa97436`). Auto-submit is permitted on a board passing a **mechanical** trust gate when nothing needed a judgement; everything else defers **with a stated reason**. Ships `enabled: false, dry_run: true`. None of it is built.
-- **Priority: start Phase 2 and Phase 3.** Fix security holes as they surface; run a **full Phase 1 security sweep at the end**, not now. The user's reasoning is borne out by this session — every serious finding came from building, not auditing.
-- **Real-job testing: not yet.** The user deferred to the recommendation to land the value-carrying-act rule first.
-- **`.claude/hooks/` and `.claude/settings*.json` are the user's**, sealed on both paths. Hook and permission changes go to them.
-- **`zz-test-co` removed** from the application store: 12 applications, 10 companies.
+## The CI pipeline has never run
 
-## Open, with owners
+`origin/dev` is **53 commits behind** local `dev`. The security-gate, matrix,
+reaper and ci-gate jobs all arrived in unpushed commits, so every pipeline claim
+is verified by running the same scripts locally on win32/node24 — never by a
+real Actions run. `qa-breaker`'s standing canary duty (deliberately break it,
+confirm red, revert) **cannot be discharged until `dev` is pushed**, and pushing
+is the user's call. `gh` is not installed here, so Actions history could not be
+checked from the other side either.
 
-| item                                                                                                | owner           |
-| --------------------------------------------------------------------------------------------------- | --------------- |
-| Finish the locking; fix `--rescan --source model` exiting 0; stale comment at `save-answer.mjs:169` | `w1-security`   |
-| Finish the value-carrying-act rule                                                                  | `w3-resolution` |
-| Shape E (`div[role=checkbox]` scans as nothing) + E1/E3/E4/E5/E6/E8                                 | `w2-engine`     |
-| E7 — the planner plans a login wall as if it were a form                                            | `w3-resolution` |
-| Rewrite security #111 to pin the fix                                                                | `qa-adversary`  |
-| Update 26/27/59/68/97/98 for the new policy                                                         | `qa-breaker`    |
-| An honest single-page fixture that reaches `ready: true`                                            | `qa-adversary`  |
-| `bench-apply` never produces a `CONFIRM`, so the gate's latency cost is unmeasured                  | `qa-breaker`    |
-| Sweep docs for rule 6; `npm run reap`, `--self-test`, column-0 frontmatter                          | `doc-scribe`    |
-| Wire `gate-audit.mjs` — needs a committed fixture lead store                                        | `w5-leads`      |
+## Things measured, so nobody re-derives them
 
-## Things measured this session, so nobody re-derives them
-
-- **`npm test` is not reproducible in a live shared tree.** Three consecutive identical runs: 4 fail → 6 fail → 0 fail. Separately, duration inflated 56% (59.8s → 93.3s) purely from contention. **A gate number taken mid-wave is not evidence.**
-- **Concurrent `save-answer.mjs` writers silently lose answers.** 6 writers, 5 trials, 4 lost 1–3 of 6 — every process exiting 0. Reproduced independently by the manager.
-- **Zero honest board fixtures reach `ready: true` today.** All four that do are hostile and minimal. Phase 2's headline item has never been demonstrated firing on an honest form — that reframes what Phase 2 is optimising.
-- **`--rescan` cannot detect well-formed fabrication.** Two of the four entries that actually contaminated the bank pass it silently. It validates shape, never truth.
-- **The classifier's inferred leg is a pattern list and every real entry takes it.** Four wordings of "are you authorized to work here" classify two ways. Rates measured at 11/13 and 5/13 on different question sets — **the rate is unestablished; the hole is not.**
-- **`.claude/hooks/` was open on the shell path.** Found by probing, after reading the files produced the wrong conclusion twice.
-
-## Standing rules that cost something to relearn
-
-- **Clear a full agent's context between jobs; an agent that died on a session limit is ALWAYS cleared** — except where its transcript holds mid-edit work, as now. A cleared agent is owed a handoff; ownership belongs to the role, not the instance.
-- **Never run a whole-tree git command** while agents are live — no `stash`, `checkout .`, `reset --hard`, `add -A`. Path-scoped only; `git status` first.
-- **A self-report is a claim, not evidence.** Every significant finding this session was verified by re-running it, and two agents caught errors in their own work that way.
-- **Use the third lens.** It was used once here and overturned the question rather than answering it.
-- **An auxiliary assertion placed before a finding assertion masks the finding.**
-- **A `git commit -m` whose message names `.claude/hooks/` and contains a mutator word is denied** by the new guard. Use `git commit -F <file>`. This is documented, deliberate, and it already bit twice.
-- **Commit messages carry the reasoning, not just the change.** This project's history is its documentation.
+- **The orientation tax is ~7%, not the dominant cost.** The three files agents
+  read at startup went 88,856 → 54,497 chars (~8,600 tokens saved per agent).
+  The larger term is each agent running 80–144 tool calls re-deriving context.
+- **`npm test` is not reproducible in a live shared tree** — three identical
+  runs gave 4 → 6 → 0 failures; duration inflated 75s → 150s from contention.
+  A gate number taken mid-wave is not evidence.
+- **A parse is not a run.** `node --check` passes on a scope error; a deleted
+  `const` killed every write to the fact base while the file "parsed fine".
+- **The bench was measuring nothing** — answer ids did not match `BANK_ID_RE`,
+  so a `CONFIRM` was structurally unreachable and the class gate read as free
+  because it had never once run.
+- **The required-widget defer costs +1 model turn, not +4.** Three of the four
+  belong to step C's skip predicate.
+- **`ready:true` ≠ "green".** Green means removing the model entirely via a
+  runner that does not exist. 12 → 6 turns is what Phase 2 promised; the manager
+  conflated the two and was corrected by `innov-perf`.

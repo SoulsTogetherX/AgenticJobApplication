@@ -1294,3 +1294,183 @@ test("--rescan takes no lock, so an audit cannot block a writer", (t) => {
   assert.equal(fs.existsSync(`${file}.lock`), false)
   assert.deepEqual(fs.readdirSync(dir), ["answers.yaml"])
 })
+
+// A NORMAL RELEASE LOOKS LIKE EPERM TO A WAITER, ON WIN32.
+//
+// `openSync(path, "wx")` reports EPERM — not EEXIST — while the path is
+// delete-pending, which is the state a lockfile is in for a moment during every
+// clean release. Measured on this host with one churner against one waiter over
+// 3s: 7357 attempts, EEXIST 3529, EPERM 636 (8.6%). Both implementations
+// special-cased EEXIST and rethrew, so 8.6% of contended attempts crashed with
+// a raw stack trace instead of polling.
+//
+// This asserts it AT THE CONSUMER — the script, not the module — because the
+// module having a correct classifier proves nothing about whether this caller
+// uses it.
+//
+// THE SHAPE OF THIS TEST WAS FOUND BY CANARYING IT, TWICE, NOT BY REASONING.
+//
+//   v1 — one save against a create/unlink churner:  green 3/3 against the
+//        unfixed script. Useless.
+//   v2 — sixteen saves against the same churner:    red 1/5. Still useless: a
+//        save WINS the path on its first or second attempt, so it barely
+//        samples the window at all. ~1.3% detection per run.
+//   v3 — this one. The churner HOLDS the lock for 20ms between create and
+//        unlink, so the save is locked out and polls ~65 times at 12ms inside
+//        an 800ms timeout. Attempts are what sample the window, so this is the
+//        variable that mattered.
+//
+// The point of writing that down: the defect's exposure is proportional to the
+// number of CREATE ATTEMPTS a waiter makes, and a test whose waiter succeeds
+// immediately cannot see it however many times you repeat it.
+//
+// CANARY RATE, MEASURED: green 5/5 against the fixed script, red 4/5 against
+// the EEXIST-only one. Stated because it is not 5/5 — this test catches the
+// regression four times in five, so a single green run of it is weaker evidence
+// than a green run of a deterministic test, and CI seeing it fail once is a
+// real signal rather than noise.
+const EPERM_RUNS = 5
+const EPERM_TIMEOUT_MS = "800"
+
+test("a writer polls through a lock that is mid-release instead of crashing", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "answers-eperm-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, "answers.yaml")
+  const lock = `${file}.lock`
+
+  // Take the lock, HOLD it 20ms, release, immediately retake. The hold is what
+  // forces the save to poll instead of winning on its first attempt, and the
+  // release is the delete-pending window it must poll through.
+  const churn = spawn(
+    process.execPath,
+    [
+      "-e",
+      `const fs=require("fs");const p=process.argv[1];const end=Date.now()+20000;
+       const nap=()=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);
+       while(Date.now()<end){try{fs.closeSync(fs.openSync(p,"wx"))}catch(e){continue}
+       nap();try{fs.unlinkSync(p)}catch(e){}}`,
+      lock,
+    ],
+    { stdio: "ignore" },
+  )
+  t.after(() => churn.kill())
+  // Let the churner get going first, or the save wins the path uncontended and
+  // the test proves nothing about the window it exists to cover.
+  await new Promise((r) => setTimeout(r, 250))
+
+  // NOT VACUOUS, ASSERTED BY MEASUREMENT. The delete-pending window is
+  // invisible from outside the save, so the test opens the same window itself,
+  // on the same path, while the same churner runs. If this probe sees no EPERM
+  // then the window was never open and everything below is decoration.
+  //
+  // (An earlier version of this guard asserted that some save got locked out
+  // instead. It failed 16/16 with status 0 — the saves always win the path,
+  // they just sometimes hit EPERM on the way. The guard was wrong about the
+  // mechanism, which is precisely what a vacuity guard is for.)
+  // The budget is 3s, not the 400ms it started at: under full-suite load the
+  // churner gets less CPU, the delete-pending window opens less often, and 400ms
+  // was not enough to see one. It exits as soon as it sees one, so the budget
+  // costs nothing on an idle machine.
+  let epermSeen = 0
+  const probeEnd = Date.now() + 3000
+  while (Date.now() < probeEnd && epermSeen === 0) {
+    try {
+      fs.closeSync(fs.openSync(lock, "wx"))
+      fs.unlinkSync(lock)
+    } catch (err) {
+      if (err.code === "EPERM" || err.code === "EACCES" || err.code === "EBUSY")
+        epermSeen++
+    }
+  }
+  assert.ok(
+    epermSeen > 0,
+    "the delete-pending window never opened during this test, so it proved nothing",
+  )
+
+  const statuses = []
+  for (let i = 0; i < EPERM_RUNS; i++) {
+    const res = await runAsync([`Churn question ${i}?`, "Yes", "--file", file], {
+      AJ_LOCK_TIMEOUT_MS: EPERM_TIMEOUT_MS,
+    })
+    statuses.push(res.status)
+    // 0 (won the path) and 5 (gave up, or had its lock broken by the churner)
+    // are both correct outcomes. A raw transient create error is not.
+    assert.doesNotMatch(
+      res.stderr,
+      /EPERM|EACCES|EBUSY/,
+      `run ${i}: a transient create error surfaced as a crash instead of a poll:\n${res.stderr}`,
+    )
+    assert.doesNotMatch(
+      res.stderr,
+      /at Object\.|at Module\.|at acquireLock/,
+      `run ${i}: raw stack trace:\n${res.stderr}`,
+    )
+    assert.ok(
+      res.status === 0 || res.status === 5,
+      `run ${i}: exited ${res.status} — expected a lock outcome:\n${res.stderr}`,
+    )
+  }
+  churn.kill()
+  assert.equal(
+    statuses.filter((s) => s !== 0 && s !== 5).length,
+    0,
+    `unexpected exit statuses: ${statuses.join(",")}`,
+  )
+})
+
+// A LIVENESS BOUND, AND EXPLICITLY *NOT* A REGRESSION TEST FOR THE HOT SPIN.
+//
+// The acquire loop used to `continue` after a failed break without checking its
+// deadline or sleeping, which is an unbounded spin. This test was written to
+// cover that and CANARIED GREEN 3/3 against the pre-fix loop order — so it does
+// not cover it, and saying otherwise would be the exact failure this suite
+// keeps finding.
+//
+// Why it cannot: the spin needs the lockfile to exist, be old, AND resist
+// rename, persistently. On this filesystem a churner that deletes the file
+// makes the next `wx` succeed, so the waiter escapes through the front door
+// instead of spinning. I could not construct the condition; the fix is
+// therefore justified by code shape (the deadline is now the first thing
+// checked, so no branch can outlive it) and NOT by this test.
+//
+// What it does assert is still worth having: a save returns within its timeout
+// under churn, so a future change that reintroduces a hang gets caught even
+// though the original spin would not have been.
+test("a save returns within its timeout under churn (liveness bound, not a spin canary)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "answers-spin-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, "answers.yaml")
+  const lock = `${file}.lock`
+
+  // A lock that is re-planted, always old, as fast as it is broken.
+  const replant = spawn(
+    process.execPath,
+    [
+      "-e",
+      `const fs=require("fs");const p=process.argv[1];const end=Date.now()+4000;
+       while(Date.now()<end){
+         try{fs.writeFileSync(p,JSON.stringify({pid:1,host:"x",nonce:"replanted"}));
+             const old=new Date(Date.now()-60000);fs.utimesSync(p,old,old)}catch(e){}
+       }`,
+      lock,
+    ],
+    { stdio: "ignore" },
+  )
+  t.after(() => replant.kill())
+
+  const started = Date.now()
+  const res = await runAsync(["Spin question?", "Yes", "--file", file], {
+    AJ_LOCK_TIMEOUT_MS: "1000",
+  })
+  const elapsed = Date.now() - started
+  replant.kill()
+
+  assert.ok(
+    res.status === 0 || res.status === 5,
+    `exited ${res.status}: ${res.stderr}`,
+  )
+  assert.ok(
+    elapsed < 2500,
+    `took ${elapsed}ms against a 1s timeout — the acquire loop outlived its own deadline`,
+  )
+})

@@ -23,7 +23,7 @@
   },
   "testGate": {
     "full": {
-      "floor": 1324,
+      "floor": 1350,
       "maxTodo": 0,
       "requireDirs": [
         "tests",
@@ -32,7 +32,7 @@
       "paths": [
         "tests"
       ],
-      "measured": "2026-07-31 on win32/node24: 1322 x3 pre-edit, then 1325 x3. Floor set to the observed MINIMUM (1324), not the maximum: the count drifts by ~1 under load and a floor above an honest run teaches people to ignore it. 'paths: tests' replaced node's DEFAULT DISCOVERY so all four matrix legs expand the file list the same way; verified name-for-name identical on node 24 (1325 = 1325, empty diff both directions) before switching, so this changed how the list is built and not what is in it. NOTE: measured on a tree holding uncommitted work - 88 of these tests are in tests/auto/ and tests/lib/lock.test.mjs, which were untracked. If that work does not land, lower this by exactly what the gate reports and say so."
+      "measured": "2026-07-31 on win32/node24: 1322 x3 pre-edit, then 1325 x3. Floor set to the observed MINIMUM (1324), not the maximum: the count drifts by ~1 under load and a floor above an honest run teaches people to ignore it. 'paths: tests' replaced node's DEFAULT DISCOVERY so all four matrix legs expand the file list the same way; verified name-for-name identical on node 24 (1325 = 1325, empty diff both directions) before switching, so this changed how the list is built and not what is in it. NOTE: measured on a tree holding uncommitted work - 88 of these tests are in tests/auto/ and tests/lib/lock.test.mjs, which were untracked. If that work does not land, lower this by exactly what the gate reports and say so. RAISED 1324 -> 1350 by build-manager once that work landed and the tree went fully green: two independent gate runs agreed at 1350 (w1-security's and the manager's), 0 fail, 2 skips both carrying reasons. Same rule as before - the floor is a number two honest runs actually produced, not the best one seen. package.json is ci-engineer's file; edited directly because a one-number floor bump is smaller than the context an agent would rebuild to make it, per the staffing rule in team-roster.md."
     },
     "security": {
       "floor": 236,

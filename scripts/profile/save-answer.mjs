@@ -111,6 +111,17 @@ import {
   rescanSummary,
   RESCAN_LIMITS,
 } from "../lib/untrusted.mjs"
+// The dangerous halves of the lock live in ONE place now. This script keeps its
+// own acquire loop (see LOCK_TIMEOUT_MS below for the one reason why), but the
+// read, the break and the win32 error classification are shared — those are the
+// three that diverged between the two implementations, and the divergence in
+// `breakStale` alone was the difference between 43 mutual-exclusion violations
+// and 0 under 20 concurrent writers.
+import {
+  readLock as readLockAt,
+  breakStale,
+  isRetryableCreateError,
+} from "../lib/lock.mjs"
 
 const SOURCES = new Set(["user", "model"])
 const DEFAULT_FILE = "profile/answers.yaml"
@@ -639,8 +650,7 @@ function envMs(name, fallback) {
 const LOCK_STALE_MS = 10_000 // an untouched lock older than this is abandoned
 const LOCK_TIMEOUT_MS = envMs("AJ_LOCK_TIMEOUT_MS", 20_000) // > LOCK_STALE_MS
 const LOCK_POLL_MS = 12 // between acquisition attempts
-const READ_ATTEMPTS = 5 // a failed read is not an answer; see readLock()
-const READ_BACKOFF_MS = 4
+// (the read-retry counts now live in lib/lock.mjs alongside readLock itself)
 const UNLINK_ATTEMPTS = 20 // release runs in an exit handler: keep it under ~100ms
 const UNLINK_BACKOFF_MS = 5
 const RENAME_ATTEMPTS = 60 // see writeFileAtomic: EPERM on win32 is transient
@@ -670,22 +680,9 @@ const lockNonce = crypto.randomUUID()
 // An empty or half-written file is a holder mid-acquire, not a corpse, so a
 // parse failure is retried rather than believed. Only ENOENT is an immediate
 // answer, because a missing file is unambiguous.
-function readLock() {
-  let lastErr
-  for (let i = 0; i < READ_ATTEMPTS; i++) {
-    try {
-      return {
-        state: "held",
-        holder: JSON.parse(fs.readFileSync(lockPath, "utf8")),
-      }
-    } catch (err) {
-      if (err.code === "ENOENT") return { state: "absent" }
-      lastErr = err
-      sleepSync(READ_BACKOFF_MS)
-    }
-  }
-  return { state: "unreadable", err: lastErr }
-}
+//
+// The implementation is lib/lock.mjs's; this is the path-bound wrapper.
+const readLock = () => readLockAt(lockPath)
 
 // null means "not old" — gone, or unreadable. Never treat an unknown age as an
 // expired one: that is the direction that breaks a live writer's lock.
@@ -705,39 +702,11 @@ function lockAgeMs() {
 // which case we are holding a live writer's lock, and deleting it would put two
 // processes in the critical section at once. A file that turns out to be fresh
 // goes straight back.
-function breakStaleLock() {
-  const doomed = `${lockPath}.stale-${process.pid}-${lockNonce}`
-  try {
-    fs.renameSync(lockPath, doomed)
-  } catch {
-    return false // somebody else broke it first
-  }
-  let takenAge = null
-  try {
-    takenAge = Date.now() - fs.statSync(doomed).mtimeMs
-  } catch {
-    /* cannot age it; fall through and treat it as broken */
-  }
-  if (takenAge !== null && takenAge <= LOCK_STALE_MS) {
-    // Not ours to break. Put it back — but NEVER over the top of a lock
-    // somebody has created since, because that clobber is the failure this
-    // whole section exists to avoid.
-    try {
-      if (!fs.existsSync(lockPath)) {
-        fs.renameSync(doomed, lockPath)
-        return false
-      }
-    } catch {
-      /* restore lost its own race; fall through */
-    }
-  }
-  try {
-    fs.unlinkSync(doomed)
-  } catch {
-    /* a leftover .stale file is inert */
-  }
-  return true
-}
+//
+// The implementation is lib/lock.mjs's, which is this one plus an `fs.linkSync`
+// restore (atomic create-or-EEXIST, so the put-back can never clobber a lock
+// created in the meantime, where the old `existsSync` + rename could).
+const breakStaleLock = () => breakStale(lockPath, lockNonce, LOCK_STALE_MS)
 
 function acquireLock() {
   const deadline = Date.now() + LOCK_TIMEOUT_MS
@@ -761,13 +730,20 @@ function acquireLock() {
       }
       return broke
     } catch (err) {
-      if (err.code !== "EEXIST") throw err
+      // "COULD NOT CREATE RIGHT NOW" IS NOT ONLY EEXIST ON WIN32. `wx` returns
+      // EPERM — not EEXIST — when the path is delete-pending, which is exactly
+      // what a NORMAL release looks like from a waiter's side. Measured on this
+      // host, one churner against one waiter over 3s: 7357 attempts, EEXIST
+      // 3529, EPERM 636 (8.6%). Rethrowing that 8.6% put raw stack traces out
+      // of live writer processes. EPERM/EACCES/EBUSY belong on the poll path.
+      // This is platform classification, not a pattern list to keep extending.
+      if (!isRetryableCreateError(err.code)) throw err
     }
-    const age = lockAgeMs()
-    if (age !== null && age > LOCK_STALE_MS) {
-      if (breakStaleLock()) broke = `it was untouched for ${Math.round(age / 1000)}s`
-      continue
-    }
+
+    // THE DEADLINE IS CHECKED BEFORE ANY BRANCH THAT CAN `continue`. It used to
+    // be checked only on the fall-through, so a break that kept failing looped
+    // with neither a deadline test nor a sleep — a hot spin for the full
+    // timeout. Nothing below may outlive this.
     if (Date.now() >= deadline) {
       const r = readLock()
       const holder = r.state === "held" ? r.holder : null
@@ -779,6 +755,17 @@ function acquireLock() {
       )
       e.lockTimeout = true
       throw e
+    }
+
+    // AGE IS THE ONLY THING THAT MAY BREAK A LOCK. There is deliberately no pid
+    // probe: see the long note above LOCK_STALE_MS, and lib/lock.mjs's header
+    // for the A/B that removed it from there too (43 mutual-exclusion
+    // violations with it, 0 without, over 20 writers x 5 trials).
+    const age = lockAgeMs()
+    if (age !== null && age > LOCK_STALE_MS) {
+      if (breakStaleLock())
+        broke = `it was untouched for ${Math.round(age / 1000)}s`
+      continue // the deadline is re-checked at the top; this cannot spin forever
     }
     sleepSync(LOCK_POLL_MS)
   }

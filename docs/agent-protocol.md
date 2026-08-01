@@ -37,6 +37,51 @@ otherwise. A confident report over an empty result is the shape to watch for.
 7. **Checking is not optional work.** An agent that ships its own task and skips
    its check duty has not finished.
 
+## Dispatch discipline — the manager's own cost rules
+
+**User decision 2026-07-31**, after a twelve-agent wave cost ~1.38M tokens.
+These bind the **manager**, because most of that spend was ordered rather than
+chosen by the agents.
+
+**1. Do not order a blanket read of the orientation files.** Every brief in that
+wave opened with "read `agent-protocol.md` and `team-roster.md` first" —
+~5,400 tokens each, twelve times, by manager order, and most agents needed one
+line of it. Instead:
+
+- **Put the rules the agent actually needs INTO the brief**, in a sentence each.
+  A worker touching the fact base needs rule 2 and the exit codes; it does not
+  need the staffing constraints.
+- Point at `team-roster.md` for **one** purpose: verifying a contested ownership
+  claim. Point at `roster-log.md` only to answer "why does this line say this?"
+- `CLAUDE.md` is read by the agent harness already. Do not re-order it.
+
+**2. One bounded task per agent.** If the work is three tasks, decide before
+dispatching whether that is one wider brief or three jobs — do not discover it
+mid-run. Agents in that wave ran to 150k–238k tokens and 80–144 tool calls;
+several in the session before died at their limit **mid-edit**, which cost more
+than the work saved.
+
+**3. Reuse before re-hiring.** `SendMessage` to a live agent keeps its context
+and costs nothing to re-orient. Dispatching a fresh agent for a small follow-up
+pays the whole orientation and exploration cost again to save a few thousand
+tokens of accumulated context. The clearing table in `team-roster.md` says when
+to clear; the default for a _small follow-up_ is **resume, not replace**.
+
+**4. Require the agent to stop rather than expand.** Scope found mid-run comes
+back as a finding for the manager to route, not as extra work done quietly. Two
+agents in that wave fixed real bugs outside their brief — good work, and
+unbudgeted; the finding was the deliverable, the fix was a bonus that could have
+gone the other way.
+
+**5. State the falsifiable-report contract once, briefly.** It is three lines —
+test count for a pass claim, command for a measurement, file and behaviour for a
+fix, own incompleteness first — not three paragraphs.
+
+The measured split, so nobody optimises the wrong term: orientation was **~7%**
+of that wave. The dominant cost is **exploration and verification inside each
+agent** — which is what rules 2, 3 and 4 target, and what the phase-boundary
+rule below targets on the manager's side.
+
 ## When checking happens — at phase boundaries, not after every agent
 
 **User decision 2026-07-31.** Verification is real work with a real cost, and

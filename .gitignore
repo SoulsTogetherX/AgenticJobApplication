@@ -5,6 +5,14 @@ profile/*
 !profile/profile.example.yaml
 jobs/
 
+# Scratch copies of the fact base. docs/next-session-prompt.md documents a
+# repair recipe that stages the real answers.yaml at the REPO ROOT:
+#   head -n 234 profile/answers.yaml > answers.tmp && mv answers.tmp profile/...
+# `profile/*` does not cover the root, so a half-run recipe leaves the user's
+# answers sitting outside every ignore rule. Found untracked and uncovered on
+# 2026-07-31 (0 bytes that time). tests/hooks/repo-hygiene.test.mjs asserts it.
+*.tmp
+
 # Secrets — never commit; use .env.example as the template
 .env
 

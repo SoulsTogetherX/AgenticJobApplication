@@ -59,6 +59,91 @@ test("nothing under tests/ is gitignored", (t) => {
   )
 })
 
+// Every hook wired in .claude/settings.json must actually exist on disk.
+//
+// Written on 2026-07-31, when guard-profile-shell.mjs moved from scripts/hooks/
+// to .claude/hooks/ and settings.json was repointed by hand. If that edit had
+// been missed, or a later reorg moves a hook again, the guard is simply GONE:
+// Claude Code cannot run a file that is not there, and nothing else in the
+// suite reads settings.json. The 2026-07-29 reorg already did exactly this to
+// `npm run verify`, which pointed at a moved path and did nothing at all for
+// two days. A guardrail that silently stopped being loaded is the worst kind of
+// green.
+test("every hook command in .claude/settings.json points at a file that exists", () => {
+  const settingsPath = path.join(ROOT, ".claude", "settings.json")
+  const raw = fs.readFileSync(settingsPath, "utf8")
+  let settings
+  assert.doesNotThrow(() => {
+    settings = JSON.parse(raw)
+  }, "settings.json must be valid JSON or Claude Code loads NO hooks at all")
+
+  const commands = []
+  for (const [event, matchers] of Object.entries(settings.hooks ?? {})) {
+    for (const m of matchers) {
+      for (const h of m.hooks ?? []) {
+        if (h.type === "command") {
+          commands.push({ event, matcher: m.matcher, command: h.command })
+        }
+      }
+    }
+  }
+  assert.ok(
+    commands.length >= 4,
+    `expected the guardrail hooks to be wired, found ${commands.length}`,
+  )
+
+  for (const { event, matcher, command } of commands) {
+    // `node <script>` — take the first .js/.mjs argument as the script path.
+    const m = command.match(/([\w./\\-]+\.m?js)/)
+    assert.ok(m, `cannot find a script path in ${event} hook: ${command}`)
+    const scriptPath = path.join(ROOT, m[1])
+    assert.ok(
+      fs.existsSync(scriptPath),
+      `${event} (${matcher}) is wired to "${m[1]}", which does not exist. ` +
+        "That hook is silently not running.",
+    )
+  }
+})
+
+// The fact base has two doors: the Edit/Write tool path and the shell path.
+// Both must be wired, and the shell one must be on BOTH shell tools.
+test("both fact-base guards are wired, and the shell guard covers Bash AND PowerShell", () => {
+  const settings = JSON.parse(
+    fs.readFileSync(path.join(ROOT, ".claude", "settings.json"), "utf8"),
+  )
+  const pre = settings.hooks?.PreToolUse ?? []
+  const commandsFor = (toolName) =>
+    pre
+      .filter((m) => String(m.matcher).split("|").includes(toolName))
+      .flatMap((m) => (m.hooks ?? []).map((h) => h.command))
+      .join(" ")
+
+  // Edit/Write door.
+  assert.match(
+    commandsFor("Edit"),
+    /protect-profile\.js/,
+    "profile/ is unguarded on the Edit tool path",
+  )
+  // Shell door — a Bash call carries no file_path, so protect-profile.js never
+  // sees it. This project uses both shell tools; guarding one is guarding none.
+  for (const tool of ["Bash", "PowerShell"]) {
+    assert.match(
+      commandsFor(tool),
+      /guard-profile-shell\.mjs/,
+      `profile/ is unguarded on the ${tool} tool path`,
+    )
+  }
+  // And it must be the copy agents cannot rewrite.
+  assert.match(
+    commandsFor("Bash"),
+    /\.claude\/hooks\/guard-profile-shell\.mjs/,
+    "the shell guard must be wired from .claude/hooks/ (agent-unwritable), " +
+      "not from scripts/hooks/ where the agents it constrains could edit it",
+  )
+  // The git branch policy still has to be there too.
+  assert.match(commandsFor("Bash"), /guard-bash\.mjs/)
+})
+
 test("the fake board and hostile fixtures are committable", (t) => {
   if (!gitAvailable()) {
     return t.skip("git is not on PATH, so ignore rules cannot be evaluated")

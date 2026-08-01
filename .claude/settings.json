@@ -33,7 +33,7 @@
           },
           {
             "type": "command",
-            "command": "node scripts/hooks/guard-profile-shell.mjs"
+            "command": "node .claude/hooks/guard-profile-shell.mjs"
           }
         ]
       }

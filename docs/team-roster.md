@@ -122,24 +122,24 @@ user starting a new session.
 
 ## Current roster
 
-| Agent              | Role           | Model   | Owns (exclusive)                                                                                                                     |
-| ------------------ | -------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `build-manager`    | manager        | Opus    | Process only: this file, `agent-protocol.md`, the git history, the decision to ship                                                  |
-| `innov-architect`  | innovator      | Fable 5 | Nothing. Structure, rewrite backlog, deletion candidates                                                                             |
-| `innov-perf`       | innovator      | Opus    | `scripts/dev/bench-*.mjs`, `docs/measurements.md`                                                                                    |
-| `innov-resilience` | innovator      | Opus    | Nothing. Failure modes, concurrency, security architecture                                                                           |
-| `w1-security`      | worker         | Opus    | `lib/untrusted.mjs`, `lib/lib.mjs`, `documents/verify-claims.mjs`, `profile/save-answer.mjs`                                         |
-| `w2-engine`        | worker         | Opus    | `apply/fill-engine.mjs`, `apply/scan-engine.mjs`, `apply/browser.mjs`, `tests/apply/fill-page.*`                                     |
-| `w3-resolution`    | worker         | Sonnet  | `apply/fill-plan.mjs`, `answer-bank.mjs`, `field-cache.mjs`, `pending-questions.mjs`, `apply/ats/`                                   |
-| `w4-autonomy`      | worker         | Opus    | `scripts/auto/*`, `lib/lock.mjs`, `lib/db.mjs`, `apply/automatability.mjs`, `apply/auth-sync.mjs`                                    |
-| `w5-leads`         | worker         | Sonnet  | `scripts/leads/*`, `scripts/recruiters/*`, `docs/candidates/*`                                                                       |
-| `w6-documents`     | worker         | Fable 5 | `scripts/documents/*` (not verify-claims), `templates/*` — **the user's résumé and cover letter**                                    |
-| `ci-engineer`      | cicd           | Opus    | `.github/workflows/*`, `package.json`, `scripts/hooks/*`, `.claude/settings*.json`, `.gitignore`, `.prettierignore`, `tests/hooks/*` |
-| `doc-scribe`       | scribe         | Fable 5 | `CLAUDE.md`, `README.md`, `docs/reference/*`, most `docs/*.md`, `.claude/skills/*`, `schemas/*`                                      |
-| `qa-adversary`     | QA             | Fable 5 | `tests/security/`, `tests/fixtures/boards/`, `tests/fixtures/hostile/`                                                               |
-| `qa-breaker`       | QA             | Opus    | `tests/apply/` (not fill-page), `tests/auto/`, `tests/dev/`, `scripts/dev/bench-apply.mjs`, `scripts/dev/flake-rate.mjs`             |
-| `researcher`       | **researcher** | Fable 5 | `docs/research/*`. Keywords, ATS behaviour, market conditions, comparable services. Consultable by everyone                          |
-| `job-worker`       | worker         | Sonnet  | Pre-existing. Per-job runtime worker for `pipeline-jobs`; not part of this build                                                     |
+| Agent              | Role           | Model   | Owns (exclusive)                                                                                                                                    |
+| ------------------ | -------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build-manager`    | manager        | Opus    | Process only: this file, `agent-protocol.md`, the git history, the decision to ship                                                                 |
+| `innov-architect`  | innovator      | Fable 5 | Nothing. Structure, rewrite backlog, deletion candidates                                                                                            |
+| `innov-perf`       | innovator      | Opus    | `scripts/dev/bench-*.mjs`, `docs/measurements.md`                                                                                                   |
+| `innov-resilience` | innovator      | Opus    | Nothing. Failure modes, concurrency, security architecture                                                                                          |
+| `w1-security`      | worker         | Opus    | `lib/untrusted.mjs`, `lib/lib.mjs`, `documents/verify-claims.mjs`, `profile/save-answer.mjs`                                                        |
+| `w2-engine`        | worker         | Opus    | `apply/fill-engine.mjs`, `apply/scan-engine.mjs`, `apply/browser.mjs`, `tests/apply/fill-page.*`                                                    |
+| `w3-resolution`    | worker         | Sonnet  | `apply/fill-plan.mjs`, `answer-bank.mjs`, `field-cache.mjs`, `pending-questions.mjs`, `apply/ats/`                                                  |
+| `w4-autonomy`      | worker         | Opus    | `scripts/auto/*`, `lib/lock.mjs`, `lib/db.mjs`, `apply/automatability.mjs`, `apply/auth-sync.mjs`                                                   |
+| `w5-leads`         | worker         | Sonnet  | `scripts/leads/*`, `scripts/recruiters/*`, `docs/candidates/*`                                                                                      |
+| `w6-documents`     | worker         | Fable 5 | `scripts/documents/*` (not verify-claims), `templates/*` — **the user's résumé and cover letter**                                                   |
+| `ci-engineer`      | cicd           | Opus    | `.github/workflows/*`, `package.json`, `scripts/hooks/*`, `.gitignore`, `.prettierignore`, `tests/hooks/*` — **no longer `.claude/settings*.json`** |
+| `doc-scribe`       | scribe         | Fable 5 | `CLAUDE.md`, `README.md`, `docs/reference/*`, most `docs/*.md`, `.claude/skills/*`, `schemas/*`                                                     |
+| `qa-adversary`     | QA             | Fable 5 | `tests/security/`, `tests/fixtures/boards/`, `tests/fixtures/hostile/`                                                                              |
+| `qa-breaker`       | QA             | Opus    | `tests/apply/` (not fill-page), `tests/auto/`, `tests/dev/`, `scripts/dev/bench-apply.mjs`, `scripts/dev/flake-rate.mjs`                            |
+| `researcher`       | **researcher** | Fable 5 | `docs/research/*`. Keywords, ATS behaviour, market conditions, comparable services. Consultable by everyone                                         |
+| `job-worker`       | worker         | Sonnet  | Pre-existing. Per-job runtime worker for `pipeline-jobs`; not part of this build                                                                    |
 
 ### Contested paths, resolved
 
@@ -175,8 +175,26 @@ user starting a new session.
   what the lexicon is missing, the owner decides what goes in it. That split is
   deliberate — it keeps a claim sourced from the open web from becoming a term
   this pipeline will place in a résumé without an owner having agreed to it.
-- `.claude/hooks/protect-profile.js` — **nobody.** That path denies writes to
-  itself, deliberately.
+- `.claude/hooks/*` and `.claude/settings*.json` — **nobody. The user's alone**
+  (user decision 2026-07-31). `protect-profile.js` always denied writes to its
+  own directory on the Edit/Write path; the manager then probed the SHELL path
+  and found it open — `"probe" | Out-File .claude/hooks/__probe.txt` succeeded,
+  so an agent could have rewritten the guard denying it. Both hooks were
+  extended: the shell guard now covers `.claude/hooks/` and
+  `.claude/settings*.json`, and `protect-profile.js` now covers
+  `settings*.json` too.
+
+  `settings.json` is in scope for a reason that is easy to miss: it **wires**
+  every hook, so a guard is disabled by deleting one line there without ever
+  touching a protected file. Flagged independently by `ci-engineer` and by
+  `guard-profile-shell.mjs`'s own residuals note — two confirmations.
+
+  **Cost, accepted knowingly:** `ci-engineer` can no longer wire a hook, add a
+  permission or change a matcher; those come to the user. That is the trade,
+  because `settings.json` is precisely where a guardrail gets switched off.
+  Known false positive: `git commit -m` whose MESSAGE names a guarded path and
+  contains `rm`/`install` is denied — use `git commit -F <file>`.
+
 - **Comments** — owned by whoever owns the file, _except_ in a post-merge
   comment window granted to `doc-scribe`, who may then edit comments and
   docstrings only, never executable code.

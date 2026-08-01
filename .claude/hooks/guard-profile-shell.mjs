@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// PreToolUse hook (Bash|PowerShell): keep the user-owned fact base out of reach
-// of a SHELL command. Sibling of .claude/hooks/protect-profile.js, which guards
-// the Edit/Write tool path. Between them, profile/ has no unguarded writer.
+// PreToolUse hook (Bash|PowerShell): keep the user-owned fact base AND the
+// guardrail machinery out of reach of a SHELL command. Sibling of
+// .claude/hooks/protect-profile.js, which guards the Edit/Write tool path.
+// Between them, neither profile/ nor .claude/hooks/ has an unguarded writer.
 //
 // WHY THIS EXISTS — two real incidents on 2026-07-31, both accidents.
 //
@@ -37,18 +38,37 @@
 // base constantly — keyword-coverage, answer-bank and verify-claims all do.
 // Only write OPERATIONS are matched, never the mere mention of a path.
 //
+// WHY THIS FILE ALSO GUARDS ITS OWN DIRECTORY (user decision 2026-07-31).
+// This file was moved from scripts/hooks/ into .claude/hooks/ so that
+// protect-profile.js would deny agent Edit/Write to it. That move was real but
+// PARTIAL, and the gap was found by probing rather than by reading: the manager
+// ran `"probe" | Out-File .claude/hooks/__probe.txt` and it SUCCEEDED. The
+// Edit/Write door was locked and the shell door was standing open, so an agent
+// could have blanked or rewritten the very guard denying it. Section 2 below
+// now covers .claude/hooks/ as well, which closes the loop — the guard lives
+// inside the directory it protects.
+//
+// .claude/settings.json is included for a different reason: it WIRES every
+// hook. Disabling a guard never required editing a guard; deleting one line
+// from settings.json does it without touching a protected file at all. That
+// was flagged independently by ci-engineer and by this file's own earlier
+// residuals note, which is two confirmations of the same weak link.
+//
 // KNOWN RESIDUALS, stated so nobody mistakes this for a wall:
-//   - THIS FILE IS AGENT-EDITABLE. protect-profile.js only denies writes under
-//     .claude/hooks/, and CLAUDE.md already records that the guards in
-//     scripts/hooks/ are not agent-protected. Moving this file to
-//     .claude/hooks/ and repointing the one line in .claude/settings.json makes
-//     it self-protecting; that move needs the user, because the agent cannot
-//     write there — which is the guard working.
-//   - .claude/settings.json wires this hook and is not itself write-protected.
-//   - An arbitrary compiled program that opens the file is only caught when its
-//     command line names a profile path AND a write call (the `node -e` case).
 //   - Fails OPEN on unparseable input, matching the sibling hook. A guard that
 //     denied every shell command on a malformed payload would be worse.
+//   - An arbitrary compiled program that opens a protected file is only caught
+//     when its command line names the path AND a write call (the `node -e`
+//     case). A purpose-built binary is out of scope; see the threat model.
+//   - Neither hook can stop a command that never names the path — a script
+//     that computes it at runtime, or an editor launched interactively.
+//   - A KNOWN FALSE POSITIVE, left in deliberately: `git commit -m "..."`
+//     whose MESSAGE names a guarded path and also contains a mutator word
+//     ("rm", "install") is denied, because the message is part of the command
+//     line and this guard cannot parse shell grammar. Workaround that costs
+//     nothing: `git commit -F <file>`, verified unaffected. Exempting
+//     `git commit` was considered and REJECTED — it would equally exempt
+//     `git commit -m "x" && rm .claude/hooks/y`, which is the whole attack.
 //
 // NOTE: no process.exit() after writing — on Windows, exiting immediately after
 // console.log drops buffered pipe output, which silently disables the deny.
@@ -59,8 +79,11 @@ process.stdin.on("data", (d) => (raw += d))
 process.stdin.on("end", () => {
   let input = {}
   // Strip a UTF-8 BOM (PowerShell pipes add one) so parse never fails silently.
+  // Written as the \uFEFF escape, not a literal BOM: the literal is invisible
+  // in a diff and does not reliably survive being copied through a chat
+  // window, which is how this file now reaches the user for hand-application.
   try {
-    input = JSON.parse(raw.replace(/^﻿/, ""))
+    input = JSON.parse(raw.replace(/^\uFEFF/, ""))
   } catch {
     return
   }
@@ -87,6 +110,11 @@ process.stdin.on("end", () => {
     "profile/ is the user-owned fact base (CLAUDE.md hard rule 2). " +
     "Only the user decides what is true about them."
 
+  const GUARDED =
+    ".claude/hooks/ holds the guardrails and .claude/settings.json wires them. " +
+    "An agent that can rewrite either can switch off every other rule, " +
+    "so both are the user's alone."
+
   // ---------------------------------------------------------------------
   // 1. The sanctioned writers, aimed at the DEFAULT fact base.
   //
@@ -105,7 +133,21 @@ process.stdin.on("end", () => {
   ) {
     const hasExplicitFile = /(?:^|\s)--file[\s=]/.test(c)
     const hasApproval = /(?:^|\s)--user-approved(?:[\s=]|$)/.test(c)
-    if (!hasExplicitFile && !hasApproval) {
+    // --rescan is a READ-ONLY audit of the stored bank, so it needs neither
+    // flag, and requiring --file made agents pass the real path by hand for a
+    // command that cannot write — a habit worth not teaching.
+    //
+    // Verified before allowing it (2026-07-31): answers.yaml's md5 is
+    // unchanged across a run, and `--rescan --replace` / `--rescan
+    // --user-approved` both exit 2.
+    //
+    // NOTE THE COUPLING, because it is the weak point of this allowance: the
+    // hook is trusting save-answer.mjs to keep refusing writes under --rescan.
+    // If that ever stops being true, this line is the hole. The same trust
+    // already underlies --file, so it is not a new KIND of risk, but it is a
+    // second place to break.
+    const isRescan = /(?:^|\s)--rescan(?:[\s=]|$)/.test(c)
+    if (!hasExplicitFile && !hasApproval && !isRescan) {
       return deny(
         `This writes the REAL fact base, and says neither that it is a test nor that the user approved it. ${OWNED}\n` +
           "  - testing?       add `--file <temp path>` so it cannot touch profile/\n" +
@@ -119,7 +161,7 @@ process.stdin.on("end", () => {
   }
 
   // ---------------------------------------------------------------------
-  // 2. Raw shell writes to a profile path.
+  // 2. Raw shell writes to a protected path.
   //
   // Matched as OPERATIONS, never as a bare mention, so reads stay allowed.
   // ---------------------------------------------------------------------
@@ -127,16 +169,34 @@ process.stdin.on("end", () => {
     /(?:^|[\s"'=(,;|&>])(?:[^\s"']*\/)?profile\/(?:profile|answers|applications)\.yaml/i.test(
       c,
     ) || /(?:^|[\s"'=(,;|&>])(?:[^\s"']*\/)?profile\/source\//i.test(c)
-  if (!namesProfile) return
 
-  // Redirection into a profile path: `> profile/answers.yaml`, `>>`, `1>`.
-  if (/\d?>>?\s*(?:"|')?(?:[^\s"']*\/)?profile\//i.test(c)) {
+  // The guardrails themselves. See the header for why the Edit/Write-only
+  // protection was not enough, and how the gap was found.
+  const namesGuard =
+    /(?:^|[\s"'=(,;|&>])(?:[^\s"']*\/)?\.claude\/hooks\//i.test(c) ||
+    /(?:^|[\s"'=(,;|&>])(?:[^\s"']*\/)?\.claude\/settings(?:\.local)?\.json/i.test(
+      c,
+    )
+
+  if (!namesProfile && !namesGuard) return
+
+  // Which subject the denial explains. The mutator shapes below are shared,
+  // because what constitutes "a write" does not differ by target — only the
+  // reason the target is off limits does.
+  const SUBJECT = namesProfile ? OWNED : GUARDED
+
+  // Redirection into a protected path: `> profile/answers.yaml`, `>>`, `1>`.
+  if (
+    /\d?>>?\s*(?:"|')?(?:[^\s"']*\/)?(?:profile\/|\.claude\/(?:hooks\/|settings))/i.test(
+      c,
+    )
+  ) {
     return deny(
-      `Shell redirection into the fact base. ${OWNED} Ask the user to make the change.`,
+      `Shell redirection into a protected path. ${SUBJECT} Ask the user to make the change.`,
     )
   }
 
-  // POSIX mutators. `cp`/`mv` match on a profile path appearing anywhere,
+  // POSIX mutators. `cp`/`mv` match on a protected path appearing anywhere,
   // because it is the DESTINATION that matters and quoting makes
   // last-argument parsing unreliable. Copying OUT of profile/ for a backup is
   // rare enough that an explained denial beats a silent overwrite.
@@ -146,7 +206,7 @@ process.stdin.on("end", () => {
     /\bperl\b[^|;&]*\s-i/i.test(c)
   ) {
     return deny(
-      `A shell command that writes, moves or deletes files names a profile path. ${OWNED} Ask the user to make the change.`,
+      `A shell command that writes, moves or deletes files names a protected path. ${SUBJECT} Ask the user to make the change.`,
     )
   }
 
@@ -157,11 +217,11 @@ process.stdin.on("end", () => {
     )
   ) {
     return deny(
-      `A PowerShell cmdlet that writes or removes files names a profile path. ${OWNED} Ask the user to make the change.`,
+      `A PowerShell cmdlet that writes or removes files names a protected path. ${SUBJECT} Ask the user to make the change.`,
     )
   }
 
-  // Inline programs that both name a profile path and call a write API.
+  // Inline programs that both name a protected path and call a write API.
   // Catches `node -e "fs.writeFileSync('profile/answers.yaml', ...)"`.
   if (
     /\b(?:writeFileSync|appendFileSync|createWriteStream|writeFile|appendFile|truncateSync|unlinkSync|rmSync|renameSync|copyFileSync)\b/i.test(
@@ -170,8 +230,10 @@ process.stdin.on("end", () => {
     /\bnode\b|\bpython3?\b|\bdeno\b|\bbun\b/i.test(c)
   ) {
     return deny(
-      `An inline program names a profile path and calls a file-write API. ${OWNED} ` +
-        "Use save-answer.mjs with `--user-approved` after the user approves, or `--file <temp path>` for a test.",
+      `An inline program names a protected path and calls a file-write API. ${SUBJECT} ` +
+        (namesProfile
+          ? "Use save-answer.mjs with `--user-approved` after the user approves, or `--file <temp path>` for a test."
+          : "Ask the user to make the change."),
     )
   }
 })

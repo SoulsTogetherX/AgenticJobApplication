@@ -37,6 +37,28 @@ otherwise. A confident report over an empty result is the shape to watch for.
 7. **Checking is not optional work.** An agent that ships its own task and skips
    its check duty has not finished.
 
+## When checking happens — at phase boundaries, not after every agent
+
+**User decision 2026-07-31.** Verification is real work with a real cost, and
+running it after every returned diff is how a wave triples its token spend
+without tripling what it catches.
+
+- **The manager verifies at the END OF A PHASE**, not after each agent. Land
+  the wave, then check it as a unit.
+- **Agents still cross-check each other continuously.** That is where the
+  expensive defects were actually found this session, and it is not what this
+  rule trims. What it trims is the manager re-running, a third time, a claim
+  two agents have already confirmed.
+- **Exception — check immediately, regardless of phase:** anything touching
+  `profile/` (the fact base), the submit path, or a guardrail. A silent failure
+  there costs the user a real application or a real fact about themselves, and
+  a phase boundary is too late to find it.
+
+The measured basis: a twelve-agent wave spent ~1.38M tokens, and the manager's
+re-verification duplicated work the cross-check protocol had already done. The
+protocol's premise — a self-report is a claim, not evidence — is satisfied by
+**one** independent check, not two.
+
 ## Slacking signatures
 
 Concrete things to look for. Each has been seen in real codebases; several are

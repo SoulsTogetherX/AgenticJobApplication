@@ -135,7 +135,7 @@ user starting a new session.
 | ------------------ | -------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `build-manager`    | manager        | Opus    | Process only: this file, `agent-protocol.md`, the git history, the decision to ship                                                                 |
 | `innov-architect`  | innovator      | Fable 5 | Nothing. Structure, rewrite backlog, deletion candidates                                                                                            |
-| `innov-perf`       | innovator      | Opus    | `scripts/dev/bench-*.mjs`, `docs/measurements.md`                                                                                                   |
+| `innov-perf`       | innovator      | Opus    | `scripts/dev/bench-*.mjs` **except `bench-apply.mjs`**, `docs/measurements.md`                                                                      |
 | `innov-resilience` | innovator      | Opus    | Nothing. Failure modes, concurrency, security architecture                                                                                          |
 | `w1-security`      | worker         | Opus    | `lib/untrusted.mjs`, `lib/lib.mjs`, `documents/verify-claims.mjs`, `profile/save-answer.mjs`                                                        |
 | `w2-engine`        | worker         | Opus    | `apply/fill-engine.mjs`, `apply/scan-engine.mjs`, `apply/browser.mjs`, `tests/apply/fill-page.*`                                                    |
@@ -146,7 +146,7 @@ user starting a new session.
 | `ci-engineer`      | cicd           | Opus    | `.github/workflows/*`, `package.json`, `scripts/hooks/*`, `.gitignore`, `.prettierignore`, `tests/hooks/*` — **no longer `.claude/settings*.json`** |
 | `doc-scribe`       | scribe         | Fable 5 | `CLAUDE.md`, `README.md`, `docs/reference/*`, most `docs/*.md`, `.claude/skills/*`, `schemas/*`                                                     |
 | `qa-adversary`     | QA             | Fable 5 | `tests/security/`, `tests/fixtures/boards/`, `tests/fixtures/hostile/`                                                                              |
-| `qa-breaker`       | QA             | Opus    | `tests/apply/` (not fill-page), `tests/auto/`, `tests/dev/`, `scripts/dev/bench-apply.mjs`, `scripts/dev/flake-rate.mjs`                            |
+| `qa-breaker`       | QA             | Opus    | `tests/apply/` (not fill-page), `tests/dev/`, `scripts/dev/bench-apply.mjs`, `scripts/dev/flake-rate.mjs` — **no longer `tests/auto/`**             |
 | `researcher`       | **researcher** | Fable 5 | `docs/research/*`. Keywords, ATS behaviour, market conditions, comparable services. Consultable by everyone                                         |
 | `job-worker`       | worker         | Sonnet  | Pre-existing. Per-job runtime worker for `pipeline-jobs`; not part of this build                                                                    |
 
@@ -173,6 +173,25 @@ user starting a new session.
 - `docs/application-limits.yaml` — **the user's file. No agent edits it.**
   Propose values; the user approves. `researcher` reads it constantly (it is
   the scope of every market question) and edits it never.
+- `scripts/dev/flake-rate.mjs` and `tests/dev/` — **`qa-breaker`**, which built
+- `scripts/dev/bench-apply.mjs` — **`qa-breaker`**, and this resolves a real
+  collision: line 138 gave `innov-perf` the whole `bench-*` glob while line 149
+  named this one file to `qa-breaker`. **The specific line wins over the glob.**
+  `qa-breaker` built the gate matrix, found the `BANK_ID_RE` defect that made a
+  `CONFIRM` structurally unreachable, and wired the `--browser` leg; the shapes
+  it benchmarks are its own edge cases. `innov-perf` keeps `docs/measurements.md`
+  — the **ledger** — and every other `bench-*`. That split is the point: the
+  agent that takes a measurement does not also own the record of what the
+  project believes, so a number has to survive a second party to become fact.
+  Flagged independently by `qa-breaker` and by the manager's brief to
+  `innov-perf`, which had already told it not to edit that file.
+- `tests/auto/` — **`w4-autonomy`**, not `qa-breaker`. It mirrors
+  `scripts/auto/`, which `w4` built from nothing and tested as it went.
+  `qa-breaker` never wrote there and **flagged the contradiction rather than
+  claiming it**, which is the behaviour this section exists to reward.
+  `tests/auto/auth-sync.test.mjs` is a deliberate mirror exception: the script
+  lives at `scripts/apply/auth-sync.mjs` but is autonomy work, and splitting it
+  from its siblings to satisfy the convention would cost more than it buys.
 - `scripts/dev/flake-rate.mjs` and `tests/dev/` — **`qa-breaker`**, which built
   them and flagged them as unclaimed. `innov-perf` owns `scripts/dev/bench-*`,
   and flake rate is not a `bench-*` file: it measures **test reliability**, a QA

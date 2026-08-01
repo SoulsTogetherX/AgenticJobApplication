@@ -108,6 +108,13 @@ export function applyCache(scan, entry) {
     if (known && Array.isArray(known.opts) && known.opts.length) {
       f.opts = known.opts.slice()
       if (known.optsTruncated) f.optsTruncated = true
+      // The REAL count, when the scanner (or a previous field-cache write)
+      // recorded one. Re-served alongside the cached list so a caller that
+      // only sees a re-served options array still knows "40 of 200", not
+      // just "40, maybe incomplete" — see answer-bank.mjs's noteFor(), which
+      // reads this to give the user a number instead of a caveat with no
+      // scale.
+      if (known.optsTotal) f.optsTotal = known.optsTotal
       if (wantsOptions) hits++
     } else if (wantsOptions) {
       miss++
@@ -157,6 +164,14 @@ export function recordCache(cache, { fp, scan, atsId, url, now = new Date() }) {
         opts.length > MAX_CACHED_OPTS ||
         (!freshOpts && !!prev.optsTruncated)
       if (truncated) next.optsTruncated = true
+      // The real total, same freshness rule as opts/optsTruncated above: a
+      // fresh scan's number wins, and a re-record that did not re-probe
+      // keeps whatever the cache already knew rather than silently dropping
+      // it. Both scanners set this from the actual DOM/react-select list
+      // length, not the post-cut array length, so it survives being cut
+      // again by MAX_CACHED_OPTS here.
+      const total = freshOpts ? f.optsTotal : (f.optsTotal ?? prev.optsTotal)
+      if (total) next.optsTotal = total
     }
     const sel = f.sel ?? prev.sel
     if (sel) next.sel = sel

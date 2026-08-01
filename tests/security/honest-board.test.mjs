@@ -200,16 +200,24 @@ test("the honest page is the ONLY board fixture that reaches ready:true, and the
   assert.deepEqual(
     rows.sort(),
     [
-      // All four are hostile fixtures with one or two fields, kept ready on
+      // All three are hostile fixtures with one or two fields, kept ready on
       // purpose so the attack they carry is the only reason a plan could be
       // unsafe. None of them is evidence that the fast path works.
+      //
+      // WAS FOUR. `escalated-aria-checkbox` LEFT this set on 2026-07-31 and
+      // that is a fix landing, caught here rather than reported: its
+      // <div role="checkbox"> consent used to be invisible to the scanner, so
+      // the plan contained one honest text fill and called itself ready while
+      // a REQUIRED consent went unmentioned. w2-engine's scanner now emits it
+      // as `t: "aria-checkbox"`, a type buildPlan has no verb for, so it
+      // defers and readiness() refuses. See hostile-forms.test.mjs section 4c.
       "consent-decoupled",
       "destructive-combobox",
-      "escalated-aria-checkbox",
       "mislabelled-escalated",
     ],
     "the set of fixtures reaching ready:true under the generic adapter moved — " +
-      "if a hostile fixture joined it, check what stopped deferring",
+      "if a hostile fixture JOINED it, check what stopped deferring. If one " +
+      "LEFT it, a defence landed: say which, here, before making this green",
   )
 })
 

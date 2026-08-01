@@ -308,15 +308,37 @@ export default async function scanPage(page, opts = {}) {
         .first()
         .waitFor({ state: "attached", timeout: 300 })
         .catch(() => {})
-      const found = await page.evaluate(() => {
+      // THE CUT IS STATED, NOT SILENT. A 200-option country list came back as
+      // 40 with nothing recording that anything was dropped, so the field
+      // cache stored the short list as the whole list and an answer the form
+      // really does offer — past the cut — resolved as "not on offer" and was
+      // deferred to the user for no reason. `total` is what the menu actually
+      // rendered; the caller flags the field when it exceeds what we kept.
+      const raw = await page.evaluate(() => {
         const pick = (sel) =>
           [...document.querySelectorAll(sel)]
             .map((e) => (e.innerText || "").replace(/\s+/g, " ").trim())
             .filter(Boolean)
         const a = pick("[class*='__option']")
-        return (a.length ? a : pick("[role='option']")).slice(0, 40)
+        const all = a.length ? a : pick("[role='option']")
+        return { opts: all.slice(0, 40), total: all.length }
       })
-      if (found.length) f.opts = found
+      // A page.evaluate return is DATA FROM THE PAGE and its shape is never
+      // assumed: an unexpected one used to become `probe_error` on every
+      // dropdown at once, which reads as "this board refuses to open its
+      // menus" and is indistinguishable from the real thing. A bare array is
+      // the shape this returned before the truncation flag existed.
+      const found = Array.isArray(raw)
+        ? { opts: raw, total: raw.length }
+        : {
+            opts: Array.isArray(raw && raw.opts) ? raw.opts : [],
+            total: Number((raw && raw.total) || 0),
+          }
+      if (found.opts.length) f.opts = found.opts
+      if (found.total > found.opts.length) {
+        f.optsTruncated = true
+        f.optsTotal = found.total
+      }
       stats.probed++
       await page.keyboard.press("Escape")
       // Let the menu close before the next dropdown is clicked — for as long

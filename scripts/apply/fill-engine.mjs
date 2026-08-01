@@ -84,9 +84,21 @@
 //   - A stale/detached-element error right after locate() (seen on Ashby:
 //     resume-autofill parses the uploaded PDF and remounts the form
 //     asynchronously, after the upload settle delay already waited for the
-//     upload itself) is retried ONCE with a freshly re-resolved locator before
-//     it counts as a real failure — see isStaleError below. fill/select/check
-//     are idempotent, so replaying one item is safe.
+//     upload itself) is retried with a freshly re-resolved locator before it
+//     counts as a real failure — see isStaleError below. fill/select/check are
+//     idempotent, so replaying one item is safe. THREE attempts, not one: one
+//     replay absorbs Ashby's single async remount and nothing more, and a form
+//     that remounts on a timer detaches the replay too.
+//   - A form that remounts faster than any retry is not decided by retries at
+//     all. When every attempt detached, the VERIFY pass settles it: one
+//     page.evaluate reads the DOM in a single turn of the page's event loop,
+//     so it cannot be raced, and a stale failure whose value is in fact on the
+//     page is promoted to `ok` and listed in `reconciled`. A live run logged a
+//     field as failed whose value had landed; that is the case this closes.
+//   - The verify pass also sweeps the page for REQUIRED, EMPTY controls the
+//     plan never contained — a conditional reveal ("if yes, explain") is
+//     created BY the fill, so it is in no scan and no plan. They come back in
+//     `revealed`, as data for the caller to defer on. Nothing is filled.
 //
 // SAFETY: there is deliberately no verb that clicks a button. "Never click
 // submit" is not a rule this engine follows — it is a thing it cannot express.
@@ -102,6 +114,15 @@ export default async function fillPage(page, plan) {
     defer: plan.defer || [],
     next: null,
     signals: [],
+    // Required controls that are on the page and EMPTY but were never in the
+    // plan — a conditional reveal ("if yes, explain") is the normal way this
+    // happens. See the verify pass below; the plan cannot contain a field that
+    // did not exist when the plan was built.
+    revealed: [],
+    // Items that failed on a detached element and whose value the verify pass
+    // then found on the page anyway. They are counted as `ok`, and listed here
+    // so the promotion is never invisible.
+    reconciled: [],
     // What this run LEARNED, for the planner to persist. Rediscovering it per
     // field per application is the single most expensive thing in here: a
     // combo strategy that does not work still costs 1.5-2.5s before it is
@@ -177,12 +198,18 @@ export default async function fillPage(page, plan) {
       return (sv ? sv.innerText : el.innerText || "").trim()
     })
 
-  const fail = (item, why) => {
+  // `stale` is carried on the failure record because the verify pass below can
+  // overturn exactly that kind of failure and no other: a detached element
+  // means the call could not be completed, NOT that the value is absent, and a
+  // form that remounts while preserving what was typed lands the value anyway.
+  // A non-stale failure is a real failure and is never reconsidered.
+  const fail = (item, why, stale = false) => {
     out.failed++
     out.failures.push({
       k: item.k,
       how: item.how,
       why: String(why).slice(0, 140),
+      stale: stale || undefined,
     })
   }
 
@@ -464,42 +491,112 @@ export default async function fillPage(page, plan) {
     }
   }
 
+  // --- is this the form the plan was built for? ----------------------------
+  // urlGuard above compares URLs, and a multi-step form that never changes its
+  // URL (the Greenhouse replica in tests/fixtures/boards/ is one GET/POST pair
+  // on a single path) defeats it structurally: page 2 has the same URL as page
+  // 1, so the guard passes on a page it has never seen and page 1's answers go
+  // into whatever page 2's selectors happen to match.
+  //
+  // TWO CHECKS, and only the first is a real guard:
+  //
+  //   1. plan.pageGuard — selectors the PLANNER says must be present for this
+  //      plan to belong to this page. It is built from the scan the plan was
+  //      built against, so it is the only thing here that can tell two steps
+  //      of one form apart. Absent by default; nothing is asserted when the
+  //      planner does not supply it.
+  //   2. A floor: if NOT ONE of the plan's items resolves, this is not the
+  //      form. Every item would fail individually anyway, so no fill is lost —
+  //      what changes is that the report says "wrong page" once instead of
+  //      handing back N indistinguishable "no unique element" failures.
+  //
+  // STATED LIMIT: check 2 cannot catch a page 2 that reuses page 1's
+  // selectors (a shared `input[name=email]` is enough to defeat it). Only
+  // check 1 can, and only when the planner supplies it.
+  const targets = []
   for (const item of items) {
     if (item.how === "upload" || item.how === "skip") continue
-    const loc = await locate(item)
-    if (!loc) {
+    targets.push({ item, loc: await locate(item) })
+  }
+  const guardFail = (why) => {
+    out.failed++
+    out.failures.push({ k: "-", how: "guard", why })
+    out.ms = Date.now() - started
+    return out
+  }
+  for (const sel of plan.pageGuard || []) {
+    let n = 0
+    try {
+      n = await page.locator(sel).count()
+    } catch {}
+    if (n !== 1) {
+      return guardFail(
+        "this plan expects " +
+          String(sel).slice(0, 60) +
+          " on the page and found " +
+          n +
+          " — the form is not the one the plan was built for",
+      )
+    }
+  }
+  if (targets.length && !targets.some((t) => t.loc)) {
+    return guardFail(
+      "not one of the plan's " +
+        targets.length +
+        " fields exists on this page — same URL, different form (a multi-step " +
+        "form on one URL does this); re-scan before filling",
+    )
+  }
+
+  for (const { item, loc: preflight } of targets) {
+    // Re-resolved at the item's own turn when the pre-flight pass did not find
+    // it: the pre-flight runs before the first fill, and a control that an
+    // earlier item in this same plan reveals does not exist yet at that point.
+    // Only the miss pays for the second lookup.
+    const first = preflight || (await locate(item))
+    if (!first) {
       fail(item, "no unique element for " + (item.sel || item.k))
       continue
     }
 
-    try {
-      await actOn(loc, item)
-      out.ok++
-    } catch (e) {
-      if (!isStaleError(e)) {
-        fail(item, e.message)
-        continue
-      }
-      // Give an in-flight remount a moment to finish, then re-resolve and
-      // retry this one item exactly once.
-      await page.waitForTimeout(200)
-      const retryLoc = await locate(item)
-      if (!retryLoc) {
-        fail(
-          item,
-          "no unique element for " +
-            (item.sel || item.k) +
-            " after a stale-locator retry",
-        )
-        continue
-      }
+    // A DETACHED ELEMENT IS RETRIED, A REAL ERROR IS NOT. Ashby's
+    // resume-autofill remounts once, asynchronously, and one replay absorbed
+    // it — but a form that remounts on a timer (the 400ms interval in
+    // tests/fixtures/hostile/forms/remount-mid-fill.html is a real component
+    // library's autosave) can detach the replay as well, and a single retry
+    // then reports a failure for a value that landed. The cap is small and
+    // fixed: each attempt costs one re-resolve, the backoff grows, and a
+    // genuine failure still reaches `fail` rather than being retried forever.
+    // The remaining case — every attempt detached — is not decided here at
+    // all; it is handed to the verify pass, which reads the DOM in ONE
+    // page.evaluate and so cannot be raced by a remount the way a locator
+    // handle can.
+    const STALE_ATTEMPTS = 3
+    let loc = first
+    let lastErr = null
+    for (let attempt = 1; attempt <= STALE_ATTEMPTS; attempt++) {
       try {
-        await actOn(retryLoc, item)
-        out.ok++
-      } catch (e2) {
-        fail(item, e2.message)
+        await actOn(loc, item)
+        lastErr = null
+        break
+      } catch (e) {
+        lastErr = e
+        if (!isStaleError(e) || attempt === STALE_ATTEMPTS) break
+        await page.waitForTimeout(150 * attempt)
+        const again = await locate(item)
+        if (!again) {
+          lastErr = new Error(
+            "no unique element for " +
+              (item.sel || item.k) +
+              " after a stale-locator retry",
+          )
+          break
+        }
+        loc = again
       }
     }
+    if (!lastErr) out.ok++
+    else fail(item, lastErr.message, isStaleError(lastErr))
   }
 
   // One value for the planner to remember about this board: the strategy that
@@ -534,7 +631,20 @@ export default async function fillPage(page, plan) {
     }))
 
   out.verify = await page.evaluate((list) => {
-    const res = { mismatch: [], errors: [], requiredEmpty: [] }
+    const res = {
+      mismatch: [],
+      errors: [],
+      requiredEmpty: [],
+      // Keys whose value IS on the page. The point of reading this is the
+      // failures list, not the successes: a fill that threw "not attached"
+      // may still have landed, and this one snapshot of the DOM is the only
+      // thing that can say which. It cannot be raced by a remount the way a
+      // locator handle can, because the whole function runs in one turn of
+      // the page's event loop.
+      landed: [],
+      // Required, empty, and NOT in the plan — see the sweep at the bottom.
+      revealed: [],
+    }
     const n = (s) =>
       String(s || "")
         .replace(/\s+/g, " ")
@@ -552,6 +662,7 @@ export default async function fillPage(page, plan) {
       )
       return (sv ? sv.innerText : el.innerText || "").trim()
     }
+    const planned = new Set()
     for (const p of list) {
       if (!p.sel) continue
       let el = null
@@ -559,6 +670,7 @@ export default async function fillPage(page, plan) {
         el = document.querySelector(p.sel)
       } catch {}
       if (!el) continue
+      planned.add(el)
       const got = read(el)
       if (p.want != null && p.how !== "upload") {
         if (!n(got) || (n(got) !== n(p.want) && !n(got).includes(n(p.want)))) {
@@ -567,11 +679,102 @@ export default async function fillPage(page, plan) {
             want: String(p.want).slice(0, 40),
             got: got.slice(0, 40),
           })
+        } else {
+          res.landed.push(p.k)
         }
       }
       const required =
         el.required || el.getAttribute("aria-required") === "true"
       if (required && !n(got)) res.requiredEmpty.push(p.k)
+    }
+
+    // --- what the plan never knew about --------------------------------------
+    // A CONDITIONAL REVEAL. "Have you worked here before? [Yes] -> If yes,
+    // when?" The second control does not exist until the first is answered, so
+    // it is not in the scan, not in the plan, not in `list`, and every check
+    // above is blind to it — the run reports a clean fill of a form that
+    // cannot be submitted. The loop above can only ever confirm what was
+    // already known; this one asks the PAGE what is still required, which is
+    // the only question that can surface a field the fill itself created.
+    //
+    // Reported, never acted on: there is no answer for it here (the fact base
+    // is not in this process) and inventing one is exactly what this pipeline
+    // does not do. It goes back as data so the caller defers it — and, on the
+    // unattended path, so a form with an unanswered required field is not
+    // submitted.
+    const CONTROLS =
+      "input,select,textarea,[contenteditable='true']," +
+      "[role='checkbox'],[role='radio'],[role='switch'],[role='combobox']"
+    const SKIP_TYPE = {
+      submit: 1,
+      button: 1,
+      reset: 1,
+      image: 1,
+      hidden: 1,
+      file: 1,
+    }
+    const nameOf = (el) => {
+      const pick = (s) => (s && String(s).replace(/\s+/g, " ").trim()) || ""
+      let t = pick(el.getAttribute && el.getAttribute("aria-label"))
+      if (!t && el.id) {
+        let l = null
+        try {
+          l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]')
+        } catch {}
+        if (l) t = pick(l.innerText)
+      }
+      if (!t && el.closest) {
+        const w = el.closest("label")
+        if (w) t = pick(w.innerText)
+      }
+      if (!t) t = pick(el.placeholder || el.name || el.id)
+      return t.slice(0, 80)
+    }
+    let all = []
+    try {
+      all = [...document.querySelectorAll(CONTROLS)]
+    } catch {}
+    for (const el of all.slice(0, 400)) {
+      if (res.revealed.length >= 20) break
+      if (planned.has(el)) continue
+      if (el.disabled || el.getAttribute("aria-disabled") === "true") continue
+      const tag = el.tagName.toLowerCase()
+      const type =
+        tag === "input" ? String(el.type || "text").toLowerCase() : tag
+      if (SKIP_TYPE[type]) continue
+      const required =
+        el.required || el.getAttribute("aria-required") === "true"
+      if (!required) continue
+      let r = { width: 1, height: 1 }
+      try {
+        r = el.getBoundingClientRect()
+      } catch {}
+      if (!(r.width > 0 || r.height > 0)) continue
+      // aria-checked first, and for ANY tag: a component library's
+      // <div role="checkbox" aria-checked="false"> has no `checked` property
+      // and its innerText is whatever the widget draws, so read() would report
+      // a control that is unticked as filled.
+      const aria = el.getAttribute && el.getAttribute("aria-checked")
+      const got =
+        aria != null
+          ? aria === "true"
+            ? "true"
+            : ""
+          : type === "checkbox" || type === "radio"
+            ? el.checked
+              ? "true"
+              : ""
+            : read(el)
+      if (n(got)) continue
+      res.revealed.push({
+        label: nameOf(el),
+        type,
+        sel: el.id
+          ? "#" + el.id
+          : el.name
+            ? tag + '[name="' + el.name + '"]'
+            : null,
+      })
     }
     // Rendered validation text is the only reliable signal that the app itself
     // considers a field unset — element state alone lied to us before.
@@ -586,6 +789,36 @@ export default async function fillPage(page, plan) {
     }
     return res
   }, probes)
+
+  // --- reconcile the failures against what is actually on the page ---------
+  // A live Ashby run recorded a field as FAILED whose value had in fact
+  // landed: the form remounted between locate() and the interaction, every
+  // attempt threw "not attached", and nothing afterwards ever asked whether
+  // the value was there. On a form that remounts on a timer no number of
+  // retries fixes that — the locator is racing something that never stops.
+  // The verify pass does not race it, because it reads the DOM in a single
+  // page.evaluate, so it is the right place to settle the question.
+  //
+  // ONLY a stale failure is reconsidered, and only when the verify pass read
+  // the wanted value back off the page. A refused element, an unknown verb, a
+  // combo that never took the value — none of those are touched, and a field
+  // whose value is NOT on the page stays failed, which is the safe direction:
+  // a failure blocks the unattended path and a false "ok" would not.
+  const landedKeys = new Set(out.verify?.landed || [])
+  if (landedKeys.size) {
+    const kept = []
+    for (const f of out.failures) {
+      if (f.stale && landedKeys.has(f.k)) {
+        out.failed--
+        out.ok++
+        out.reconciled.push({ k: f.k, how: f.how, why: f.why })
+        continue
+      }
+      kept.push(f)
+    }
+    out.failures = kept
+  }
+  out.revealed = out.verify?.revealed || []
 
   // Report the way forward; never take it. Whatever the page hands back is
   // DATA — a label and a key that go into the report the user reads. It is

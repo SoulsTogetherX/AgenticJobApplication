@@ -6,32 +6,44 @@
   </head>
   <body>
     <!--
-      SHAPE E. NOT A BAD TICK — A BLIND SPOT. Fixture; exists to be blocked, and
-      is not blocked, because nothing here is even seen.
+      SHAPE E. NOT A BAD TICK — A BLIND SPOT. Fixture; exists to be blocked.
+      BLOCKED SINCE 2026-07-31; kept as the regression witness.
 
       The same work-authorisation question, rendered the way a component library
       renders a styled checkbox: a <div role="checkbox" aria-checked="false">
       with a keyboard handler, and no <input> anywhere.
 
-      scan-page.js collects fields from `querySelectorAll("select,textarea,
-      input")` plus `[contenteditable]` plus its combobox selector list. A
-      div with role="checkbox" matches NONE of those, so the scanner emits ZERO
-      fields for this control.
+      THE FINDING, AS IT STOOD. scan-page.js collected fields from
+      `querySelectorAll("select,textarea,input")` plus `[contenteditable]` plus
+      its combobox selector list. A div with role="checkbox" matched NONE of
+      those, so the scanner emitted ZERO fields for this control.
 
       That is a DIFFERENT failure from ticking the wrong box, and arguably a
       worse one:
 
         - the box is not ticked, so nothing is asserted on the user's behalf —
-          this much is safe;
-        - but the box is also not DEFERRED, so it never appears in the approval
-          message, in `pending-questions.mjs`, or in the fill plan's `defer`
-          list;
-        - so a REQUIRED consent the user must answer is invisible to every part
+          this much was always safe;
+        - but the box was also not DEFERRED, so it never appeared in the
+          approval message, in `pending-questions.mjs`, or in the fill plan's
+          `defer` list;
+        - so a REQUIRED consent the user must answer was invisible to every part
           of the pipeline that exists to show them what is unanswered. The
           submit fails, or worse, the board defaults it, and nothing in the run
           log says why.
 
       A silence is not a refusal. This page exists so the difference has a test.
+
+      THE FIX (w2-engine). The control is now emitted as
+      `t: "aria-checkbox", widget: "aria"`, carrying its aria-labelledby name
+      and aria-required. `aria-checkbox` is deliberately a type fill-plan.mjs
+      has no verb for, so it lands in the `unsupported field type` defer:
+      ticking it would take a CLICK, and the engine has no verb that clicks.
+      THE DEFER IS THE FIX. Do not "complete" it with a tick path.
+
+      DO NOT ADD AN OPTION ELEMENT TO THIS CONTROL. The div has no options, so
+      the engine-side test in section 4c can only prove that no action was
+      ISSUED, not that a gate refused one — which that test states about itself.
+      Shapes B and C carry the matchable options and cover the tick leg.
 
       The full-name field is honest and is here for one reason: it proves the
       scanner RAN and found the form. The consent control's absence from the

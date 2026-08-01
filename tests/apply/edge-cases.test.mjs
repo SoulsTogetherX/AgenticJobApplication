@@ -39,6 +39,9 @@ import { recordCache, fingerprint } from "../../scripts/apply/field-cache.mjs"
 import {
   resolveFields,
   resolveScanPath,
+  buildPlan,
+  readiness,
+  submitReadiness,
 } from "../../scripts/apply/fill-plan.mjs"
 import { instrumentedPage, unwrapScan } from "../../scripts/dev/bench-apply.mjs"
 
@@ -56,27 +59,55 @@ const src = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8")
 // E1 — a 200-option dropdown
 // ---------------------------------------------------------------------------
 
-test("E1 BREAKS [w2-engine]: the 200 -> 40 cut is silent, in both scanners", () => {
-  // The cut itself happens INSIDE a page.evaluate arrow, so it needs a DOM to
-  // observe and the assertion here is structural: both scanners hard-slice,
-  // and neither records that it did. Method — read the two constants out of
-  // the source, then prove the consequence at the two consumers that can be
-  // run in-process (the cache and matchOption).
+// E1 CLOSED (the scanner half) 2026-07-31 by w2-engine. The cut is still 40 —
+// that is a latency decision, not the defect — but it is no longer SILENT:
+// both scanners now record `optsTruncated` and the real `optsTotal`, so the
+// flag field-cache.mjs has always read defensively finally arrives.
+test("E1 HANDLED [w2-engine]: the 200 -> 40 cut still happens but is now RECORDED, in both scanners", () => {
   const engine = src("scripts/apply/scan-engine.mjs")
   const scanner = src(".claude/skills/apply-job/scan-page.js")
 
-  const engineCut = /\.slice\(0,\s*(\d+)\)/.exec(
-    engine.split("pick(\"[role='option']\")")[1] ?? "",
-  )
-  assert.ok(engineCut, "the probe must still slice its option list")
-  assert.equal(engineCut[1], "40", "scan-engine.mjs cuts at 40")
-  assert.match(scanner, /const MAX_OPTS = 40/, "scan-page.js cuts at 40 too")
+  assert.match(scanner, /const MAX_OPTS = 40/, "scan-page.js still cuts at 40")
+  // Both of scan-page.js's option branches — the native <select> and the
+  // react-select probe — must set it. One of two is the shape of a half-fix,
+  // and a count is how this notices.
+  const flagged = scanner.match(/f\.optsTruncated = true/g) ?? []
   assert.equal(
-    /optsTruncated/.test(engine) || /optsTruncated/.test(scanner),
-    false,
-    "THE DEFECT: neither scanner records that it dropped options, so the " +
-      "flag field-cache.mjs reads defensively never arrives",
+    flagged.length,
+    2,
+    "both the <select> branch and the probe branch must flag truncation",
   )
+  assert.match(scanner, /f\.optsTotal = all\.length/)
+  assert.match(
+    engine,
+    /f\.optsTruncated = true/,
+    "the local-runner scan engine must record it too",
+  )
+})
+
+test("E1 HANDLED [w2-engine]: a probe whose page-side list was cut comes back flagged with the REAL total", async () => {
+  // The behavioural half, because the grep above cannot tell a live
+  // assignment from a dead one. The probe's return value crosses the
+  // page boundary as data, so the double can supply either shape.
+  const scan = {
+    kind: "form",
+    fields: [{ k: "c1", t: "combo", l: "Country *", req: true }],
+    btns: [{ k: "b1", l: "Submit", r: "submit" }],
+  }
+  const cut = instrumentedPage({ scan, menuOptions: 40, menuTotal: 200 })
+  const out = unwrapScan(await scanPage(cut.page, {}))
+  const f = out.scan.fields.find((x) => x.k === "c1")
+  assert.equal(f.opts.length, 40, "40 options came back")
+  assert.equal(f.optsTruncated, true, "and the engine says so")
+  assert.equal(f.optsTotal, 200, "with the real length, not the cut one")
+
+  // The control: a genuinely short list must NOT be flagged, or the flag
+  // means nothing and every combo defers forever.
+  const whole = instrumentedPage({ scan, menuOptions: 12, menuTotal: 12 })
+  const out2 = unwrapScan(await scanPage(whole.page, {}))
+  const f2 = out2.scan.fields.find((x) => x.k === "c1")
+  assert.equal(f2.opts.length, 12)
+  assert.equal(f2.optsTruncated, undefined, "a complete list carries no flag")
 })
 
 test("E1 BREAKS [w3-resolution]: 40 of 200 is cached as if it were the whole list", () => {
@@ -244,37 +275,59 @@ test("E3 BREAKS [w2-engine]: urlGuard cannot tell page 2 from page 1", async () 
 // E4 — a React form that remounts mid-fill
 // ---------------------------------------------------------------------------
 
-test("E4 BREAKS [w2-engine]: a form remounting faster than one retry reports a landed value as failed", async () => {
-  // tests/fixtures/hostile/forms/remount-mid-fill.html remounts every 400ms
-  // and PRESERVES typed values. The engine retries a stale locator exactly
-  // once (fill-engine.mjs actOn/isStaleError), which is enough for Ashby's
-  // single async remount and not enough for a form that keeps doing it.
+// E4 CLOSED 2026-07-31 by w2-engine, and NOT by adding retries — that is the
+// part worth reading. A form that remounts on a timer is racing the locator,
+// so no attempt count wins; the fix is that the VERIFY pass reads the DOM in a
+// single page.evaluate, which cannot be raced, and promotes a stale failure
+// whose value is in fact on the page. The retry cap did move (1 -> 3 attempts)
+// but that only absorbs Ashby's single async remount.
+test("E4 HANDLED [w2-engine]: a value that landed under a repeating remount is reconciled to ok, not reported failed", async () => {
   const rig = instrumentedPage({
     elements: { "#f1": { kind: "input", value: "" } },
     staleForever: true,
+    // The page's own answer at verify time: the value IS there. This is the
+    // live-run case — tests/fixtures/hostile/forms/remount-mid-fill.html
+    // remounts every 400ms and PRESERVES typed values.
+    verifyLanded: ["f1"],
+  })
+  const report = await fillPage(rig.page, {
+    items: [{ k: "f1", how: "fill", sel: "#f1", value: "Ada", label: "First" }],
+  })
+  assert.equal(report.failed, 0, "a landed value must not be reported failed")
+  assert.equal(report.ok, 1)
+  assert.deepEqual(
+    report.reconciled.map((r) => r.k),
+    ["f1"],
+    "and the rescue must be VISIBLE, not a silent upgrade",
+  )
+  assert.match(report.reconciled[0].why, /not attached to the dom/i)
+
+  // Every attempt still ran, and the cap is still finite — the reconciliation
+  // is a second mechanism, not a licence to retry forever. kindOf() is the
+  // first thing actOn touches, so it is what the remount detaches and what
+  // counts the attempts.
+  const kindOfCalls = rig.cost.calls.filter(
+    (c) => c[0] === "locator.evaluate",
+  ).length
+  assert.equal(kindOfCalls, 3, "STALE_ATTEMPTS = 3, bounded")
+})
+
+test("E4 HANDLED [w2-engine]: the rescue is not a blanket pass — a value that did NOT land stays failed", async () => {
+  // The safe direction, and the assertion that stops the test above from
+  // being satisfied by "promote every stale failure". A failure blocks the
+  // unattended path; a false ok would not.
+  const rig = instrumentedPage({
+    elements: { "#f1": { kind: "input", value: "" } },
+    staleForever: true,
+    verifyLanded: [], // the verify pass read the page and the value is absent
   })
   const report = await fillPage(rig.page, {
     items: [{ k: "f1", how: "fill", sel: "#f1", value: "Ada", label: "First" }],
   })
   assert.equal(report.failed, 1)
+  assert.equal(report.ok, 0)
+  assert.deepEqual(report.reconciled, [])
   assert.match(report.failures[0].why, /not attached to the dom/i)
-  assert.equal(
-    report.ok,
-    0,
-    "THE DEFECT: one retry is not enough against a repeating remount, and " +
-      "the report says failed for a field whose value may well have landed",
-  )
-  // The retry did happen — one replay, not zero and not a loop. kindOf() is
-  // the first thing actOn touches, so it is what the remount detaches, and it
-  // is therefore what counts the attempts.
-  const kindOfCalls = rig.cost.calls.filter(
-    (c) => c[0] === "locator.evaluate",
-  ).length
-  assert.equal(
-    kindOfCalls,
-    2,
-    "exactly one replay: the cap is right, its size is not",
-  )
 })
 
 test("E4 HANDLED [w2-engine]: one async remount (Ashby's) IS absorbed", async () => {
@@ -308,23 +361,41 @@ test("E4 HANDLED [w2-engine]: one async remount (Ashby's) IS absorbed", async ()
 // E5 — shadow DOM and same-origin iframes
 // ---------------------------------------------------------------------------
 
-test("E5 BREAKS [w2-engine]: nothing in the scan or fill path can see a shadow root", () => {
-  // Method: read the three files that touch the page and search for every API
-  // that can cross a shadow boundary. Absence is the finding — a scanner built
-  // only on document.querySelectorAll cannot see into an open shadow root, let
-  // alone a closed one, so a form inside a web component is invisible.
-  const files = [
-    ".claude/skills/apply-job/scan-page.js",
+// E5 PARTIALLY closed 2026-07-31 by w2-engine, and the split matters more than
+// either half: a shadow root holding form controls is now DETECTED and
+// reported, and it is still UNFILLABLE. Collapsing those into one "handled"
+// would be the documentation slacking signature — a defence described as
+// stronger than it is.
+test("E5 HANDLED [w2-engine]: a shadow root holding form controls is detected and signalled", () => {
+  const scanner = src(".claude/skills/apply-job/scan-page.js")
+  assert.match(scanner, /\.shadowRoot/, "the scanner must look for one")
+  assert.match(
+    scanner,
+    /shadow root\(s\) hold form controls this scanner cannot see or fill/,
+    "and say so in a signal the user can act on",
+  )
+  // Detection is gated on the root actually holding a CONTROL, not on the
+  // root existing — a shadow root wrapping a styled button is not a blind
+  // spot, and a signal that fires on every design-system page gets ignored.
+  assert.match(scanner, /querySelector\(HIDDEN_CONTROL\)/)
+})
+
+test("E5 BREAKS [w2-engine]: detecting a shadow root is not filling one — no API in either engine can cross the boundary", () => {
+  // Method: read the two files that actually touch elements and search for
+  // every API that can cross a shadow boundary. Absence is the finding. The
+  // scanner is excluded from this sweep on purpose — it now legitimately
+  // mentions shadowRoot for the DETECTION above, which is exactly why the two
+  // halves are separate tests.
+  for (const f of [
     "scripts/apply/scan-engine.mjs",
     "scripts/apply/fill-engine.mjs",
-  ]
-  for (const f of files) {
+  ]) {
     const text = src(f)
     assert.equal(
       /shadowRoot|attachShadow|::part\(|:host\b/.test(text),
       false,
-      `${f} unexpectedly mentions shadow DOM — if support was added, this ` +
-        `finding is closed and the assertion must flip`,
+      `THE REMAINING DEFECT: ${f} has no way into a shadow root. A form ` +
+        `inside a web component is reported and then handed to the user.`,
     )
   }
 })
@@ -396,22 +467,57 @@ test("E7 HANDLED [w2-engine]: a password field classifies the page as login", ()
   assert.match(scanner, /CAPTCHA present — hand off to the user/)
 })
 
-test("E7 BREAKS [w3-resolution]: fill-plan.mjs plans a form regardless of scan.kind", () => {
-  // The login/CAPTCHA hand-off is written in SKILL.md, i.e. it is a model
-  // instruction, and there is nothing mechanical behind it. A scan whose kind
-  // is `login` still produces a fill plan, so the unattended runner (Phase 3,
-  // which has no model on the green path) would fill a login wall.
+// E7 CLOSED 2026-07-31 by w3-resolution. The BREAKS assertion below used to
+// read: "nothing in the planner reads scan.kind", and it was green because the
+// hand-off existed only as prose in apply-job/SKILL.md — an instruction a
+// MODEL reads, which the Phase 3 unattended runner does not have on its green
+// path. `buildPlan()` now short-circuits on the page's own classification.
+//
+// The three tests below are deliberately not one test. The grep proves the
+// check is IN the file; the behavioural test proves it WORKS. A grep alone
+// cannot tell a live guard from a commented-out one, which is exactly the
+// slacking signature the protocol calls "a test that asserts the mock rather
+// than the behaviour" — flagged by w3-resolution against its own fix, and it
+// was right.
+const LOGIN_ADAPTER = {
+  id: "generic",
+  comboStrategies: [],
+  fileFields: [],
+  fileOrder: [],
+}
+
+test("E7 HANDLED [w3-resolution]: the planner reads scan.kind and signals, as a BRANCH not a mention", () => {
   const planner = src("scripts/apply/fill-plan.mjs")
-  assert.equal(
-    /scan\.kind|kind === "login"|kind !== "form"/.test(planner),
-    false,
-    "THE DEFECT: nothing in the planner reads scan.kind. The only thing " +
-      "stopping a login wall from being filled is the model reading SKILL.md, " +
-      "which the auto path removes.",
+  assert.match(
+    planner,
+    /scan\.kind === "login"/,
+    "the planner must read the scanner's own login classification",
   )
-  // ...and the engine only COPIES signals into its report. Method: every
-  // non-comment line of fill-engine.mjs that mentions `signals`, checked for a
-  // control-flow keyword. A signal that is only ever assigned stops nothing.
+  assert.match(planner, /captcha/i, "and its CAPTCHA signal")
+  // A mention is not a branch. Every non-comment line naming scan.kind must
+  // sit in control flow — the same method the old BREAKS test used against
+  // fill-engine.mjs's signals, inverted.
+  const kindLines = src("scripts/apply/fill-plan.mjs")
+    .split(/\r?\n/)
+    .filter((l) => /scan\.kind/.test(l) && !/^\s*\/\//.test(l))
+  assert.ok(kindLines.length > 0, "scan.kind must appear outside comments")
+  assert.ok(
+    kindLines.some((l) => /===|!==|\bif\b/.test(l)),
+    `scan.kind is read but never compared: ${JSON.stringify(kindLines)}`,
+  )
+  // ...and the comparison must short-circuit rather than annotate: the guard
+  // returns a whole plan of its own. Asserted on the source because the
+  // behavioural tests below cannot tell "returned early" from "produced no
+  // items for some other reason".
+  assert.match(
+    planner,
+    /if \(captchaSignal \|\| blockedKind\) \{[\s\S]{0,600}?items: \[\],/,
+    "the guard must return a plan with empty items, before the field loop",
+  )
+  // The engine's `signals` are still data only — that has NOT changed, and it
+  // is correct: the stop belongs in the planner, which runs before anything
+  // touches the page. Kept so a future "fix" that moves the branch into the
+  // engine has to say so.
   const signalLines = src("scripts/apply/fill-engine.mjs")
     .split(/\r?\n/)
     .filter((l) => /\bsignals\b/.test(l) && !/^\s*\/\//.test(l))
@@ -420,9 +526,102 @@ test("E7 BREAKS [w3-resolution]: fill-plan.mjs plans a form regardless of scan.k
     assert.equal(
       /\b(if|return|throw|continue|break)\b/.test(l),
       false,
-      `THE DEFECT: signals are data only, never a branch: ${l.trim()}`,
+      `the engine branching on signals would be a second, weaker gate: ${l.trim()}`,
     )
   }
+})
+
+// The behavioural half. Each case is a page the pipeline must REFUSE, carrying
+// a field the fact base can answer perfectly well — that is the trap: a login
+// wall's stray inputs resolve OK like any others, so `readiness()` alone can
+// never catch this. Only a page-shape refusal can.
+for (const c of [
+  {
+    name: "a login wall (password field on the page)",
+    scan: { kind: "login", heading: "Sign in to continue", signals: [] },
+    expect: /login wall/i,
+  },
+  {
+    name: "an already-submitted confirmation page",
+    scan: { kind: "confirm", heading: "Thanks for applying", signals: [] },
+    expect: /confirmation/i,
+  },
+  {
+    name: "a CAPTCHA, even on a page that classifies as a form",
+    scan: {
+      kind: "form",
+      heading: "Apply",
+      signals: ["iframe:recaptcha challenge"],
+    },
+    expect: /captcha/i,
+  },
+]) {
+  test(`E7 HANDLED [w3-resolution]: buildPlan refuses ${c.name} — no items, blocks both readiness gates`, () => {
+    const scan = {
+      url: "https://job-boards.greenhouse.io/x/jobs/1",
+      // A field the fact base answers with total confidence. If the guard ran
+      // AFTER the field loop, or not at all, this would be planned as a fill.
+      fields: [
+        { k: "f1", sel: "#e", n: "email", t: "text", l: "Email", req: true },
+      ],
+      ...c.scan,
+    }
+    const resolved = resolveFields(scan.fields, {
+      profile: path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+      answers: path.join(ROOT, "tests", "fixtures", "answers.yaml"),
+    })
+    assert.equal(
+      resolved[0].status,
+      "OK",
+      "precondition: this field DOES resolve, so nothing but the page-shape guard can stop it",
+    )
+    const plan = buildPlan({
+      scan,
+      resolved,
+      adapter: LOGIN_ADAPTER,
+      url: scan.url,
+    })
+    assert.deepEqual(plan.items, [], "nothing may be handed to the fill engine")
+    assert.equal(plan.defer.length, 1, "exactly one defer, naming the page")
+    assert.match(plan.defer[0].why, c.expect)
+    // THE ONE THAT MATTERS MOST: either exempted marker would route a login
+    // wall straight through readiness() and re-mark the page ready.
+    assert.notEqual(plan.defer[0].why, "consent")
+    assert.notEqual(plan.defer[0].why, "confirm-widget")
+    assert.equal(readiness(plan).ready, false)
+    assert.equal(submitReadiness(plan).ready, false)
+  })
+}
+
+test("E7 HANDLED [w3-resolution]: the control — an ordinary form with the same field is unaffected and reaches ready:true", () => {
+  // Without this, the three refusals above are satisfied by a planner that
+  // refuses everything. `kind: "form"` and no signals is the normal case.
+  const scan = {
+    url: "https://job-boards.greenhouse.io/x/jobs/1",
+    kind: "form",
+    heading: "Apply",
+    signals: [],
+    fields: [
+      { k: "f1", sel: "#e", n: "email", t: "text", l: "Email", req: true },
+    ],
+  }
+  const resolved = resolveFields(scan.fields, {
+    profile: path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+    answers: path.join(ROOT, "tests", "fixtures", "answers.yaml"),
+  })
+  const plan = buildPlan({
+    scan,
+    resolved,
+    adapter: LOGIN_ADAPTER,
+    url: scan.url,
+  })
+  assert.deepEqual(
+    plan.items.map((i) => `${i.k}:${i.how}`),
+    ["f1:fill"],
+  )
+  assert.deepEqual(plan.defer, [])
+  assert.equal(readiness(plan).ready, true)
+  assert.equal(submitReadiness(plan).ready, true)
 })
 
 test("E7 HANDLED: a malformed scan does not crash the planner", () => {
@@ -447,19 +646,56 @@ test("E7 HANDLED: a malformed scan does not crash the planner", () => {
   }
 })
 
+// UPDATED 2026-07-31: this test used to send a plan of ONE ambiguous item, and
+// w2-engine's new wrong-page floor now fires first on that input (if not one
+// of the plan's items resolves, the engine says "wrong page" once instead of N
+// indistinguishable per-field failures). So the plan needs a field that DOES
+// resolve, or the ambiguity refusal is never reached and this test silently
+// measures the other guard. Both guards are now asserted, separately.
 test("E7 HANDLED [w2-engine]: a locator that resolves to more than one element is refused", async () => {
-  const rig = instrumentedPage({ elements: {} })
+  const rig = instrumentedPage({
+    elements: { "#ok": { kind: "input", value: "" } },
+  })
   const realLocator = rig.page.locator.bind(rig.page)
   rig.page.locator = (sel) => {
     const loc = realLocator(sel)
-    loc.count = async () => 2 // ambiguous markup: two matches for one selector
+    if (sel === ".dup") loc.count = async () => 2 // two matches for one selector
     return loc
   }
   const report = await fillPage(rig.page, {
-    items: [{ k: "f1", how: "fill", sel: ".dup", value: "x", label: "Dup" }],
+    items: [
+      { k: "f0", how: "fill", sel: "#ok", value: "Ada", label: "Fine" },
+      { k: "f1", how: "fill", sel: ".dup", value: "x", label: "Dup" },
+    ],
   })
+  assert.equal(report.ok, 1, "the unambiguous field still fills")
   assert.equal(report.failed, 1)
+  assert.equal(report.failures[0].k, "f1")
   assert.match(report.failures[0].why, /no unique element/)
+})
+
+test("E7 HANDLED [w2-engine]: when NOT ONE of the plan's fields exists, the engine says 'wrong page' once instead of N failures", async () => {
+  // E3's shape — a multi-page form on a single URL, where urlGuard cannot
+  // help. Three items, none present; the report must name the cause once.
+  const rig = instrumentedPage({ elements: {} })
+  const report = await fillPage(rig.page, {
+    items: [
+      { k: "f1", how: "fill", sel: "#a", value: "1", label: "A" },
+      { k: "f2", how: "fill", sel: "#b", value: "2", label: "B" },
+      { k: "f3", how: "fill", sel: "#c", value: "3", label: "C" },
+    ],
+  })
+  assert.equal(
+    report.failed,
+    1,
+    "one guard failure, not one per field — three identical 'no unique " +
+      "element' lines is what this replaced. Got: " +
+      JSON.stringify(report.failures),
+  )
+  assert.equal(report.failures[0].how, "guard")
+  assert.match(report.failures[0].why, /same URL, different form/i)
+  assert.match(report.failures[0].why, /re-scan before filling/i)
+  assert.equal(report.ok, 0, "and nothing was filled on the wrong page")
 })
 
 // ---------------------------------------------------------------------------
@@ -552,8 +788,10 @@ test("the open gaps are named, not silently dropped", () => {
     {
       id: "shadow DOM at runtime",
       why:
-        "E5 proves the APIs are absent from the source, which is the " +
-        "structural finding. It does not run a web-component form.",
+        "E5 proves the scanner now DETECTS a shadow root holding controls " +
+        "and that neither engine has an API to cross one — both structural " +
+        "findings from the source. It does not run a web-component form, so " +
+        "whether the detection fires on a real one is still unproven.",
       needs: "a Playwright leg",
     },
   ]

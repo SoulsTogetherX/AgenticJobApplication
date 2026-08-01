@@ -189,12 +189,78 @@ test("the fixtures assert more than a label: sel, type and vouch state are all p
     "labelWhy",
     "req",
     "v",
+    // `section` and `widget` were added by w2-engine on 2026-07-31 and are
+    // each carried by exactly two fields / one field in the whole corpus, so
+    // both are one careless regeneration away from vanishing without a red
+    // line. `section` is greenhouse-step1's two `Attach` file inputs (case E8);
+    // `widget: "aria"` is escalated-aria-checkbox f2, the control that used to
+    // be invisible entirely. The deep-equal above compares the fixture to
+    // whatever the scanner currently does, so it cannot tell "the scanner
+    // stopped emitting section" from "the fixture was right all along" — this
+    // can.
+    "section",
+    "widget",
     "o.sel",
     "o.n",
     "o.l",
   ]) {
     assert.ok(seen.has(key), `no fixture in the corpus carries \`${key}\``)
   }
+})
+
+test("a section heading speaks only for its own container — the certify box does NOT inherit the EEO legend", () => {
+  // THE NEAR-MISS THIS PINS, reported by w2-engine against itself while
+  // landing `section`. Its first heuristic was "the last heading before this
+  // control in document order", and greenhouse-step2.html is the page that
+  // falsifies it: a <fieldset><legend>Voluntary Self-Identification of
+  // Disability</legend> CLOSES, and the "I certify that the information
+  // provided in this application is true and complete" checkbox is rendered
+  // after it. By document order the legend precedes the checkbox; by
+  // containment the checkbox is not in that section at all. Stamping it there
+  // labels a legal attestation with a demographic heading.
+  //
+  // The deep-equal above already fails if a `section` key appears on that
+  // field, but it fails as "the fixture claims a shape the scanner does not
+  // produce" — which reads like fixture drift and invites a regeneration. This
+  // says what the correct answer is and why, so the red line names the rule.
+  //
+  // The two suppression rules are asserted TOGETHER because they are different
+  // rules and either alone would look sufficient here:
+  //   - the certify box: suppressed by CONTAINMENT (the legend's parent
+  //     <fieldset> does not contain it);
+  //   - the radio group g1: suppressed because the section it would get IS its
+  //     own label — the legend is both.
+  const s = fixture("greenhouse-step2")
+  assert.deepEqual(
+    s.fields.map((f) => [f.k, f.t, f.section ?? null]),
+    [
+      ["f2", "url", null],
+      ["f3", "url", null],
+      ["f1", "combo", null],
+      ["g1", "radio", null],
+      ["g2", "checkbox", null],
+    ],
+    "no field on greenhouse-step2 may carry a section. If the certify " +
+      "checkbox (g2) has acquired 'Voluntary Self-Identification of " +
+      "Disability', the heading rule has stopped requiring containment and a " +
+      "legal attestation is now labelled with a demographic heading",
+  )
+
+  // And the contrast, so this is not just an assertion of absence: the sibling
+  // page DOES produce sections, on exactly the fields that sit under a heading
+  // whose own parent contains them.
+  assert.deepEqual(
+    fixture("greenhouse-step1")
+      .fields.filter((f) => f.section)
+      .map((f) => [f.l, f.section]),
+    [
+      ["Attach", "Resume"],
+      ["Attach", "Cover Letter"],
+    ],
+    "greenhouse-step1's two file inputs must still carry their headings, or " +
+      "the rule above is being satisfied by a scanner that emits no sections " +
+      "at all — which would make this whole test vacuous",
+  )
 })
 
 test("no served page hides text by geometry, which is the harness's stated limit", () => {

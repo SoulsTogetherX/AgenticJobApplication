@@ -74,18 +74,45 @@
           <input type="tel" id="phone" name="job_application[phone]" />
         </div>
 
-        <!-- Greenhouse labels BOTH attachment inputs "Attach". -->
-        <div class="field">
-          <label for="resume">Attach</label>
-          <input type="file" id="resume" name="job_application[resume]" />
+        <!--
+          Greenhouse labels BOTH attachment inputs "Attach". The word that
+          tells resume from cover letter is the SECTION HEADING above each
+          one, which sits OUTSIDE the element labelOf() reads — and that is
+          the whole of case E8.
+
+          THE <h3>s ARE LOAD-BEARING, ADDED 2026-07-31. Before them this page
+          had exactly one heading, the page <h1>, and scan-page.js's section
+          rule never stamps a heading whose parent is <body> (a key with the
+          same value on every field distinguishes nothing). So E8's assertion
+          "no field carries a section" was true of this page for a reason
+          that had nothing to do with the defect it was asserting, and it
+          would have stayed green after the fix landed. Each <h3> lives in a
+          wrapper that contains ONLY its own input, because sectionOf()
+          requires the heading's own parent to contain the field — see
+          greenhouse-step2.html, where a legend precedes the "I certify"
+          checkbox in document order and must NOT be stamped on it.
+
+          Do not flatten these wrappers, and do not give the <h3>s a shared
+          parent: either change makes the section key vanish or spread, and
+          both look like a scanner regression.
+        -->
+        <div class="field-group" id="resume_section">
+          <h3>Resume</h3>
+          <div class="field">
+            <label for="resume">Attach</label>
+            <input type="file" id="resume" name="job_application[resume]" />
+          </div>
         </div>
-        <div class="field">
-          <label for="cover_letter">Attach</label>
-          <input
-            type="file"
-            id="cover_letter"
-            name="job_application[cover_letter]"
-          />
+        <div class="field-group" id="cover_letter_section">
+          <h3>Cover Letter</h3>
+          <div class="field">
+            <label for="cover_letter">Attach</label>
+            <input
+              type="file"
+              id="cover_letter"
+              name="job_application[cover_letter]"
+            />
+          </div>
         </div>
 
         <!-- A real react-select. Options appear only after a click. -->

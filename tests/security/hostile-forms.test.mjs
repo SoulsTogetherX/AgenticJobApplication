@@ -946,7 +946,19 @@ test("THE REAL CONTROL, at the file: the escalated page's own label cannot get a
 //
 //   B  escalated-tickbox-yes    one tickbox, its OWN label "Yes"   -> was TICKED
 //   C  escalated-radio-yesno    Yes/No radio pair (commonest)      -> was TICKED
-//   E  escalated-aria-checkbox  <div role="checkbox">              -> INVISIBLE
+//   E  escalated-aria-checkbox  <div role="checkbox">              -> was INVISIBLE
+//
+// CLOSED FOR E, 2026-07-31, BY A DIFFERENT MECHANISM AND IT IS WORTH SAYING
+// WHICH. E was never a bad tick; it was a blindness — scan-page.js collected
+// only from querySelectorAll("select,textarea,input"), [contenteditable] and
+// its combobox list, so a div[role=checkbox] produced NO field and a required
+// consent reached neither the tick path nor the defer path. w2-engine now
+// emits it as `t: "aria-checkbox", widget: "aria"`, and the fix is that
+// `aria-checkbox` is a type fill-plan.mjs has NO VERB FOR: it lands in the
+// `unsupported field type` defer. Ticking one would need a CLICK, and the
+// engine deliberately has no verb that clicks. THE DEFER IS THE FIX, not a
+// placeholder for a fill path — asserted below at buildPlan AND at the engine,
+// because "the scanner can see it now" is one consumer short of the point.
 //
 // CLOSED FOR B AND C, 2026-07-31. w1-security added answerClass() to
 // scripts/lib/untrusted.mjs — an answer the user recorded is a `datum` (a fact:
@@ -1604,9 +1616,10 @@ test("the renderings differ ONLY in markup: same question, same input name, same
     ["escalated-radio-yesno", AUTH_Q, "work_authorization"],
   ])
 
-  // And shape E carries the identical question in the SERVED HTML, where the
-  // scanner never picks it up. Read from the page, not from the scan fixture —
-  // the scan fixture is exactly the thing that does not contain it.
+  // And shape E carries the identical question. Read from the SERVED HTML as
+  // well as the scan: while the scanner was blind to this control the page was
+  // the only place the question existed, and keeping the page assertion means
+  // the fixture can never be the sole witness that shape E is the same attack.
   const html = fs.readFileSync(
     path.join(
       ROOT,
@@ -1618,84 +1631,122 @@ test("the renderings differ ONLY in markup: same question, same input name, same
     html.replace(/\s+/g, " ").includes(AUTH_Q),
     "shape E must ask the same question, or it is not the same attack",
   )
+  assert.deepEqual(
+    scan("escalated-aria-checkbox")
+      .fields.filter((f) => f.l === AUTH_Q)
+      .map((f) => [f.t, f.widget ?? null]),
+    [["aria-checkbox", "aria"]],
+    "shape E's control must still be the ARIA one and must still be SEEN — " +
+      "the served page and the scan must agree on which question is asked",
+  )
 })
 
-test("BLIND (shape E): a div[role=checkbox] consent produces no field, so it is neither ticked NOR shown to the user", () => {
-  // A DIFFERENT failure from B and C, and the reason it gets its own test.
-  // Nothing is asserted on the user's behalf — that half is safe. What is lost
-  // is the DEFER: the mechanism by which an unanswered required question
-  // reaches the approval message and pending-questions.mjs. A silence is not a
-  // refusal.
+test("FIX (shape E): a div[role=checkbox] consent reaches the user as a DEFER, and the plan stops calling itself ready", () => {
+  // REPLACED the BLIND (shape E) test on 2026-07-31, when w2-engine's scanner
+  // fix landed. BLIND asserted the ABSENCE of a field on purpose, so that a
+  // scanner fix would turn it red and the finding would be re-derived rather
+  // than silently closed. That is what happened; this is the re-derivation.
   //
-  // EXERCISES: scan-page.js's field collection (querySelectorAll of
-  // "select,textarea,input", [contenteditable], and the combobox selector
-  // list), asserted through what buildPlan can see.
-  // DOES NOT EXERCISE: any consent control, any identity guard, any part of
-  // fill-plan.mjs's decision-making — there is nothing for them to decide
-  // about. This test says NOTHING about whether those controls work.
+  // WHAT WAS LOST BEFORE, and what this now asserts is recovered: not the tick
+  // (nothing was ever ticked here — that half was always safe) but the DEFER,
+  // the mechanism by which an unanswered required question reaches the approval
+  // message and pending-questions.mjs. A silence is not a refusal.
+  //
+  // EXERCISES: scan-page.js's ARIA-widget collection, and buildPlan's
+  // unsupported-type branch, asserted at the plan.
+  // DOES NOT EXERCISE: the class gate (answerClass) or the widget rule that
+  // closed B and C. Shape E never reaches them — it is refused one step
+  // earlier, for having no verb. A green here is NOT evidence about those two.
   const s = scan("escalated-aria-checkbox")
   const plan = planFrom(s)
 
-  // 1. The scanner saw the form — the honest field is there — and did not see
-  //    the consent control.
+  // 1. The scanner sees the form AND the consent control, and reports the
+  //    control's ARIA facts: its accessible name and that it is required.
   assert.deepEqual(
-    s.fields.map((f) => [f.k, f.t, f.l]),
-    [["f1", "text", "Full name"]],
-    "the scanner now emits a second field for this page — if it is the ARIA " +
-      "consent control, this finding is closed and the fixture must be redone",
+    s.fields.map((f) => [f.k, f.t, f.l, f.req ?? false, f.widget ?? null]),
+    [
+      ["f1", "text", "Full name", false, null],
+      ["f2", "aria-checkbox", AUTH_Q, true, "aria"],
+    ],
+    "shape E's scan changed. If the ARIA control has stopped being emitted, " +
+      "the blindness is BACK and this is a regression, not a fixture drift",
   )
 
-  // 2. At the consumer: the question appears NOWHERE in the plan. Not as an
-  //    item, not as a defer, not as a skip.
-  assert.ok(
-    !JSON.stringify(plan).includes(AUTH_Q),
-    "the plan mentions the consent question somewhere — find out where before " +
-      "treating this as closed",
+  // 2. At the consumer, in one record: the question is a DEFER with a stated
+  //    reason, it is not an item, it is not a silent skip, and the deferral
+  //    propagates to readiness — so the fast path can no longer fill and hand
+  //    over a form carrying an unanswered required consent.
+  const labelled = (x) => String(x.label ?? "").includes(AUTH_Q)
+  assert.deepEqual(
+    {
+      defer: plan.defer.filter(labelled).map((d) => [d.k, d.why]),
+      items: plan.items.filter(labelled).map((i) => [i.k, i.how]),
+      readiness: readiness(plan),
+      // Proof the plan is not empty, so none of the above is vacuous.
+      honestItems: plan.items.map((i) => `${i.sel} = ${i.value}`),
+    },
+    {
+      defer: [["f2", "unsupported field type aria-checkbox"]],
+      items: [],
+      readiness: { ready: false, reason: "1 deferred field(s) need a human" },
+      honestItems: ["#ar-name = Jane Test"],
+    },
+    "the ARIA consent must be deferred with a reason. An item of ANY verb, a " +
+      "silent skip, or ready:true is a regression",
   )
 
-  // 3. And the plan reports itself ready, which is the actual damage: the fast
-  //    path fills and hands over a form carrying an unanswered required
-  //    consent that the user was never told existed.
-  assert.deepEqual(readiness(plan), { ready: true, reason: null })
-
-  // 4. The contrast, in one assertion, so the difference between B/C and E is
-  //    pinned rather than described: the same question on a rendering the
-  //    scanner CAN see produces a planned action; here it produces nothing.
-  const mentioned = (n) => {
+  // 3. The contrast, in one assertion, so the difference between B/C and E is
+  //    pinned rather than described: all three renderings of the SAME question
+  //    now reach the user, and none of them reaches the browser.
+  const treatment = (n) => {
     const p = planFrom(scan(n))
-    return [...p.items, ...p.defer].some((x) =>
-      String(x.label ?? "").includes(AUTH_Q),
-    )
+    return {
+      deferred: p.defer.filter(labelled).map((d) => d.why),
+      acted: p.items.filter(labelled).map((i) => i.how),
+    }
   }
   assert.deepEqual(
     {
-      tickbox: mentioned("escalated-tickbox-yes"),
-      radio: mentioned("escalated-radio-yesno"),
-      aria: mentioned("escalated-aria-checkbox"),
+      tickbox: treatment("escalated-tickbox-yes"),
+      radio: treatment("escalated-radio-yesno"),
+      aria: treatment("escalated-aria-checkbox"),
     },
-    { tickbox: true, radio: true, aria: false },
+    {
+      tickbox: { deferred: ["confirm"], acted: [] },
+      radio: { deferred: ["confirm"], acted: [] },
+      aria: { deferred: ["unsupported field type aria-checkbox"], acted: [] },
+    },
+    "the three renderings must all defer. The REASONS differ on purpose and " +
+      "collapsing them would hide which defence is actually load-bearing: B " +
+      "and C are stopped HERE by the CLASS gate (`confirm`), because the " +
+      "default bank answers this question with an assertion-class entry and " +
+      "that gate fires first; section 4d re-runs the same two shapes against " +
+      "wordings the class gate MISSES and gets `confirm-widget` from the " +
+      "widget rule behind it. E is stopped by neither — it has no verb.",
   )
 })
 
-test("FALSIFIER (shape E, pre-built for w2-engine): when the scanner CAN see the ARIA consent control it must defer it, never act on it", async () => {
-  // WRITTEN BEFORE THE FIX, ON PURPOSE, and this is the sequencing argument
-  // that put shape E behind the classifier rather than in front of it: making a
-  // control VISIBLE before it can DEFER converts a blindness into a bad tick.
-  // Today the scanner emits no field for <div role="checkbox">, so the pipeline
-  // does nothing with it. The moment scan-page.js starts emitting one, the
-  // question resolves against the same a-002 bank entry shapes B and C hit, and
-  // the only thing standing between it and a ticked arbitration waiver is
-  // w1-security's classifier gate. This asserts that outcome in advance.
+test("FIX (shape E) AT THE ENGINE: the visible ARIA consent control is deferred, and no browser action is ever issued against it", async () => {
+  // WRITTEN BEFORE THE FIX, ON PURPOSE, and LIVE since 2026-07-31. This is the
+  // sequencing argument that put shape E behind the classifier rather than in
+  // front of it: making a control VISIBLE before it can DEFER converts a
+  // blindness into a bad tick. So the assertion was armed while the scanner was
+  // still blind, and it passed in that world for a stated reason rather than
+  // by accident. w2-engine's scanner fix landed; this is now the live test.
   //
   // HOW IT BEHAVES IN EACH WORLD — the expectation is DERIVED from what the
-  // scanner emits, so one test covers all three:
-  //   invisible (today)      scannerSees=false -> expect no action, no defer  PASS
+  // scanner emits, so one test covers all of them:
   //   visible and deferred   scannerSees=true  -> expect no action, a defer   PASS
   //   visible and TICKED     acted is non-empty                               FAIL
   //   visible and SKIPPED    scannerSees=true, no defer                       FAIL
-  // The last row is the one worth stating out loud: a scanner that sees the
-  // control and produces a silent `skip` item is NOT a fix. Section 4b's last
-  // test is the record of that mistake being made once already.
+  //   invisible again        scannerSees=false                                FAIL
+  // The last two rows are the ones worth stating out loud. A scanner that sees
+  // the control and produces a silent `skip` item is NOT a fix — section 4b's
+  // last test is the record of that mistake being made once already. And a
+  // REGRESSION to blindness now fails here too: `scannerSees` was derived on
+  // both sides of the deepEqual while the finding was open, which is what let
+  // one test cover the before and the after, but leaving it derived after the
+  // fix would let the pipeline go blind again silently. It is pinned `true`.
   //
   // `scannerSees` is not self-certifying. It is a fact about the scan fixture,
   // and tests/security/scan-fidelity.test.mjs holds that fixture to what the
@@ -1703,8 +1754,8 @@ test("FALSIFIER (shape E, pre-built for w2-engine): when the scanner CAN see the
   // pass by editing the fixture alone. I own the fixture; I do not own
   // scan-page.js, and I have not touched it.
   //
-  // CANARIED 2026-07-31, three worlds, by temporarily adding the g1 the
-  // scanner does not yet emit and (where stated) forcing the classifier to
+  // CANARIED 2026-07-31 (pre-fix), three worlds, by temporarily adding a group
+  // the scanner did not yet emit and (where stated) forcing the classifier to
   // "datum". Both mutations were reverted and verified byte-identical by md5.
   //   1. visible + gate intact ................................ PASS
   //   2. visible + gate broken + a matchable "Yes" option ...... FAIL
@@ -1713,15 +1764,18 @@ test("FALSIFIER (shape E, pre-built for w2-engine): when the scanner CAN see the
   //   3. visible + gate broken, but the control's ONLY option label is the
   //      question itself ...................................... PASS
   //
-  // WORLD 3 IS A CAVEAT AND IT IS REPORTED RATHER THAN HIDDEN. It is the most
-  // likely shape for w2-engine to emit here, because the div's accessible name
-  // IS the question and there is no "Yes" text anywhere. In that world nothing
-  // ticks — but for the SAME accident section 4b's last test documents (a lone
-  // control offers no option for the stored answer to match), not because of
-  // the classifier. So a green here in world 3 is not evidence about the gate.
-  // If the scanner ends up emitting that shape, this test still catches a
-  // silent skip and a missing defer, and the tick leg is covered by shapes B
-  // and C on the same question.
+  // RE-CANARIED 2026-07-31 (post-fix) against the shape the scanner ACTUALLY
+  // emits — a single `t: "aria-checkbox"` field with no options — by deleting
+  // buildPlan's unsupported-type defer: `deferred` goes false and this test
+  // goes red. So the defer leg is armed against the real shape, not only
+  // against the hypothetical one the pre-fix canary used.
+  //
+  // WHAT THIS TEST DOES NOT PROVE, and world 3 above is why. The emitted field
+  // carries NO options, so there is nothing for a stored "Yes" to match even if
+  // every gate were removed. `acted: []` is therefore evidence that the plan
+  // issued no action, not evidence that the classifier would have refused one.
+  // The tick leg for this exact question is covered by shapes B and C, which do
+  // carry matchable options.
   const s = scan("escalated-aria-checkbox")
   const isAuth = (f) =>
     String(f.l ?? "")
@@ -1731,8 +1785,9 @@ test("FALSIFIER (shape E, pre-built for w2-engine): when the scanner CAN see the
   const scannerSees = Boolean(authField)
 
   // Every selector belonging to that control — the field itself and every
-  // option under it. Empty while the control is invisible, which is why `acted`
-  // is empty today for a reason the record states rather than hides.
+  // option under it. Non-empty now that the control is visible, which is what
+  // makes `acted: []` mean "the engine touched nothing of it" rather than
+  // "there was nothing to touch".
   const sels = new Set()
   if (authField) {
     if (authField.sel) sels.add(authField.sel)
@@ -1747,6 +1802,8 @@ test("FALSIFIER (shape E, pre-built for w2-engine): when the scanner CAN see the
   assert.deepEqual(
     {
       scannerSees,
+      // Every selector of the control is known, so this is a real search.
+      watched: [...sels].sort(),
       acted: actionsAgainst(page, sels),
       deferred: plan.defer.some(labelled),
       skippedSilently: plan.items.some((i) => i.how === "skip" && labelled(i)),
@@ -1757,19 +1814,18 @@ test("FALSIFIER (shape E, pre-built for w2-engine): when the scanner CAN see the
       engineFailures: report.failures,
     },
     {
-      scannerSees,
+      // Pinned, not derived: a regression to blindness fails here.
+      scannerSees: true,
+      watched: ["#ar-auth"],
       acted: [],
-      // The load-bearing line: once the scanner sees it, it MUST be deferred.
-      deferred: scannerSees,
+      // The load-bearing line: the scanner sees it, so it MUST be deferred.
+      deferred: true,
       skippedSilently: false,
       engineFilled: ["#ar-name = Jane Test"],
       engineFailures: [],
     },
-    scannerSees
-      ? "the scanner now sees the ARIA consent control. It must reach the user " +
-          "as a defer and must never be acted on — a tick or a silent skip is a " +
-          "regression, not progress."
-      : "the scanner still cannot see the ARIA consent control (the open " +
-          "finding); this test is armed and will assert the defer the moment it can.",
+    "the ARIA consent control must reach the user as a defer and must never be " +
+      "acted on. A tick, a silent skip, or the scanner going blind to it again " +
+      "are all regressions.",
   )
 })

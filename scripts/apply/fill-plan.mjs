@@ -599,6 +599,52 @@ export function labelHazard(...texts) {
 }
 
 // Pure core (exported for tests).
+// A small set of CSS selectors, drawn from the scan's own REQUIRED fields,
+// that fill-engine.mjs checks before it fills anything — each must resolve
+// to exactly one element or the run stops with "the form is not the one the
+// plan was built for" (fill-engine.mjs's "is this the form the plan was
+// built for?" section, check 1). This is the producer half of that contract:
+// the engine has honoured an optional `plan.pageGuard` since it landed, but
+// nothing ever set it, so a single-URL multi-step form (urlGuard cannot tell
+// step 1 from step 2 — same URL, same guard verdict) had no defence beyond
+// the engine's own floor check (fail once, loudly, when NOT ONE item
+// resolves) — which a step that happens to share even one stale selector
+// with the plan's step defeats, because that floor only requires one hit.
+//
+// REQUIRED fields preferred, not every field on the scan: an optional field
+// (EEO especially) coming and going between two loads of the SAME step would
+// otherwise make the guard misfire on a page that is actually correct — the
+// same reasoning fingerprint() already applies to cache keys. Capped at
+// PAGE_GUARD_MAX so a form with dozens of required fields does not turn a
+// debugging aid into a fragile assertion that any single renamed element
+// trips; a handful of anchors is enough to tell one step from another.
+//
+// FALLBACK: a step whose only required field is a combo (no plain `.sel` —
+// Greenhouse's step 2 is exactly this: "How did you hear about this job?" is
+// the sole required field and it is a combo) would otherwise get NO guard at
+// all, which is worse than an occasionally-optional one — an absent guard
+// gives back exactly the pre-fix behaviour for that step. When no required
+// field carries a selector, any field's selector (required or not) is used
+// instead: some protection against the multi-step-one-URL case beats none,
+// and a false "wrong page" here is loud (a guard failure, not a silent
+// misfill) and recoverable with a re-scan.
+const PAGE_GUARD_MAX = 5
+function buildPageGuard(scan) {
+  const collect = (wantReq) => {
+    const sels = []
+    for (const f of scan.fields ?? []) {
+      if (wantReq && !f.req) continue
+      if (!f.sel) continue
+      if (sels.includes(f.sel)) continue
+      sels.push(f.sel)
+      if (sels.length >= PAGE_GUARD_MAX) break
+    }
+    return sels
+  }
+  const required = collect(true)
+  return required.length ? required : collect(false)
+}
+
 export function buildPlan({
   scan,
   resolved,
@@ -655,6 +701,7 @@ export function buildPlan({
       slug: scan.slug ?? null,
       ats: adapter.id,
       urlGuard: url ?? scan.url ?? null,
+      pageGuard: buildPageGuard(scan),
       comboStrategies: adapter.comboStrategies,
       valueAliases: adapter.valueAliases ?? [],
       items: [],
@@ -1019,6 +1066,7 @@ export function buildPlan({
         why: (r.status ?? "UNRESOLVED").toLowerCase(),
         options: f.opts ?? (f.o ?? []).map((o) => o.l),
         optsTruncated: f.optsTruncated || undefined,
+        optsTotal: f.optsTotal || undefined,
         note: r.note,
       })
       continue
@@ -1143,6 +1191,7 @@ export function buildPlan({
     slug: scan.slug ?? null,
     ats: adapter.id,
     urlGuard: url ?? scan.url ?? null,
+    pageGuard: buildPageGuard(scan),
     comboStrategies: adapter.comboStrategies,
     // Where an ATS renders a value differently from the option text it was
     // chosen by (Greenhouse's country picker shows "United States +1" but
@@ -1250,7 +1299,21 @@ export function readiness(plan) {
 // the planner left anything at all undecided. Never used to authorise an
 // actual submit click by itself — hard rule 6 is enforced independently of
 // what any function in this file returns.
-export function submitReadiness(plan) {
+// `report` is OPTIONAL and, when passed, is exactly fill-engine.mjs's
+// fillPage() return value — the half of the gate that does not exist until
+// after the engine has actually run (see this function's own comment above
+// and automatability.mjs's header, which already documents this pairing).
+// Today's only caller of this file's CLI runs before any fill, so `report`
+// is normally absent and every check below is skipped, same as before.
+//
+// `report.revealed`: the engine's verify pass sweeps the page for REQUIRED,
+// EMPTY controls the plan never contained — a conditional reveal ("if yes,
+// explain") is created BY the fill, so no scan and no plan could have seen
+// it coming. Under hard rule 6 that is the same class of problem as an
+// UNKNOWN field: something on the page was not understood, so it blocks
+// exactly like a defer would, even though the plan itself was clean and
+// resolved everything it knew about.
+export function submitReadiness(plan, report = null) {
   const fillable = (plan.items ?? []).filter((i) => i.how !== "skip")
   if (plan.defer?.length) {
     return {
@@ -1260,6 +1323,14 @@ export function submitReadiness(plan) {
   }
   if (!fillable.length) {
     return { ready: false, reason: "nothing to fill" }
+  }
+  if (report?.revealed?.length) {
+    return {
+      ready: false,
+      reason:
+        `${report.revealed.length} field(s) revealed by the fill were ` +
+        "never in the plan — the page was not fully understood",
+    }
   }
   return { ready: true, reason: null }
 }
@@ -1331,10 +1402,19 @@ export function buildDriverSource(plan, engineSrc, scannerSrc = null) {
   // The scanner is the ONLY thing that goes INTO the page, and it goes in over
   // CDP — never as an inline <script>, which a nonce-CSP board refuses. Its text
   // was read off our own disk by the generator; nothing is read back out.
+  //
+  // Installed UNCONDITIONALLY — never gated on
+  // "typeof window.__ajScan === 'function'". That check asks the PAGE whether
+  // it already has a scanner and trusts the answer; a board can define
+  // window.__ajScan itself before we run and keep its own scanner installed,
+  // and the engine's end-of-run window.__ajScan(false) then reports THAT
+  // board's invented signals/buttons as though we produced them (w2-engine
+  // repro: a page defining window.__ajScan before the bootstrap runs made
+  // out.next the board's own fabricated button). Same class of bug as the
+  // __ajFillSrc readback this file already refuses above — the page's answer
+  // about itself is not evidence. The cost of always installing is ~1ms.
   const SCANNER = ${embedLiteral(scannerSrc)}
-  if (!(await page.evaluate(() => typeof window.__ajScan === "function"))) {
-    await page.evaluate((s) => { (0, eval)(s); }, SCANNER)
-  }
+  await page.evaluate((s) => { (0, eval)(s); }, SCANNER)
 `
     : ""
   return `// Generated by scripts/apply/fill-plan.mjs — do not edit by hand.

@@ -611,12 +611,85 @@ test("a persistent stale error survives the retry and is reported, not swallowed
   assert.equal(out.ok, 0)
   assert.match(out.failures[0].why, /not attached to the dom/i)
   const scrolls = page.log.filter((e) => e[0] === "scroll")
-  assert.equal(scrolls.length, 2, "exactly one retry — not an infinite loop")
+  assert.equal(
+    scrolls.length,
+    3,
+    "three attempts, then it stops — a BOUNDED retry, not an infinite loop. " +
+      "One replay absorbed Ashby's single async remount and nothing more; a " +
+      "form that remounts on a timer detaches the replay as well.",
+  )
   assert.equal(
     page.log.filter((e) => e[0] === "fill").length,
     0,
     "a scroll that never succeeds must never reach fill",
   )
+  assert.equal(
+    out.failures[0].stale,
+    true,
+    "the failure is marked stale, which is what lets the verify pass overturn " +
+      "it when the value turns out to have landed anyway",
+  )
+})
+
+test("a stale failure whose value DID land is not reported as a failure", async () => {
+  // The live Ashby incident: the form remounted between locate() and the
+  // interaction, every attempt threw "not attached", and the run logged a
+  // failure for a field whose value was on the page. Retries cannot settle
+  // this — the locator is racing a remount that never stops. The verify pass
+  // can, because it reads the DOM in ONE page.evaluate.
+  const page = fakePage({
+    elements: {
+      "#a": {
+        kind: "input",
+        throwOnScroll: "Element is not attached to the DOM",
+      },
+    },
+  })
+  const realEval = page.evaluate.bind(page)
+  page.evaluate = async (fn, arg) => {
+    if (String(fn).includes("requiredEmpty")) {
+      // What the page really holds: the value landed on the remount's own
+      // re-render, which is exactly what remount-mid-fill.html does.
+      return { mismatch: [], errors: [], requiredEmpty: [], landed: ["f1"] }
+    }
+    return realEval(fn, arg)
+  }
+  const out = await fillPage(
+    page,
+    plan([{ k: "f1", sel: "#a", how: "fill", value: "x" }]),
+  )
+  assert.equal(out.failed, 0, "a value that is on the page is not a failure")
+  assert.equal(out.ok, 1)
+  assert.deepEqual(plain(out.failures), [])
+  assert.deepEqual(
+    plain(out.reconciled),
+    [{ k: "f1", how: "fill", why: "Element is not attached to the DOM" }],
+    "the promotion is recorded, never silent",
+  )
+})
+
+test("only a STALE failure can be overturned by the verify pass", async () => {
+  // A refused element, an unknown verb, a combo that never took — none of
+  // those mean "the call could not be completed", so a value on the page is
+  // not evidence about them. Only a detached element gets reconsidered.
+  const page = fakePage({
+    elements: { "#a": { kind: "input", throwOnFill: "boom" } },
+  })
+  const realEval = page.evaluate.bind(page)
+  page.evaluate = async (fn, arg) => {
+    if (String(fn).includes("requiredEmpty")) {
+      return { mismatch: [], errors: [], requiredEmpty: [], landed: ["f1"] }
+    }
+    return realEval(fn, arg)
+  }
+  const out = await fillPage(
+    page,
+    plan([{ k: "f1", sel: "#a", how: "fill", value: "x" }]),
+  )
+  assert.equal(out.failed, 1)
+  assert.equal(out.ok, 0)
+  assert.equal(out.failures[0].why, "boom")
+  assert.deepEqual(plain(out.reconciled), [])
 })
 
 test("a stale hit inside kindOf is retried too, not just scrollIntoViewIfNeeded", async () => {
@@ -1594,3 +1667,343 @@ test("a missing playwright-core is a clear message, not a stack trace", async (t
     /playwright-core is not installed/,
   )
 })
+// ---------------------------------------------------------------------------
+// THE BROWSER LEG — a real Chromium, never a real employer.
+//
+// Everything above runs against a hand-written page double, which is exactly
+// right for ordering, guards and call shape and can say nothing at all about
+// what a DOM does. These cases cannot be answered any other way: whether the
+// scanner SEES a control, whether a heading is where the walk expects it, and
+// whether a required field the fill itself created is visible to the verify
+// pass. The pages are built here with setContent (about:blank) or read out of
+// tests/fixtures/, so no network is touched — and browser.mjs's own loopback
+// guard is the backstop, pinned by the last test in this file.
+//
+// Skipped with a STATED reason when playwright-core or its browser is absent,
+// because a leg that skips silently is indistinguishable from one that passes.
+// ---------------------------------------------------------------------------
+
+const NO_BROWSER = await (async () => {
+  try {
+    const s = await launchBrowser({ headless: true });
+    await s.close();
+    return null;
+  } catch (e) {
+    return "no usable Chromium: " + String(e.message).slice(0, 90);
+  }
+})();
+
+const withPage = async (fn) => {
+  const s = await launchBrowser({ headless: true });
+  try {
+    return await fn(s.page);
+  } finally {
+    await s.close();
+  }
+};
+
+const HOSTILE = path.join(ROOT, "tests", "fixtures", "hostile", "forms");
+
+test("SHAPE E: a <div role=checkbox> consent is SEEN, and defers", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  // The finding this closes was BLINDNESS, not a bad tick: the scanner
+  // collected from select/textarea/input, [contenteditable] and its combobox
+  // list, so a component library's styled checkbox emitted ZERO fields. The
+  // box was not ticked (safe) and not deferred either (not safe) — a REQUIRED
+  // consent reached neither the approval message nor the plan's defer list.
+  const html = fs.readFileSync(
+    path.join(HOSTILE, "escalated-aria-checkbox.html"),
+    "utf8",
+  );
+  const { scan } = await withPage(async (page) => {
+    await page.setContent(html);
+    return scanPage(page, { probeMax: 0 });
+  });
+  const aria = scan.fields.filter((f) => f.widget === "aria");
+  assert.equal(aria.length, 1, "the control must appear in the scan at all");
+  assert.equal(aria[0].t, "aria-checkbox");
+  assert.equal(aria[0].req, true, "aria-required must survive");
+  assert.equal(
+    aria[0].l,
+    "Are you legally authorized to work in the United States?",
+  );
+  assert.equal(aria[0].sel, "#ar-auth");
+  // The honest field on the page is still there — so this is a finding about
+  // the control, not about the page or the scan.
+  assert.ok(scan.fields.some((f) => f.l === "Full name"));
+  // And the type is one no verb in this pipeline can operate, which is the
+  // whole point: ticking one of these takes a CLICK, and the engine has no
+  // verb that clicks. Deferring is the answer, not a fill.
+  assert.ok(
+    !/aria-checkbox|aria-radio|aria-switch/.test(SRC),
+    "the engine must gain no verb for these",
+  );
+});
+
+test("a field revealed BY the fill is reported, not silently left empty", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  // "If yes, explain": the control does not exist when the scan runs, so it is
+  // in no plan, and the verify pass probed the plan's own items only — it
+  // could confirm what was already known and nothing else. The run reported a
+  // clean fill of a form that cannot be submitted.
+  const out = await withPage(async (page) => {
+    await page.setContent(
+      "<form>" +
+        '<label for="q1">Have you worked here before?</label>' +
+        '<input type="checkbox" id="q1" name="prior">' +
+        '<div id="extra"></div>' +
+        "<script>" +
+        "document.getElementById('q1').addEventListener('change', () => {" +
+        "  document.getElementById('extra').innerHTML =" +
+        "    '<label for=\"when\">If yes, when?</label>' +" +
+        '    \'<input id="when" name="when" required>\'' +
+        "})" +
+        "</script>" +
+        "</form>",
+    );
+    return fillPage(page, {
+      items: [
+        { k: "q1", how: "check", sel: "#q1", value: true, label: "prior" },
+      ],
+    });
+  });
+  assert.equal(out.failed, 0);
+  assert.equal(out.ok, 1);
+  assert.deepEqual(
+    out.revealed.map((r) => r.label),
+    ["If yes, when?"],
+    "the required control the fill created must come back as data",
+  );
+  assert.equal(out.revealed[0].sel, "#when");
+  // Reported, never answered: nothing in this process knows what goes in it.
+  assert.equal(out.verify.mismatch.length, 0);
+});
+
+test("a field the plan already covers is not reported as revealed", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  // The sweep must not turn every ordinary required field into noise. A
+  // checker that cries wolf gets ignored, which is a gotcha this repo already
+  // paid for once.
+  const out = await withPage(async (page) => {
+    await page.setContent(
+      "<form>" +
+        '<label for="a">First name</label><input id="a" name="a" required>' +
+        '<label for="b">Last name</label><input id="b" name="b" required>' +
+        "</form>",
+    );
+    return fillPage(page, {
+      items: [
+        { k: "f1", how: "fill", sel: "#a", value: "Ada", label: "First name" },
+        { k: "f2", how: "fill", sel: "#b", value: "Lovelace", label: "Last" },
+      ],
+    });
+  });
+  assert.equal(out.ok, 2);
+  assert.deepEqual(out.revealed, []);
+  assert.deepEqual(out.verify.requiredEmpty, []);
+});
+
+test("the heading above a field is carried, so two 'Attach' inputs differ", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  // Greenhouse labels BOTH attachment inputs "Attach"; the word that tells
+  // resume from cover letter is the section heading, which sits outside the
+  // element the label waterfall reads. Until now only document order separated
+  // them, and document order is a convention of these boards, not a fact.
+  const { scan } = await withPage(async (page) => {
+    await page.setContent(
+      "<h1>Full-Stack Engineer</h1><form>" +
+        "<h3>Resume</h3>" +
+        '<div><label for="r">Attach</label><input type="file" id="r" name="resume"></div>' +
+        "<h3>Cover letter</h3>" +
+        '<div><label for="c">Attach</label><input type="file" id="c" name="cover"></div>' +
+        "</form>",
+    );
+    return scanPage(page, { probeMax: 0 });
+  });
+  const files = scan.fields.filter((f) => f.t === "file");
+  assert.deepEqual(
+    files.map((f) => f.l),
+    ["Attach", "Attach"],
+  );
+  assert.deepEqual(
+    files.map((f) => f.section),
+    ["Resume", "Cover letter"],
+  );
+});
+
+test("the page heading is not stamped on every field as a fake section", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  // A key with the same value on every field distinguishes nothing, and the
+  // job title is what an <h1> holds on all four board replicas. Emitting it
+  // per field would be noise on the wire and would make `section` look
+  // informative when it is not.
+  const { scan } = await withPage(async (page) => {
+    await page.setContent(
+      "<h1>Full-Stack Engineer</h1><form>" +
+        '<label for="a">First name</label><input id="a" name="a">' +
+        '<label for="b">Email</label><input id="b" name="b">' +
+        "</form>",
+    );
+    return scanPage(page, { probeMax: 0 });
+  });
+  assert.equal(scan.heading, "Full-Stack Engineer");
+  for (const f of scan.fields) {
+    assert.equal(f.section, undefined, f.l + " must carry no section");
+  }
+});
+
+test("a cut option list says it was cut, and how long it really was", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  // 40 survivors of a 200-option country list used to be indistinguishable
+  // from a genuine 40-option list: the field cache stored the short list as
+  // complete, and an answer the form does offer, past the cut, resolved as
+  // "not on offer" and was deferred to the user for nothing.
+  const { scan } = await withPage(async (page) => {
+    const opts = Array.from(
+      { length: 200 },
+      (_, i) => "<option>C" + i + "</option>",
+    ).join("");
+    await page.setContent(
+      "<form>" +
+        '<label for="n">Country</label><select id="n" name="country">' +
+        opts +
+        "</select>" +
+        '<label for="s">State</label><select id="s" name="state">' +
+        "<option>NV</option><option>CA</option></select>" +
+        "</form>",
+    );
+    return scanPage(page, { probeMax: 0 });
+  });
+  const country = scan.fields.find((f) => f.l === "Country");
+  assert.equal(country.opts.length, 40);
+  assert.equal(country.optsTruncated, true);
+  assert.equal(country.optsTotal, 200);
+  // A list that fits is not flagged, or the flag means nothing.
+  const state = scan.fields.find((f) => f.l === "State");
+  assert.equal(state.opts.length, 2);
+  assert.equal(state.optsTruncated, undefined);
+});
+
+test("a form the scanner cannot see is a stated refusal, not silence", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  // querySelectorAll stops at a shadow boundary. Crossing it properly means
+  // making every selector in the fill engine root-aware, and a CLOSED shadow
+  // root cannot be crossed at all — so this DETECTS the boundary and says so.
+  // A scan that comes back short and looks complete is the worse outcome, and
+  // that is what this replaces.
+  const { scan } = await withPage(async (page) => {
+    await page.setContent(
+      '<div id="host"></div>' +
+        '<form><label for="x">Name</label><input id="x" name="x"></form>' +
+        "<script>" +
+        "document.getElementById('host').attachShadow({ mode: 'open' })" +
+        ".innerHTML = '<label>Work authorisation</label><input required>'" +
+        "</script>",
+    );
+    return scanPage(page, { probeMax: 0 });
+  });
+  assert.equal(scan.fields.length, 1, "the shadow input is genuinely not seen");
+  assert.ok(
+    (scan.signals || []).some((s) => /shadow root/.test(s)),
+    "and the scan must SAY so: " + JSON.stringify(scan.signals),
+  );
+});
+
+test("a shadow root with no form controls raises nothing", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  // Component libraries put shadow roots on icons and buttons. A signal that
+  // fires on every modern page is a signal nobody reads.
+  const { scan } = await withPage(async (page) => {
+    await page.setContent(
+      '<div id="host"></div>' +
+        '<form><label for="x">Name</label><input id="x" name="x"></form>' +
+        "<script>" +
+        "document.getElementById('host').attachShadow({ mode: 'open' })" +
+        ".innerHTML = '<span>decorative</span>'" +
+        "</script>",
+    );
+    return scanPage(page, { probeMax: 0 });
+  });
+  assert.equal(
+    (scan.signals || []).some((s) => /shadow root/.test(s)),
+    false,
+  );
+});
+
+test("a plan for a different step of the same URL is refused as a whole", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  // urlGuard compares URLs, and the Greenhouse replica serves both steps on
+  // ONE path — so the guard passes on a page it has never seen. This does not
+  // make that safe; what it changes is that the report says "wrong page" once
+  // instead of handing back N indistinguishable "no unique element" failures.
+  const out = await withPage(async (page) => {
+    await page.setContent(
+      '<form><label for="p2a">Salary expectation</label>' +
+        '<input id="p2a" name="p2a"></form>',
+    );
+    return fillPage(page, {
+      items: [
+        {
+          k: "f1",
+          how: "fill",
+          sel: "#first_name",
+          value: "Ada",
+          label: "First",
+        },
+        { k: "f2", how: "fill", sel: "#last_name", value: "L", label: "Last" },
+      ],
+    });
+  });
+  assert.equal(out.failed, 1, "one verdict, not one failure per field");
+  assert.equal(out.failures[0].how, "guard");
+  assert.match(out.failures[0].why, /not one of the plan's 2 fields/);
+});
+
+test("pageGuard is what can actually tell two steps apart", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  // The floor above is defeated by a single shared selector — one
+  // input[name=email] on both steps and it never fires. pageGuard is the
+  // PLANNER's assertion about which form this plan belongs to, and it is the
+  // only check here that survives that.
+  const run = (pageGuard) =>
+    withPage(async (page) => {
+      await page.setContent(
+        '<form><label for="email">Email</label>' +
+          '<input id="email" name="email"></form>',
+      );
+      return fillPage(page, {
+        pageGuard,
+        items: [
+          {
+            k: "f1",
+            how: "fill",
+            sel: "#email",
+            value: "a@b.c",
+            label: "Email",
+          },
+        ],
+      });
+    });
+  const wrong = await run(["#first_name"]);
+  assert.equal(wrong.failed, 1);
+  assert.equal(wrong.failures[0].how, "guard");
+  assert.match(wrong.failures[0].why, /#first_name/);
+  const right = await run(["#email"]);
+  assert.equal(right.failed, 0);
+  assert.equal(right.ok, 1);
+});
+
+test("nothing in the browser leg can reach a real employer", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  // The leg above uses setContent and file: reads only. This pins the backstop
+  // that would stop it anyway if someone added a goto to a live board.
+  const s = await launchBrowser({ headless: true });
+  try {
+    await assert.rejects(
+      () => s.goto("https://boards.greenhouse.io/acme/jobs/1"),
+      /restricted to localhost/,
+    );
+  } finally {
+    await s.close();
+  }
+});

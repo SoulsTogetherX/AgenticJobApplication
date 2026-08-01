@@ -14,6 +14,26 @@
 // sel=stable app-owned selector (id/name/aria-label) that outlives a React
 // remount, which data-aj does not — fill plans fall back to it.
 //
+// Four more, each present only when it has something to say:
+//   optsTruncated / optsTotal
+//               the option list was CUT at MAX_OPTS and this is how long it
+//               really was. Without it, 40 survivors of a 200-option country
+//               list are indistinguishable from a genuine 40-option list: the
+//               field cache stores the short list as complete, and an answer
+//               the form does offer, past the cut, is deferred as unofferable.
+//   section     the section heading the field sits under, when there is one
+//               and it is neither the page heading nor a repeat of the label.
+//               Greenhouse labels BOTH attachment inputs "Attach" and the word
+//               that tells resume from cover letter is this heading, which
+//               sits outside the element the label waterfall reads. REPORTED,
+//               never merged into `l` — see the block that computes it.
+//   widget      "aria" on a control that is a DIV wearing a form control's
+//               role. No verb in this pipeline can operate one; see the block
+//               that collects them for why that is deliberate.
+// `t` is correspondingly "aria-checkbox" / "aria-radio" / "aria-switch" for
+// those, which is a type fill-plan.mjs has no verb for — so they DEFER rather
+// than being acted on, which is the whole point of emitting them.
+//
 // WHAT THE ELEMENT SAYS IT IS, reported as fields of its own rather than left
 // inside `sel` for a consumer to reverse-engineer out of a selector string:
 //   n   the element's `name` attribute, verbatim
@@ -654,7 +674,17 @@ window.__ajScan = async (PROBE = true) => {
       h: helpOf(el) || undefined,
     }
     if (tag === "select") {
-      f.opts = [...el.options].map((o) => txt(o.text, 60)).slice(0, MAX_OPTS)
+      // THE CUT IS NOW STATED. It used to be silent, and 40 survivors of a
+      // 200-option country list are indistinguishable from a genuine
+      // 40-option list: the field cache stored the short list as complete,
+      // and an answer the form really does offer, past the cut, resolved as
+      // "not on offer" and was deferred to the user for no reason.
+      const all = [...el.options].map((o) => txt(o.text, 60))
+      f.opts = all.slice(0, MAX_OPTS)
+      if (all.length > MAX_OPTS) {
+        f.optsTruncated = true
+        f.optsTotal = all.length
+      }
       if (el.multiple) f.multi = true
     }
     fields.push(f)
@@ -685,8 +715,126 @@ window.__ajScan = async (PROBE = true) => {
     })
   }
 
+  // --- controls that are not elements the loops above collect ---------------
+  // SHAPE E, and it is BLINDNESS RATHER THAN DEFENCE. A component library
+  // renders a checkbox as <div role="checkbox" aria-checked="false"> with a
+  // keyboard handler and no <input> anywhere. The loops above collect from
+  // select/textarea/input, [contenteditable] and the combobox selector list,
+  // so such a control matched NONE of them and this scanner emitted zero
+  // fields for it. On tests/fixtures/hostile/forms/escalated-aria-checkbox.html
+  // that control is a REQUIRED work-authorisation consent: it was not ticked,
+  // which is safe, but it was also not DEFERRED, so it never reached the
+  // approval message, pending-questions.mjs, or the plan's defer list. The
+  // submit then fails, or the board defaults the answer, and nothing in the
+  // run log says why. A silence is not a refusal.
+  //
+  // WHY THE TYPE IS `aria-checkbox` AND NOT `checkbox`. Ticking one of these
+  // takes a CLICK, and the fill engine deliberately has no verb that clicks —
+  // that absence is what stops an injected plan from submitting an
+  // application, and it is not being traded away for a consent tick. So these
+  // carry a type fill-plan.mjs has no verb for, which lands them in its
+  // `unsupported field type` defer: reported to the user, blocking the
+  // unattended path, never acted on. That is the whole intended outcome, and
+  // it is why this is a scanner change and not an engine one.
+  //
+  // A native <input type=checkbox role="checkbox"> is already collected above;
+  // it is excluded here so it cannot be reported twice.
+  const ARIA_CONTROL = "[role='checkbox'],[role='radio'],[role='switch']"
+  const NATIVE = { INPUT: 1, SELECT: 1, TEXTAREA: 1, BUTTON: 1, OPTION: 1 }
+  for (const el of document.querySelectorAll(ARIA_CONTROL)) {
+    if (NATIVE[el.tagName]) continue
+    if (!vis(el) || el.closest("[data-aj]")) continue
+    if (el.getAttribute("aria-disabled") === "true") continue
+    const da = labelDetail(el)
+    const label = txt(da.text)
+    const role = full(el.getAttribute("role")).toLowerCase()
+    fields.push({
+      k: stamp(el, "f"),
+      sel: stableSel(el),
+      ...identityOf(el),
+      t: "aria-" + role,
+      l: label,
+      lSeen: seenOf(el, da),
+      req: isReq(el, label) || undefined,
+      v: el.getAttribute("aria-checked") === "true" ? "true" : undefined,
+      h: helpOf(el) || undefined,
+      // Stated so a consumer does not have to parse the type string: this is
+      // a control no verb in this pipeline can operate.
+      widget: "aria",
+    })
+  }
+
   fields.push(...combos)
   const elFor = (f) => elOf.get(f.k) || (f.o && f.o[0] && elOf.get(f.o[0].k))
+
+  // --- the heading a field sits under --------------------------------------
+  // Greenhouse labels BOTH attachment inputs "Attach"; the word that tells
+  // resume from cover letter is the SECTION HEADING above each one, which sits
+  // outside the element labelOf() reads. Until now nothing carried it, so the
+  // two fields were the same string in the scan and the only thing separating
+  // them was document order — which is a convention of these boards, not a
+  // fact about the page. `section` is that heading, reported so a consumer can
+  // tell them apart, and so a field whose label contradicts the heading it
+  // sits under is at least VISIBLE as a contradiction.
+  //
+  // It is REPORTED, NOT MERGED INTO `l`. `l` is what answer-bank matches on,
+  // what the field cache keys on and what the form fingerprint hashes;
+  // repointing all of that at a concatenated string is a bigger change than
+  // the one being made. Same reasoning as lSeen above.
+  //
+  // Omitted when it equals the page heading already at the top of this scan.
+  // On a form with no sections that is EVERY field, and a key with the same
+  // value on every field distinguishes nothing — which is precisely the
+  // property this exists to supply. Omitted when it merely repeats the label
+  // too.
+  const HEADING_SEL =
+    "h1,h2,h3,h4,h5,h6,legend,[role='heading'],[class*='section-header'],[class*='sectionHeader']"
+  const pageHeading = txt(
+    (document.querySelector("h1") || {}).innerText || document.title,
+    100,
+  )
+  let headings = []
+  try {
+    headings = [...document.querySelectorAll(HEADING_SEL)].filter(vis).slice(0, 40)
+  } catch {}
+  // A HEADING ONLY SPEAKS FOR ITS OWN CONTAINER, and this is not a detail —
+  // "the last heading before this control" alone got it wrong on the very
+  // first page it was run against. greenhouse-step2.html closes a
+  // <fieldset><legend>Voluntary Self-Identification of Disability</legend>
+  // and THEN renders the "I certify..." checkbox; by document order that
+  // legend precedes the checkbox, and the checkbox is not in that section at
+  // all. So the heading's own parent must also contain the field.
+  //
+  // The same rule disposes of the page <h1>: its parent is <body>, which
+  // contains every field on the page, so a page-level heading would otherwise
+  // be stamped on all of them — and a key with the same value everywhere
+  // distinguishes nothing, which is the property this exists to supply. A
+  // heading whose parent is BODY/HTML is therefore never a section.
+  const owns = (h, el) => {
+    const p = h.parentElement
+    if (!p || p.tagName === "BODY" || p.tagName === "HTML") return false
+    return !!(p.contains && p.contains(el))
+  }
+  const sectionOf = (el) => {
+    if (!el || !headings.length) return undefined
+    let best = null
+    for (const h of headings) {
+      if (h === el || (h.contains && h.contains(el))) continue
+      // Document order: the last heading that comes BEFORE this control.
+      if (!(h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+        break
+      }
+      if (owns(h, el)) best = h
+    }
+    const t = best ? txt(best.innerText, 80) : ""
+    if (!t || t === pageHeading) return undefined
+    return t
+  }
+  for (const f of fields) {
+    const s = sectionOf(elFor(f))
+    if (s && full(s).toLowerCase() !== full(f.l).toLowerCase()) f.section = s
+  }
+
   fields.sort((a, b) => {
     const ea = elFor(a)
     const eb = elFor(b)
@@ -780,7 +928,13 @@ window.__ajScan = async (PROBE = true) => {
         ]
           .filter(vis)
           .map((o) => txt(o.innerText, 60))
-        f.opts = uniq(opts).slice(0, MAX_OPTS)
+        const all = uniq(opts)
+        f.opts = all.slice(0, MAX_OPTS)
+        // Same silent cut as the <select> branch above, same consequence.
+        if (all.length > MAX_OPTS) {
+          f.optsTruncated = true
+          f.optsTotal = all.length
+        }
         if (!f.opts.length) f.opts = undefined
         el.dispatchEvent(
           new KeyboardEvent("keydown", {
@@ -813,6 +967,62 @@ window.__ajScan = async (PROBE = true) => {
     signals.push(
       `application embedded in iframe — navigate to ${embedded.src}`,
     )
+
+  // --- WHAT THIS SCANNER CANNOT SEE, SAID OUT LOUD -------------------------
+  // A DELIBERATE REFUSAL, NOT SUPPORT. Everything above is built on
+  // document.querySelectorAll, which stops at a shadow boundary and at a
+  // document boundary. A form inside a web component's open shadow root, or
+  // inside a same-origin iframe, is therefore INVISIBLE here: the scan comes
+  // back short, the plan is built for the fields that were visible, and the
+  // run reports a clean fill of a form nobody filled.
+  //
+  // Crossing those boundaries properly is a different piece of work — it needs
+  // every selector in the fill engine to become frame-and-root aware, and a
+  // closed shadow root cannot be crossed at all. Silence would be the worse
+  // outcome, so this DETECTS the boundary and says so, and the honest failure
+  // is a hand-off to the user rather than a scan that looks complete.
+  //
+  // Only reported when the hidden subtree actually contains form controls: a
+  // shadow root holding a styled button is not a blind spot worth a signal.
+  const HIDDEN_CONTROL =
+    "input,select,textarea,[contenteditable='true']," +
+    "[role='combobox'],[role='checkbox'],[role='radio'],[role='switch']"
+  let shadowForms = 0
+  try {
+    // Capped: this is one pass over the document on every scan, and a huge
+    // page should not pay for an unbounded one.
+    const all = document.querySelectorAll("*")
+    const cap = Math.min(all.length, 4000)
+    for (let i = 0; i < cap; i++) {
+      const r = all[i].shadowRoot
+      if (r && r.querySelector && r.querySelector(HIDDEN_CONTROL)) shadowForms++
+    }
+  } catch {}
+  if (shadowForms) {
+    signals.push(
+      shadowForms +
+        " shadow root(s) hold form controls this scanner cannot see or fill — fill them by hand",
+    )
+  }
+  let frameForms = 0
+  for (const fr of [...document.querySelectorAll("iframe")].slice(0, 6)) {
+    let doc = null
+    try {
+      // Cross-origin throws; that case is already covered by the embed signal
+      // above and is not a silent blind spot.
+      doc = fr.contentDocument
+    } catch {}
+    try {
+      if (doc && doc.querySelector && doc.querySelector(HIDDEN_CONTROL))
+        frameForms++
+    } catch {}
+  }
+  if (frameForms) {
+    signals.push(
+      frameForms +
+        " same-origin iframe(s) hold form controls this scanner cannot see or fill — open the frame directly",
+    )
+  }
 
   const body = txt(document.body.innerText, 3000)
   const kind = signals.some((s) => s.startsWith("password"))

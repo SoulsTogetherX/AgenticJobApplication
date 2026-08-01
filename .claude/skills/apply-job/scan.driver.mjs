@@ -135,15 +135,27 @@ async (page) => {
         .first()
         .waitFor({ state: "attached", timeout: 300 })
         .catch(() => {})
-      const opts = await page.evaluate(() => {
+      // THE CUT IS STATED, NOT SILENT — mirrored from scan-engine.mjs, which
+      // carries the reasoning: 40 survivors of a 200-option country list are
+      // indistinguishable from a genuine 40-option list, so the cache stores
+      // the short list as complete and an answer past the cut is deferred as
+      // unofferable.
+      const raw = await page.evaluate(() => {
         const pick = (sel) =>
           [...document.querySelectorAll(sel)]
             .map((e) => (e.innerText || "").replace(/\s+/g, " ").trim())
             .filter(Boolean)
         const a = pick("[class*='__option']")
-        return (a.length ? a : pick("[role='option']")).slice(0, 40)
+        const all = a.length ? a : pick("[role='option']")
+        return { opts: all.slice(0, 40), total: all.length }
       })
+      const opts = Array.isArray(raw) ? raw : (raw && raw.opts) || []
+      const total = Array.isArray(raw) ? raw.length : Number((raw && raw.total) || 0)
       if (opts.length) f.opts = opts
+      if (total > opts.length) {
+        f.optsTruncated = true
+        f.optsTotal = total
+      }
       stats.probed++
       await page.keyboard.press("Escape")
       // Let the menu close before the next dropdown is clicked — for as long

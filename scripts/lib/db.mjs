@@ -169,6 +169,68 @@ CREATE TABLE IF NOT EXISTS board_stats (
   leads_produced     INTEGER DEFAULT 0,
   last_qualifying_at TEXT
 );
+
+-- Unattended auto-apply runs. One row per run of scripts/auto/auto-apply.mjs.
+--
+-- This is the SECOND of two copies, not the only one. jobs/.auto/runs/ holds
+-- the same events as append-only JSONL, and that is the copy that survives:
+-- jobs/ is gitignored, this database has no on-disk source for anything it
+-- alone holds, and an unattended process is exactly the one whose history
+-- nobody is watching accumulate. The table exists because the JSONL cannot be
+-- queried ("how many times have we written to this company this week?" is a
+-- cap question that must be answered before the next submit, cheaply).
+--
+-- profile_sha_start / profile_sha_end are the two hashes of profile.yaml and
+-- answers.yaml taken at the ends of the run. The auto path is forbidden to
+-- write to profile/ at all, so these differing is not an audit detail, it is
+-- an alarm: either something wrote the fact base during an unattended run, or
+-- the user edited it mid-run and the run was reasoning about a snapshot that
+-- no longer holds.
+CREATE TABLE IF NOT EXISTS auto_runs (
+  run_id            TEXT PRIMARY KEY,
+  started_at        TEXT NOT NULL,
+  finished_at       TEXT,
+  mode              TEXT,            -- 'dry_run' | 'live'
+  outcome           TEXT,            -- 'ok' | 'stopped' | 'error' | 'running'
+  planned           INTEGER DEFAULT 0,
+  submitted         INTEGER DEFAULT 0,
+  deferred          INTEGER DEFAULT 0,
+  failed            INTEGER DEFAULT 0,
+  stop_reason       TEXT,            -- why the runner disabled itself, if it did
+  profile_sha_start TEXT,
+  profile_sha_end   TEXT,
+  jsonl             TEXT,            -- path to the surviving copy
+  doc               TEXT NOT NULL    -- the complete run record, verbatim
+);
+CREATE INDEX IF NOT EXISTS idx_auto_runs_started ON auto_runs(started_at);
+
+-- One row per application the auto path SUBMITTED, and the ledger the
+-- blast-radius caps are counted from. Separate from auto_runs because
+-- per_company_max_per_week is a GROUP BY over companies and dates, not a scan
+-- of run documents.
+--
+-- confirmation_url is here for one reason: manual withdrawal. An application
+-- cannot be unsent, so the least the record can do is make undoing it one
+-- click rather than an archaeology exercise.
+--
+-- A dry-run row is recorded too, with mode 'dry_run' and no confirmation url:
+-- the point of the dry run is that its counts and its cap arithmetic are the
+-- same ones a live run would have done, so a cap query that silently ignored
+-- them would be testing different code than it protects.
+CREATE TABLE IF NOT EXISTS auto_submissions (
+  run_id           TEXT NOT NULL,
+  slug             TEXT NOT NULL,
+  company          TEXT,
+  title            TEXT,
+  submitted_at     TEXT NOT NULL,
+  mode             TEXT,             -- 'dry_run' | 'live'
+  plan_sha256      TEXT,
+  confirmation_url TEXT,
+  doc              TEXT NOT NULL,    -- verify block, consent labels, screenshots
+  PRIMARY KEY (run_id, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_auto_subs_company ON auto_submissions(company, submitted_at);
+CREATE INDEX IF NOT EXISTS idx_auto_subs_at ON auto_submissions(submitted_at);
 `
 
 export function openDb(file = DB_PATH) {
@@ -613,6 +675,133 @@ export function screenIndex(db, source) {
   const map = new Map()
   for (const s of readScreens(db, { source })) map.set(s.lead_id, s)
   return map
+}
+
+// --- unattended runs ---------------------------------------------------------
+
+// Upsert, not insert: a run is written once at start (outcome 'running') and
+// again at the end. A run that never gets its second write is a run that died,
+// and it should be visible as 'running' with no finished_at rather than absent
+// entirely — the silent no-op is the failure nobody notices.
+export function upsertAutoRun(db, run) {
+  // The profile hashes arrive as { "profile.yaml": sha, "answers.yaml": sha } —
+  // two files, so a single column cannot hold them as a scalar. Stored as JSON
+  // text rather than flattened to one combined digest, because "which of the
+  // two changed" is the first question anyone asks when they differ, and a
+  // combined hash destroys exactly that.
+  const asText = (v) =>
+    v == null ? null : typeof v === "object" ? JSON.stringify(v) : String(v)
+  db.prepare(
+    `INSERT INTO auto_runs
+       (run_id, started_at, finished_at, mode, outcome, planned, submitted,
+        deferred, failed, stop_reason, profile_sha_start, profile_sha_end, jsonl, doc)
+     VALUES ($run_id, $started_at, $finished_at, $mode, $outcome, $planned, $submitted,
+             $deferred, $failed, $stop_reason, $profile_sha_start, $profile_sha_end, $jsonl, $doc)
+     ON CONFLICT(run_id) DO UPDATE SET
+       finished_at = excluded.finished_at,
+       mode = excluded.mode,
+       outcome = excluded.outcome,
+       planned = excluded.planned,
+       submitted = excluded.submitted,
+       deferred = excluded.deferred,
+       failed = excluded.failed,
+       stop_reason = excluded.stop_reason,
+       profile_sha_end = excluded.profile_sha_end,
+       jsonl = excluded.jsonl,
+       doc = excluded.doc`,
+  ).run({
+    run_id: run.run_id,
+    started_at: run.started_at,
+    finished_at: run.finished_at ?? null,
+    mode: run.mode ?? null,
+    outcome: run.outcome ?? "running",
+    planned: run.planned ?? 0,
+    submitted: run.submitted ?? 0,
+    deferred: run.deferred ?? 0,
+    failed: run.failed ?? 0,
+    stop_reason: run.stop_reason ?? null,
+    profile_sha_start: asText(run.profile_sha_start),
+    profile_sha_end: asText(run.profile_sha_end),
+    jsonl: run.jsonl ?? null,
+    doc: JSON.stringify(run),
+  })
+  return run.run_id
+}
+
+export function readAutoRuns(db, { limit = 20 } = {}) {
+  return db
+    .prepare("SELECT doc FROM auto_runs ORDER BY started_at DESC LIMIT ?")
+    .all(limit)
+    .map((r) => JSON.parse(r.doc))
+}
+
+// The heartbeat status.mjs warns on when it is over 26h old.
+export function latestAutoRun(db) {
+  const row = db
+    .prepare("SELECT doc FROM auto_runs ORDER BY started_at DESC LIMIT 1")
+    .get()
+  return row ? JSON.parse(row.doc) : null
+}
+
+export function recordAutoSubmission(db, sub) {
+  db.prepare(
+    `INSERT INTO auto_submissions
+       (run_id, slug, company, title, submitted_at, mode, plan_sha256, confirmation_url, doc)
+     VALUES ($run_id, $slug, $company, $title, $submitted_at, $mode, $plan_sha256, $confirmation_url, $doc)
+     ON CONFLICT(run_id, slug) DO UPDATE SET
+       company = excluded.company,
+       title = excluded.title,
+       submitted_at = excluded.submitted_at,
+       mode = excluded.mode,
+       plan_sha256 = excluded.plan_sha256,
+       confirmation_url = excluded.confirmation_url,
+       doc = excluded.doc`,
+  ).run({
+    run_id: sub.run_id,
+    slug: sub.slug,
+    company: sub.company ?? null,
+    title: sub.title ?? null,
+    submitted_at: sub.submitted_at ?? new Date().toISOString(),
+    mode: sub.mode ?? null,
+    plan_sha256: sub.plan_sha256 ?? null,
+    confirmation_url: sub.confirmation_url ?? null,
+    doc: JSON.stringify(sub),
+  })
+  return 1
+}
+
+// How many auto submissions since `sinceIso`. `per_day_max`'s counter.
+export function countAutoSubmissions(db, sinceIso) {
+  return db
+    .prepare("SELECT COUNT(*) c FROM auto_submissions WHERE submitted_at >= ?")
+    .get(sinceIso).c
+}
+
+// per_company_max_per_week's counter, and the one that matters most: carpet
+// bombing one employer is the reputational damage that actually costs the
+// user something.
+//
+// Counts BOTH ledgers deliberately. auto_submissions alone would let the
+// runner send a fourth application to a company the user applied to three
+// times by hand this week — from the employer's side those are the same four
+// applications. Company names are compared case- and whitespace-insensitively
+// because the two ledgers get their names from different places (a board
+// payload and the user typing it into log-application.mjs).
+export function countCompanySubmissions(db, company, sinceIso) {
+  const norm = (s) =>
+    String(s ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase()
+  const key = norm(company)
+  if (!key) return 0
+  const auto = db
+    .prepare("SELECT company FROM auto_submissions WHERE submitted_at >= ?")
+    .all(sinceIso)
+  const manual = db
+    .prepare("SELECT company FROM applications WHERE applied_at >= ?")
+    .all(sinceIso)
+  return [...auto, ...manual].filter((r) => norm(r.company) === key).length
 }
 
 export function recordBoardStats(db, row) {

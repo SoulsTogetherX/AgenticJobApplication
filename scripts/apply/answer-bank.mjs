@@ -690,9 +690,14 @@ export function createResolver(profile = {}, answersDoc = {}) {
         return "field was not probed — no options were recorded, so the resolved value could not be checked against the real list"
       }
       const base = `options: ${(opts ?? []).join(" | ")}`
-      return f.optsTruncated
-        ? `${base} (option list may be truncated — verify by hand before assuming the value is unavailable)`
-        : base
+      if (!f.optsTruncated) return base
+      // f.optsTotal, when field-cache or a scanner recorded the REAL count,
+      // turns a bare caveat into a number the caller can act on ("verify by
+      // hand" vs. "37 unseen options exist").
+      const scale = f.optsTotal
+        ? ` — ${(opts ?? []).length} of ${f.optsTotal} shown`
+        : ""
+      return `${base} (option list may be truncated${scale} — verify by hand before assuming the value is unavailable)`
     }
 
     if (SKIP_TYPES.has(f.t)) {

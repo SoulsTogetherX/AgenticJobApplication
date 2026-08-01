@@ -405,5 +405,170 @@ test("the CI workflow contains no failure-swallowing constructs", () => {
   }
   assert.match(code, /workflow_dispatch/, "CI must be triggerable by hand")
   assert.match(code, /npm run test:security/, "the security gate must be wired")
-  assert.match(code, /needs: \[security-gate, test\]/)
+
+  // ci-gate is the single required status check, so every blocking job must
+  // be in its `needs`. A job absent from this list still runs and still goes
+  // red on its own, but ci-gate would report success over it — which is the
+  // same shape as a green run that executed zero tests.
+  const needs = /needs: \[([^\]]+)\]/.exec(code)
+  assert.ok(needs, "ci-gate must declare what it depends on")
+  const declared = needs[1].split(",").map((s) => s.trim())
+  for (const job of ["security-gate", "test", "scaffolding"]) {
+    assert.ok(
+      declared.includes(job),
+      `ci-gate does not depend on "${job}", so that job could fail while ci-gate reports success`,
+    )
+  }
+})
+
+// Every job defined in the workflow must be reachable from ci-gate, so adding
+// a job cannot silently create one nothing requires. Written as a derivation
+// from the file rather than a hardcoded list, because a hardcoded list is
+// exactly what goes stale.
+test("every workflow job is required by ci-gate", async () => {
+  // Parsed, not regexed. The first version matched `  push:` under `on:` as a
+  // job name and failed for the wrong reason — a test that goes red over its
+  // own parser teaches people to delete it.
+  const { default: yaml } = await import("js-yaml")
+  const doc = yaml.load(
+    fs.readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8"),
+  )
+  const jobs = Object.keys(doc.jobs)
+  assert.ok(jobs.length >= 4, `expected several jobs, got ${jobs.join(", ")}`)
+  const needs = doc.jobs["ci-gate"].needs
+  for (const job of jobs) {
+    if (job === "ci-gate") continue
+    assert.ok(
+      needs.includes(job),
+      `job "${job}" exists but ci-gate does not require it — it could fail while the required check goes green`,
+    )
+  }
+})
+
+// A job that never fails cannot protect anything, and `continue-on-error` is
+// only the most obvious way to get one. These are the two subtler ways: a
+// step whose exit code nothing reads, and an `if:` that quietly disables it.
+test("no CI step is neutered by an always-true condition", async () => {
+  const { default: yaml } = await import("js-yaml")
+  const doc = yaml.load(
+    fs.readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8"),
+  )
+  for (const [name, job] of Object.entries(doc.jobs)) {
+    assert.ok(
+      job["continue-on-error"] !== true,
+      `job ${name} has continue-on-error`,
+    )
+    for (const step of job.steps ?? []) {
+      assert.ok(
+        step["continue-on-error"] !== true,
+        `step "${step.name ?? step.uses}" in ${name} has continue-on-error`,
+      )
+      // `if: always()` is legitimate on ci-gate — that is how it reports on a
+      // failed dependency at all — and suspicious anywhere else.
+      if (step.if && name !== "ci-gate") {
+        assert.doesNotMatch(
+          String(step.if),
+          /always\(\)/,
+          `step "${step.name ?? step.uses}" in ${name} runs with always(), which can mask a skipped setup step`,
+        )
+      }
+    }
+  }
+})
+
+// --------------------------------------------------------------- --require-ran
+//
+// The gate accepts an attributed skip everywhere by design. --require-ran is
+// the narrow exception for a leg that was BUILT to run a specific test: the
+// three real-browser tests in tests/security/browser-vouch skip with an honest
+// reason when no Chromium is present, and on the one CI leg that installs
+// Chromium that same honest reason means the install silently did not work.
+// Both directions matter, so both are here.
+
+const SKIPPING = `import test from "node:test"
+test("needs a browser", (t) => { t.skip("no browser available on this leg") })
+test("ordinary", () => {})
+test("also ordinary", () => {})
+`
+
+const RUNNING = `import test from "node:test"
+test("needs a browser", () => {})
+test("ordinary", () => {})
+test("also ordinary", () => {})
+`
+
+test("--require-ran FAILS when the named test skipped, even with a reason", (t) => {
+  const dir = fixture({ "tests/a.test.mjs": SKIPPING })
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+
+  // Without the flag this is a PASS: the skip carries a reason, which is the
+  // gate's normal rule. Pinning that first is what makes the next assertion
+  // evidence about the flag rather than about the fixture.
+  const lenient = runGate(["--floor", "3", "--path", "tests"], dir)
+  assert.equal(lenient.status, 0, lenient.out)
+
+  const strict = runGate(
+    ["--floor", "3", "--path", "tests", "--require-ran", "needs a browser"],
+    dir,
+  )
+  assert.equal(
+    strict.status,
+    1,
+    `expected the strict run to fail\n${strict.out}`,
+  )
+  assert.match(strict.out, /--require-ran "needs a browser" was SKIP/)
+  assert.match(strict.out, /no browser available on this leg/)
+  assert.match(strict.out, /\[SKIPPED\]/)
+})
+
+test("--require-ran PASSES when the named test actually ran", (t) => {
+  const dir = fixture({ "tests/a.test.mjs": RUNNING })
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+
+  const r = runGate(
+    ["--floor", "3", "--path", "tests", "--require-ran", "needs a browser"],
+    dir,
+  )
+  assert.equal(r.status, 0, r.out)
+  assert.match(r.out, /\[ran\] 1 match\(es\)/)
+})
+
+test("--require-ran FAILS when the named test is absent entirely", (t) => {
+  // A renamed or deleted test would otherwise satisfy "did not skip" by not
+  // existing, which is the same empty-run hole this whole gate exists to close.
+  const dir = fixture({ "tests/a.test.mjs": PASSING })
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+
+  const r = runGate(
+    ["--floor", "3", "--path", "tests", "--require-ran", "needs a browser"],
+    dir,
+  )
+  assert.equal(r.status, 1, `expected exit 1\n${r.out}`)
+  assert.match(r.out, /matched NO test in this run/)
+  assert.match(r.out, /\[ABSENT\]/)
+})
+
+// The three names ci.yml pins must exist in the suite. If qa-adversary renames
+// one, --require-ran would start failing the security leg for a confusing
+// reason; this fails here instead, in the file that owns the pin.
+test("the browser tests named by ci.yml --require-ran exist in tests/security", () => {
+  const yml = fs.readFileSync(
+    path.join(ROOT, ".github", "workflows", "ci.yml"),
+    "utf8",
+  )
+  const pinned = [...yml.matchAll(/--require-ran\s+"([^"]+)"/g)].map(
+    (m) => m[1],
+  )
+  assert.ok(pinned.length > 0, "ci.yml must pin the browser tests by name")
+
+  const src = fs.readFileSync(
+    path.join(ROOT, "tests", "security", "browser-vouch.test.mjs"),
+    "utf8",
+  )
+  for (const name of pinned) {
+    assert.ok(
+      src.includes(name),
+      `ci.yml pins --require-ran "${name}", which no longer appears in tests/security/browser-vouch.test.mjs`,
+    )
+  }
 })

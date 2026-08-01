@@ -8,15 +8,26 @@
     "test": "node .github/workflows/test-gate.mjs full",
     "test:raw": "node --test",
     "test:security": "node .github/workflows/test-gate.mjs security",
+    "reap": "node .github/workflows/scaffolding-reaper.mjs",
+    "browser:install": "node node_modules/playwright-core/cli.js install chromium",
     "verify": "node scripts/documents/verify-claims.mjs"
+  },
+  "phases": {
+    "order": [
+      "phase-1",
+      "phase-2",
+      "phase-3",
+      "phase-4"
+    ],
+    "current": "phase-1"
   },
   "testGate": {
     "full": {
-      "floor": 946,
+      "floor": 1186,
       "maxTodo": 0
     },
     "security": {
-      "floor": 147,
+      "floor": 224,
       "maxTodo": 0,
       "requireDirs": [
         "tests/security"

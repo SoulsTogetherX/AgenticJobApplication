@@ -41,8 +41,55 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --prefer-offline --no-audit --fund=false
+
+      # ---- the browser, and why it is on THIS leg only ------------------
+      # tests/security/browser-vouch.test.mjs drives a real Chromium against
+      # our own loopback fixture (tests/fixtures/boards/), never a live
+      # employer's board. It is the only real-browser evidence in the suite,
+      # and it covers the one carrier a fake DOM cannot express: CSS. The
+      # markup of an honest label and of a label rendered `color: transparent`
+      # is IDENTICAL — the difference is what getComputedStyle returns, so the
+      # only way to know whether the scanner vouches for an unreadable label
+      # is to render it. That control is load-bearing since d945871.
+      #
+      # `playwright-core`, never `playwright`: the latter's postinstall
+      # downloads ~150MB of browsers on EVERY leg. Installing it here and not
+      # in the matrix below is the deliberate trade — one download instead of
+      # four, on the gate people actually wait on. The four matrix legs still
+      # run these tests, skip them with an attributed reason, and the gate
+      # prints that reason on every run.
+      - name: Cache the Chromium build playwright-core pins
+        id: chromium-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          # Keyed on the lockfile: playwright-core pins one exact Chromium
+          # revision, so a version bump must miss the cache rather than launch
+          # a browser the library does not speak to.
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # Uses the LOCAL playwright-core CLI. `npx playwright install` would
+      # fetch the full `playwright` package as an undeclared extra dependency,
+      # which is exactly the postinstall this project avoided.
+      # No `|| true`: if the download fails, this leg goes red here, which is
+      # a clearer failure than three tests skipping later for a stated reason.
+      - name: Install Chromium (playwright-core CLI, not npx playwright)
+        run: npm run browser:install
+
+      # --require-ran turns an ATTRIBUTED skip into a failure for these three
+      # names, and ONLY on this leg. Rationale in test-gate.mjs: the gate's
+      # normal rule (a skip is fine if it names a reason) is right for a leg
+      # that genuinely has no browser, and wrong for the one leg whose job is
+      # to have one. "no browser available" printed here means the install
+      # step above silently did not work — a broken setup, not an unrunnable
+      # test — and nothing else in the summary distinguishes those two.
+      # Absence fails too, so renaming a test cannot satisfy "did not skip".
       - name: Security gate (tests/security + untrusted + verify-claims)
-        run: npm run test:security
+        run: >-
+          npm run test:security --
+          --require-ran "color:transparent must not be vouched for"
+          --require-ran "the honest boxes on the same page still behave"
+          --require-ran "nonce CSP is ENFORCED, not merely sent"
 
   # ---------------------------------------------------------------------
   # The whole suite, on both platforms. Windows is the primary platform (the
@@ -79,28 +126,60 @@ jobs:
       # and fails on a skip with no reason. A green run here means tests ran.
       - run: npm test
 
-      # Playwright is NOT installed here on purpose. w4-autonomy will request
-      # `playwright-core` (not `playwright`) precisely so that no postinstall
-      # downloads a browser on four matrix legs. When it lands, the browser
-      # tests need an explicit, cached `npx playwright install chromium` step
-      # ADDED HERE — until that step exists those tests must skip with a
-      # reason, which the gate reports on every run. There is deliberately no
-      # silent middle option.
+      # Chromium is deliberately NOT installed on these four legs — it is
+      # installed once, on `security-gate` above. The browser tests therefore
+      # skip here, loudly and with an attributed reason the gate prints. That
+      # is the whole trade: one ~150MB download instead of four, with the
+      # real-browser evidence produced on the blocking gate rather than
+      # nowhere. If you want it on a matrix leg, add the same cache + install
+      # pair; there is no silent middle option.
 
   # ---------------------------------------------------------------------
-  # NOT wired, on purpose:
+  # The scaffolding reaper. docs/team-roster.md promises that ci-engineer
+  # FAILS THE BUILD when a development-only artifact outlives the phase it
+  # declared it would die in; until 2026-07-31 that promise was a comment in
+  # this file and nothing else, which is the protocol's "a capability
+  # documented that does not exist".
+  #
+  # It currently finds ZERO declared artifacts, and that is reported as
+  # "0 declared" rather than as a silent tick — a checker with nothing to
+  # check must be distinguishable from a broken one. The --self-test step is
+  # how: it drives the verdict function over five synthetic artifacts and
+  # fails if the checker cannot go red. tests/hooks/scaffolding-reaper.test.mjs
+  # covers the same ground over real fixture trees.
+  #
+  # Its own job, not a step inside `test`, because it is seconds long, needs
+  # no npm install, and its verdict should be readable without opening a
+  # 1167-test log.
+  # ---------------------------------------------------------------------
+  scaffolding:
+    name: Scaffolding reaper
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prove the reaper can still go red
+        run: node .github/workflows/scaffolding-reaper.mjs --self-test
+      - name: Fail if any scaffolding artifact outlived its phase
+        run: npm run reap
+
+  # ---------------------------------------------------------------------
+  # NOT wired, on purpose — and stated here rather than wired vacuously,
+  # because a job that always passes reads as coverage that does not exist:
   #
   # * `gate-audit.mjs` — the whole-store regression check that exits 1 when a
-  #   lead became newly REJECTED. It opens jobs/leads.db, which is gitignored
-  #   (personal data), so on a clean checkout it has no store to diff against.
-  #   A job here would pass vacuously on every run and read as coverage that
-  #   does not exist. It stays a local step the owner of a gate change runs:
+  #   lead became newly REJECTED, which is the worst failure in this system
+  #   (a job the user never sees). It opens jobs/leads.db, which is
+  #   gitignored because it holds personal data, so on a clean checkout there
+  #   is no store to diff against and no previous run to compare with. It
+  #   stays a local step the owner of a gate change runs, and CLAUDE.md says
+  #   to run it after ANY gate change:
   #     node scripts/leads/gate-audit.mjs
-  #
-  # * the scaffolding reaper — fails the build when a skill marked
-  #   `scaffolding: true` outlives its `remove_after` phase. No artifact
-  #   carries that frontmatter yet (checked 2026-07-31), and a checker with
-  #   nothing to check is indistinguishable from a broken one.
+  #   Wiring it would need a committed fixture store, which is a different
+  #   piece of work owned by w5-leads, not a CI change.
   # ---------------------------------------------------------------------
 
   # ---------------------------------------------------------------------
@@ -115,14 +194,15 @@ jobs:
   ci-gate:
     name: ci-gate
     if: always()
-    needs: [security-gate, test]
+    needs: [security-gate, test, scaffolding]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require the security gate and the full matrix to have passed
+      - name: Require the security gate, the full matrix and the reaper to have passed
         run: |
           echo "security-gate: ${{ needs.security-gate.result }}"
           echo "test matrix:   ${{ needs.test.result }}"
+          echo "scaffolding:   ${{ needs.scaffolding.result }}"
           fail=0
           if [ "${{ needs.security-gate.result }}" != "success" ]; then
             echo "::error::Phase 1 security gate did not pass"
@@ -130,6 +210,10 @@ jobs:
           fi
           if [ "${{ needs.test.result }}" != "success" ]; then
             echo "::error::the test matrix did not pass"
+            fail=1
+          fi
+          if [ "${{ needs.scaffolding.result }}" != "success" ]; then
+            echo "::error::a scaffolding artifact outlived its phase"
             fail=1
           fi
           exit $fail

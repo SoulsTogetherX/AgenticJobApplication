@@ -18,7 +18,10 @@
 //   - any test skipped WITHOUT a reason. A skip is legitimate (ubuntu has no
 //     Edge/Chrome, so the PDF tests cannot run there) but it must be explicit,
 //     reported and attributed. An unattributed skip is indistinguishable from
-//     a test that quietly stopped running.
+//     a test that quietly stopped running;
+//   - a test named by --require-ran that SKIPPED, or that is not in the TAP
+//     output at all. See the block above that flag's handling for why an
+//     attributed skip is still sometimes a failure.
 //
 // It never hides a failure: there is no `|| true` path, and every exit is
 // either 0 with the counts printed or 1 with the reason printed.
@@ -32,6 +35,7 @@
 // Usage:
 //   node .github/workflows/test-gate.mjs <gate-name>      # config from package.json "testGate"
 //   node .github/workflows/test-gate.mjs --floor 10 --path tests/x [--require-dir d] [--quiet]
+//   node .github/workflows/test-gate.mjs full --require-ran "<substring of a test name>"
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
@@ -53,6 +57,7 @@ function parseArgs(argv) {
     maxTodo: null,
     paths: [],
     requireDirs: [],
+    requireRan: [],
     quiet: false,
     cwd: null,
     label: null,
@@ -63,6 +68,7 @@ function parseArgs(argv) {
     else if (a === "--max-todo") o.maxTodo = Number(argv[++i])
     else if (a === "--path") o.paths.push(argv[++i])
     else if (a === "--require-dir") o.requireDirs.push(argv[++i])
+    else if (a === "--require-ran") o.requireRan.push(argv[++i])
     else if (a === "--cwd") o.cwd = argv[++i]
     else if (a === "--label") o.label = argv[++i]
     else if (a === "--quiet") o.quiet = true
@@ -159,6 +165,21 @@ function collectDirectives(tap) {
   return out
 }
 
+// Every test name the run reported, passing or not. Used only by
+// --require-ran, which has to tell "skipped" apart from "not there at all".
+const NAME_RE = /^[ \t]*(?:not )?ok \d+ - (.*)$/gm
+
+function collectNames(tap) {
+  const out = []
+  for (const m of tap.matchAll(NAME_RE)) {
+    let name = m[1].trim()
+    const hash = name.indexOf(" # ")
+    if (hash !== -1) name = name.slice(0, hash).trim()
+    out.push(name)
+  }
+  return out
+}
+
 // Failing tests, split into "named and owned" and "unexpected".
 //
 // qa-adversary's convention is `FINDING (<owner>): <what is broken>` for a
@@ -198,6 +219,9 @@ const paths = opts.paths.length ? opts.paths : (cfg.paths ?? [])
 const requireDirs = opts.requireDirs.length
   ? opts.requireDirs
   : (cfg.requireDirs ?? [])
+const requireRan = opts.requireRan.length
+  ? opts.requireRan
+  : (cfg.requireRan ?? [])
 const label = opts.label ?? opts.gate ?? "test-gate"
 const cwd = opts.cwd ? path.resolve(opts.cwd) : ROOT
 
@@ -280,6 +304,7 @@ const counts = {
   duration_ms: tapCount(tap, "duration_ms"),
 }
 const directives = collectDirectives(tap)
+const names = collectNames(tap)
 const failures = collectFailures(tap)
 const unexpected = failures.filter((f) => !f.owner)
 const owned = failures.filter((f) => f.owner)
@@ -320,6 +345,42 @@ if (problems.length === 0) {
         `${d.kind} without a reason: "${d.name}". A skip must say WHY (e.g. t.skip("no Edge/Chrome on this machine")) or it is indistinguishable from a test that silently stopped running.`,
       )
     }
+    // ---- --require-ran: an ATTRIBUTED skip that is still a failure --------
+    //
+    // The gate's normal rule is that a skip is fine as long as it names a
+    // reason. That rule is right for the PDF tests: a runner with no
+    // Edge/Chrome genuinely cannot run them, and failing there would only
+    // teach people to ignore the leg.
+    //
+    // It is wrong for a test on a leg that was BUILT to run it. On
+    // 2026-07-31 three real-browser tests in tests/security/browser-vouch
+    // began passing locally once Chromium was installed; on a CI leg that
+    // runs `npm run browser:install` and then skips them anyway, the skip
+    // reason is honest and the coverage loss is total. "no browser
+    // available" printed on the one leg whose job is to have a browser is a
+    // broken install, not an attributed skip — and the difference between
+    // those two is invisible in the summary, which is precisely the
+    // quiet-coverage-loss shape this gate exists to prevent.
+    //
+    // So: --require-ran is opt-in PER INVOCATION, never a gate-wide setting.
+    // It is passed only on legs that install the thing the test needs.
+    // Absence is a failure too, because a renamed or deleted test would
+    // otherwise satisfy "did not skip" by not existing.
+    for (const want of requireRan) {
+      const matched = names.filter((n) => n.includes(want))
+      if (matched.length === 0) {
+        problems.push(
+          `--require-ran "${want}" matched NO test in this run. Either the test was renamed/deleted, or it never loaded. A test that is not there cannot have passed.`,
+        )
+        continue
+      }
+      const skipped = directives.filter((d) => d.name.includes(want))
+      for (const d of skipped) {
+        problems.push(
+          `--require-ran "${want}" was ${d.kind}: "${d.name}" — ${d.reason || "no reason given"}. This leg was configured to RUN it (that is what the browser install step is for), so a skip here means the setup did not work, not that the test is unrunnable. Fix the setup or drop the --require-ran, but do not let it skip quietly.`,
+        )
+      }
+    }
     if (child.status !== 0 && counts.fail === 0) {
       problems.push(
         `the test runner exited ${child.status} while reporting 0 failures — treat as a failure, not noise.`,
@@ -346,6 +407,16 @@ lines.push(`  skipped     ${counts.skipped ?? "?"}`)
 lines.push(`  todo        ${counts.todo ?? "?"}   (cap ${maxTodo})`)
 if (counts.duration_ms != null) {
   lines.push(`  duration    ${(counts.duration_ms / 1000).toFixed(1)}s`)
+}
+if (requireRan.length) {
+  lines.push(`  must-run on this leg (${requireRan.length}):`)
+  for (const want of requireRan) {
+    const matched = names.filter((n) => n.includes(want))
+    const skipped = directives.filter((d) => d.name.includes(want))
+    const state =
+      matched.length === 0 ? "ABSENT" : skipped.length ? "SKIPPED" : "ran"
+    lines.push(`    [${state}] ${matched.length} match(es) — "${want}"`)
+  }
 }
 if (directives.length) {
   lines.push(`  not executed on this leg (${directives.length}):`)

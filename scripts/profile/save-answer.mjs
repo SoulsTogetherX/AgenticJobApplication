@@ -65,10 +65,34 @@
 // base is a writer wearing a different hat, and hard rule 2 says the agent is
 // not one. Every finding prints the command a HUMAN would run.
 //
-// Exit codes: 0 saved, 1 conflict, 2 usage, 3 instruction-shaped, 4 sensitive.
+// AND ONE WRITER AT A TIME, ON A FILE THAT SURVIVES A KILL.
+//
+// Everything above assumes the write itself lands. It did not. answers.yaml was
+// read at process start and rewritten whole at the end, with no lock and no
+// atomic replacement — a textbook lost update.
+//
+// MEASURED, by spawning N writers at the same target and comparing the answers
+// on disk against the number of processes that exited 0:
+//
+//   committed version, 6 writers x 5 trials: 4 trials lost 1-3 answers each,
+//     7 of 30 lost in total, and EVERY PROCESS EXITED 0 IN EVERY TRIAL.
+//   with this lock, 6 writers x 5 trials:  0 lost.
+//   with this lock, 20 writers x 5 trials: 0 of 100 lost.
+//
+// That is the user's own data disappearing while every caller reports success —
+// and `pipeline-jobs` runs one subagent per job, so overlapping writers are the
+// design rather than an edge case. The lock section further down carries the
+// mechanism, the stale-lock rule, and the measurement that killed the first
+// version of it.
+//
+// Exit codes: 0 saved, 1 conflict, 2 usage, 3 instruction-shaped, 4 sensitive,
+// 5 the bank was locked by another writer and nothing was written (retryable).
 // --rescan reuses 0 (clean) and 1 (findings) and never 3 or 4 — those mean "this
 // write was refused" and a rescan performs no write.
 import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import crypto from "node:crypto"
 import { loadYamlFile, dumpYaml } from "../lib/lib.mjs"
 import {
   sanitizeUntrusted,
@@ -153,6 +177,7 @@ const opts = {
 }
 let wantReplace = false
 let fileGiven = false
+let sourceGiven = false
 let userApproved = false
 let wantRescan = false
 let wantJson = false
@@ -172,6 +197,13 @@ for (let i = 0; i < argv.length; i++) {
       if (v === undefined) usage(`${name} needs a value.`)
       opts[VALUE_FLAGS.get(name)] = v
       if (name === "--file") fileGiven = true
+      // --source has a DEFAULT, so `opts.source !== null` cannot tell "the
+      // caller typed it" from "nobody did". Every other write flag is detected
+      // by being non-null; this one needs its own bit, and without it --rescan
+      // silently accepted --source and exited 0 — the swallowed-flag shape that
+      // caused both 2026-07-31 contamination incidents, sitting inside the fix
+      // for them.
+      if (name === "--source") sourceGiven = true
       continue
     }
     if (name === "--replace" && eq === -1) {
@@ -190,17 +222,26 @@ for (let i = 0; i < argv.length; i++) {
       continue
     }
     // --user-approved asserts, on the command line where a PreToolUse hook can
-    // see it, that the user personally gave this answer in chat. It changes
-    // nothing here: `source` already records provenance, and an agent that
-    // would lie in the flag would lie in `--source` too.
+    // see it, that the user personally gave this answer in chat. It grants
+    // nothing: `source` already records provenance, and an agent that would lie
+    // in the flag would lie in `--source` too. The one thing it does do here is
+    // count as a write flag under --rescan, which refuses it (see below) — a
+    // report-only audit has no approval to carry.
     //
-    // It exists for scripts/hooks/guard-profile-shell.mjs, which denies any
-    // shell invocation of this script that targets the DEFAULT fact base
-    // without either --file (a test writes its own) or this flag (the user
-    // said it). Both 2026-07-31 incidents carried neither, because neither
-    // agent intended to touch the real file at all — so requiring the writer
-    // to STATE which of the two it is stops the accident class, not just the
-    // one typo that --file's strict parsing already closed.
+    // It exists for .claude/hooks/guard-profile-shell.mjs, which denies any
+    // shell invocation of this script that targets the DEFAULT fact base unless
+    // it carries one of THREE things: --file (a test writes its own), this flag
+    // (the user said it), or --rescan (an audit that cannot write at all).
+    // Both 2026-07-31 incidents carried none of them, because neither agent
+    // intended to touch the real file — so requiring the writer to STATE which
+    // case it is stops the accident class, not just the one typo that --file's
+    // strict parsing already closed.
+    //
+    // NOTE THE COUPLING, because the hook's own comment names it as its weak
+    // point: the --rescan allowance means the hook is TRUSTING this script to
+    // keep refusing every write under --rescan. The conflict check below is
+    // what makes that trust good. If it ever stops being exhaustive, the hook
+    // has a hole — which is exactly what `--rescan --source model` was.
     if (name === "--user-approved" && eq === -1) {
       userApproved = true
       continue
@@ -290,6 +331,7 @@ if (wantRescan) {
   if (opts.id !== null) conflicting.push("--id")
   if (opts.cls !== null) conflicting.push("--class")
   if (opts.setClass !== null) conflicting.push("--set-class")
+  if (sourceGiven) conflicting.push("--source")
   if (userApproved) conflicting.push("--user-approved")
   if (conflicting.length)
     usage(
@@ -478,7 +520,411 @@ if (sensitive.length) {
   process.exit(4)
 }
 
-const data = fs.existsSync(file) ? (loadYamlFile(file) ?? {}) : {}
+const header = `# ANSWERS BANK — user-editable. Agent adds entries ONLY via scripts/profile/save-answer.mjs.\n`
+
+// --- THE WRITE LOCK, AND WHY THE READ IS INSIDE IT --------------------------
+//
+// TWO SEPARATE DEFECTS LIVED HERE, and the second is the worse one.
+//
+// 1. LOST UPDATE. The bank was read at process start and rewritten whole at the
+//    end. Two writers overlapping means the second one's document — built from
+//    a snapshot taken before the first one's write — replaces it. Measured,
+//    not theorised: six concurrent writers against the committed version lost
+//    answers in four trials out of five, 7 of 30 in total. Every process exited
+//    0 in every trial, so nothing anywhere detected it. The fix is not
+//    "write carefully":
+//    the READ, the duplicate check, the id allocation and the write must all
+//    be one critical section, because each of them is a decision made about a
+//    document that another process is entitled to change.
+//
+// 2. PARTIAL FILE. `writeFileSync` opens with O_TRUNC: the old contents are
+//    destroyed before the new ones are written, which is a property of the call
+//    rather than a race anyone has to be lucky to hit. A reader hot-looping
+//    during a save was reported to observe a short file 1 read in 66 on a
+//    685 KB bank (inherited measurement, NOT re-run here — the lost-update
+//    numbers above were re-measured, this one was not). A process killed in
+//    that window leaves the file short PERMANENTLY, and a truncated
+//    answers.yaml is worse than a lost answer: it
+//    loses every answer, and `verify-claims` reads this file to decide what
+//    the user's resume may claim. Hence write-to-temp + rename, which is
+//    all-or-nothing: a crash leaves either the whole old file or the whole new
+//    one, never half of either.
+//
+// STALE LOCKS — the failure a lock introduces, and how it is bounded.
+// A lockfile that outlives its holder would wedge the fact base forever, which
+// would be a worse bug than the one being fixed. ONE rule bounds it, and it is
+// deliberately one rule:
+//
+//   A lock whose mtime is older than LOCK_STALE_MS is abandoned and may be
+//   broken. NOTHING ELSE BREAKS A LOCK.
+//
+// WHY NOT A PID PROBE — the obvious mechanism, which was implemented here first
+// and which caused the exact bug this lock exists to prevent.
+//
+// The first version also broke a lock when `process.kill(holder.pid, 0)`
+// reported ESRCH, so that a killed writer recovered in milliseconds instead of
+// seconds. MEASURED with six concurrent writers over five trials (2026-08-01):
+// it broke locks whose holders had acquired them 11ms, 13ms and 18ms earlier,
+// and produced `exit0=6/6 onDisk=5` — six processes all reporting success with
+// one of the user's answers missing.
+//
+// The probe is not lying: a direct experiment on this host returned "alive"
+// 400/400 for a live sibling process and ESRCH only after death. What is wrong
+// is the INFERENCE. "The holder process is no longer running" is not the same
+// claim as "the lock is abandoned", because a healthy writer's process is gone
+// milliseconds after it acquires — so any race that leaves its lockfile behind
+// for an instant looks exactly like a crash. Two writers then enter the
+// critical section together, and the second one's document, built from a
+// snapshot taken before the first one's write, replaces it.
+//
+// The trade the probe was making: risk the primary defect in order to save a
+// few seconds in the rare case where a writer is KILLED mid-save. That is badly
+// skewed, and age alone is both simpler and strictly safer:
+//
+//   * `statSync().mtimeMs` is one syscall returning a number. It cannot be
+//     misparsed, and it does not depend on reading the file's contents while
+//     five other processes poll the same path.
+//   * The critical section measures in single-digit milliseconds and
+//     LOCK_STALE_MS is ten SECONDS — a thousandfold margin, so a healthy lock
+//     is never a candidate. (If that section ever grows past about a second,
+//     this needs a heartbeat that touches the mtime. Today it does not.)
+//   * LOCK_TIMEOUT_MS is longer than LOCK_STALE_MS on purpose, so a single
+//     waiter outlives a full stale window and recovers a killed writer's lock
+//     by itself. Nobody has to delete a lockfile by hand.
+//
+// THE COST, STATED PLAINLY: a writer killed mid-save blocks other writers for
+// up to LOCK_STALE_MS rather than for milliseconds. That is the price of not
+// letting the recovery path cause the bug.
+//
+// Breaking is a rename to a unique name, which is atomic — so when N waiters
+// all judge the same lock stale, exactly one rename succeeds and the other N-1
+// get ENOENT and go back to polling. The breaker then CHECKS WHAT IT TOOK,
+// because between the stat that judged the lock old and the rename that takes
+// it, the holder may have released and a new writer acquired; a file that turns
+// out to be fresh is put back rather than deleted.
+//
+// And the converse, which is the last line of defence: a holder whose lock was
+// broken out from under it re-checks ownership immediately before publishing
+// and ABORTS rather than writing a document built from a snapshot it no longer
+// owns. Refusing to write is recoverable; a silent clobber is the bug we
+// started with.
+//
+// THE HONEST LIMIT. This is a cooperative, advisory lock: it binds processes
+// that go through this script, and nothing else. A human editing answers.yaml
+// in a text editor, or any future script that writes the bank without taking
+// this lock, is not serialised by it. The atomic rename still protects such a
+// writer from producing a torn file, but not from a lost update. The guarantee
+// is "save-answer.mjs does not lose its own writes", not "this file cannot be
+// clobbered".
+// A TEST SEAM ON THE TIMEOUT, AND WHY IT CANNOT WEAKEN THE CONTROL.
+//
+// LOCK_TIMEOUT_MS bounds how long a writer WAITS before giving up with exit 5
+// and writing nothing. Every value of it produces the same safety property:
+// lowering it makes this process surrender sooner, and there is no value that
+// lets it write while another process holds the lock. So it is safe to make
+// configurable, and asserting the locked-out path in a test costs milliseconds
+// instead of fifteen seconds.
+//
+// LOCK_STALE_MS is deliberately NOT configurable. Lowering THAT would let a
+// writer declare a live holder abandoned and break a lock somebody is using,
+// which is the lost update wearing a different hat. The two constants look
+// alike and are not: one bounds patience, the other bounds trust.
+function envMs(name, fallback) {
+  const raw = process.env[name]
+  if (raw === undefined) return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
+const LOCK_STALE_MS = 10_000 // an untouched lock older than this is abandoned
+const LOCK_TIMEOUT_MS = envMs("AJ_LOCK_TIMEOUT_MS", 20_000) // > LOCK_STALE_MS
+const LOCK_POLL_MS = 12 // between acquisition attempts
+const READ_ATTEMPTS = 5 // a failed read is not an answer; see readLock()
+const READ_BACKOFF_MS = 4
+const UNLINK_ATTEMPTS = 20 // release runs in an exit handler: keep it under ~100ms
+const UNLINK_BACKOFF_MS = 5
+const RENAME_ATTEMPTS = 60 // see writeFileAtomic: EPERM on win32 is transient
+const RENAME_BACKOFF_MS = 15
+
+// Synchronous sleep. This script is a short-lived CLI with no event loop work
+// to interleave, so blocking is the honest primitive; an async rewrite would
+// buy nothing and would make the "no path from --rescan into write()" ordering
+// guarantee above harder to read.
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+const lockPath = `${file}.lock`
+const lockNonce = crypto.randomUUID()
+
+// READING THE LOCK, AND WHY IT REPORTS THREE STATES RATHER THAN TWO.
+//
+// The first version returned the holder record or `null`, and `null` meant BOTH
+// "there is no lock" and "I could not read the lock right now". Those are
+// opposite facts, and collapsing them is a bug with teeth: six processes
+// polling one path with readFileSync produce transient failures, and every one
+// of them was read as "my lock is gone". A holder would then skip its own
+// release — leaking a lock that the next waiter reads as a crash — or abort a
+// write it was perfectly entitled to make.
+//
+// An empty or half-written file is a holder mid-acquire, not a corpse, so a
+// parse failure is retried rather than believed. Only ENOENT is an immediate
+// answer, because a missing file is unambiguous.
+function readLock() {
+  let lastErr
+  for (let i = 0; i < READ_ATTEMPTS; i++) {
+    try {
+      return {
+        state: "held",
+        holder: JSON.parse(fs.readFileSync(lockPath, "utf8")),
+      }
+    } catch (err) {
+      if (err.code === "ENOENT") return { state: "absent" }
+      lastErr = err
+      sleepSync(READ_BACKOFF_MS)
+    }
+  }
+  return { state: "unreadable", err: lastErr }
+}
+
+// null means "not old" — gone, or unreadable. Never treat an unknown age as an
+// expired one: that is the direction that breaks a live writer's lock.
+function lockAgeMs() {
+  try {
+    return Date.now() - fs.statSync(lockPath).mtimeMs
+  } catch {
+    return null
+  }
+}
+
+// Break a lock judged abandoned. The rename is atomic, so simultaneous breakers
+// cannot both succeed; the loser sees ENOENT and goes back to polling.
+//
+// Then it verifies what it took. Between the stat that judged the lock old and
+// this rename, the holder may have released and a NEW writer acquired — in
+// which case we are holding a live writer's lock, and deleting it would put two
+// processes in the critical section at once. A file that turns out to be fresh
+// goes straight back.
+function breakStaleLock() {
+  const doomed = `${lockPath}.stale-${process.pid}-${lockNonce}`
+  try {
+    fs.renameSync(lockPath, doomed)
+  } catch {
+    return false // somebody else broke it first
+  }
+  let takenAge = null
+  try {
+    takenAge = Date.now() - fs.statSync(doomed).mtimeMs
+  } catch {
+    /* cannot age it; fall through and treat it as broken */
+  }
+  if (takenAge !== null && takenAge <= LOCK_STALE_MS) {
+    // Not ours to break. Put it back — but NEVER over the top of a lock
+    // somebody has created since, because that clobber is the failure this
+    // whole section exists to avoid.
+    try {
+      if (!fs.existsSync(lockPath)) {
+        fs.renameSync(doomed, lockPath)
+        return false
+      }
+    } catch {
+      /* restore lost its own race; fall through */
+    }
+  }
+  try {
+    fs.unlinkSync(doomed)
+  } catch {
+    /* a leftover .stale file is inert */
+  }
+  return true
+}
+
+function acquireLock() {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS
+  let broke = null
+  for (;;) {
+    try {
+      // "wx" is create-exclusively-or-fail, and that atomicity IS the lock.
+      const fd = fs.openSync(lockPath, "wx")
+      try {
+        fs.writeSync(
+          fd,
+          JSON.stringify({
+            pid: process.pid,
+            host: os.hostname(),
+            nonce: lockNonce,
+            at: new Date().toISOString(),
+          }),
+        )
+      } finally {
+        fs.closeSync(fd)
+      }
+      return broke
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err
+    }
+    const age = lockAgeMs()
+    if (age !== null && age > LOCK_STALE_MS) {
+      if (breakStaleLock()) broke = `it was untouched for ${Math.round(age / 1000)}s`
+      continue
+    }
+    if (Date.now() >= deadline) {
+      const r = readLock()
+      const holder = r.state === "held" ? r.holder : null
+      const who = holder ? `pid ${holder.pid} on ${holder.host} since ${holder.at}` : "another writer"
+      const e = new Error(
+        `Timed out after ${LOCK_TIMEOUT_MS / 1000}s waiting for the answer-bank lock (held by ${who}).\n` +
+          `NOTHING WAS WRITTEN — this is safe to retry. If ${lockPath} is left over from a process that\n` +
+          `died, it is broken automatically once it is ${LOCK_STALE_MS / 1000}s old, or you can delete it.`,
+      )
+      e.lockTimeout = true
+      throw e
+    }
+    sleepSync(LOCK_POLL_MS)
+  }
+}
+
+// Do we still hold the lock we took? Called immediately before publishing. If a
+// waiter judged us stale and broke our lock, another writer may now be building
+// its own document from the same snapshot, and publishing ours would be exactly
+// the lost update this whole section exists to prevent.
+//
+// AN UNREADABLE LOCK COUNTS AS NOT HELD, deliberately. The two possible
+// mistakes are wildly unequal in cost: writing when we no longer own the lock
+// is the lost update, and refusing to write when we do own it costs the caller
+// one retry. readLock() retries first, so this is rare rather than routine.
+function stillHoldLock() {
+  const r = readLock()
+  return r.state === "held" && r.holder?.nonce === lockNonce
+}
+
+// Only ever unlink a lock that is provably ours. An unreadable lock is LEFT IN
+// PLACE — it ages out on its own, and unlinking something we cannot identify is
+// precisely how a live writer's lock gets deleted.
+//
+// The retry is the same win32 fact writeFileAtomic documents: removing a file
+// another process has open for reading fails transiently. Without it a release
+// silently failed, the lock leaked, and the next waiter read the leak as a
+// crashed writer.
+function releaseLock() {
+  if (!stillHoldLock()) return
+  for (let i = 0; i < UNLINK_ATTEMPTS; i++) {
+    try {
+      fs.unlinkSync(lockPath)
+      return
+    } catch (err) {
+      if (err.code === "ENOENT") return
+      if (!["EPERM", "EACCES", "EBUSY"].includes(err.code)) return
+      sleepSync(UNLINK_BACKOFF_MS)
+    }
+  }
+}
+
+// All-or-nothing replacement: full contents into a sibling temp file, fsync,
+// then rename over the target.
+//
+// The temp file MUST be in the same directory — rename is only atomic within a
+// filesystem, and a temp in os.tmpdir() would degrade to a copy.
+//
+// MEASURED WINDOWS BEHAVIOUR, and the reason for the retry loop: renaming over
+// a file that ANOTHER PROCESS HAS OPEN FOR READING fails with EPERM on win32
+// (verified on this machine; on POSIX it succeeds). answer-bank.mjs and
+// verify-claims.mjs both read this file, so that collision is routine rather
+// than exotic. The retry rides it out. What we never do is fall back to a
+// truncating write — that would trade the lost-update bug for the partial-file
+// bug, which is the worse of the two. On exhaustion the ORIGINAL file is
+// untouched and the caller is told.
+function writeFileAtomic(target, text) {
+  const dir = path.dirname(path.resolve(target))
+  const tmp = path.join(dir, `.${path.basename(target)}.tmp-${process.pid}-${lockNonce}`)
+  const fd = fs.openSync(tmp, "wx")
+  try {
+    fs.writeFileSync(fd, text, "utf8")
+    fs.fsyncSync(fd) // the bytes are on disk BEFORE anything points at them
+  } finally {
+    fs.closeSync(fd)
+  }
+  let lastErr
+  for (let i = 0; i < RENAME_ATTEMPTS; i++) {
+    try {
+      fs.renameSync(tmp, target)
+      return
+    } catch (err) {
+      lastErr = err
+      if (!["EPERM", "EACCES", "EBUSY"].includes(err.code)) break
+      sleepSync(RENAME_BACKOFF_MS)
+    }
+  }
+  try {
+    fs.unlinkSync(tmp)
+  } catch {
+    /* best effort; the temp is dotfile-named and inert */
+  }
+  throw new Error(
+    `Could not replace ${target} (${lastErr?.code ?? lastErr?.message}). NOTHING WAS WRITTEN and the\n` +
+      `existing file is intact. On Windows this happens when another process is holding the file open;\n` +
+      `close anything reading it and retry.`,
+  )
+}
+
+// --- ENTERING THE CRITICAL SECTION ------------------------------------------
+//
+// Everything from here to write() is ONE indivisible decision about the bank:
+// what is already in it, whether this question duplicates an entry, which id is
+// free, and what the file becomes. Every one of those is derived from a
+// document another process is entitled to change, so performing them outside a
+// lock is the lost update — not a race that is unlikely, a race that was
+// measured losing answers in most trials.
+//
+// THE LOCK IS TAKEN HERE, AND NOT EARLIER, ON PURPOSE. Exits 2, 3 and 4 all
+// happen above this line, so a refused save never creates a lockfile at all:
+// an instruction-shaped label cannot wedge the fact base against other writers,
+// and a usage error leaves nothing behind to clean up. `--rescan` exits far
+// above this too, so the read-only audit takes no lock and cannot be blocked
+// by one.
+//
+// Registered before the acquire rather than after, so a failure DURING
+// acquisition still releases. releaseLock() is nonce-guarded, so running it
+// when we never held the lock — or when a waiter already broke it — does
+// nothing rather than deleting somebody else's claim.
+process.on("exit", releaseLock)
+
+let brokeStale = null
+try {
+  brokeStale = acquireLock()
+} catch (err) {
+  if (err.lockTimeout) {
+    console.error(err.message)
+    process.exit(5)
+  }
+  if (err.code === "ENOENT") {
+    console.error(
+      `Cannot create ${lockPath}: its directory does not exist. Nothing was written.`,
+    )
+    process.exit(2)
+  }
+  throw err
+}
+// Said out loud, never only logged: breaking a lock is the one moment this
+// script overrides another process's claim on the user's fact base. A bank that
+// needs it repeatedly has a writer that keeps dying, and that is worth seeing.
+if (brokeStale)
+  console.error(`Note: broke an abandoned lock on ${file} — ${brokeStale}.`)
+
+let data
+try {
+  data = fs.existsSync(file) ? (loadYamlFile(file) ?? {}) : {}
+} catch (err) {
+  // AN UNPARSEABLE BANK IS NOT AN EMPTY BANK. Falling through to `{}` here
+  // would replace the user's entire file with a fresh one-entry document — the
+  // largest possible version of the data loss this whole section exists to
+  // prevent, performed by the fix for it.
+  console.error(
+    `Could not parse ${file}: ${err.message}\n` +
+      `NOTHING WAS WRITTEN. Repair the YAML by hand, or move the file aside if you meant to start over.`,
+  )
+  process.exit(2)
+}
 data.answers ??= []
 if (!Array.isArray(data.answers)) {
   console.error(`${file} is malformed: "answers" is not a list`)
@@ -489,8 +935,34 @@ const dupQ = data.answers.find(
   (a) => a.question?.trim().toLowerCase() === question.trim().toLowerCase(),
 )
 
-const header = `# ANSWERS BANK — user-editable. Agent adds entries ONLY via scripts/profile/save-answer.mjs.\n`
-const write = () => fs.writeFileSync(file, header + dumpYaml(data), "utf8")
+// THE ONLY WRITER. Every success path below goes through this and nothing else
+// touches the file. Two things happen here that did not before:
+//
+//   * the ownership re-check, so a writer whose lock was broken out from under
+//     it refuses to publish a document built from a snapshot it no longer owns;
+//   * the all-or-nothing replacement, so no reader and no kill can observe a
+//     half-written bank.
+//
+// Both report exit 5, which means "nothing was written, this is safe to retry".
+// That is deliberately neither 1 (a conflict the caller must resolve by
+// choosing something different) nor 2 (the command line was wrong): retrying
+// either of those unchanged is pointless, and retrying this one is the fix.
+const write = () => {
+  if (!stillHoldLock()) {
+    console.error(
+      `Aborting: another process broke this writer's lock on ${file} before it published.\n` +
+        `NOTHING WAS WRITTEN and the existing file is intact — re-run the command. A lock is only\n` +
+        `broken after ${LOCK_STALE_MS / 1000}s untouched, so this means the save stalled that long.`,
+    )
+    process.exit(5)
+  }
+  try {
+    writeFileAtomic(file, header + dumpYaml(data))
+  } catch (err) {
+    console.error(err.message)
+    process.exit(5)
+  }
+}
 
 // --- classification ---------------------------------------------------------
 //

@@ -309,7 +309,12 @@ import { TECH_TERMS } from "./keywords.mjs"
 // question's text is evidence only when the answer is an unambiguous yes —
 // "Do you have experience with React?" / "Yes" really does evidence React,
 // while "1, 2, 3, 5" evidences nothing but itself.
-const AFFIRMATIVE = /^\s*(yes|y|true|yes\.|yes,? i (do|have|am))\s*$/i
+// EXPORTED so the answer-bank rescan can answer "which stored entries currently
+// promote their QUESTION into the R6 corpus?" using the same predicate the
+// corpus builder uses. A second copy of this regex living in the auditor would
+// drift from this one, and the audit would then report on a corpus that is not
+// the corpus. One definition, two readers.
+export const AFFIRMATIVE = /^\s*(yes|y|true|yes\.|yes,? i (do|have|am))\s*$/i
 
 // THE SIBLING CASE, and the one the fix above left open.
 //

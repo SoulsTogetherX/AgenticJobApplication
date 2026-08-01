@@ -58,7 +58,14 @@
 // do about a finding belongs to the caller (see isDisqualifying).
 
 import { createHash } from "node:crypto"
-import { textSnippet, decodeEntities, SNIPPET_MAX } from "./lib.mjs"
+import {
+  textSnippet,
+  decodeEntities,
+  SNIPPET_MAX,
+  techTermsIn,
+  questionEvidence,
+  AFFIRMATIVE,
+} from "./lib.mjs"
 
 // Exported so any surface that prints findings can print the caveat with them.
 // The limit belongs next to the report, not only in a comment nobody opens.
@@ -1396,4 +1403,536 @@ export function describeClass(info) {
   if (!info) return null
   const reasons = info.reasons?.length ? ` (${info.reasons.join(", ")})` : ""
   return `${info.class}/${info.source}${reasons}`
+}
+
+// ===========================================================================
+// The answer-bank rescan — the READ-TIME counterpart of every control above
+// ===========================================================================
+//
+// WHY THIS EXISTS.
+//
+// Everything in this file is a WRITE-TIME control: it decides whether a new
+// entry may enter profile/answers.yaml. The stored bank predates all of them.
+// Forty-nine entries were written before there was a sanitiser, before the
+// sensitive-value refusal, and before an answer had a class at all — so the
+// question "is what is already in there something these controls would accept
+// today?" has never been asked, and nothing was in a position to ask it.
+//
+// It stopped being hypothetical on 2026-07-31. Two contaminations landed in the
+// real fact base in one session, both from the same dropped flag: four entries
+// (a-050..a-053) stamped `source: user`, which was false, one of them a
+// FABRICATED PHONE NUMBER under a label that appears on nearly every
+// application form. The user removed them by hand. Nothing in the pipeline
+// found them; a person did, by reading the file. That is the gap this closes:
+// a bank that has been written to by something is a bank that should be
+// re-examined, and re-examining it should not require a person to read YAML.
+//
+// WHAT IT DELIBERATELY IS NOT.
+//
+//   * It never writes. Not a --fix, not a --apply, not a "safe" normalisation.
+//     Hard rule 2 says the agent does not edit the fact base, and an auditor
+//     that repairs what it audits is a writer wearing a different hat. Every
+//     finding prints what a HUMAN would run, or says to open the file.
+//   * It is not a detector of FALSEHOOD. No function here can tell a real phone
+//     number from an invented one, and pretending otherwise would be the worst
+//     failure available to it — a clean report over a contaminated bank. What
+//     it can do about a-051 is bound the set a human must eyeball, which is the
+//     `reach` finding below, and it says so in those words.
+//   * It is not a provenance oracle. "`source: user` on an entry no user could
+//     have stated" is not mechanically decidable: the field is a string a
+//     writer chose, and a wrong writer chooses a wrong string. What IS decidable
+//     is stated in RESCAN_LIMITS, and the rest is named there as not covered.
+//
+// SEVERITY, and why only one of the two moves the exit code.
+//
+//   error   the entry is in a state a write TODAY would refuse (an identifier,
+//           an instruction-shaped label, a duplicate question) or is structurally
+//           malformed in a way that silently weakens a control (a stored class
+//           with no provenance reports as `inferred` and nobody is told).
+//   review  true of a healthy bank too. Which skills the bank whitelists through
+//           R6, which answers are typed into nearly every form, an id gap left by
+//           a deletion. These are for a person to read, and a check that is red
+//           on a healthy store is a check that gets ignored — the same lesson
+//           checkWrittenForm's deliberately short pair list records.
+//
+// ITS MEASURED SCORE AGAINST THE INCIDENT THAT CAUSED IT, so nobody has to
+// assume it works because it exists. Replayed over a faithful reconstruction of
+// a-050..a-053 (see the test of the same name in tests/lib/untrusted.test.mjs):
+//
+//   a-053  CAUGHT at error   — the two probe writes reused one question label,
+//                              and a duplicate question is an outright refusal
+//   a-051  CAUGHT at review  — the fabricated phone number, listed for a human
+//                              to look at, on REACH and never on suspicion
+//   a-050  MISSED            } well formed, in sequence, correctly dated, and
+//   a-052  MISSED            } `source: user`, which is a string a writer chose
+//
+// So: exit 1, the alarm raised, one of four named as an error and the dangerous
+// one surfaced — and half the contamination invisible. That is the honest
+// number. A future reader who needs it to be better should change the write
+// path, not add an eighth pattern here.
+export const RESCAN_LIMITS =
+  "the rescan re-runs the write-time controls over stored entries; it cannot detect a FALSE answer, and " +
+  "`source` is a string a writer chose, so a mis-stamped provenance is only visible when it contradicts " +
+  "something else in the record. Bounding what a human must read is the goal, not replacing them."
+
+// Exactly the keys save-answer.mjs writes. Anything else is a hand-edit — which
+// the file's own header invites ("user-editable"), so it is reported at `review`
+// and never as an error.
+const KNOWN_ENTRY_KEYS = new Set([
+  "id",
+  "question",
+  "answer",
+  "source",
+  "added",
+  "class",
+  "class_source",
+  "class_reasons",
+])
+
+const ENTRY_SOURCES = new Set(["user", "model"])
+const ID_SHAPE = /^a-(\d{3,})$/
+const DATE_SHAPE = /^\d{4}-\d{2}-\d{2}$/
+
+// Questions whose answer this pipeline will type into essentially every form it
+// ever fills. The point is REACH, not suspicion: an error in one of these is
+// repeated on every future application, so it is the shortlist a human should
+// re-read after any incident. a-051 — the fabricated phone number — was exactly
+// this shape, and this is the only finding here that would have surfaced it.
+const HIGH_REACH_QUESTION =
+  /\b(?:phone|mobile|cell(?:\s*phone)?|telephone|e-?mail|first\s+name|last\s+name|full\s+name|legal\s+name|preferred\s+name|street\s+address|mailing\s+address|home\s+address|address\s+line|city\b|state\b|province|zip\s*code|postal\s+code|country\b|linkedin|github|portfolio|personal\s+website|desired\s+salary|salary\s+expectation|expected\s+(?:salary|compensation)|pronouns)/i
+
+function finding(entryId, severity, kind, detail, remedy = null, value = null) {
+  return {
+    entry: entryId,
+    severity,
+    kind,
+    detail,
+    remedy,
+    ...(value ? { value } : {}),
+  }
+}
+
+// FOUND BY RUNNING IT. The first live run of --rescan against the real bank
+// printed the user's home address and personal email into an agent transcript,
+// because the high-reach finding needs a human to look at the VALUE and the
+// obvious way to arrange that is to print it. That is right for the human at
+// the terminal and wrong for everyone else: an agent relaying "check a-027
+// yourself" does not need the address, and a transcript keeps it forever.
+//
+// So the value travels in its own field, masked by default, and the CLI reveals
+// it only on a TTY. This is the same reasoning that keeps a sensitive finding
+// from echoing the identifier it refused, applied one notch down: this data is
+// not an identifier the pipeline must never hold, it is data the user should be
+// able to check without broadcasting.
+export function maskValue(v) {
+  const s = String(v ?? "")
+  if (!s) return ""
+  if (s.length <= 2) return "*".repeat(s.length)
+  return `${s[0]}${"*".repeat(Math.min(s.length - 2, 12))}${s[s.length - 1]} (${s.length} chars)`
+}
+
+// A stored date that YAML may have parsed into a Date object (js-yaml does this
+// for an unquoted 2026-07-27) or left as a string. Both are legitimate on disk,
+// so both are accepted and only genuinely unusable values are reported.
+function dateProblem(added, now) {
+  if (added == null || added === "") return "missing"
+  let iso
+  if (added instanceof Date) {
+    if (Number.isNaN(added.getTime())) return "unparseable"
+    iso = added.toISOString().slice(0, 10)
+  } else if (typeof added === "string") {
+    if (!DATE_SHAPE.test(added.trim())) return "not YYYY-MM-DD"
+    iso = added.trim()
+  } else {
+    return `not a date (${typeof added})`
+  }
+  const t = Date.parse(`${iso}T00:00:00Z`)
+  if (Number.isNaN(t)) return "unparseable"
+  // A day of slack, so a machine an hour ahead of UTC is not a finding.
+  if (t > now.getTime() + 36 * 3600 * 1000) return `in the future (${iso})`
+  return null
+}
+
+// THE AUDIT. Pure: takes the parsed document, returns findings, touches nothing.
+//
+// `doc` is the loaded answers.yaml ({ answers: [...] }). `now` is injectable so
+// a test can assert the future-date rule without waiting.
+export function rescanAnswerBank(doc, { now = new Date() } = {}) {
+  const out = []
+  const answers = doc?.answers
+
+  if (answers == null)
+    return [
+      finding(
+        null,
+        "error",
+        "no_answers_key",
+        'the document has no "answers" key — nothing to audit, which is not the same as nothing wrong',
+      ),
+    ]
+  if (!Array.isArray(answers))
+    return [
+      finding(
+        null,
+        "error",
+        "answers_not_a_list",
+        `"answers" is a ${typeof answers}, not a list`,
+      ),
+    ]
+
+  const seenIds = new Map()
+  const seenQuestions = new Map()
+  const idNumbers = []
+  let prevNum = null
+  let prevDate = null
+
+  answers.forEach((entry, i) => {
+    const at = `#${i + 1}`
+    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
+      out.push(
+        finding(
+          at,
+          "error",
+          "entry_not_an_object",
+          `list item ${at} is a ${Array.isArray(entry) ? "list" : typeof entry}, not a mapping`,
+        ),
+      )
+      return
+    }
+
+    const rawId = entry.id
+    const id = typeof rawId === "string" && rawId ? rawId : at
+    const question = entry.question == null ? "" : String(entry.question)
+    const answer = entry.answer == null ? "" : String(entry.answer)
+
+    // --- the untrusted boundary, re-run -------------------------------------
+    //
+    // Order matters: the hostile check runs FIRST and, when it fires, this
+    // entry's text is never echoed again by any later finding. A report that
+    // reprints the payload is the same defect as untrusted_findings[].sample
+    // re-emitting 120 raw characters into the file the tailoring model reads.
+    const scanQ = sanitizeUntrusted(question)
+    const scanA = sanitizeUntrusted(answer)
+    const allFindings = [...scanQ.findings, ...scanA.findings]
+    const hostile = allFindings.filter(isDisqualifying)
+    const quotable = hostile.length === 0
+
+    if (hostile.length) {
+      out.push(
+        finding(
+          id,
+          "error",
+          "instruction_shaped",
+          `stored text is instruction-shaped (${describeFindings(hostile)}). ` +
+            `The text is NOT reprinted here. save-answer.mjs would exit 3 on this today.`,
+          `open the file and delete ${id} yourself, after reading it — this is a permanent, ` +
+            `global entry in the verify-claims evidence corpus`,
+        ),
+      )
+    } else if (allFindings.length) {
+      // Not hostile, but the stored bytes are not what a write today would
+      // store: the sanitiser strips these before saving, so their presence
+      // means the entry predates the sanitiser or was hand-edited.
+      out.push(
+        finding(
+          id,
+          "error",
+          "hidden_characters",
+          `stored text carries characters a write today would strip ` +
+            `(${describeFindings(allFindings)})`,
+          `re-save it from the readable text, or edit ${id} by hand`,
+        ),
+      )
+    }
+
+    // --- the sensitive-value boundary, re-run -------------------------------
+    // Run on the SANITISED text for the same reason save-answer.mjs does: an
+    // identifier padded with zero-width characters is reassembled first.
+    const sensitive = findSensitiveValues(scanQ.text, scanA.text)
+    if (sensitive.length) {
+      out.push(
+        finding(
+          id,
+          "error",
+          "sensitive_value",
+          `stored answer looks like a ${describeSensitive(sensitive)} ` +
+            `(matched: ${[...new Set(sensitive.map((s) => s.matched))].join(", ")}). ` +
+            `The value is NOT printed. save-answer.mjs would exit 4 on this today.`,
+          `open the file and delete ${id}. This pipeline types stored answers into third-party ` +
+            `forms, so holding one is the whole blast radius of a label-lie routing attack`,
+        ),
+      )
+    }
+
+    // --- identity and ordering ---------------------------------------------
+    if (typeof rawId !== "string" || !rawId) {
+      out.push(
+        finding(at, "error", "missing_id", `entry ${at} has no string id`),
+      )
+    } else if (!ID_SHAPE.test(rawId)) {
+      out.push(
+        finding(
+          id,
+          "error",
+          "malformed_id",
+          `id "${rawId}" is not the a-NNN shape save-answer.mjs writes`,
+        ),
+      )
+    } else {
+      const num = Number(ID_SHAPE.exec(rawId)[1])
+      idNumbers.push(num)
+      if (seenIds.has(rawId))
+        out.push(
+          finding(
+            id,
+            "error",
+            "duplicate_id",
+            `id "${rawId}" also appears at #${seenIds.get(rawId) + 1}; save-answer.mjs refuses a duplicate id (exit 1)`,
+          ),
+        )
+      else seenIds.set(rawId, i)
+      if (prevNum !== null && num <= prevNum)
+        out.push(
+          finding(
+            id,
+            "review",
+            "id_out_of_sequence",
+            `id ${rawId} does not increase on the previous entry (${prevNum}); save-answer.mjs only appends`,
+          ),
+        )
+      prevNum = num
+    }
+
+    // A question already in the bank is refused at write time (exit 1), so a
+    // stored duplicate means the file was edited by hand — and the SECOND copy
+    // is unreachable, because answer-bank matches the first.
+    const key = question.trim().toLowerCase()
+    if (key) {
+      if (seenQuestions.has(key))
+        out.push(
+          finding(
+            id,
+            "error",
+            "duplicate_question",
+            `the same question is already answered at ${seenQuestions.get(key)}; ` +
+              `save-answer.mjs refuses this (exit 1) and only the first copy is ever matched`,
+          ),
+        )
+      else seenQuestions.set(key, id)
+    } else {
+      out.push(
+        finding(id, "error", "empty_question", "no question text stored"),
+      )
+    }
+    if (!answer.trim())
+      out.push(finding(id, "error", "empty_answer", "no answer text stored"))
+
+    // --- provenance ---------------------------------------------------------
+    //
+    // A MISSING `source` is deliberately NOT a finding. Forty-one of the
+    // forty-nine real entries have none, save-answer.mjs already reads that as
+    // "user", and reporting all of them would bury the eight that matter. What
+    // IS reported is a source that is present and not one this script writes.
+    if (entry.source != null && !ENTRY_SOURCES.has(entry.source))
+      out.push(
+        finding(
+          id,
+          "error",
+          "malformed_source",
+          `source: ${JSON.stringify(entry.source)} is not user|model. ` +
+            `Downstream code falls back to "user", the STRONGEST provenance, so a typo here silently ` +
+            `protects the entry from --replace`,
+        ),
+      )
+
+    const dateBad = dateProblem(entry.added, now)
+    if (dateBad)
+      out.push(
+        finding(
+          id,
+          "error",
+          "malformed_added",
+          `added is ${dateBad}; save-answer.mjs writes an ISO date on every entry`,
+        ),
+      )
+
+    // Ids are appended in order, so their dates should not go backwards. This
+    // is the one provenance check with any real force: it catches an entry
+    // spliced into the middle of the file, which is what a hand-edit looks
+    // like and what an append never does.
+    if (!dateBad && entry.added != null) {
+      const iso =
+        entry.added instanceof Date
+          ? entry.added.toISOString().slice(0, 10)
+          : String(entry.added).trim()
+      if (prevDate && iso < prevDate)
+        out.push(
+          finding(
+            id,
+            "review",
+            "date_out_of_sequence",
+            `added ${iso} is earlier than the previous entry's ${prevDate}, but ids only ever append`,
+          ),
+        )
+      prevDate = iso
+    }
+
+    // --- class provenance ---------------------------------------------------
+    //
+    // The comment on answerClass promises that a stored class with an
+    // unrecognised or absent class_source reports as `inferred` — the WEAKEST
+    // provenance — so that a hand-edit cannot claim the user declared it. That
+    // promise is kept SILENTLY at read time. Here is where it is said out loud.
+    const storedClass = entry.class
+    const hasValidClass =
+      typeof storedClass === "string" && ANSWER_CLASSES.has(storedClass)
+    if (storedClass != null && !hasValidClass) {
+      out.push(
+        finding(
+          id,
+          "error",
+          "malformed_class",
+          `class: ${JSON.stringify(storedClass)} is not datum|assertion, so answerClass ignores it ` +
+            `and re-derives from the question. The stored value has no effect and nothing says so`,
+          `node scripts/profile/save-answer.mjs --set-class datum|assertion`,
+        ),
+      )
+    } else if (hasValidClass && !CLASS_SOURCES.has(entry.class_source)) {
+      out.push(
+        finding(
+          id,
+          "error",
+          "class_without_provenance",
+          `class: ${storedClass} is stored with class_source ${JSON.stringify(entry.class_source ?? null)}, ` +
+            `which is not user|model|inferred — so it reports as "inferred", the weakest provenance. ` +
+            `A datum written by hand cannot buy itself unattended auto-fill, but nobody is told either`,
+          `node scripts/profile/save-answer.mjs --set-class ${storedClass}`,
+        ),
+      )
+    }
+    if (storedClass == null && entry.class_source != null)
+      out.push(
+        finding(
+          id,
+          "error",
+          "orphan_class_source",
+          `class_source: ${JSON.stringify(entry.class_source)} with no class — it decides nothing`,
+        ),
+      )
+    if (entry.class_reasons != null && !Array.isArray(entry.class_reasons))
+      out.push(
+        finding(
+          id,
+          "error",
+          "malformed_class_reasons",
+          `class_reasons is a ${typeof entry.class_reasons}, not a list; answerClass discards it`,
+        ),
+      )
+
+    // Does the class the file records still match what the rules say today?
+    // A stored `datum` over a question that now classifies as an assertion is
+    // the direction that matters: datum means "may be filled unattended, in any
+    // widget, on any form". Reported at `review` because a class the USER
+    // declared legitimately outranks the rules — but they should still see it.
+    const effective = answerClass(entry)
+    const derived = classifyAnswer(question, answer)
+    if (effective.class === "datum" && derived.class === "assertion")
+      out.push(
+        finding(
+          id,
+          "review",
+          "class_drift",
+          `stored/effective class is datum (${effective.source}) but the rules read this question as an ` +
+            `assertion (${derived.reasons.join(", ")}). A datum is auto-fillable unattended`,
+          `node scripts/profile/save-answer.mjs --set-class assertion`,
+        ),
+      )
+
+    // --- what this entry currently whitelists on a résumé -------------------
+    //
+    // verify-claims R6 lets a claim onto a document when the evidence corpus
+    // backs it, and evidenceText builds that corpus from this file. So every
+    // stored entry is silently deciding which technologies may appear on a
+    // document signed with the user's name, and nothing has ever printed that
+    // list. This does.
+    //
+    // Split by ROUTE, because the two are not equally trustworthy:
+    //   via_answer    the user wrote the words. Ordinary; not reported.
+    //   via_question  an affirmative answer promoted the employer's label into
+    //                 the corpus. Narrowed hard by questionEvidence, but this
+    //                 is the poisoning route and it is worth a person's eyes.
+    if (AFFIRMATIVE.test(answer)) {
+      const asked = questionEvidence(question)
+      const viaQuestion = techTermsIn(asked)
+      const viaAnswer = new Set(techTermsIn(answer))
+      const promoted = viaQuestion.filter((t) => !viaAnswer.has(t))
+      if (promoted.length)
+        out.push(
+          finding(
+            id,
+            "review",
+            "evidence_via_question",
+            `a "${answer.trim()}" here whitelists ${promoted.join(", ")} for every future résumé ` +
+              `(R6 evidence corpus). Confirm the user meant to claim ${promoted.length > 1 ? "those" : "that"}` +
+              (quotable ? `. Asked: "${asked}"` : ""),
+            `if not, open the file and delete or reword ${id}`,
+          ),
+        )
+    }
+
+    // --- blast radius -------------------------------------------------------
+    //
+    // REACH, NOT SUSPICION, and the honest limit of this whole tool: nothing
+    // here can tell a real phone number from a fabricated one. What it can do
+    // is print the handful of answers that get typed into nearly every form, so
+    // "is that actually your number?" is a question a person can answer in
+    // thirty seconds. a-051 was this shape and this is the only finding that
+    // would have surfaced it.
+    if (
+      HIGH_REACH_QUESTION.test(question) &&
+      effective.class === "datum" &&
+      answer.trim()
+    )
+      out.push(
+        finding(
+          id,
+          "review",
+          "high_reach_datum",
+          `auto-fillable on nearly every form` +
+            (quotable ? `: "${question.trim()}"` : "") +
+            ` -> ${maskValue(answer.trim())}`,
+          `confirm this is really yours — a wrong value here is repeated on every application`,
+          // Carried separately and printed only on a TTY. See maskValue.
+          quotable ? answer.trim() : null,
+        ),
+      )
+  })
+
+  // Gaps are reported once, as a summary, rather than per entry. A gap is the
+  // normal trace of a deletion — the user removed a-050..a-053 by hand on
+  // 2026-07-31 — so it is information, not a fault.
+  if (idNumbers.length) {
+    const sorted = [...new Set(idNumbers)].sort((a, b) => a - b)
+    const gaps = []
+    for (let n = sorted[0]; n < sorted[sorted.length - 1]; n++)
+      if (!sorted.includes(n)) gaps.push(`a-${String(n).padStart(3, "0")}`)
+    if (gaps.length)
+      out.push(
+        finding(
+          null,
+          "review",
+          "id_gaps",
+          `${gaps.length} id(s) missing from the sequence (${gaps.slice(0, 12).join(", ")}` +
+            `${gaps.length > 12 ? ", …" : ""}). Normal after a deletion; unexplained is worth a look`,
+        ),
+      )
+  }
+
+  return out
+}
+
+export function rescanSummary(findings) {
+  const errors = findings.filter((f) => f.severity === "error").length
+  const review = findings.filter((f) => f.severity === "review").length
+  return { errors, review, total: findings.length }
 }

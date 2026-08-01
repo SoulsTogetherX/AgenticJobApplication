@@ -56,7 +56,18 @@
 // and can defeat any test of the page, but it cannot change what kind of thing
 // the user recorded.
 //
+// AND THE BANK IS AUDITABLE AFTER THE FACT.
+//
+// Everything above is a WRITE-TIME control and the stored bank predates all of
+// them. `--rescan` is the read-time counterpart: it re-runs every check on this
+// boundary against what is ALREADY stored and prints a report. It never writes —
+// there is no --fix and no --apply, because an auditor that repairs the fact
+// base is a writer wearing a different hat, and hard rule 2 says the agent is
+// not one. Every finding prints the command a HUMAN would run.
+//
 // Exit codes: 0 saved, 1 conflict, 2 usage, 3 instruction-shaped, 4 sensitive.
+// --rescan reuses 0 (clean) and 1 (findings) and never 3 or 4 — those mean "this
+// write was refused" and a rescan performs no write.
 import fs from "node:fs"
 import { loadYamlFile, dumpYaml } from "../lib/lib.mjs"
 import {
@@ -72,6 +83,9 @@ import {
   describeClass,
   ANSWER_CLASSES,
   CLASS_LIMITS,
+  rescanAnswerBank,
+  rescanSummary,
+  RESCAN_LIMITS,
 } from "../lib/untrusted.mjs"
 
 const SOURCES = new Set(["user", "model"])
@@ -80,7 +94,8 @@ const DEFAULT_FILE = "profile/answers.yaml"
 const USAGE =
   'Usage: save-answer.mjs "<question>" "<answer>" [--id a-NNN] [--source user|model]\n' +
   "                      [--class datum|assertion] [--replace] [--file answers.yaml]\n" +
-  '       save-answer.mjs "<question>" --set-class datum|assertion [--file answers.yaml]'
+  '       save-answer.mjs "<question>" --set-class datum|assertion [--file answers.yaml]\n' +
+  "       save-answer.mjs --rescan [--file answers.yaml] [--json]   (report only, never writes)"
 
 function usage(msg) {
   console.error(`${msg}\n${USAGE}`)
@@ -139,6 +154,8 @@ const opts = {
 let wantReplace = false
 let fileGiven = false
 let userApproved = false
+let wantRescan = false
+let wantJson = false
 const positional = []
 let endOfFlags = false
 for (let i = 0; i < argv.length; i++) {
@@ -159,6 +176,17 @@ for (let i = 0; i < argv.length; i++) {
     }
     if (name === "--replace" && eq === -1) {
       wantReplace = true
+      continue
+    }
+    // Report-only audit of the stored bank. Parsed here with the other flags so
+    // the strict-parsing guarantee covers it too; the mode itself is handled
+    // below, AFTER the NODE_TEST_CONTEXT guard and BEFORE any code that writes.
+    if (name === "--rescan" && eq === -1) {
+      wantRescan = true
+      continue
+    }
+    if (name === "--json" && eq === -1) {
+      wantJson = true
       continue
     }
     // --user-approved asserts, on the command line where a PreToolUse hook can
@@ -218,6 +246,126 @@ if (!fileGiven && process.env.NODE_TEST_CONTEXT) {
 }
 
 const file = opts.file
+
+// --json belongs to --rescan and to nothing else. CAUGHT BY AN EXISTING TEST,
+// not by review: "every near-miss flag exits 2 rather than writing somewhere
+// else" already listed --json among the flags a WRITE must refuse, and adding
+// it to the parser made a save silently accept and ignore it. That is precisely
+// the swallowed-flag shape that put four fabricated entries in the real fact
+// base on 2026-07-31 — reintroduced, in the same file, by the fix for it.
+// Recognising a flag is not the same as accepting it in every mode.
+if (wantJson && !wantRescan)
+  usage("--json only applies to --rescan; a save has no JSON output.")
+
+// --- --rescan: the read-time audit ------------------------------------------
+//
+// PLACED HERE ON PURPOSE. Every line below this block can write; this one
+// cannot reach any of them, because it exits. The ordering is the guarantee:
+// there is no path from --rescan into write(), so "report only" is a property
+// of the control flow rather than a promise in a comment.
+//
+// It sits AFTER the NODE_TEST_CONTEXT guard deliberately, so a test must still
+// name its own --file. Reading the real bank from a test is harmless in itself,
+// but a test that silently depends on the user's private fact base passes or
+// fails for reasons that are not in the repository.
+//
+// EXIT CODES, and why finding something is not exit 2:
+//   0  the scan ran and found nothing at `error` severity
+//   1  the scan ran and found at least one `error` — the same meaning 1 already
+//      carries here ("the store is not in the state you wanted"), so a caller
+//      can gate on it. `review` findings never change the exit code: they are
+//      true of a healthy bank, and a check that is red on a healthy store is a
+//      check that gets switched off.
+//   2  usage, or the file could not be read
+// 3 and 4 are never used: they mean "this write was refused", and there is no
+// write here to refuse.
+if (wantRescan) {
+  // A rescan combined with a write flag is a usage error, not a rescan that
+  // quietly ignores the rest of the command line. That is the exact failure
+  // shape — a dropped flag continuing as if it had never been typed — that put
+  // four fabricated entries in the real fact base on 2026-07-31.
+  const conflicting = []
+  if (positional.length) conflicting.push(`${positional.length} positional argument(s)`)
+  if (wantReplace) conflicting.push("--replace")
+  if (opts.id !== null) conflicting.push("--id")
+  if (opts.cls !== null) conflicting.push("--class")
+  if (opts.setClass !== null) conflicting.push("--set-class")
+  if (userApproved) conflicting.push("--user-approved")
+  if (conflicting.length)
+    usage(
+      `--rescan reports and never writes, so it cannot be combined with ${conflicting.join(", ")}.\n` +
+        `Run the rescan on its own, then run any correction it prints as a separate command.`,
+    )
+
+  if (!fs.existsSync(file)) {
+    console.error(`No such file: ${file}`)
+    process.exit(2)
+  }
+  let doc
+  try {
+    doc = loadYamlFile(file) ?? {}
+  } catch (err) {
+    console.error(`Could not parse ${file}: ${err.message}`)
+    process.exit(2)
+  }
+
+  const findings = rescanAnswerBank(doc)
+  const counts = rescanSummary(findings)
+  const entries = Array.isArray(doc?.answers) ? doc.answers.length : 0
+
+  // A finding may carry the stored VALUE (the high-reach check needs a human to
+  // look at it). It is revealed only to a human at a terminal. Found by running
+  // the first version: it printed the user's home address and personal email
+  // into an agent transcript, where nobody needed them and nothing forgets.
+  const human = Boolean(process.stdout.isTTY)
+  if (wantJson) {
+    console.log(
+      JSON.stringify(
+        {
+          file,
+          entries,
+          ...counts,
+          // `value` is dropped entirely from JSON: --json is what a script or an
+          // agent reads, and neither is the reader the value exists for.
+          findings: findings.map(({ value, ...f }) => f),
+          limits: RESCAN_LIMITS,
+        },
+        null,
+        2,
+      ),
+    )
+    process.exit(counts.errors ? 1 : 0)
+  }
+
+  const bySeverity = (sev) => findings.filter((f) => f.severity === sev)
+  const render = (f) =>
+    `  ${(f.entry ?? "bank").padEnd(7)} ${f.kind}: ${f.detail}` +
+    (human && f.value ? `\n          value: ${f.value}` : "") +
+    (f.remedy ? `\n          -> ${f.remedy}` : "")
+
+  console.log(`Rescan of ${file} — ${entries} entries, nothing written.`)
+  const errs = bySeverity("error")
+  const revs = bySeverity("review")
+  if (errs.length) {
+    console.log(
+      `\nERROR (${errs.length}) — a write today would refuse this, or it silently weakens a control:`,
+    )
+    for (const f of errs) console.log(render(f))
+  }
+  if (revs.length) {
+    console.log(
+      `\nREVIEW (${revs.length}) — normal in a healthy bank; these are for you to read, not faults:`,
+    )
+    for (const f of revs) console.log(render(f))
+  }
+  if (!findings.length) console.log("\nNo findings.")
+  console.log(
+    `\n${counts.errors} error, ${counts.review} review. This tool NEVER edits ${file} — ` +
+      `corrections are yours to make.\nNote: ${RESCAN_LIMITS}`,
+  )
+  process.exit(counts.errors ? 1 : 0)
+}
+
 const forcedId = opts.id
 const source = opts.source
 if (!SOURCES.has(source)) {

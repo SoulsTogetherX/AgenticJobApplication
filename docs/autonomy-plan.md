@@ -597,17 +597,45 @@ Targets, to be confirmed by `bench-apply.mjs` against the local board:
 column is the largest of the three, since a turn costs seconds and a Node call
 costs milliseconds).
 
-| Fix                                                                                            | Owner | Recovers                                                    |
-| ---------------------------------------------------------------------------------------------- | ----- | ----------------------------------------------------------- |
-| `readiness()` stops counting consent defers — re-enables the fast path that has never fired    | w3    | The whole step-C model block                                |
-| Probe only combos the answer bank couldn't resolve (run resolution _before_ the probe)         | w3+w2 | ~5s of the 6.8s scan sleep                                  |
-| Cache which combo strategy worked — `setCombo` returns `via` and the caller **throws it away** | w2    | 1.5–2.5s per combo, per app                                 |
-| Cap `keyboard.type` on richtext; use `fill()` where the element allows                         | w2    | up to 45s on a cover letter                                 |
-| Replace the flat 1s post-upload sleep with a condition on the observable remount               | w2    | 1s per upload                                               |
-| Import `answer-bank` instead of `spawnSync`-ing it twice                                       | w3    | 2 process spawns; also removes the Windows 32k argv ceiling |
-| Scan returns a summary; the full inventory goes straight to disk via `filename`                | w2    | ~3.5k tokens per page                                       |
-| Fix `cache=H/T` so a miss is distinguishable from a no-op                                      | w3    | one needless 7–80s re-scan                                  |
-| Wire the `valueAliases` that all four adapters define and nothing reads                        | w3    | false verify mismatches                                     |
+> **STATUS CORRECTION, 2026-07-31 (`build-manager`). Six of the nine rows below
+> were ALREADY IMPLEMENTED and this table did not say so.** Two workers were
+> dispatched against it and both spent a full job discovering their items were
+> done — `w3-resolution` by reading the code, `w2-engine` by tracing all three
+> of its rows to commit `147eb68` with `git log -S"TYPE_MAX"` and
+> `git log -S"comboVia"`. Neither fabricated a before/after for work it had not
+> done, which is the reporting contract earning its keep, but the cost of the
+> stale table was two agents.
+>
+> **What was actually missing was the evidence, not the code.** None of it had
+> ever been run against a real browser. Chromium is installed now, so the
+> `Recovers` column below is measured rather than estimated — and two of the
+> three estimates were wrong.
+
+| Fix                                                                                            | Owner | Status | Recovers (measured where marked ✓)                                                                                                                    |
+| ---------------------------------------------------------------------------------------------- | ----- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `readiness()` stops counting consent defers — re-enables the fast path that has never fired    | w3    | DONE   | The whole step-C model block                                                                                                                          |
+| Probe only combos the answer bank couldn't resolve (run resolution _before_ the probe)         | w3+w2 | OPEN   | ~5s of the 6.8s scan sleep                                                                                                                            |
+| Cache which combo strategy worked — `setCombo` returns `via` and the caller **throws it away** | w2    | DONE   | ✓ **~1500ms per combo** (cold ~3.28s, warm ~1.77s, n=4). 1.5s confirmed, 2.5s did **not** reproduce                                                   |
+| Cap `keyboard.type` on richtext; use `fill()` where the element allows                         | w2    | DONE   | ✓ **800ms vs 94,818ms** on a 3000-char cover letter, n=1. "Up to 45s" **understated it ~2×** — 15ms delay plus a per-key CDP round trip is ~31ms/char |
+| Replace the flat 1s post-upload sleep with a condition on the observable remount               | w2    | DONE   | ✓ 772ms at a 120ms remount, 1292ms at Ashby's 700ms, n=1 each. It is a 1000ms **ceiling**, not a 1000ms cost                                          |
+| Import `answer-bank` instead of `spawnSync`-ing it twice                                       | w3    | DONE   | `grep -rn "spawnSync\|child_process" scripts/apply/` → zero hits                                                                                      |
+| Scan returns a summary; the full inventory goes straight to disk via `filename`                | w2    | OPEN   | ~3.5k tokens per page                                                                                                                                 |
+| Fix `cache=H/T` so a miss is distinguishable from a no-op                                      | w3    | DONE   | `applyCache()` already returns `hits`/`probed`/`miss` as three counters                                                                               |
+| Wire the `valueAliases` that all four adapters define and nothing reads                        | w3    | DONE   | Copied onto both plan return paths; the verify-side consumer is `w2`'s                                                                                |
+
+**Measurement harness**, so the numbers above are falsifiable:
+`AJ_MEASURE=1 node --test --test-name-pattern="MEASURED" tests/apply/fill-page.test.mjs`
+— real Chromium, local `setContent` pages, A/B in one process. **The "before"
+arm is a reconstruction of the old call, not a git checkout**, because the fixes
+are already in `HEAD` and there is no earlier tree to run. Two of the three are
+n=1 and a single sample is not a trend. None of it can enter
+`docs/measurements.md` yet: `bench-apply.mjs --browser` still prints _"schema
+reserved, not yet wired"_ (`qa-breaker`).
+
+**Still genuinely open in this phase**, and both are real: the two `OPEN` rows
+above, plus **R1 (state machine)** and **R3 (typed intents)**, which are the
+structural half and were never started. The targets at the top of this section
+have not been re-measured against the finished rows.
 
 ---
 

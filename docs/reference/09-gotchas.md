@@ -46,6 +46,18 @@ node --test "tests/security/**/*.test.mjs"
 `.github/workflows/test-gate.mjs`, which expands directories itself, so they are
 not affected — this bites hand-written `node --test` invocations.
 
+### A parse is not a run — `node --check` passes on a scope error
+
+`node --check <file>` only proves the file **parses**. It does not resolve
+identifiers, so a deleted `const` whose remaining use was left behind sails
+through it and then throws at module load, on every single invocation.
+
+That happened to `scripts/profile/save-answer.mjs`: the file "checked fine" while
+being dead on arrival — and `save-answer.mjs` is the only way anything enters the
+fact base (hard rule 2), so the failure mode was "the user cannot record an
+answer at all". Run the thing, or run its test file. A green `--check` is not
+evidence the module loads.
+
 ### The Playwright MCP browser profile holds real session cookies
 
 `--user-data-dir .playwright-mcp/profile` in `.mcp.json` keeps ATS logins alive
@@ -303,6 +315,29 @@ already looking at, at zero extra model turns. A **required** `confirm-widget`
 defer is not rescued — the form insists on an answer and nobody has reviewed
 one, so it blocks like any other unresolved required field. `submitReadiness()`
 is blocked by both kinds, as it is by every defer.
+
+### A consent box defers on its SHAPE when the topic list misses it
+
+`isConsent(label)` (`fill-plan.mjs:166`) is a **topic** match — a list of words
+like "agree", "certify", "privacy policy". A topic list is a wording race the
+board always wins: the 26th rephrasing of the same agreement is free to write and
+costs this repo a code change every time.
+
+So `looksLikeAgreementProse(field, label)` (`fill-plan.mjs:245`) is a second door
+into the same protected branch, and it matches on **shape**, not topic: a
+`checkbox` with exactly one option whose label is at least
+`MIN_AGREEMENT_WORDS` (8) words and ends in `.` or `!`. That is what agreement
+prose looks like regardless of language or phrasing.
+
+Two things to keep straight:
+
+- The two are OR'd at the call site (`fill-plan.mjs:929`), and entry to that
+  branch is only entry — the vouch check, the exact-text allowlist and
+  `!isHardConsent` all still apply below it. **Neither function auto-ticks
+  anything.** Nothing auto-ticks a consent box on any path that runs today.
+- False positives here are cheap — one more defer, which the user is looking at
+  anyway. A false negative is a consent box the agent might have treated as an
+  ordinary field. The asymmetry is why the shape gate is deliberately loose.
 
 ---
 

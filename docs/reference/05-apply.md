@@ -8,7 +8,11 @@ is in the loop exactly twice per application — once to write the approval mess
 once to hand the form over for review. Nothing on this path clicks submit; the
 unattended submit hard rule 6 permits belongs to a Phase 3 runner behind a
 mechanical trust gate, and that runner is not written — `scripts/auto/` holds
-`guard.mjs` and `audit.mjs`, which are checks, not a thing that can submit.
+`guard.mjs`, `audit.mjs` and `preflight.mjs`, which are checks and a run record,
+not a thing that can submit. None of the three opens a browser or contains a
+click. (Corrected `doc-scribe` 2026-07-31: this line named only the first two,
+which was true when it was written and stopped being true when `preflight.mjs`
+landed. A doc asserting what a directory does **not** contain decays.)
 
 > **Partially rewritten during Phase 1 of `docs/autonomy-plan.md`
 > (2026-07-31).** `.claude/skills/apply-job/fill-page.js` **no longer exists**;
@@ -714,6 +718,23 @@ bootstrap read its own engine back out of an untrusted page.
    before, and rendered error text is the only reliable signal that the app itself
    considers a field unset.
 6. **report `next`** and never click it.
+
+The verify pass carries three keys past `mismatch` / `errors` / `requiredEmpty`,
+and a caller that reads only the first three loses real information (added by
+`w2-engine` 2026-07-31; documented here `doc-scribe` the same day after reading
+`fill-engine.mjs`):
+
+- **`verify.landed`** — the keys whose value is genuinely on the page. Read in
+  one `page.evaluate`, so it runs in a single turn of the page's event loop and
+  cannot be raced by a remount the way a locator handle can.
+- **`reconciled`** (top level) — items that threw on a detached element and whose
+  value `landed` then found on the page anyway. They are promoted into `ok`; this
+  list exists so the promotion is never invisible. A live run logged a field as
+  failed while its value had landed, and that is the case this closes.
+- **`revealed`** (top level, mirrored at `verify.revealed`, capped at 20) —
+  required, empty controls that were in no scan and no plan because the fill
+  **created** them ("if yes, explain"). **Nothing is filled into them**; they are
+  data for the caller to defer on.
 
 > **Defect:** `stampInput`'s fallback stamps `inputs[0]` regardless, despite the
 > comment claiming "the first input still awaiting a file" — so a cover letter can

@@ -170,16 +170,20 @@ not re-derive answers the planner already resolved.
 If PDFs are not rendered yet the attachment rows defer with `no rendered
 resume` — that is expected before approval; re-run this after rendering.
 
-### C. Decide what work is actually needed (0 calls)
+### C. Decide what work is actually needed (0 browser calls)
 
-**Skip this whole step when B printed `ready=true` and the documents it needs
-are already rendered.** There is nothing to decide; go to D.
-
-Otherwise, from the scan, settle three things:
+**Gate each decision on what it actually reads.** The three document decisions
+below are **scan-derived**: they depend on which fields the form has. `ready` is
+**defer-derived** — it answers only "does a model still have to think before the
+engine can run?". Gating a scan-derived decision on `ready` is the same
+class of mistake `readiness()` itself had while it counted consent defers as
+blocking (see D+E), and it costs the same way: a form with one required
+`confirm-widget` comes back `ready=false` and drags three decisions with it that
+the widget cannot possibly change.
 
 - **Cover letter?** Only if the form has a cover-letter field or accepts
   attachments beyond the resume, or the posting explicitly asks. Otherwise skip
-  it and say so.
+  it and say so. This is a property of the scan; `ready` does not enter it.
 - **PDFs?** Only if the scan has a `t: "file"` field. A form with no file input
   (some Workday and in-house forms) needs no render at all — that saves ~6s and
   a browser launch. If there is a rich-text/textarea resume box instead, the
@@ -187,9 +191,16 @@ Otherwise, from the scan, settle three things:
 - **Reuse?** `node scripts/documents/reuse-check.mjs <slug>` — if it returns
   `verdict=REUSE`, an existing tailored resume is close enough that re-tailoring
   is wasted work. Offer it in the approval message with the score; the user
-  decides. Never reuse silently.
+  decides. Never reuse silently. **Skip the call entirely when the scan has no
+  `t: "file"` field and no rich-text resume box** — there is nowhere to put a
+  resume, so no verdict can change what you do next.
 
-Then work the non-`OK` rows from B in one pass: pick options for
+When every bullet above resolves to "nothing to do", C costs **zero calls and
+zero turns**: it is a non-terminal reasoning step and folds into the next tool
+call. Only `reuse-check` costs anything, and only when it runs.
+
+Then work the non-`OK` rows from B in one pass — this half **is** defer-derived,
+so it runs whenever B printed a `defer` line: pick options for
 `NEEDS-CHOICE`/`MAYBE` from profile facts, and collect every remaining `UNKNOWN`
 into a numbered list for the approval message. Record every question into
 `job.json` `questions`.
@@ -269,8 +280,20 @@ B, so this message does not repeat unless a later page asks something new.
 
 ### D+E. Fill and verify (ONE call)
 
-Re-run `node scripts/apply/fill-plan.mjs <slug>` after rendering PDFs and saving any
-new answers. The `reason=` names what is still outstanding.
+Re-run `node scripts/apply/fill-plan.mjs <slug>` **only after rendering PDFs or
+saving new answers** — those are the two inputs a re-run can pick up. The
+`reason=` names what is still outstanding.
+
+**If you rendered nothing and saved nothing, do not re-run it.** The plan is a
+pure function of the scan, the fact base and the rendered files; with all three
+unchanged you get the same bytes and the same `reason=` back for a whole extra
+turn. In particular a `confirm-widget` defer can **never** be cleared by a
+re-run: the guard in `fill-plan.mjs` defers on the control being a checkbox or
+radio group, not on whether the bank has an answer (it defers even when the
+answer resolved `OK`), so re-running with a fuller fact base changes nothing.
+Confirmed by `innov-perf` on 2026-07-31 — `benchPlan` twice on one slug,
+byte-identical plan, same `ready=false`, same reason. Take a required
+`confirm-widget` to the approval message instead.
 
 **A consent checkbox on its own no longer makes `ready=false`** (changed
 2026-07-31, AUDIT **H10** closed). Until then, consent defers counted as blocking
@@ -316,9 +339,25 @@ returns only what is not right:
 
 ```json
 { "ok": 24, "failed": 0, "deferred": 12, "ms": 5100,
-  "failures": [], "verify": { "mismatch": [], "errors": [], "requiredEmpty": [] },
+  "failures": [],
+  "verify": { "mismatch": [], "errors": [], "requiredEmpty": [], "landed": [], "revealed": [] },
+  "revealed": [], "reconciled": [],
   "defer": [...], "next": { "btn": "b34", "label": "Submit application", "role": "submit" } }
 ```
+
+Three of those keys are the verify pass telling you something the fill itself
+could not know, and skipping them loses real information:
+
+- **`revealed`** — required controls that are on the page, empty, and were in no
+  scan and no plan, because the fill **created** them ("if yes, explain"). Treat
+  each as a new defer: nothing is filled into them. Repeated back at the top
+  level as `revealed` for convenience.
+- **`reconciled`** — items that threw on a detached element and whose value the
+  verify pass then found on the page anyway. They are already counted in `ok`;
+  the list exists so the promotion is never silent. Do not re-fill these.
+- **`verify.landed`** — the keys whose value is genuinely on the page. Its point
+  is the failure list, not the successes: it is what turns a stale-element throw
+  into a `reconciled` entry rather than a false failure.
 
 **Do not follow this with a verification scan** — the verify already ran inside
 that call, including a sweep of the page's own rendered error text (element
@@ -356,9 +395,17 @@ Update `context.json` statuses and confirm the log entry.
 
 ## Cost expectations
 
-Per page, on a recognised ATS: **2 browser calls** — one scan, one
-fill-and-verify — plus one click to advance. Everything between them is Bash.
+Per page, on a recognised ATS: **4 browser calls** — scan, write the scan to
+`scan-p<N>.json`, fill-and-verify, and the click to advance. **Page 1 is 5**,
+because it also pays the `browser_navigate`. Everything between them is Bash.
 Two human touchpoints per application, total.
+
+That number is counted, not guessed: `node scripts/dev/bench-apply.mjs --board
+greenhouse --json` reports `round_trips` with the steps it counted, and on
+2026-07-31 it returned **5** for greenhouse page 1
+(`navigate, scan, scan-to-disk, fill, advance`). The older "2 browser calls"
+line omitted `navigate` and the scan-to-disk write that step B requires before
+`fill-plan.mjs` can run.
 
 Baseline before this existed: ~30 browser calls and roughly 8 minutes for a
 single Greenhouse form. If you are making per-field calls, taking accessibility

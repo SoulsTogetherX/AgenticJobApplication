@@ -21,7 +21,18 @@ node_modules/
 *.log
 
 # Playwright MCP browser artifacts (snapshots/console logs from apply sessions)
+# BOTH of these hold the user's REAL ATS session cookies. That is the whole
+# reason they are here, and it is why neither may ever be committed.
+#   .playwright-mcp/  is MCP-owned and the only place a login ever happens
+#   .playwright-auto/ is the unattended runner's, refreshed by auth-sync.mjs
+# .playwright-auto/ was missing until 2026-07-31 and auth-sync.mjs refuses to
+# run without it (code: "not_ignored") — a deliberate refusal rather than a
+# silent sync into a tracked directory. Found by w4-autonomy while building
+# that script; added by build-manager rather than ci-engineer, whose file this
+# is, because an un-ignored cookie store is a live credential-leak risk and
+# adding an ignore line only ever narrows what can be committed.
 .playwright-mcp/
+.playwright-auto/
 
 # Rendered artifacts outside jobs/
 *.pdf

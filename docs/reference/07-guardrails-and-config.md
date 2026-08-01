@@ -232,6 +232,23 @@ path list.
 > `scripts/verify-claims.mjs`, so `npm run verify` did nothing at all) is
 > **closed**.
 
+### Who owns the guardrails — it is not uniform
+
+- `scripts/hooks/*` (`guard-files.mjs`, `guard-bash.mjs`, `prettify.mjs`) —
+  `ci-engineer`'s, and **agent-editable**. An agent may change how these guard.
+- `.claude/hooks/*` and `.claude/settings*.json` — **the user's alone**, and
+  sealed on the Edit/Write path _and_ the shell path since `e19e87e`.
+
+`settings.json` is inside that seal for a reason that is easy to miss: it does
+not merely sit next to the hooks, it **wires** them. Deleting one line there
+disables a guard without ever touching a protected file. The shell path was open
+until it was probed directly — `"probe" | Out-File .claude/hooks/__probe.txt`
+succeeded — which meant an agent could have rewritten the guard that was denying
+it.
+
+The accepted cost: `ci-engineer` can no longer wire a hook, add a permission or
+change a matcher. Those go to the user.
+
 ### `.claude/settings.json`
 
 The hook wiring above, plus a permissions allowlist (`npm test*`, `npm install*`,

@@ -178,6 +178,42 @@ The schema is **flat**: one `CREATE TABLE IF NOT EXISTS` block in
 idempotent build step you can always re-run. That works because every input is
 re-derivable — except `documents`, which is why that table is fenced off.
 
+## Four data-model facts that are easy to get wrong
+
+- **The schema is flat, not versioned.** Declared once in `scripts/lib/db.mjs`
+  with `CREATE TABLE IF NOT EXISTS`. There is no migration chain, and `migrate.mjs`
+  is an idempotent build step rather than a step in a sequence.
+- **`documents` has no on-disk source** (the state table above says the same
+  thing in a column). Job workspaces are hybrid: files while an application is
+  live, rows in `documents` once it closes. A listing of `jobs/` should therefore
+  show only live work — normally one to three folders.
+- **`profile/applications.yaml` is a generated export**, never authoritative once
+  the database exists. It is the recovery input, not the record. This is why hard
+  rule 2 is about **provenance, not the file**: an application is recorded because
+  the user said they submitted it, wherever the bytes live.
+- **There is no standing `jobs/leads.json`.** A second copy went stale the moment
+  a sweep ran. Leads are re-derivable by re-sweeping; applications are not, which
+  is why only applications keep a durable export.
+
+## Where the source lives, and what `.env` is
+
+- `profile/` — the fact base. **Gitignored, user-owned.** Tests use
+  `tests/fixtures/`, never the real profile.
+- `jobs/<slug>/` — per-job workspace: `job.json`, `context.json` (**shared** by
+  both tailoring skills, so they stay consistent), `resume.md`,
+  `cover-letter.md`, PDFs.
+- `jobs/leads.db` — the SQLite store of record (gitignored): `leads`,
+  `lead_keywords`, `applications`, `documents`, `screens`, `board_stats`.
+- `scripts/` — deterministic helpers, no LLM calls, grouped by domain: `lib/`
+  (`db.mjs`, `keywords.mjs` — the one lexicon, `untrusted.mjs` — hard rule 0),
+  `leads/`, `applications/`, `documents/`, `apply/` (incl. the Playwright-side
+  browser engines), `auto/`, `profile/`, `maintenance/`, `dev/`, `hooks/`.
+  `status.mjs` stays at the root as the one cross-cutting digest.
+- `tests/` — mirrors `scripts/` one-for-one, with shared `tests/fixtures/`.
+  `tests/security/` is the Phase 1 gate.
+- `.env` — secrets (gitignored; Adzuna keys). **Never print its contents into
+  chat, docs, or commits.** `.env.example` is the committed template.
+
 ## Reading order for the rest of this reference
 
 | doc                                                        | covers                                              |

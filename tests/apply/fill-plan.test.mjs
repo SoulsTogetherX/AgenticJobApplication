@@ -1918,7 +1918,27 @@ test("labelHazard: an instruction addressed to the agent is flagged, hidden char
   assert.match(labelHazard(f6.l), /conceal_from_user/)
 })
 
-test("A6: filling stays correct — the fact base answers the real question, nothing is written to answers.yaml on this path, and hazardous labels are marked, not blocked", () => {
+// POLICY SUPERSEDED 2026-07-31, and this test rewritten rather than relaxed.
+// A6 used to assert that f2/f3 — "Are you legally authorized to work in the
+// US?", answered truthfully from the bank — produced an auto-`fill` item,
+// under a comment reading "truthfully answered, no flag". Truthfulness was
+// never the question the classifier asks. w1-security's answerClass()
+// (scripts/lib/untrusted.mjs) splits a bank answer into `datum` (a fact about
+// the user) and `assertion` (something the user asserts or agrees to — work
+// authorisation, relocation, background check, arbitration), and
+// w3-resolution wired it into resolveFields()/buildPlan(): an assertion never
+// auto-acts, however truthful and however confidently matched, because the
+// question is whether the USER IS PRESENT when a claim about them is
+// submitted. So the two work-authorisation fields below now assert a
+// `confirm` DEFER — and the assertions around them are strengthened, not
+// dropped, because A6's job is still to prove filling stays CORRECT:
+//   * the deferred value must be the same truthful string that would have
+//     been filled (a defer that loses the answer is a different defect),
+//   * every `datum` field on the page must still auto-fill,
+//   * and no defer here may be caused by a labelFlag — the original DoS
+//     check, which `assert.deepEqual(plan.defer, [])` used to carry and which
+//     now has to be stated directly instead of riding on an empty array.
+test("A6: filling stays correct — data fills, an ASSERTION defers with its value intact, and hazardous labels are marked, not blocked", () => {
   const resolved = resolveFields(HOSTILE_SCAN.fields, {
     profile: HOSTILE_PROFILE,
     answers: HOSTILE_ANSWERS,
@@ -1935,13 +1955,33 @@ test("A6: filling stays correct — the fact base answers the real question, not
     url: HOSTILE_SCAN.url,
   })
   const byKey = Object.fromEntries(plan.items.map((i) => [i.k, i]))
+  const deferByKey = Object.fromEntries(plan.defer.map((d) => [d.k, d]))
 
-  // f2/f3: a real work-authorization question, truthfully answered, no flag.
-  assert.equal(byKey.f2.how, "fill")
-  assert.equal(byKey.f2.value, "Yes, US citizen, no sponsorship needed.")
-  assert.equal(byKey.f2.labelFlag, undefined)
-  assert.equal(byKey.f3.how, "fill")
-  assert.equal(byKey.f3.labelFlag, undefined)
+  // f2/f3: a real work-authorization question, truthfully answered — and
+  // therefore an ASSERTION, which never auto-acts. Assert the whole record,
+  // not just that it is absent from items: the value has to survive the
+  // defer (the approval message shows the user exactly what the fact base
+  // would have said), the reason has to be the classifier's `confirm` and not
+  // some other defer that happens to have the same effect, and the class
+  // description has to name work authorisation so a wrong classification is
+  // visible here rather than silently correct-by-accident.
+  assert.equal(byKey.f2, undefined, "an assertion must not be an auto-fill")
+  assert.equal(byKey.f3, undefined, "an assertion must not be an auto-fill")
+  assert.equal(deferByKey.f2.why, "confirm")
+  assert.equal(deferByKey.f2.value, "Yes, US citizen, no sponsorship needed.")
+  assert.match(deferByKey.f2.classInfo, /^assertion\b/)
+  assert.match(deferByKey.f2.classInfo, /work_authorization/)
+  assert.equal(deferByKey.f2.labelFlag, undefined)
+  assert.equal(deferByKey.f3.why, "confirm")
+  assert.equal(deferByKey.f3.value, "Yes, US citizen, no sponsorship needed.")
+  assert.match(deferByKey.f3.classInfo, /^assertion\b/)
+  assert.equal(deferByKey.f3.labelFlag, undefined)
+
+  // f1: the plainest `datum` on the page (a name, straight from the profile).
+  // It must still FILL. If the gate had collapsed into "defer anything the
+  // fact base answered", this is the assertion that catches it.
+  assert.equal(byKey.f1.how, "fill")
+  assert.equal(byKey.f1.value, "Jane Test")
 
   // f5: a real "how did you hear about this job" question, truthfully
   // answered from the bank, but its label ALSO carried a hidden instruction —
@@ -1959,8 +1999,294 @@ test("A6: filling stays correct — the fact base answers the real question, not
   assert.equal(byKey.f6.how, "skip")
   assert.match(byKey.f6.labelFlag, /conceal_from_user/)
 
-  // The DoS check: NOTHING here moved a field from items into defer. A
-  // hostile board gains nothing by decorating a real question with an
-  // imperative — the fast path (readiness) is unaffected by labelFlag.
-  assert.deepEqual(plan.defer, [])
+  // The DoS check, restated now that the defer list is legitimately non-empty:
+  // a hostile board still gains NOTHING by decorating a question with an
+  // imperative. Every defer on this page is a `confirm` (the classifier's
+  // decision, made on what the USER recorded), and not one of them carries a
+  // labelFlag — so no third-party label text moved a field out of items.
+  assert.deepEqual(
+    plan.defer.map((d) => d.k).sort(),
+    ["f2", "f3"],
+    "only the two assertion fields may defer on this page",
+  )
+  for (const d of plan.defer) {
+    assert.equal(d.why, "confirm", `defer ${d.k} must be classifier-driven`)
+    assert.equal(
+      d.labelFlag,
+      undefined,
+      `defer ${d.k} must not be caused by hostile label text`,
+    )
+  }
+})
+
+// ---------------------------------------------------------------------------
+// THE BLAST-RADIUS LEDGER FOR THE ASSERTION GATE (qa-breaker, 2026-07-31).
+//
+// The load-bearing SAFETY claim of the datum/assertion split is easy to state
+// and easy to check: an assertion never auto-acts. The load-bearing COST claim
+// is neither, and it is the one that decays silently: the gate must not have
+// collapsed into "defer anything the fact base answered", or "defer every
+// checkbox and radio". If it had, `ready=true` becomes unreachable on every
+// real form — and docs/autonomy-plan.md's Phase 2 table names re-enabling that
+// fast path the highest-leverage latency item in the whole plan. Losing it
+// would not show up as a red test anywhere; it would show up as the pipeline
+// quietly never taking the fast path again.
+//
+// Until now that claim rested on ONE measurement taken by hand. These two
+// tests pin it. They are deliberately written as a ledger — the exact set that
+// defers, the exact rate, and the floor on the denominator so the rate cannot
+// be made to look good by resolving fewer fields.
+//
+// HOW THE FIXTURE SET IS DERIVED, and why it is not a hardcoded list: a scan
+// fixture counts as HONEST when tests/fixtures/boards/pages/ contains the page
+// it was generated from. The hostile variants live under
+// tests/fixtures/hostile/forms/, so they are excluded structurally rather than
+// by name — and a newly added honest replica joins this ledger automatically
+// and turns it red until the numbers below are re-checked, which is the
+// correct outcome. That also makes "a fixture quietly stopped being loaded"
+// impossible to do silently: the denominator floor below fails first.
+// ---------------------------------------------------------------------------
+
+const BOARDS_DIR = path.join(ROOT, "tests", "fixtures", "boards")
+
+// Reproduce with:
+//   node --test tests/apply/fill-plan.test.mjs
+function honestScanFixtures() {
+  const scansDir = path.join(BOARDS_DIR, "scans")
+  const pagesDir = path.join(BOARDS_DIR, "pages")
+  return fs
+    .readdirSync(scansDir)
+    .filter((f) => f.endsWith(".scan.json"))
+    .map((f) => ({ name: f.replace(/\.scan\.json$/, ""), file: f }))
+    .filter((x) => fs.existsSync(path.join(pagesDir, `${x.name}.html`)))
+    .map((x) => ({
+      ...x,
+      scan: JSON.parse(fs.readFileSync(path.join(scansDir, x.file), "utf8")),
+    }))
+}
+
+test("the assertion gate did not collapse: over the honest board fixtures exactly ONE resolved field defers, and it is work authorisation", () => {
+  const fixtures = honestScanFixtures()
+  // The denominator floor, asserted FIRST so a shrunken fixture set cannot
+  // make the rate below look good by accident.
+  assert.ok(
+    fixtures.length >= 2,
+    `expected at least the two greenhouse steps as honest fixtures, got ${fixtures.length}: ${fixtures.map((f) => f.name).join(", ")}`,
+  )
+
+  // "Resolved" means the fact base produced something to act on — a non-empty
+  // value. A field the bank cannot answer is not evidence either way about
+  // the classifier, so counting it would dilute the rate into meaninglessness.
+  const resolvedRows = []
+  for (const fx of fixtures) {
+    for (const r of resolveFields(fx.scan.fields, {
+      profile: HOSTILE_PROFILE,
+      answers: HOSTILE_ANSWERS,
+    })) {
+      if (r.value) resolvedRows.push({ fixture: fx.name, ...r })
+    }
+  }
+  const confirmed = resolvedRows.filter((r) => r.status === "CONFIRM")
+
+  // MEASURED 2026-07-31 on tests/fixtures/{profile,answers-bank}.yaml against
+  // greenhouse-step1 + greenhouse-step2: 8 resolved, 1 confirm = 12.5%.
+  assert.ok(
+    resolvedRows.length >= 8,
+    `the fact base must still resolve at least 8 fields across the honest boards; got ${resolvedRows.length}. A drop here makes the defer rate below unfalsifiable.`,
+  )
+
+  // The exact set, not just the count — a NEW field starting to defer and an
+  // old one stopping would cancel out in a count and both matter.
+  assert.deepEqual(
+    confirmed.map((r) => `${r.fixture}:${r.k}`),
+    ["greenhouse-step1:g1"],
+    `only the work-authorisation question may defer as an assertion; got ${JSON.stringify(confirmed.map((r) => ({ f: r.fixture, k: r.k, l: r.label })))}`,
+  )
+  assert.match(confirmed[0].label, /authorized to work/i)
+  assert.match(confirmed[0].classDescription, /^assertion\b/)
+
+  // The rate, with headroom. 12.5% measured; anything at or above a quarter of
+  // everything the fact base can answer means the classifier has started
+  // treating ordinary data as assertions, and the fast path is dying.
+  const rate = confirmed.length / resolvedRows.length
+  assert.ok(
+    rate < 0.25,
+    `assertion-defer rate rose to ${(rate * 100).toFixed(1)}% (${confirmed.length}/${resolvedRows.length}); measured baseline is 12.5% (1/8)`,
+  )
+
+  // STATED LIMIT of the rate above, found by canarying this test rather than
+  // by reading it: only ONE of those eight resolved fields comes from the
+  // answer bank at all (greenhouse's authorisation radio). Every other field
+  // these honest replicas resolve comes from the profile or a structural
+  // rule, which the classifier never touches — so a collapse confined to bank
+  // answers moves the rate from 1/8 to 1/8 and this ledger stays green.
+  // (Confirmed: neutering `if (info.class === "datum") continue` in
+  // resolveFields fails only the pure-datum readiness test below.)
+  //
+  // So the bank itself is measured too, at the same boundary, one text field
+  // per stored answer. This denominator IS sensitive to a collapse, and it
+  // moves whenever the fixture bank grows — which is the point: a new stored
+  // answer that starts deferring shows up here on the next run.
+  const bankFields = [
+    "Are you authorized to work in the US?",
+    "Are you legally authorized to work in the United States?",
+    "Will you now or in the future require sponsorship for employment visa status?",
+    "What is your highest level of education?",
+    "How did you hear about this job?",
+  ].map((l, i) => ({ k: `b${i}`, sel: `#b${i}`, n: `q${i}`, t: "text", l }))
+  const bankRows = resolveFields(bankFields, {
+    profile: HOSTILE_PROFILE,
+    answers: HOSTILE_ANSWERS,
+  })
+  assert.equal(
+    bankRows.length,
+    5,
+    "tests/fixtures/answers-bank.yaml grew or shrank — re-check the split below",
+  )
+  assert.ok(
+    bankRows.every((r) => /^a-\d+@exact/.test(r.source ?? "")),
+    `every question here is the exact text of a bank entry and must match it; got ${JSON.stringify(bankRows.map((r) => [r.k, r.source]))}`,
+  )
+  // MEASURED: 3 assertions (all three work-authorisation/sponsorship
+  // wordings), 2 data (education level, referral source). Education and
+  // referral source are the canaries for over-classification: they are facts
+  // ABOUT the user, they are not things the user asserts or agrees to, and
+  // the day either of them defers the fast path is materially worse for no
+  // safety gain.
+  assert.deepEqual(
+    bankRows.map((r) => `${r.k}:${r.status}`),
+    ["b0:CONFIRM", "b1:CONFIRM", "b2:CONFIRM", "b3:OK", "b4:OK"],
+    "the datum/assertion split over the whole fixture bank changed",
+  )
+
+  // The specific collapse this exists to catch, asserted directly rather than
+  // inferred from the rate: the gate keys on the ANSWER's class, never on the
+  // widget. greenhouse-step2's EEO question is a RADIO GROUP resolved from a
+  // structural rule, and greenhouse-step1's authorisation question is ALSO a
+  // radio group — same widget, opposite outcomes. If a future "fix" ever
+  // branches on f.t, these two assertions disagree and the test goes red.
+  const step2 = fixtures.find((f) => f.name === "greenhouse-step2")
+  assert.ok(step2, "greenhouse-step2 fixture must still exist")
+  const step2Rows = resolveFields(step2.scan.fields, {
+    profile: HOSTILE_PROFILE,
+    answers: HOSTILE_ANSWERS,
+  })
+  const eeo = step2Rows.find((r) => r.k === "g1")
+  assert.equal(eeo.t, "radio")
+  assert.equal(eeo.status, "OK", "a datum-class radio group must still resolve")
+  const step1 = fixtures.find((f) => f.name === "greenhouse-step1")
+  const step1Rows = resolveFields(step1.scan.fields, {
+    profile: HOSTILE_PROFILE,
+    answers: HOSTILE_ANSWERS,
+  })
+  const auth = step1Rows.find((r) => r.k === "g1")
+  assert.equal(auth.t, "radio")
+  assert.equal(auth.status, "CONFIRM")
+
+  // The CONFIRM status is only half the gate; buildPlan's own CONFIRM branch
+  // is the half that actually stops the click. Assert it here as well as in
+  // A6, so disabling that branch alone fails BOTH tests rather than one.
+  const step1Plan = buildPlan({
+    scan: step1.scan,
+    resolved: step1Rows,
+    adapter: {
+      id: "generic",
+      comboStrategies: [],
+      fileFields: [],
+      fileOrder: [],
+    },
+    url: step1.scan.url,
+  })
+  assert.equal(
+    step1Plan.items.some((i) => i.k === "f9" || i.k === "g1"),
+    false,
+    "the work-authorisation radio must never reach items as a check/fill",
+  )
+  const authDefer = step1Plan.defer.find((d) => d.k === "g1")
+  assert.equal(authDefer.why, "confirm")
+  assert.equal(authDefer.value, "Yes")
+  assert.equal(authDefer.pick, "f9", "the pick must survive the defer")
+  assert.equal(
+    readiness(step1Plan).ready,
+    false,
+    "a confirm defer must block ready, unlike a consent defer",
+  )
+
+  // And the EEO radio must reach the plan as a real CHECK, not a defer —
+  // resolving OK is worth nothing if buildPlan defers it anyway.
+  const step2Plan = buildPlan({
+    scan: step2.scan,
+    resolved: step2Rows,
+    adapter: {
+      id: "generic",
+      comboStrategies: [],
+      fileFields: [],
+      fileOrder: [],
+    },
+    url: step2.scan.url,
+  })
+  assert.ok(
+    step2Plan.items.some((i) => i.how === "check"),
+    "the EEO radio group must still auto-check; if it defers, the gate has collapsed onto the widget",
+  )
+  // The consent path must also survive intact and stay DISTINCT — the certify
+  // checkbox is a `consent` defer, not swallowed into `confirm`. They are
+  // treated differently by readiness(), so conflating them is a live defect.
+  const certify = step2Plan.defer.find((d) => d.why === "consent")
+  assert.ok(certify, "the certify checkbox must still defer as consent")
+  assert.match(certify.label, /I certify/i)
+})
+
+test("ready=true is still reachable: a form of pure `datum` fields needs no human, radio group included", () => {
+  // Every field here is a datum — three profile contact facts and one BANK
+  // answer (a-004, "What is your highest level of education?") rendered as a
+  // radio group. The bank answer is the point: if the gate had been written as
+  // "anything that came out of answers.yaml is suspect", or as "any radio
+  // group is suspect", this form would defer and ready would be false.
+  const scan = scanOf([
+    { k: "f1", sel: "#n", n: "name", t: "text", l: "Full name", req: true },
+    { k: "f2", sel: "#e", n: "email", t: "text", l: "Email", req: true },
+    { k: "f3", sel: "#p", n: "phone", t: "text", l: "Phone", req: true },
+    {
+      k: "g1",
+      t: "radio",
+      l: "What is your highest level of education?",
+      o: [
+        { k: "f4", sel: "#e1", n: "edu", l: "Bachelor's degree" },
+        { k: "f5", sel: "#e2", n: "edu", l: "Master's degree" },
+      ],
+    },
+  ])
+  const resolved = resolveFields(scan.fields, {
+    profile: HOSTILE_PROFILE,
+    answers: HOSTILE_ANSWERS,
+  })
+  assert.ok(
+    resolved.every((r) => r.status === "OK"),
+    `every field here is a datum and must resolve OK; got ${JSON.stringify(resolved.map((r) => [r.k, r.status]))}`,
+  )
+  // The bank row specifically — proves the classifier RAN and said `datum`,
+  // rather than the row having skipped classification for some other reason.
+  const edu = resolved.find((r) => r.k === "g1")
+  assert.match(edu.source, /^a-\d+@/, "must be a bank-resolved answer")
+  assert.equal(edu.classDescription, undefined)
+
+  const plan = buildPlan({
+    scan,
+    resolved,
+    adapter: {
+      id: "generic",
+      comboStrategies: [],
+      fileFields: [],
+      fileOrder: [],
+    },
+    url: scan.url,
+  })
+  assert.deepEqual(plan.defer, [], "a pure-datum form must defer nothing")
+  assert.equal(plan.items.filter((i) => i.how !== "skip").length, 4)
+  assert.deepEqual(readiness(plan), { ready: true, reason: null })
+  // The stricter twin must agree here too: nothing at all is left undecided,
+  // so the plan-side half of the Phase 3 pre-submit gate is satisfied. (Hard
+  // rule 6 is enforced independently of what either function returns.)
+  assert.equal(submitReadiness(plan).ready, true)
 })

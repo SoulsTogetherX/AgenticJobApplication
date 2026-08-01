@@ -31,6 +31,13 @@ import {
   readiness,
 } from "../../scripts/apply/fill-plan.mjs"
 import { normalizeQuestion } from "../../scripts/apply/answer-bank.mjs"
+import { questionsFromPlans } from "../../scripts/apply/pending-questions.mjs"
+import fillPage from "../../scripts/apply/fill-engine.mjs"
+import {
+  recordingPage,
+  selectorsWritingTo,
+  actionsAgainst,
+} from "./engine-double.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")
@@ -935,14 +942,31 @@ test("THE REAL CONTROL, at the file: the escalated page's own label cannot get a
 // isHardConsent read, and all looksLikeAgreementProse reads apart from its
 // `t === "checkbox"` test.
 //
-//   B  escalated-tickbox-yes    one tickbox, its OWN label "Yes"   -> TICKED
-//   C  escalated-radio-yesno    Yes/No radio pair (commonest)      -> TICKED
+//   B  escalated-tickbox-yes    one tickbox, its OWN label "Yes"   -> was TICKED
+//   C  escalated-radio-yesno    Yes/No radio pair (commonest)      -> was TICKED
 //   E  escalated-aria-checkbox  <div role="checkbox">              -> INVISIBLE
 //
-// B and C are LANDS tests, green on purpose, for the reason section 4b states
-// at length: this directory is the `npm run test:security` gate and a
-// permanently-red line stops being read. They go red if the behaviour moves in
-// EITHER direction.
+// CLOSED FOR B AND C, 2026-07-31. w1-security added answerClass() to
+// scripts/lib/untrusted.mjs — an answer the user recorded is a `datum` (a fact:
+// email, phone) or an `assertion` (work authorisation, relocation, background
+// check, arbitration) — and w3-resolution wired it into resolveFields() in
+// scripts/apply/fill-plan.mjs, which now stamps `status: "CONFIRM"` on any OK
+// row resolved from an assertion-class bank entry, and into buildPlan(), which
+// turns that into a `why: "confirm"` defer instead of an item.
+//
+// WHY THAT IS A FIX AND NOT THE 26TH PATTERN. It keys on what the USER
+// recorded, in a file the board cannot write, and it reads `f.t`/`r.t`
+// NOWHERE — which is the whole point of the B/C pair. Shape C exists precisely
+// because a fix that branched on the widget would close B (a checkbox) and
+// leave C (a radio pair) open, and the two tests below now assert that the
+// identical treatment arrives at both.
+//
+// The three tests that pinned the landed attack were REWRITTEN to pin the fix,
+// not flipped: each one now asserts at the fill ENGINE — no browser action is
+// issued against the arbitration waiver — because "buildPlan emitted no check
+// item" is one consumer short of the thing that matters. Canaried on
+// 2026-07-31 by forcing answerClass() to return "datum" and, separately, by
+// deleting buildPlan's CONFIRM branch; both make them red. See the report.
 //
 // WHICH CONTROL EACH ONE EXERCISES is stated per test, because that is exactly
 // the mistake this section exists to correct: 4b's fixture was built to defeat
@@ -961,15 +985,107 @@ const optionDestination = (s, k) => {
 
 const AUTH_Q = "Are you legally authorized to work in the United States?"
 
-test("LANDS (shape B): a tickbox whose own label is 'Yes' is auto-ticked, and the tick POSTs into an arbitration waiver", () => {
-  // EXERCISES: the ordinary checkbox branch of buildPlan — resolveFields finds
-  // an exact bank answer, finds a matching option, and buildPlan emits
-  // `how: "check"` on it.
+// THE CONSUMER, RUN. Builds the plan for a fixture and then hands it to the
+// REAL fill engine against a recording page double, so the question a test asks
+// is "what did the pipeline do to the browser?" rather than "what did a
+// predicate return?".
+//
+// Every field of the returned record is evidence, and the tests below assert
+// over the whole record in ONE deepEqual rather than in a sequence of checks.
+// That is the rule this file earned twice in one day: an auxiliary assertion
+// placed ahead of a finding assertion pre-empts it, and the finding then
+// disappears behind a message about something else. It also removes the way
+// this test could pass vacuously — `engineFilled` and `engineFailures` are in
+// the same expectation as `waiverActions`, so an engine that bailed at the URL
+// guard (and therefore touched nothing at all) fails instead of looking safe.
+async function driveEngine(name) {
+  const s = scan(name)
+  const plan = planFrom(s)
+  const page = recordingPage({ url: plan.urlGuard })
+  const report = await fillPage(page, plan)
+  const waiver = selectorsWritingTo(s, "agree_arbitration")
+  return {
+    scan: s,
+    plan,
+    page,
+    report,
+    waiverSelectors: [...waiver],
+    // What the engine did to any control the server writes into
+    // `agree_arbitration`. THE finding assertion, in every test below.
+    waiverActions: actionsAgainst(page, waiver),
+    // Proof the engine actually ran: the honest "Full name" datum is still
+    // filled. A fix that deferred everything would be a regression, not a fix.
+    engineFilled: page.actions
+      .filter((a) => a.op === "fill")
+      .map((a) => `${a.sel} = ${a.value}`),
+    engineFailures: report.failures,
+  }
+}
+
+test("FIX (shape B): a tickbox whose own label is 'Yes' is no longer ticked — the engine issues no action against the arbitration waiver", async () => {
+  // EXERCISES: resolveFields()'s CONFIRM stamp (the answer for this question is
+  // an assertion-class bank entry, a-002) and buildPlan()'s CONFIRM branch,
+  // asserted through fill-engine.mjs — the last consumer before a real browser.
   // DOES NOT EXERCISE: the consent branch, the vouch, or the consent
-  // allowlist. None of them run on this field, and the assertion below pins
-  // that, so this test can never be misread as evidence about them.
-  const s = scan("escalated-tickbox-yes")
-  const g = s.fields.find((f) => f.t === "checkbox")
+  // allowlist. None of them run on this field. That is asserted AFTER the
+  // finding, so this test can never be misread as evidence about them and the
+  // characterisation can never pre-empt the security assertion.
+  const d = await driveEngine("escalated-tickbox-yes")
+
+  assert.deepEqual(
+    {
+      waiverActions: d.waiverActions,
+      waiverSelectors: d.waiverSelectors,
+      engineFilled: d.engineFilled,
+      engineFailures: d.engineFailures,
+    },
+    {
+      // Nothing. Not a check, not a click, not even a scroll.
+      waiverActions: [],
+      // The trap is armed: the fixture still carries a control the server
+      // writes into an arbitration waiver. An empty list here would make the
+      // line above meaningless.
+      waiverSelectors: ["#tb-auth-yes"],
+      // And the honest datum still lands, so this is a gate and not an outage.
+      engineFilled: ["#tb-name = Jane Test"],
+      engineFailures: [],
+    },
+    "a browser action reached the arbitration waiver, or the engine never ran",
+  )
+
+  // NOT TICKED IS NOT THE SAME AS SHOWN TO THE USER — section 4b's last test
+  // records what that mistake looks like. The question must still reach the
+  // approval message, carrying the value it WOULD have used and why it did not.
+  assert.deepEqual(
+    d.plan.defer.map((x) => ({
+      k: x.k,
+      why: x.why,
+      value: x.value,
+      pickSel: x.pickSel ?? null,
+      classInfo: x.classInfo ?? null,
+    })),
+    [
+      {
+        k: "g1",
+        why: "confirm",
+        value: "Yes",
+        pickSel: "#tb-auth-yes",
+        classInfo: "assertion/inferred (work_authorization)",
+      },
+    ],
+    "the deferred assertion must carry the value and the class to the user",
+  )
+  // And the plan must not ALSO contain an item for it — a defer beside a live
+  // item would be the worst of both.
+  assert.deepEqual(
+    d.plan.items.filter((i) => i.k === "g1"),
+    [],
+  )
+
+  // Characterisation last: which control did NOT do this. Nothing
+  // consent-aware ran, so nobody can read the green above as evidence that
+  // isConsent/isHardConsent/looksLikeAgreementProse were what stopped it.
+  const g = d.scan.fields.find((f) => f.t === "checkbox")
   assert.deepEqual(
     {
       consent: isConsent(g.l),
@@ -977,51 +1093,72 @@ test("LANDS (shape B): a tickbox whose own label is 'Yes' is auto-ticked, and th
       prose: looksLikeAgreementProse(g, g.l),
     },
     { consent: false, hard: false, prose: false },
-    "this field now enters the consent branch — the finding below is about a " +
-      "DIFFERENT code path and must be re-derived",
+    "this field now enters the consent branch too — re-derive WHICH control " +
+      "is holding before trusting the title of this test",
   )
-
-  const plan = planFrom(s)
-  const ticks = plan.items
-    .filter((i) => i.how === "check")
-    .map((i) => ({
-      sel: i.sel,
-      value: i.value,
-      label: i.label,
-      why: i.why ?? null,
-      serverColumn: optionDestination(s, i.k),
-    }))
-  assert.deepEqual(ticks, [
-    {
-      sel: "#tb-auth-yes",
-      value: "true",
-      label: `${AUTH_Q} → Yes`,
-      // Not "consent:allowlisted": nothing consent-aware was consulted.
-      why: null,
-      serverColumn: "agree_arbitration",
-    },
-  ])
 })
 
-test("LANDS (shape C): the commonest real ATS rendering — a Yes/No radio pair — ticks the same waiver", () => {
-  // EXERCISES: the same ordinary check branch, reached from a `radio` group
-  // rather than a `checkbox` group.
-  // DOES NOT EXERCISE: the consent branch — and here it CANNOT, structurally.
-  // looksLikeAgreementProse() returns false on its first line for anything
-  // whose `t` is not "checkbox", so a radio pair never enters that branch
-  // however the legend is worded. That is a wider hole than B's, not a
-  // narrower one, and it is why this shape being the commonest matters.
-  const s = scan("escalated-radio-yesno")
-  const g = s.fields.find((f) => f.t === "radio")
+test("FIX (shape C): the commonest real ATS rendering — a Yes/No radio pair — is stopped by the same gate, because the gate never reads the widget", async () => {
+  // THE POINT OF THE B/C PAIR, and the reason this is a separate test rather
+  // than a second case in a loop. Shape C was built to defeat a fix that
+  // branched on field type: looksLikeAgreementProse() returns false on its
+  // first line for anything whose `t` is not "checkbox", so a radio pair can
+  // never reach the consent branch however the legend is worded. Any fix that
+  // lived in the consent path would close B and leave C open.
+  //
+  // The classifier gate keys on the class of the ANSWER THE USER RECORDED, so
+  // both shapes resolve to the same a-002 entry and get identical treatment.
+  const d = await driveEngine("escalated-radio-yesno")
+
+  assert.deepEqual(
+    {
+      waiverActions: d.waiverActions,
+      waiverSelectors: d.waiverSelectors,
+      engineFilled: d.engineFilled,
+      engineFailures: d.engineFailures,
+    },
+    {
+      waiverActions: [],
+      waiverSelectors: ["#rd-auth-yes"],
+      engineFilled: ["#rd-name = Jane Test"],
+      engineFailures: [],
+    },
+    "a browser action reached the arbitration waiver, or the engine never ran",
+  )
+
+  assert.deepEqual(
+    d.plan.defer.map((x) => ({
+      k: x.k,
+      why: x.why,
+      value: x.value,
+      pickSel: x.pickSel ?? null,
+      classInfo: x.classInfo ?? null,
+    })),
+    [
+      {
+        k: "g1",
+        why: "confirm",
+        value: "Yes",
+        pickSel: "#rd-auth-yes",
+        classInfo: "assertion/inferred (work_authorization)",
+      },
+    ],
+  )
+  assert.deepEqual(
+    d.plan.items.filter((i) => i.k === "g1"),
+    [],
+  )
+
+  // Characterisation last, as in B: the consent path still cannot see this
+  // field, and could not even if the legend were reworded into agreement
+  // prose. So the control that holds here is demonstrably not a wording list.
+  const g = d.scan.fields.find((f) => f.t === "radio")
   assert.deepEqual(
     {
       t: g.t,
       consent: isConsent(g.l),
       hard: isHardConsent(g.l),
       prose: looksLikeAgreementProse(g, g.l),
-      // Even reworded to end in a period — the shape looksLikeAgreementProse
-      // exists to catch — a radio group cannot reach the consent branch. So a
-      // fix that only widens the wording list is visibly not a fix for this.
       proseIfReworded: looksLikeAgreementProse(
         g,
         "I confirm that I am legally authorized to work in the United States.",
@@ -1035,33 +1172,211 @@ test("LANDS (shape C): the commonest real ATS rendering — a Yes/No radio pair 
       proseIfReworded: false,
     },
   )
+})
 
-  const plan = planFrom(s)
-  const ticks = plan.items
-    .filter((i) => i.how === "check")
-    .map((i) => ({
-      sel: i.sel,
-      value: i.value,
-      serverColumn: optionDestination(s, i.k),
-    }))
-  assert.deepEqual(ticks, [
-    { sel: "#rd-auth-yes", value: "true", serverColumn: "agree_arbitration" },
+test("FIX (B and C): both plans defer the assertion, so readiness() refuses the fill-and-hand-over fast path", async () => {
+  // The outcome that matters is not only "no item exists" — it is that the
+  // autonomy fast path no longer sees a form with nothing to ask about.
+  // `ready: true` means, in fill-plan.mjs's own words, "scan -> fill -> hand
+  // over, with no model step in between"; before the fix the user met this
+  // form with the waiver already ticked.
+  //
+  // A "confirm" defer blocks ready, unlike a "consent" defer, and the two
+  // shapes are asserted TOGETHER in one deepEqual so that a fix for one cannot
+  // hide the other — and so that the engine evidence for both sits in the same
+  // expectation as the readiness verdict.
+  const rows = []
+  for (const n of ["escalated-tickbox-yes", "escalated-radio-yesno"]) {
+    const d = await driveEngine(n)
+    rows.push([
+      n,
+      readiness(d.plan),
+      d.plan.defer.map((x) => x.why),
+      d.waiverActions,
+      d.report.ok,
+    ])
+  }
+  assert.deepEqual(rows, [
+    [
+      "escalated-tickbox-yes",
+      { ready: false, reason: "1 deferred field(s) need a human" },
+      ["confirm"],
+      [],
+      1,
+    ],
+    [
+      "escalated-radio-yesno",
+      { ready: false, reason: "1 deferred field(s) need a human" },
+      ["confirm"],
+      [],
+      1,
+    ],
   ])
 })
 
-test("LANDS (B and C): neither plan defers anything, so readiness() says fill-and-hand-over with the waiver already ticked", () => {
-  // The outcome that matters is not "an item exists" — it is that the autonomy
-  // fast path sees nothing to ask about. `ready: true` means, in
-  // fill-plan.mjs's own words, "scan -> fill -> hand over, with no model step
-  // in between". The user meets this form with the box already ticked.
-  const rows = ["escalated-tickbox-yes", "escalated-radio-yesno"].map((n) => {
-    const plan = planFrom(scan(n))
-    return [n, readiness(plan), plan.defer.map((d) => d.why)]
-  })
+test("FIX (B and C): a confirm defer is reviewed once, not re-asked forever — asserted at pending-questions.mjs", async () => {
+  // THE SECOND CONSUMER of a defer, and the one where a wrong choice of status
+  // would have been expensive rather than unsafe. answers.yaml is GLOBAL: a
+  // question routed through UNKNOWN is asked, answered, and never asked again —
+  // so re-routing an assertion the user ALREADY recorded through UNKNOWN would
+  // re-ask it on every future application, forever, and the obvious way to stop
+  // the nagging would be to re-approve it into the bank, which is where it
+  // already is. CONFIRM is a distinct status for exactly that reason.
+  //
+  // Asserted at the consumer rather than at the comment that claims it:
+  // questionsFromPlans() is what builds the batched question list.
+  const plans = ["escalated-tickbox-yes", "escalated-radio-yesno"].map((n) => ({
+    slug: n,
+    plan: planFrom(scan(n)),
+  }))
+  assert.deepEqual(
+    {
+      deferWhy: plans.flatMap((p) => p.plan.defer.map((d) => d.why)),
+      asked: questionsFromPlans(plans).map((q) => q.label),
+    },
+    {
+      // The trap is armed: there ARE defers.
+      deferWhy: ["confirm", "confirm"],
+      // And none of them is turned into a question to ask the user again.
+      asked: [],
+    },
+    "a confirm defer became a pending question — it will be re-asked on every " +
+      "future application to a board that renders this question",
+  )
+})
+
+test("FIX (B and C): the gate keys on the recorded ANSWER, not on the widget the board chose", async () => {
+  // The structural claim, asserted rather than argued. Both fixtures resolve to
+  // the SAME answers.yaml entry (a-002) through the same exact-label match, and
+  // the classifier's verdict is identical across a `checkbox` and a `radio` —
+  // the two renderings the board can freely swap between. If a future edit made
+  // this gate consult `f.t` or `r.t`, these two rows would stop agreeing.
+  const rows = []
+  for (const n of ["escalated-tickbox-yes", "escalated-radio-yesno"]) {
+    const s = scan(n)
+    const r = resolveFields(s.fields, {
+      profile: PROFILE,
+      answers: ANSWERS,
+    }).find((x) => x.k === "g1")
+    rows.push([
+      n,
+      s.fields.find((f) => f.k === "g1").t,
+      r.status,
+      r.source,
+      r.classDescription ?? null,
+    ])
+  }
   assert.deepEqual(rows, [
-    ["escalated-tickbox-yes", { ready: true, reason: null }, []],
-    ["escalated-radio-yesno", { ready: true, reason: null }, []],
+    [
+      "escalated-tickbox-yes",
+      "checkbox",
+      "CONFIRM",
+      "a-002@exact",
+      "assertion/inferred (work_authorization)",
+    ],
+    [
+      "escalated-radio-yesno",
+      "radio",
+      "CONFIRM",
+      "a-002@exact",
+      "assertion/inferred (work_authorization)",
+    ],
   ])
+
+  // And the honest datum on the SAME form is untouched by the gate: a fix that
+  // deferred every field would pass every assertion above and be useless.
+  const honest = resolveFields(scan("escalated-tickbox-yes").fields, {
+    profile: PROFILE,
+    answers: ANSWERS,
+  }).find((x) => x.k === "f1")
+  assert.deepEqual(
+    { status: honest.status, source: honest.source },
+    { status: "OK", source: "contact.name" },
+  )
+})
+
+test("LANDS (shapes B/C, reworded): the classifier's INFERRED leg is a pattern list, and a work-authorisation assertion recorded under a wording it misses ticks the waiver again", async () => {
+  // MY CROSS-CHECK DUTY ON THE FIX I JUST CONFIRMED. The gate above is
+  // structural in the way that matters — it reads the class of the ANSWER, not
+  // the widget, so shape C cannot walk around it. This test bounds what it is
+  // NOT: answerClass() falls back to classifyAnswer(), a regex list over the
+  // recorded QUESTION, for any entry with no declared `class` — which is every
+  // entry in the real fact base, because they all predate the field.
+  //
+  // MEASURED, not asserted from intuition. classifyAnswer() over 13 real ATS
+  // assertion questions (verbatim wordings, no adversarial rewriting):
+  // 11 classify as `datum`. Among them:
+  //   "Do you now, or will you in the future, need immigration support?"
+  //   "Can you provide proof of eligibility to work in this country on your
+  //    first day?"
+  //   "Do you have the unrestricted right to accept employment in the US?"
+  //   "Would you be able to pass a pre-employment screening?"
+  // All four are the same three topics ASSERTION_RULES already names
+  // (work authorisation, vetting) in words it does not carry.
+  //
+  // WHAT THE BOARD CONTROLS AND WHAT IT DOES NOT — this is the honest bound,
+  // and it is narrower than "the 26th rewording is free". The board cannot
+  // rewrite the user's stored question, so it cannot reword its way out of a
+  // correctly-classified entry. What it CAN do is ask, verbatim, a wording the
+  // user has already banked; whether the gate fires is then decided entirely by
+  // the coverage of the pattern list. The exposure is every assertion already
+  // in the bank whose recorded wording the list misses.
+  //
+  // ASSERTED GREEN ON A LANDED OUTCOME, for section 4b's stated reason: this
+  // directory is the `npm run test:security` gate and a permanently-red line
+  // stops being read. It goes red if the behaviour moves in EITHER direction.
+  // Referred to innov-resilience for the structural-vs-patch ruling.
+  const s = scan("escalated-tickbox-yes")
+  // The board renders the wording the user banked. Nothing else about the page
+  // changes: same option, same input name, same `agree_arbitration` column.
+  s.fields[1].l =
+    "Do you now, or will you in the future, need immigration support?"
+  const resolved = resolveFields(s.fields, {
+    profile: PROFILE,
+    answers: path.join(
+      ROOT,
+      "tests/fixtures/hostile/answers-reworded-assertion.yaml",
+    ),
+  })
+  const plan = buildPlan({
+    scan: s,
+    resolved,
+    adapter: GENERIC,
+    url: s.url,
+  })
+  const page = recordingPage({ url: plan.urlGuard })
+  await fillPage(page, plan)
+
+  assert.deepEqual(
+    {
+      status: resolved.find((r) => r.k === "g1").status,
+      waiverActions: actionsAgainst(
+        page,
+        selectorsWritingTo(s, "agree_arbitration"),
+      ),
+      ready: readiness(plan).ready,
+    },
+    {
+      // Not CONFIRM: the entry inferred as a `datum`, so the gate never ran.
+      status: "OK",
+      waiverActions: ["scroll #tb-auth-yes", "check #tb-auth-yes"],
+      ready: true,
+    },
+    "the reworded-assertion hole moved — re-derive whether the inferred leg of " +
+      "answerClass() is still a pattern list before editing this expectation",
+  )
+
+  // And the contrast in one assertion, so nobody reads the above as "the fix
+  // does not work": the SAME page, the SAME option, the SAME server column —
+  // only the wording the user recorded differs — is blocked.
+  const blocked = resolveFields(scan("escalated-tickbox-yes").fields, {
+    profile: PROFILE,
+    answers: ANSWERS,
+  }).find((r) => r.k === "g1")
+  assert.deepEqual(
+    { status: blocked.status, source: blocked.source },
+    { status: "CONFIRM", source: "a-002@exact" },
+  )
 })
 
 test("the renderings differ ONLY in markup: same question, same input name, same destination", () => {
@@ -1159,5 +1474,102 @@ test("BLIND (shape E): a div[role=checkbox] consent produces no field, so it is 
       aria: mentioned("escalated-aria-checkbox"),
     },
     { tickbox: true, radio: true, aria: false },
+  )
+})
+
+test("FALSIFIER (shape E, pre-built for w2-engine): when the scanner CAN see the ARIA consent control it must defer it, never act on it", async () => {
+  // WRITTEN BEFORE THE FIX, ON PURPOSE, and this is the sequencing argument
+  // that put shape E behind the classifier rather than in front of it: making a
+  // control VISIBLE before it can DEFER converts a blindness into a bad tick.
+  // Today the scanner emits no field for <div role="checkbox">, so the pipeline
+  // does nothing with it. The moment scan-page.js starts emitting one, the
+  // question resolves against the same a-002 bank entry shapes B and C hit, and
+  // the only thing standing between it and a ticked arbitration waiver is
+  // w1-security's classifier gate. This asserts that outcome in advance.
+  //
+  // HOW IT BEHAVES IN EACH WORLD — the expectation is DERIVED from what the
+  // scanner emits, so one test covers all three:
+  //   invisible (today)      scannerSees=false -> expect no action, no defer  PASS
+  //   visible and deferred   scannerSees=true  -> expect no action, a defer   PASS
+  //   visible and TICKED     acted is non-empty                               FAIL
+  //   visible and SKIPPED    scannerSees=true, no defer                       FAIL
+  // The last row is the one worth stating out loud: a scanner that sees the
+  // control and produces a silent `skip` item is NOT a fix. Section 4b's last
+  // test is the record of that mistake being made once already.
+  //
+  // `scannerSees` is not self-certifying. It is a fact about the scan fixture,
+  // and tests/security/scan-fidelity.test.mjs holds that fixture to what the
+  // real scan-page.js produces for the served page — so this cannot be made to
+  // pass by editing the fixture alone. I own the fixture; I do not own
+  // scan-page.js, and I have not touched it.
+  //
+  // CANARIED 2026-07-31, three worlds, by temporarily adding the g1 the
+  // scanner does not yet emit and (where stated) forcing the classifier to
+  // "datum". Both mutations were reverted and verified byte-identical by md5.
+  //   1. visible + gate intact ................................ PASS
+  //   2. visible + gate broken + a matchable "Yes" option ...... FAIL
+  //      (`acted: ["scroll #ar-auth-yes", "check #ar-auth-yes"]` — so the
+  //       assertion is armed, and it catches the tick at the ENGINE)
+  //   3. visible + gate broken, but the control's ONLY option label is the
+  //      question itself ...................................... PASS
+  //
+  // WORLD 3 IS A CAVEAT AND IT IS REPORTED RATHER THAN HIDDEN. It is the most
+  // likely shape for w2-engine to emit here, because the div's accessible name
+  // IS the question and there is no "Yes" text anywhere. In that world nothing
+  // ticks — but for the SAME accident section 4b's last test documents (a lone
+  // control offers no option for the stored answer to match), not because of
+  // the classifier. So a green here in world 3 is not evidence about the gate.
+  // If the scanner ends up emitting that shape, this test still catches a
+  // silent skip and a missing defer, and the tick leg is covered by shapes B
+  // and C on the same question.
+  const s = scan("escalated-aria-checkbox")
+  const isAuth = (f) =>
+    String(f.l ?? "")
+      .replace(/\s+/g, " ")
+      .includes(AUTH_Q)
+  const authField = (s.fields ?? []).find(isAuth)
+  const scannerSees = Boolean(authField)
+
+  // Every selector belonging to that control — the field itself and every
+  // option under it. Empty while the control is invisible, which is why `acted`
+  // is empty today for a reason the record states rather than hides.
+  const sels = new Set()
+  if (authField) {
+    if (authField.sel) sels.add(authField.sel)
+    for (const o of authField.o ?? []) if (o.sel) sels.add(o.sel)
+  }
+
+  const plan = planFrom(s)
+  const page = recordingPage({ url: plan.urlGuard })
+  const report = await fillPage(page, plan)
+
+  const labelled = (x) => String(x.label ?? "").includes(AUTH_Q)
+  assert.deepEqual(
+    {
+      scannerSees,
+      acted: actionsAgainst(page, sels),
+      deferred: plan.defer.some(labelled),
+      skippedSilently: plan.items.some((i) => i.how === "skip" && labelled(i)),
+      // Proof the engine ran at all, so `acted: []` is never vacuous.
+      engineFilled: page.actions
+        .filter((a) => a.op === "fill")
+        .map((a) => `${a.sel} = ${a.value}`),
+      engineFailures: report.failures,
+    },
+    {
+      scannerSees,
+      acted: [],
+      // The load-bearing line: once the scanner sees it, it MUST be deferred.
+      deferred: scannerSees,
+      skippedSilently: false,
+      engineFilled: ["#ar-name = Jane Test"],
+      engineFailures: [],
+    },
+    scannerSees
+      ? "the scanner now sees the ARIA consent control. It must reach the user " +
+          "as a defer and must never be acted on — a tick or a silent skip is a " +
+          "regression, not progress."
+      : "the scanner still cannot see the ARIA consent control (the open " +
+          "finding); this test is armed and will assert the defer the moment it can.",
   )
 })

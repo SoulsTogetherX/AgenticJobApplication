@@ -1,0 +1,20 @@
+# A fake answer bank holding ONE entry: a work-authorisation assertion, recorded
+# under a wording that scripts/lib/untrusted.mjs's ASSERTION_RULES does not
+# match. Fixture only; nothing here belongs to the user.
+#
+# WHY IT EXISTS. w1-security's answerClass() has two legs. If an entry carries a
+# declared `class` (written by save-answer.mjs --class), that is used and no
+# pattern is consulted — structural, and a board cannot touch it. If it does
+# not, the class is INFERRED by classifyAnswer(), which is a regex list over the
+# question text. Every one of the entries already in the real fact base predates
+# the field, so every one of them takes the inferred leg.
+#
+# `id: a-002` deliberately matches tests/fixtures/answers-bank.yaml's id, so the
+# only thing that differs between the blocked case and the landed case is the
+# WORDING the user happened to record. Same board, same page, same server
+# destination.
+answers:
+  - id: a-002
+    question: Do you now, or will you in the future, need immigration support?
+    answer: "Yes"
+    added: 2026-07-27

@@ -360,19 +360,71 @@ const polarityMismatch = (label, match) =>
 // concept guard that keeps "require sponsorship" away from "authorized to
 // work". Identical text cannot confuse those.
 //
+// Rendering-only variance folded into the exact key. Each of these is a
+// measured miss, not a guess (2026-07-31): a-049 is stored as "Do you require
+// sponsorship?" and a board rendering the same label WITHOUT the trailing "?"
+// missed exact match and fell to fuzzy; "What's your notice period?" typed
+// with a U+2019 apostrophe vs a board rendering ASCII "'" likewise missed.
+// NFKC first, so a full-width/compatibility variant of any character below
+// (or of anything else) collapses to its ordinary form before the folds run.
+// This is deliberately narrower than "strip punctuation": every fold here
+// maps several CODEPOINTS that render as the same glyph onto ONE, never
+// discards a character that carries meaning ("C++"/"C#", "18+"/"18" stay
+// distinct — see the rejected blanket-stripping proposal in the module
+// history). Trailing "?" joins the existing trailing "*"/":" strip for the
+// same reason those are stripped: a required-marker or sentence-terminator
+// position, not interior content.
+const CURLY_APOSTROPHE_RE = /[‘’ʼ′]/g
+const CURLY_QUOTE_RE = /[“”„«»]/g
+const UNICODE_DASH_RE = /[‐‑‒–—]/g
+
 // Exported so fill-plan.mjs's --consent-allowlist can match a consent label
 // against the user's own exact wording the same way a saved answer matches
-// a form question — "exact" means the same thing in both places.
+// a form question — "exact" means the same thing in both places. Widening
+// this key ALSO widens what the allowlist matches; every fold above is
+// rendering-only variance (a Unicode compatibility form, a curly-vs-straight
+// quote, a dash width) and never changes what the text asserts, so the
+// allowlist's "the user's own exact wording" guarantee holds under it the
+// same way exact-answer lookup's guarantee does.
 export function normalizeQuestion(s) {
   return String(s ?? "")
+    .normalize("NFKC")
+    .replace(CURLY_APOSTROPHE_RE, "'")
+    .replace(CURLY_QUOTE_RE, '"')
+    .replace(UNICODE_DASH_RE, "-")
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim()
-    .replace(/[*:]+$/, "")
+    .replace(/[*:?]+$/, "")
     .trim()
 }
 
 const SKIP_TYPES = new Set(["file", "richtext"])
+
+// ---------------------------------------------------------------------------
+// bank-provenance contract for QUESTION_RULES / PROFILE_RULES value fns
+// ---------------------------------------------------------------------------
+// A rule's static `source` string (e.g. "experience", "answers") tells the
+// human reading a printed plan where a value came from, but it is NOT what
+// fill-plan.mjs's classifier gate keys on — that gate (BANK_ID_RE, "^a-\d+@")
+// only fires when `source` starts with a real bank id, because only then does
+// it have an `answers.yaml` entry to run answerClass()/datum-vs-assertion on.
+//
+// A rule whose value fn reads `bank` directly (not just profile.yaml) MUST
+// return `bankHit(entry, value)` rather than a bare value, so the id travels
+// with the answer. Returning a bare value when the value came from the bank
+// is exactly the bug this closes (AUDIT N3): heardAbout() called
+// `bank.find(...)` but stamped the rule's static "answers" source, so its
+// row could never match BANK_ID_RE and never passed through the datum/
+// assertion gate — harmless while "how did you hear about us" is always a
+// datum, but the SAME shape on a future bank-reading rule would silently ship
+// an unclassified assertion. `entry` may be undefined (no bank match found,
+// e.g. heardAbout's "Other"/"LinkedIn" fallback chain) — bankHit degrades to
+// a bare-value hit in that case, which is correct: there is no bank id to
+// classify because nothing came from the bank.
+function bankHit(entry, value) {
+  return entry?.id ? { value, source: `${entry.id}@rule` } : { value }
+}
 
 // ---------------------------------------------------------------------------
 // createResolver(profile, answersDoc) — everything that is a pure function of
@@ -519,6 +571,12 @@ export function createResolver(profile = {}, answersDoc = {}) {
 
   // User decision 2026-07-28: prefer the banked answer, fall back to "Other"
   // (with "found it online" as the written explanation), then LinkedIn.
+  //
+  // Returns bankHit(...) rather than a bare chain, so a `banked` hit carries
+  // its bank id (see bankHit's comment above) and passes through fill-plan's
+  // datum/assertion classifier gate the same as an exact/fuzzy bank match
+  // does. When there is no banked entry the chain is pure fallback wording
+  // ("Other"/"LinkedIn") with nothing from the bank to classify.
   const heardAbout = () => {
     const banked = bank.find((a) =>
       /how did you (hear|first learn|find out|come to know)/i.test(a.question),
@@ -526,7 +584,7 @@ export function createResolver(profile = {}, answersDoc = {}) {
     const chain = []
     if (banked?.answer) chain.push(banked.answer)
     chain.push("Other", "LinkedIn")
-    return chain
+    return bankHit(banked, chain)
   }
 
   const QUESTION_RULES = [
@@ -671,10 +729,25 @@ export function createResolver(profile = {}, answersDoc = {}) {
       : [...QUESTION_RULES, ...ctx.CONTACT_RULES, ...PROFILE_RULES]
     for (const [re, source, value] of rules) {
       if (re.test(label)) {
-        hit = {
-          source,
-          value: typeof value === "function" ? value(label) : value,
-        }
+        const out = typeof value === "function" ? value(label) : value
+        // A rule fn that pulled its answer from `bank` (not just from
+        // profile.yaml) must say so by returning `bankHit(entry, value)`
+        // instead of a bare value — see bankHit()'s comment. This is the
+        // ONLY way a QUESTION_RULES/PROFILE_RULES hit's `source` can carry a
+        // bank id; a bare value always gets the rule's own static source
+        // string, which fill-plan.mjs's BANK_ID_RE cannot match, which means
+        // it is NEVER run through answerClass()'s datum/assertion gate. That
+        // was exactly how heardAbout() bypassed the gate (AUDIT N3) — it read
+        // `bank.find(...)` directly and returned a bare value, so a banked
+        // answer to a future rule shaped like a work-authorization question
+        // would resolve OK unclassified.
+        hit =
+          out &&
+          typeof out === "object" &&
+          !Array.isArray(out) &&
+          "value" in out
+            ? { source: out.source ?? source, value: out.value }
+            : { source, value: out }
         break
       }
     }

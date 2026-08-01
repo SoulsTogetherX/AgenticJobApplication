@@ -58,7 +58,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { isTerse } from "../lib/lib.mjs"
+import { isTerse, loadYamlFile } from "../lib/lib.mjs"
 import { detectAts } from "./ats/index.mjs"
 import { resolveFieldsFromFiles, normalizeQuestion } from "./answer-bank.mjs"
 // Read-only reuse of scan-engine.mjs's own "is this control safe to click"
@@ -91,6 +91,8 @@ import {
   sanitizeUntrusted,
   isDisqualifying,
   describeFindings,
+  answerClass,
+  describeClass,
 } from "../lib/untrusted.mjs"
 
 const ROOT = path.resolve(
@@ -295,16 +297,94 @@ const VERB = {
 // Statuses answer-bank emits that mean "a human still has to decide".
 const NEEDS_HUMAN = new Set(["UNKNOWN", "NEEDS-CHOICE", "MAYBE"])
 
+// Matches the `source` answer-bank.mjs stamps on a row it resolved from a
+// bank entry — "a-051@exact", "a-051@exact:model", "a-051@0.82" — and
+// captures the bank id alone. Rows resolved from a profile rule
+// ("contact.email", "experience.current") or a structural rule ("eeo:decline")
+// never match, which is correct: those are not something the user recorded in
+// answers.yaml, so there is nothing there to classify.
+const BANK_ID_RE = /^(a-\d+)@/
+
+// answers.yaml keyed by id, loaded once per resolveFields() call (not once
+// per field — see the classification loop below for the cost this is
+// protecting). A missing/unreadable file yields an empty map, same as
+// answer-bank.mjs's own createResolver does for a missing bank.
+function loadBankById(answersFile) {
+  const map = new Map()
+  const file = answersFile || "profile/answers.yaml"
+  if (!fs.existsSync(file)) return map
+  let doc
+  try {
+    doc = loadYamlFile(file) ?? {}
+  } catch {
+    return map
+  }
+  for (const a of Array.isArray(doc.answers) ? doc.answers : []) {
+    if (a?.id) map.set(a.id, a)
+  }
+  return map
+}
+
 // Imports answer-bank.mjs directly rather than spawning a subprocess per
 // call — twice, today (here and, transitively, in pending-questions.mjs). A
 // spawned command line also has a hard ~32,767-character ceiling on Windows,
 // which a probed 200-option country list serialized into --fields can blow;
 // an in-process call has no such ceiling.
+//
+// THE CONSENT-CLASSIFIER GATE (w1-security's answerClass/mayAutoActUnattended,
+// scripts/lib/untrusted.mjs, wired here). An answer bank entry is either a
+// `datum` (a fact about the user — email, phone, years of experience, safe to
+// fill anywhere) or an `assertion` (something the user asserts or agrees to —
+// work authorisation, relocation, background check, arbitration — which must
+// NEVER auto-act unattended, however confidently answer-bank.mjs matched it).
+//
+// Before this, nothing consumed the classifier: a bank answer to "Are you
+// legally authorized to work in the United States?" resolved OK and was
+// ticked straight into whatever widget the board rendered it as — including a
+// tickbox whose own label was "Yes", and a Yes/No radio pair (the commonest
+// real ATS rendering) — both of which happened to POST into an arbitration
+// waiver in the corpus that proved this (tests/security/hostile-forms.test.mjs
+// shapes B and C). The board picks the widget; it cannot pick what kind of
+// thing the user recorded, so the gate keys on the ANSWER's class and reads
+// `r.t`/`f.t` nowhere below — a fix that branched on field type is exactly
+// what shape C (a radio pair, not a checkbox) would defeat.
+//
+// Cost: one Map lookup + answerClass() per BANK-MATCHED field, ~1us — the
+// regex on r.source finds the id, answerClass() reads the entry's own
+// `class`/`class_source` when present and only falls back to a couple of
+// regex tests on the question text when it does not. Classifying the WHOLE
+// bank per field (scanning every entry to find the one that matched) was
+// measured at ~86us/field and is not what this does.
+//
+// The status this stamps is a distinct "CONFIRM", never "UNKNOWN" — UNKNOWN
+// is what routes a field into pending-questions.mjs, which asks the user a
+// question and, once answered, never asks it again. Re-routing an assertion
+// through UNKNOWN would re-ask something the user ALREADY told the fact base,
+// on every future application, forever. CONFIRM carries the resolved value
+// (and pick/pickSel for a radio/checkbox group) forward unchanged — buildPlan
+// below turns it into a defer the user reviews once, this run, not a fresh
+// question. See buildPlan's own CONFIRM branch for the consumer half.
 export function resolveFields(fields, { profile, answers } = {}) {
   const { results } = resolveFieldsFromFiles(fields, {
     profileFile: profile,
     answersFile: answers,
   })
+  if (results.length) {
+    const bankById = loadBankById(answers)
+    if (bankById.size) {
+      for (const r of results) {
+        if (r.status !== "OK") continue
+        const m = BANK_ID_RE.exec(r.source ?? "")
+        if (!m) continue
+        const entry = bankById.get(m[1])
+        if (!entry) continue
+        const info = answerClass(entry)
+        if (info.class === "datum") continue
+        r.status = "CONFIRM"
+        r.classDescription = describeClass(info)
+      }
+    }
+  }
   return results
 }
 
@@ -841,6 +921,28 @@ export function buildPlan({
       continue
     }
 
+    // resolveFields() above stamps r.status = "CONFIRM" on exactly the rows
+    // it resolved from a bank entry (r.source starting "a-NNN@...") whose
+    // answerClass is "assertion" — never on r.t/f.t, so this applies
+    // identically whether the widget is a checkbox, a radio pair, or a plain
+    // text/select field; nothing below reads the field's type. The value
+    // (and, for a radio/checkbox group, the pick) travels onto the defer
+    // entry unchanged, so the approval message shows exactly what would have
+    // been filled and why it stopped short of auto-acting on it — not a
+    // fresh, unexplained question.
+    if (r.status === "CONFIRM") {
+      defer.push({
+        k: f.k,
+        label: displayLabel,
+        ...mLabel(),
+        why: "confirm",
+        value: r.value,
+        ...(r.pick ? { pick: r.pick, pickSel: r.pickSel } : {}),
+        classInfo: r.classDescription,
+      })
+      continue
+    }
+
     if (NEEDS_HUMAN.has(r.status) || !r.status) {
       // An OPTIONAL field the fact base cannot answer is left blank, not turned
       // into a question. Asking the user for a Twitter handle they do not have
@@ -964,7 +1066,18 @@ export function buildPlan({
 // branches on a flag instead of reading the plan and forming an opinion, which
 // is the whole point: on ready=true the path is scan -> fill -> hand over.
 //
-// A CONSENT-ONLY defer does not block ready, and every other kind still does.
+// A CONSENT-ONLY defer does not block ready, and every other kind still does
+// — INCLUDING a "confirm" defer (an assertion-class bank answer buildPlan
+// stopped short of auto-acting on; see resolveFields()'s CONFIRM status
+// above). That is deliberate and different from consent: the user ticking a
+// consent box is a decision only they can make that costs nothing extra to
+// defer, because they are already looking at the form before Submit. An
+// assertion the fact base WOULD have auto-filled (work authorisation,
+// relocation, background check, arbitration) is not the same shape of
+// problem — it is not the user's box to tick, it is a value about to be typed
+// or checked on their behalf, and hard rule 6 aside, "never auto-act
+// unattended on an assertion" (untrusted.mjs's mayAutoActUnattended) is
+// exactly the guarantee `ready=true` would otherwise silently break.
 // docs/autonomy-plan.md's Phase 2 table names this the highest-leverage item
 // in the whole plan ("readiness() stops counting consent defers — re-enables
 // the fast path that has never fired"), because nearly every real ATS has at

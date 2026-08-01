@@ -31,6 +31,8 @@ import {
   readiness,
 } from "../../scripts/apply/fill-plan.mjs"
 import { normalizeQuestion } from "../../scripts/apply/answer-bank.mjs"
+import { answerClass, classifyAnswer } from "../../scripts/lib/untrusted.mjs"
+import { loadYamlFile } from "../../scripts/lib/lib.mjs"
 import { questionsFromPlans } from "../../scripts/apply/pending-questions.mjs"
 import fillPage from "../../scripts/apply/fill-engine.mjs"
 import {
@@ -1295,87 +1297,285 @@ test("FIX (B and C): the gate keys on the recorded ANSWER, not on the widget the
   )
 })
 
-test("LANDS (shapes B/C, reworded): the classifier's INFERRED leg is a pattern list, and a work-authorisation assertion recorded under a wording it misses ticks the waiver again", async () => {
-  // MY CROSS-CHECK DUTY ON THE FIX I JUST CONFIRMED. The gate above is
-  // structural in the way that matters — it reads the class of the ANSWER, not
-  // the widget, so shape C cannot walk around it. This test bounds what it is
-  // NOT: answerClass() falls back to classifyAnswer(), a regex list over the
-  // recorded QUESTION, for any entry with no declared `class` — which is every
-  // entry in the real fact base, because they all predate the field.
-  //
-  // MEASURED, not asserted from intuition. classifyAnswer() over 13 real ATS
-  // assertion questions (verbatim wordings, no adversarial rewriting):
-  // 11 classify as `datum`. Among them:
-  //   "Do you now, or will you in the future, need immigration support?"
-  //   "Can you provide proof of eligibility to work in this country on your
-  //    first day?"
-  //   "Do you have the unrestricted right to accept employment in the US?"
-  //   "Would you be able to pass a pre-employment screening?"
-  // All four are the same three topics ASSERTION_RULES already names
-  // (work authorisation, vetting) in words it does not carry.
-  //
-  // WHAT THE BOARD CONTROLS AND WHAT IT DOES NOT — this is the honest bound,
-  // and it is narrower than "the 26th rewording is free". The board cannot
-  // rewrite the user's stored question, so it cannot reword its way out of a
-  // correctly-classified entry. What it CAN do is ask, verbatim, a wording the
-  // user has already banked; whether the gate fires is then decided entirely by
-  // the coverage of the pattern list. The exposure is every assertion already
-  // in the bank whose recorded wording the list misses.
-  //
-  // ASSERTED GREEN ON A LANDED OUTCOME, for section 4b's stated reason: this
-  // directory is the `npm run test:security` gate and a permanently-red line
-  // stops being read. It goes red if the behaviour moves in EITHER direction.
-  // Referred to innov-resilience for the structural-vs-patch ruling.
-  const s = scan("escalated-tickbox-yes")
-  // The board renders the wording the user banked. Nothing else about the page
-  // changes: same option, same input name, same `agree_arbitration` column.
-  s.fields[1].l =
-    "Do you now, or will you in the future, need immigration support?"
+// ---------------------------------------------------------------------------
+// 4d. THE REWORDING HOLE, CLOSED STRUCTURALLY (2026-07-31, second fix)
+//
+// HISTORY, because the shape of this correction is the finding. Section 4c's
+// class gate closed shapes B and C by reading the CLASS OF THE ANSWER. It was
+// the right axis and it is still in force — but answerClass() has two legs, and
+// the leg every real fact-base entry takes (`inferred`) is classifyAnswer(), a
+// regex list over the recorded question. So this file carried a LANDS test:
+// a work-authorisation assertion the user had banked under a wording the list
+// misses ("Do you now, or will you in the future, need immigration support?")
+// was inferred `datum`, and the arbitration waiver was ticked again.
+//
+// MEASURED by innov-resilience against the real 49-entry fact base, on a page
+// whose labels were all wordings the user had banked, every option wired to
+// `agree_arbitration`: 34 of 49 entries auto-ticked with `ready: true` and no
+// model step. The class gate that shipped in d945871 removed 14 of 48 (29%).
+// RECLASSIFYING CLOSES NONE OF THE REMAINING 34 — they are honestly-classified
+// data (Country, Gender, Veteran Status), correctly `datum`, and a better
+// pattern list makes that number worse, not better.
+//
+// THE FIX (w3-resolution, scripts/apply/fill-plan.mjs, buildPlan's check-verb
+// branch): a checkbox or radio group never auto-acts unattended, whatever the
+// answer's class. A tick carries no value — it carries ASSENT, on a control the
+// BOARD owns. The defer is `why: "confirm-widget"`, deliberately a different
+// string from the class gate's `why: "confirm"`.
+//
+// WHY IT IS STRUCTURAL AND THE FOUR DEFENCES BEFORE IT WERE NOT: THE RULE READS
+// NO WORDS. isConsent, isHardConsent, looksLikeAgreementProse and
+// classifyAnswer each read one string the attacker chose, so each had a 26th
+// rewording. This one decides on the widget's SHAPE, which is not a string at
+// all. The tests below are written to pin exactly that property — a wording no
+// pattern list has ever seen, and a wording where every word-reading control
+// has been explicitly overridden, must both be stopped.
+// ---------------------------------------------------------------------------
+
+// tests/fixtures/hostile/answers-unseen-wordings.yaml — five bank entries, all
+// answered "Yes" (so all five MATCH an option on shapes B and C), all carrying
+// a DECLARED `class: datum` / `class_source: user`, which is the one leg of
+// answerClass() that consults no pattern at all. See that file's header for
+// what each row is for; w1 and w5 are the two that matter.
+const UNSEEN_BANK = path.join(
+  ROOT,
+  "tests/fixtures/hostile/answers-unseen-wordings.yaml",
+)
+const UNSEEN = loadYamlFile(UNSEEN_BANK).answers
+
+// The board's ONE genuine lever: it cannot rewrite the fact base, but it can
+// render, verbatim, a question the user has already banked. So the page label
+// becomes the stored wording and nothing else about the page changes — same
+// option, same input name, same `agree_arbitration` column.
+async function driveWording(shapeName, question, { req = false } = {}) {
+  const s = scan(shapeName)
+  const g = s.fields.find((f) => f.k === "g1")
+  g.l = question
+  if (req) g.req = true
   const resolved = resolveFields(s.fields, {
     profile: PROFILE,
-    answers: path.join(
-      ROOT,
-      "tests/fixtures/hostile/answers-reworded-assertion.yaml",
+    answers: UNSEEN_BANK,
+  })
+  const plan = buildPlan({ scan: s, resolved, adapter: GENERIC, url: s.url })
+  const page = recordingPage({ url: plan.urlGuard })
+  await fillPage(page, plan)
+  const d = plan.defer.find((x) => x.k === "g1")
+  return {
+    resolved: resolved.find((r) => r.k === "g1"),
+    plan,
+    defer: d,
+    waiverActions: actionsAgainst(
+      page,
+      selectorsWritingTo(s, "agree_arbitration"),
     ),
+    honestFills: page.actions
+      .filter((a) => a.op === "fill")
+      .map((a) => `${a.sel} = ${a.value}`),
+    ready: readiness(plan).ready,
+  }
+}
+
+test("FIX (shapes B/C): no wording ticks the waiver — five bank wordings, both renderings, asserted at fill-engine.mjs", async () => {
+  // THE FINDING ASSERTION for the rewording hole, and it is deliberately a
+  // SWEEP rather than one case: the claim being pinned is about a CLASS of
+  // attack ("any wording"), so one wording would record only that today's code
+  // passes. Ten rows, one deepEqual, so a fix for one row cannot hide another.
+  //
+  // Each row carries four things at once, and every one of them is load-bearing:
+  //
+  //   status "OK"        the row RESOLVED. Without this the test could pass
+  //                      because nothing matched, which is not the fix.
+  //   pick "f2"          and it resolved to the hostile option specifically —
+  //                      the pipeline knew exactly which box it would have
+  //                      ticked and declined to tick it.
+  //   why "confirm-widget"   stopped by the WIDGET rule, not by the class gate
+  //                      ("confirm") and not by an unrelated guard.
+  //   waiverActions []   THE OUTCOME. No browser action of any kind reached a
+  //                      control the server writes into `agree_arbitration`.
+  //
+  // A word-reading exemption reintroduced anywhere on this path turns w5 (and
+  // probably w1) red, because neither has any word left for a defence to read.
+  const rows = []
+  for (const shape of ["escalated-tickbox-yes", "escalated-radio-yesno"]) {
+    for (const e of UNSEEN) {
+      const d = await driveWording(shape, e.question)
+      rows.push([
+        shape,
+        e.id,
+        d.resolved.status,
+        d.defer?.why ?? null,
+        d.defer?.pick ?? null,
+        d.waiverActions,
+      ])
+    }
+  }
+  const expected = []
+  for (const shape of ["escalated-tickbox-yes", "escalated-radio-yesno"]) {
+    for (const e of UNSEEN) {
+      expected.push([shape, e.id, "OK", "confirm-widget", "f2", []])
+    }
+  }
+  assert.deepEqual(
+    rows,
+    expected,
+    "a wording reached the arbitration waiver — the check-verb rule in " +
+      "buildPlan() has started reading words again, or an exemption was added",
+  )
+  assert.equal(
+    UNSEEN.length,
+    5,
+    "the wording set shrank — the sweep above got easier",
+  )
+})
+
+test("FIX (shapes B/C): the rule reads NO WORDS — w1 is an honest datum and w5 has every word-reading control switched off", () => {
+  // WHY THE SWEEP ABOVE IS NOT MERELY "the pattern list got better".
+  // Characterisation, placed AFTER the finding for this file's usual reason.
+  //
+  // w1 is an ordinary preference question with an ordinary "Yes". classifyAnswer
+  // is RIGHT to call it a datum, so no classifier improvement could ever stop
+  // it — that is innov-resilience's 34-of-49 in one row.
+  //
+  // w5 is the ceiling: classifyAnswer DOES match it (work_authorization), and a
+  // declared `class: datum` from the USER overrides that, taking the leg of
+  // answerClass() that reads no pattern. Every word-reading control in the
+  // repository is either silent or overridden on w5, and it is still stopped.
+  const rows = UNSEEN.map((e) => [
+    e.id,
+    classifyAnswer(e.question, e.answer).class,
+    answerClass(e).class,
+    answerClass(e).source,
+  ])
+  assert.deepEqual(rows, [
+    // inferred datum AND declared datum: nothing to read, nothing to override.
+    ["w1", "datum", "datum", "user"],
+    ["w2", "datum", "datum", "user"],
+    ["w3", "datum", "datum", "user"],
+    ["w4", "datum", "datum", "user"],
+    // the pattern list fires and is overridden by the user's own declaration.
+    ["w5", "assertion", "datum", "user"],
+  ])
+})
+
+test("FIX (shapes B/C): the axis is the WIDGET, not the words — the same entry in a TEXT input still fills", async () => {
+  // THE ANTI-REGRESSION THAT MATTERS MOST, and the one a flipped `ok`/`not ok`
+  // could never record. "No action reached the waiver" is also satisfied by a
+  // rule that refuses to fill anything work-authorisation-shaped — which would
+  // be a word-reading rule wearing the fix's name, and would have a 26th
+  // rewording like all the others.
+  //
+  // So: same page, same stored entry (w5), same question text, same resolved
+  // value "Yes", same `agree_arbitration` destination. Only the WIDGET differs.
+  // A text input fills; the checkbox and the radio group never act. If these two
+  // halves ever agree, the decision has moved off the widget and back onto the
+  // text, and this test is the alarm.
+  const q = UNSEEN.find((e) => e.id === "w5").question
+
+  const s = scan("escalated-tickbox-yes")
+  const i = s.fields.findIndex((f) => f.k === "g1")
+  // The identical question rendered as the plainest possible control. `n` and
+  // `_destination` are unchanged, so fieldIdentityMismatch() is not what
+  // decides this either.
+  s.fields[i] = {
+    k: "g1",
+    t: "text",
+    sel: "#tb-auth-text",
+    n: "work_authorization",
+    l: q,
+    _destination: "agree_arbitration",
+  }
+  const resolved = resolveFields(s.fields, {
+    profile: PROFILE,
+    answers: UNSEEN_BANK,
   })
-  const plan = buildPlan({
-    scan: s,
-    resolved,
-    adapter: GENERIC,
-    url: s.url,
-  })
+  const plan = buildPlan({ scan: s, resolved, adapter: GENERIC, url: s.url })
   const page = recordingPage({ url: plan.urlGuard })
   await fillPage(page, plan)
 
+  const widget = await driveWording("escalated-tickbox-yes", q)
   assert.deepEqual(
     {
-      status: resolved.find((r) => r.k === "g1").status,
-      waiverActions: actionsAgainst(
+      textStatus: resolved.find((r) => r.k === "g1").status,
+      textActions: actionsAgainst(
         page,
         selectorsWritingTo(s, "agree_arbitration"),
       ),
-      ready: readiness(plan).ready,
+      widgetStatus: widget.resolved.status,
+      widgetActions: widget.waiverActions,
     },
     {
-      // Not CONFIRM: the entry inferred as a `datum`, so the gate never ran.
-      status: "OK",
-      waiverActions: ["scroll #tb-auth-yes", "check #tb-auth-yes"],
-      ready: true,
+      // Identical resolution on both sides. The ONLY difference downstream is
+      // the widget, and it is the whole difference.
+      textStatus: "OK",
+      textActions: ["scroll #tb-auth-text", "fill #tb-auth-text = Yes"],
+      widgetStatus: "OK",
+      widgetActions: [],
     },
-    "the reworded-assertion hole moved — re-derive whether the inferred leg of " +
-      "answerClass() is still a pattern list before editing this expectation",
+    "the text and widget halves stopped disagreeing — either the rule now " +
+      "reads the question text (a word-reading rule in the fix's clothing), " +
+      "or it stopped covering the widget",
   )
+})
 
-  // And the contrast in one assertion, so nobody reads the above as "the fix
-  // does not work": the SAME page, the SAME option, the SAME server column —
-  // only the wording the user recorded differs — is blocked.
-  const blocked = resolveFields(scan("escalated-tickbox-yes").fields, {
-    profile: PROFILE,
-    answers: ANSWERS,
-  }).find((r) => r.k === "g1")
+test("FIX (shapes B/C): readiness() exempts ONLY a non-required confirm-widget — a required one still blocks the fast path", async () => {
+  // THE FROZEN CONTRACT, at its consumer. `ready: true` is fill-plan.mjs's own
+  // "scan -> fill -> hand over, with no model step in between", so what it does
+  // with a confirm-widget defer decides whether the user meets this form with
+  // the box already ticked (it is not — waiverActions is [] above), whether they
+  // meet it at all, and whether the pipeline pays a model turn to ask.
+  //
+  // Both halves are asserted TOGETHER because the trap innov-resilience caught
+  // before landing is exactly a half-fix: an earlier draft keyed the exemption
+  // on `why === "confirm"`, the CLASS GATE's marker, and silently re-marked an
+  // unreviewed work-authorisation defer as `ready: true`. The `confirm` row
+  // below is that trap, armed — it must stay blocking, unconditionally, with no
+  // `req` escape.
+  const rows = []
+  for (const shape of ["escalated-tickbox-yes", "escalated-radio-yesno"]) {
+    for (const req of [false, true]) {
+      const d = await driveWording(shape, UNSEEN[0].question, { req })
+      rows.push([shape, `req=${req}`, d.defer.why, d.ready])
+    }
+  }
+  // And the class gate's own marker on the SAME pages, which readiness() must
+  // keep treating differently: NOT required, and still blocking.
+  const classGate = ["escalated-tickbox-yes", "escalated-radio-yesno"].map(
+    (n) => {
+      const p = planFrom(scan(n))
+      return [n, "req=false", p.defer[0].why, readiness(p).ready]
+    },
+  )
   assert.deepEqual(
-    { status: blocked.status, source: blocked.source },
-    { status: "CONFIRM", source: "a-002@exact" },
+    [...rows, ...classGate],
+    [
+      // The box sits there unticked for the user to review before Submit, at
+      // zero extra model turns — same treatment as a consent box.
+      ["escalated-tickbox-yes", "req=false", "confirm-widget", true],
+      // The form insists on an answer and nobody has reviewed one, so it blocks.
+      ["escalated-tickbox-yes", "req=true", "confirm-widget", false],
+      ["escalated-radio-yesno", "req=false", "confirm-widget", true],
+      ["escalated-radio-yesno", "req=true", "confirm-widget", false],
+      // The trap: a `confirm` defer is NOT required here and is still blocking.
+      ["escalated-tickbox-yes", "req=false", "confirm", false],
+      ["escalated-radio-yesno", "req=false", "confirm", false],
+    ],
+    "readiness() changed how it treats a confirm/confirm-widget defer — if the " +
+      "two markers have been merged, an unreviewed assertion is now ready:true",
+  )
+})
+
+test("FIX (shapes B/C): the widget rule did not turn into 'defer everything' — the honest datum on the same page still fills", async () => {
+  // The regression a defer-shaped fix invites, and the reason every assertion
+  // above sits in a deepEqual with evidence the engine ran at all. A pipeline
+  // that defers every field passes every security assertion in this section and
+  // is useless.
+  const d = await driveWording(
+    "escalated-tickbox-yes",
+    UNSEEN.find((e) => e.id === "w5").question,
+  )
+  assert.deepEqual(
+    { fills: d.honestFills, deferred: d.plan.defer.map((x) => x.k) },
+    { fills: ["#tb-name = Jane Test"], deferred: ["g1"] },
   )
 })
 

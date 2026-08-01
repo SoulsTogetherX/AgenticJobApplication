@@ -77,6 +77,7 @@ const scan = (name) =>
 
 // Which scan fixture describes which served page.
 const PAIRS = [
+  ["honest-greenhouse", "honest-greenhouse"],
   ["greenhouse-step1", "greenhouse"],
   ["greenhouse-step2", "greenhouse-step2"],
   ["label-injection", "hostile-labels"],

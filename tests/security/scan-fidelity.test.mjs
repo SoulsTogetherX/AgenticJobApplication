@@ -52,6 +52,11 @@ const SCANS = path.resolve(HERE, "..", "fixtures", "boards", "scans")
 
 // scan fixture -> [route name, request method]
 const PAIRS = [
+  // The one HONEST page in the corpus. It is pinned here for the same reason
+  // the hostile ones are, plus one of its own: honest-board.test.mjs asserts
+  // this form reaches ready:true, and that claim is only worth anything if the
+  // scan it is asserted over is a shape the real scanner produces.
+  ["honest-greenhouse", "honest-greenhouse", "GET"],
   ["greenhouse-step1", "greenhouse", "GET"],
   ["greenhouse-step2", "greenhouse", "POST"],
   ["label-injection", "hostile-labels", "GET"],

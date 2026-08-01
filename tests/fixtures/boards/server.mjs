@@ -130,6 +130,17 @@ export const ROUTES = [
       "nonce-based CSP (why addScriptTag is banned) and an async remount 700ms after upload",
   },
   {
+    // THE ONE HONEST PAGE. Everything below this line is an attack fixture;
+    // this is the control. See the page's own header for why a defence suite
+    // that only ever sees attacks cannot tell "safe" from "broken".
+    name: "honest-greenhouse",
+    path: "/boards.greenhouse.io/fixture-analytics/jobs/2000001",
+    file: path.join(PAGES, "honest-greenhouse.html"),
+    ats: "greenhouse",
+    proves:
+      "an ordinary application form with no custom questions reaches ready:true — the fast path, demonstrated firing",
+  },
+  {
     name: "hostile-fillsrc",
     path: "/hostile/fillsrc-getter",
     file: path.join(HOSTILE, "forms", "fillsrc-getter.html"),

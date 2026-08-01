@@ -68,11 +68,34 @@ query string.
 Each reproduces the structural traits the engine actually trips on, recorded in
 `CLAUDE.md`'s gotchas and in the git history — not a tidied-up form.
 
-| fixture      | trait it reproduces                                                                                                                                                                                                                         |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `greenhouse` | **One URL, two steps.** `urlGuard` cannot tell a page-1 plan from page 2. Both file inputs labelled `Attach`. A react-select whose options need a click. A label over 120 characters.                                                       |
-| `lever`      | `.application-label` siblings instead of `<label for>` (the fourth `labelOf` tier, the one most likely to pick up the wrong text). A **native** `<select>`, so probing this board is waste. One file slot, not two.                         |
-| `ashby`      | **Nonce-based CSP with no `unsafe-inline`** — the reason `addScriptTag` is banned. **Asynchronous remount 700ms after upload**, dropping every `data-aj` stamp, which is why a live run logged a fill as failed while its value had landed. |
+| fixture             | trait it reproduces                                                                                                                                                                                                                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `greenhouse`        | **One URL, two steps.** `urlGuard` cannot tell a page-1 plan from page 2. Both file inputs labelled `Attach`. A react-select whose options need a click. A label over 120 characters.                                                                                                                                                       |
+| `lever`             | `.application-label` siblings instead of `<label for>` (the fourth `labelOf` tier, the one most likely to pick up the wrong text). A **native** `<select>`, so probing this board is waste. One file slot, not two.                                                                                                                         |
+| `ashby`             | **Nonce-based CSP with no `unsafe-inline`** — the reason `addScriptTag` is banned. **Asynchronous remount 700ms after upload**, dropping every `data-aj` stamp, which is why a live run logged a fill as failed while its value had landed.                                                                                                 |
+| `honest-greenhouse` | **The control, added 2026-07-31.** An ordinary Greenhouse posting with no custom questions: 11 fields, 7 fills, 2 uploads, 2 optional-and-unanswerable skips, **0 defers**, `ready: true`. Attachment inputs labelled informatively (`Resume/CV`, `Cover Letter`), which is the other `buildPlan` file branch from `greenhouse`'s `Attach`. |
+
+### Why an honest board that reaches `ready: true` is a security fixture
+
+Measured on 2026-07-31 over all ten scan fixtures then in `scans/`: four reached
+`ready: true` and **all four were hostile and minimal** — one or two fields each,
+built to isolate a single attack. Zero honest boards reached it. So `ready: true`
+— `fill-plan.mjs`'s own "scan → fill → hand over, with no model step in between"
+— had never been demonstrated firing on a realistic application form.
+
+That is a gap in the **defence** suite, not only in the feature coverage. Every
+other assertion in `tests/security/` has the form "no action reached the hostile
+control", and a pipeline that deferred every field on every page satisfies all of
+them. `tests/security/honest-board.test.mjs` is the other half of that pair: it
+is where a defence's cost becomes visible, and it is deliberately owned by the
+agent that adds the defences.
+
+Two of the eleven fields (`LinkedIn Profile`, `Pronouns`) are **deliberately
+unanswerable** from `tests/fixtures/profile.yaml`. They are optional, so the plan
+skips them rather than deferring — and the test flips `req` on one of them and
+asserts readiness falls, so the fixture cannot be quietly made easier. **If this
+page stops reaching `ready: true`, the fix is a finding about the pipeline, never
+a trimmed fixture.**
 
 The Ashby page also carries a **nonce-less inline script**. Under the served
 policy a browser refuses it, so `window.__ajCspProof` stays `undefined` — that
@@ -90,8 +113,8 @@ sent.
 | `remount-mid-fill`        | A form that remounts every 400ms **preserving typed values**, so a field that filled correctly is reported as failed. A one-shot retry is not enough on its own.                                                                                                                                                                                                                                                                       | `w2-engine`       |
 | `mislabelled-inputs`      | Labels that name a different field from the input they wrap: `Phone number` → `name="ssn"`, and a visible `Email` label beside an `aria-label` of `Emergency contact phone`.                                                                                                                                                                                                                                                           | `w3-resolution`   |
 | `mislabelled-escalated`   | **The same attack with `id`, `name` and `autocomplete` renamed to agree with the lying label**, so `fieldIdentityMismatch()` has no token left to compare. It LANDS, and its tests are green on purpose — see below.                                                                                                                                                                                                                   | nobody: see below |
-| `escalated-tickbox-yes`   | **Shape B.** The escalated page's work-authorisation question re-rendered as a fieldset legend plus one tickbox whose own label is `Yes`. The stored answer now has an option to match, so the box POSTing into `agree_arbitration` is **ticked**. LANDS.                                                                                                                                                                              | `w3-resolution`   |
-| `escalated-radio-yesno`   | **Shape C.** The same question as a `Yes`/`No` **radio pair** — the commonest real ATS rendering, and the cheapest version of the attack. Same tick. `looksLikeAgreementProse()` cannot even be reached: it returns false for any group whose `t` is not `checkbox`. LANDS.                                                                                                                                                            | `w3-resolution`   |
+| `escalated-tickbox-yes`   | **Shape B.** The escalated page's work-authorisation question re-rendered as a fieldset legend plus one tickbox whose own label is `Yes`, so the stored answer has an option to match. Ticked the `agree_arbitration` box until 2026-07-31; **CLOSED** — see the widget rule below.                                                                                                                                                    | `w3-resolution`   |
+| `escalated-radio-yesno`   | **Shape C.** The same question as a `Yes`/`No` **radio pair** — the commonest real ATS rendering, and the cheapest version of the attack. `looksLikeAgreementProse()` cannot even be reached: it returns false for any group whose `t` is not `checkbox`. **CLOSED** by the same rule, which never reads `t` either.                                                                                                                   | `w3-resolution`   |
 | `escalated-aria-checkbox` | **Shape E.** The same question as `<div role="checkbox" aria-checked aria-required>`. `scan-page.js` collects from `select,textarea,input`, `[contenteditable]` and its combobox list, so it emits **zero fields** for this control: the consent is neither ticked nor deferred nor shown. Blindness, not defence.                                                                                                                     | `w2-engine`       |
 
 ### `mislabelled-escalated` is a landed attack, deliberately asserted green
@@ -131,7 +154,8 @@ What actually prevents the tick is a rendering accident: that page draws a lone
 tickbox whose single option label _is the question_, so the fact base's stored
 `Yes` has no option to match. Change the rendering and the tick lands —
 `escalated-tickbox-yes` and `escalated-radio-yesno` are the same question, the
-same input name and the same server destination, and both are **ticked**. Worse,
+same input name and the same server destination, and both **were ticked** until
+the widget rule landed later the same day (see below). Worse,
 on `mislabelled-escalated` itself the field is optional, so `buildPlan` emits a
 `skip` item rather than a defer: the arbitration box never reaches the approval
 message either.
@@ -148,8 +172,10 @@ meaning is decided server-side, so the blast radius of a label-lie routing attac
 is exactly the contents of the answer bank, and `save-answer.mjs` refuses a
 government or financial identifier at the write boundary (`w1-security`, exit 4).
 Section 4b's last test asserts that at the answers file, not at the detector.
-Hard rule 6 — the user is on the Submit button — is the other floor, and it is
-the only thing standing between shapes B and C and a signed arbitration waiver.
+Hard rule 6 — the user is on the Submit button — is the other floor. It was, on
+2026-07-31, the **only** thing standing between shapes B and C and a signed
+arbitration waiver; the widget rule below is now the first line, and the rule-6
+floor is what it stops being load-bearing on its own.
 
 ### The three renderings, and which control each one actually exercises
 
@@ -160,12 +186,45 @@ touched. Question text, input `name` and server destination are identical across
 all four rows — a test in `hostile-forms.test.mjs` asserts that, so a future edit
 cannot weaken the finding to "a differently-worded question also ticks".
 
-| rendering                              | outcome                   | exercises                                                                             | does **not** exercise                                                                          |
-| -------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `mislabelled-escalated` (lone tickbox) | not ticked, and not shown | `resolveFields` option matching (no option equals `Yes`), then the optional-skip path | any consent control — all three predicates are false; the vouch; the allowlist                 |
-| B `escalated-tickbox-yes`              | **ticked**                | the ordinary checkbox branch of `buildPlan`                                           | the consent branch, the vouch, the allowlist (`why` is absent, not `consent:allowlisted`)      |
-| C `escalated-radio-yesno`              | **ticked**                | the same branch, from a `radio` group                                                 | the consent branch — and it **cannot** reach it: `looksLikeAgreementProse` requires `checkbox` |
-| E `escalated-aria-checkbox`            | **invisible** — no field  | `scan-page.js`'s field collection                                                     | every part of `fill-plan.mjs` — there is nothing for it to decide about                        |
+| rendering                              | outcome                    | exercises                                                                                                                              | does **not** exercise                                                                               |
+| -------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `mislabelled-escalated` (lone tickbox) | not ticked, and not shown  | `resolveFields` option matching (no option equals `Yes`), then the optional-skip path                                                  | any consent control — all three predicates are false; the vouch; the allowlist                      |
+| B `escalated-tickbox-yes`              | **deferred, never ticked** | the check-verb branch of `buildPlan` (`why: "confirm-widget"`), or its `CONFIRM` branch when the bank entry classifies as an assertion | the consent branch, the vouch, the allowlist (`why` is `confirm-widget`, not `consent:allowlisted`) |
+| C `escalated-radio-yesno`              | **deferred, never ticked** | the same branch, from a `radio` group                                                                                                  | the consent branch — and it **cannot** reach it: `looksLikeAgreementProse` requires `checkbox`      |
+| E `escalated-aria-checkbox`            | **invisible** — no field   | `scan-page.js`'s field collection                                                                                                      | every part of `fill-plan.mjs` — there is nothing for it to decide about                             |
+
+### The rule that closed B and C, and why it is not the 26th pattern
+
+Two fixes landed on this pair, in that order, and only the second closes the
+class:
+
+1. **The class gate** (`answerClass()`, `d945871`) — an OK row resolved from an
+   **assertion**-class bank entry is stamped `CONFIRM` and deferred. Right axis:
+   it reads what the **user** recorded, in a file the board cannot write, and it
+   reads `f.t` nowhere, so B and C get identical treatment. Removed **14 of 48**
+   auto-ticks against the real 49-entry fact base.
+2. **The widget rule** (`buildPlan`'s check-verb branch, 2026-07-31) — a checkbox
+   or radio group **never auto-acts unattended, whatever the answer's class**. A
+   tick carries no value; it carries **assent**, on a control the board owns. Of
+   the remaining **34** auto-ticks, reclassification closes **none** — they are
+   honestly-classified data (Country, Gender, Veteran Status), correctly `datum`,
+   and a better pattern list makes that number worse. **34 → 0.**
+
+**The rule reads no words.** `isConsent`, `isHardConsent`,
+`looksLikeAgreementProse` and `classifyAnswer` each read one string the attacker
+influences, so each has a 26th rewording. This one decides on the widget's
+_shape_, which is not a string at all.
+`tests/fixtures/hostile/answers-unseen-wordings.yaml` is what pins that: five
+bank wordings — including one that is an **honest** `datum` and one where a
+declared `class: datum` from the user **overrides** a pattern list that does
+match — swept across both renderings, with zero actions reaching the waiver.
+
+The defer contract is frozen at
+`{ k, label, why: "confirm-widget", value, pick, pickSel, req }`, and
+`readiness()` exempts **only** `why === "confirm-widget" && !req`.
+`"confirm-widget"` is deliberately a different string from the class gate's
+`"confirm"`: an earlier draft keyed the exemption on `"confirm"` and silently
+re-marked an unreviewed work-authorisation defer as `ready: true`.
 
 Shape E is a different failure from B and C and gets its own test. Nothing is
 asserted on the user's behalf, which is the safe half; what is lost is the

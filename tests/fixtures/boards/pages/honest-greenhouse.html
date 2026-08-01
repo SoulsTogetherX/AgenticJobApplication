@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Analytics — Full-Stack Engineer</title>
+  </head>
+  <body>
+    <!--
+      THE HONEST BOARD. Not a hostile fixture, and the only page in this tree
+      that is not.
+
+      WHY IT EXISTS. Measured on 2026-07-31 across all ten scan fixtures: four
+      reached `ready: true` and all four were HOSTILE and minimal — one or two
+      fields each, built to isolate one attack. The pipeline's headline latency
+      feature ("scan -> fill -> hand over, with no model step in between") had
+      never been demonstrated firing on a realistic, honest application form.
+      A defence suite that only ever sees attacks cannot tell "safe" from
+      "broken", because a pipeline that deferred every field on every page
+      would pass every other test in this directory.
+
+      WHAT MAKES IT HONEST. Nothing here is adversarial, nothing is hidden, and
+      nothing was trimmed to make the gate pass. It is the field set Greenhouse's
+      job-boards UI renders for a posting with no custom questions, which is the
+      commonest real application form there is:
+
+        First Name*, Last Name*, Email*, Phone, Location (City)*,
+        Resume/CV* (file), Cover Letter (file),
+        LinkedIn Profile, Website,
+        How did you hear about this job?
+
+      Two fields are deliberately NOT answerable from tests/fixtures/profile.yaml
+      — "LinkedIn Profile" and "Pronouns" — and they are optional, so the plan
+      SKIPS them rather than deferring. That is the honest behaviour being
+      demonstrated (an applicant leaves a blank optional field blank), and it is
+      also the reason those two are here: a fixture where every single field
+      resolves would not show the difference between "optional and unresolved"
+      and "unresolved", and those two states are what decide whether the fast
+      path runs.
+
+      WHAT IT WOULD TAKE TO MAKE THIS PAGE STOP BEING READY, all of which are
+      one line of markup and all of which are covered by the hostile fixtures
+      next door: a required checkbox or radio group (confirm-widget + req),
+      a consent tickbox (deferred always), a dropdown whose options are not in
+      the DOM (unprobed), a required field the fact base cannot answer.
+
+      FIDELITY. Greenhouse's newer job-boards UI labels the attachment inputs
+      informatively ("Resume/CV", "Cover Letter") rather than "Attach", which is
+      the trait pages/greenhouse-step1.html carries instead — the two together
+      cover both real shapes, and buildPlan takes a different branch for each
+      (label match vs adapter.fileOrder fallback).
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <p>Fixture Analytics — Remote (US)</p>
+
+    <form id="application-form" method="post" enctype="multipart/form-data">
+      <div class="field">
+        <label for="first_name"
+          >First Name <span aria-hidden="true">*</span></label
+        >
+        <input type="text" id="first_name" name="first_name" required />
+      </div>
+
+      <div class="field">
+        <label for="last_name"
+          >Last Name <span aria-hidden="true">*</span></label
+        >
+        <input type="text" id="last_name" name="last_name" required />
+      </div>
+
+      <div class="field">
+        <label for="email">Email <span aria-hidden="true">*</span></label>
+        <input type="email" id="email" name="email" required />
+      </div>
+
+      <div class="field">
+        <label for="phone">Phone</label>
+        <input type="tel" id="phone" name="phone" />
+      </div>
+
+      <div class="field">
+        <label for="location"
+          >Location (City) <span aria-hidden="true">*</span></label
+        >
+        <input type="text" id="location" name="location" required />
+      </div>
+
+      <div class="field">
+        <label for="resume">Resume/CV <span aria-hidden="true">*</span></label>
+        <input type="file" id="resume" name="resume" required />
+      </div>
+
+      <div class="field">
+        <label for="cover_letter">Cover Letter</label>
+        <input type="file" id="cover_letter" name="cover_letter" />
+      </div>
+
+      <div class="field">
+        <label for="linkedin">LinkedIn Profile</label>
+        <input type="url" id="linkedin" name="linkedin" />
+      </div>
+
+      <div class="field">
+        <label for="website">Website</label>
+        <input type="url" id="website" name="website" />
+      </div>
+
+      <div class="field">
+        <label for="pronouns">Pronouns</label>
+        <input type="text" id="pronouns" name="pronouns" />
+      </div>
+
+      <div class="field">
+        <label for="how_heard">How did you hear about this job?</label>
+        <input type="text" id="how_heard" name="how_heard" />
+      </div>
+
+      <button type="submit" id="btn-submit">Submit Application</button>
+    </form>
+  </body>
+</html>

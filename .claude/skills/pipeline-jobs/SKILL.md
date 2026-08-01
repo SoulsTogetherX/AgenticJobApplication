@@ -16,9 +16,13 @@ returns a compact verdict, never a transcript.
 
 - All CLAUDE.md hard rules apply inside every subagent (truthfulness, fact-base
   protection, verify-claims, limits, dev-branch git, no submit).
-- The user is ALWAYS the one who clicks Submit (rule 6), and PDF rendering
-  still requires their approval (rule 5) — so the pipeline preps applications;
-  it never finishes them alone.
+- **This pipeline never submits.** Rule 6 permits an unattended submit only on
+  the Phase 3 auto path — a mechanical trust gate, nothing on the form needing a
+  judgement — and there is no runner on that path yet: `scripts/auto/` holds
+  guards and an audit record, nothing that opens a browser. Whatever ships
+  there, **this skill is not it**. PDF rendering still requires the user's
+  approval (rule 5), so the pipeline preps applications and the user finishes
+  them.
 - Default cap: 5 jobs per run (ask before exceeding). That cap is what bounds
   concurrency — fan the run out in ONE wave rather than waves of three. Each
   `job-worker` owns exactly one `jobs/<slug>/` and nothing else, and the lead
@@ -118,8 +122,12 @@ way. Re-judge a lead only if the posting has changed.
 Only for `caution`/`pass` rows, WebFetch the posting (Playwright only if
 JS-required) and judge:
 
-- **Ghost job**: live/reposted ≥ `ghost_signals.repost_age_days` (45; industry
-  guidance says 45+ days unfilled is the strongest ghost signal), vague
+- **Ghost job**: live/reposted ≥ `ghost_signals.repost_age_days` — **read the
+  value from `docs/application-limits.yaml`, do not assume one.** The user has
+  set it to **30**; `screen.mjs`'s fallback of 45 applies only when the key is
+  absent, and quoting 45 here is how a stricter user setting gets silently
+  ignored. (The 45 comes from industry guidance that 45+ days unfilled is the
+  strongest ghost signal; the user chose tighter.) Also: vague
   responsibilities, no team or product specifics, no salary range, hiring
   freeze news for the company, evergreen "always hiring" phrasing.
   **Cross-reference**: if the lead came from an aggregator (HN, LinkedIn

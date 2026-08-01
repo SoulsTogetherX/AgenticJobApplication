@@ -5,7 +5,10 @@ form-filling path.
 
 **The governing idea:** forms are filled by _scripts_, not by the model. The model
 is in the loop exactly twice per application — once to write the approval message,
-once to hand the user the submit button.
+once to hand the form over for review. Nothing on this path clicks submit; the
+unattended submit hard rule 6 permits belongs to a Phase 3 runner behind a
+mechanical trust gate, and that runner is not written — `scripts/auto/` holds
+`guard.mjs` and `audit.mjs`, which are checks, not a thing that can submit.
 
 > **Partially rewritten during Phase 1 of `docs/autonomy-plan.md`
 > (2026-07-31).** `.claude/skills/apply-job/fill-page.js` **no longer exists**;
@@ -23,6 +26,19 @@ once to hand the user the submit button.
 > `buildPlan` no longer reads `scan.fields[].labelExact` at all, and
 > `matchOption`'s prefix rule now has a grounding check (**C1 / C2 closed**).
 > Line counts throughout were re-derived on 2026-07-31 with `wc -l`.
+>
+> **Third sweep, 2026-07-31 (`doc-scribe`), after hard rule 6 was rewritten
+> (`fa97436`).** Two changes, both verified by reading
+> `scripts/apply/fill-plan.mjs` rather than a report: the "`buildPlan`
+> decisions, in order" list was **wrong at step 6** — a radio/checkbox no longer
+> produces a fill item at all, it defers `why: "confirm-widget"` — and it was
+> missing the identity-mismatch and `CONFIRM` class-gate branches entirely. The
+> `scan.driver.mjs` step list below is also approximate against the current
+> file: steps 1–2 now run only when the page did **not** already own
+> `window.__ajScan`, step 3 waits for a button to attach rather than retrying
+> blind, and a vouch-stripping pass between steps 4 and 5 is not listed. Read
+> the file; that section is `w2-engine`'s and this is a filed finding, not a
+> correction made here.
 
 ---
 
@@ -492,13 +508,31 @@ file.
    `adapter.fileOrder` by document order. Greenhouse labels both attachment inputs
    just "Attach" — the real heading sits outside the element the scanner reads.
 4. unsupported type → defer.
-5. `UNKNOWN`/`NEEDS-CHOICE`/`MAYBE` → **defer if required, `skip` if optional**.
+5. `fieldIdentityMismatch(f)` → defer. A field whose own exposed identity (from
+   `sel`) contradicts what its label claims is never auto-filled or auto-checked,
+   however confidently the bank resolved the label — a phone number belongs
+   nowhere near a field named `ssn`. Checked **before** `req` or status matter,
+   because it is a safety concern rather than an unanswerable question, so it
+   always defers and never silently skips as optional-and-unresolved.
+6. `r.status === "CONFIRM"` → defer, `why: "confirm"`. The class gate: the bank
+   entry that answered is `answerClass: "assertion"` — something the user
+   _asserts_ rather than states (work authorisation, arbitration, background
+   check, relocation). Stamped on `r.source`, never on the widget type, so it
+   applies identically to a checkbox, a radio pair and a text field. The value
+   and pick ride along on the defer, so the approval message shows exactly what
+   would have been filled rather than asking a fresh, unexplained question.
+7. `UNKNOWN`/`NEEDS-CHOICE`/`MAYBE` → **defer if required, `skip` if optional**.
    Asking the user for a Twitter handle they do not have is noise, and noise is
    what makes an approval message get skimmed. Still counted and listed, so nothing
    disappears silently.
-6. radio/checkbox → target the **option's** key (`r.pick`), since the group has no
-   element of its own.
-7. otherwise → `{ how: VERB[f.t], value }`.
+8. `SKIP` (needs a document or long-form text), or an empty/absent resolved
+   value → defer.
+9. **any `check` verb — radio or checkbox → defer, `why: "confirm-widget"`.**
+   No option matched → defer too. This branch used to emit a fill item
+   targeting the option's key (`r.pick`); it now emits none, ever. See the
+   `readiness()` section below for the measurement and for why the marker is a
+   different string from step 6's.
+10. otherwise → `{ how: VERB[f.t], value }`.
 
 Then a post-pass: a ticked "current role" box disables the end-date pair on every
 one of these boards, so those defers are converted to `skip` rather than being
@@ -508,15 +542,43 @@ asked about.
 
 ```js
 // readiness — "does a MODEL need to think before the engine can run?"
-{ ready: false, reason: "N deferred field(s) need a human" }  // any NON-consent defer
+{ ready: false, reason: "N deferred field(s) need a human" }
 { ready: false, reason: "nothing to fill" }                   // no fillable items
 { ready: true,  reason: null }
+```
+
+Two defer kinds are excluded from that count, and nothing else is:
+
+```js
+if (d.why === "consent") return false
+if (d.why === "confirm-widget" && !d.req) return false
+return true
 ```
 
 The planner already knows the answer — it counted the defers and knows whether
 anything is left to fill. Emitting a boolean means the caller branches on a flag
 instead of reading the plan and forming an opinion. On `ready=true` the path is
 scan → fill → hand over, with **no model step in between**.
+
+> **`confirm-widget`, added 2026-07-31 (`w3-resolution`).** A checkbox or radio
+> group is **never** auto-acted on unattended, whatever class the answer bank
+> gave the value: a tick carries **assent on a control the board owns**, not a
+> value, and a `datum` classification only ever licensed filling a text field.
+> Measured against the real 49-entry fact base, on a page where every label and
+> option was wording the user had banked verbatim (Country, Gender, Veteran
+> Status — all `datum`), **34 non-CONFIRM check-verb fields auto-ticked** before
+> the guard. Now 0. `buildPlan`'s check-verb branch therefore defers every
+> check-verb resolution, with **no** exemption for a two- or three-option group:
+> a hostile board defeats an option-count exemption by adding decoy options to
+> the one box it cares about.
+>
+> **`why: "confirm-widget"` is a different string from the class gate's
+> `why: "confirm"` on purpose.** An earlier draft keyed the readiness exemption
+> on `why === "confirm"` and re-marked a page whose only defer was an unreviewed
+> **work-authorisation assertion** as `ready: true`. The exemption reads
+> `confirm-widget` only, and only combined with `!d.req` — a **required**
+> `confirm-widget` defer still blocks, because the form insists on an answer and
+> nobody has reviewed one. `submitReadiness()` is blocked by both kinds.
 
 > **AUDIT H10 — CLOSED 2026-07-31 (`w3-resolution`, `58d89b6`).** The text below
 > is the entry as written, kept because it records why the obvious fix was

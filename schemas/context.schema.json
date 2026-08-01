@@ -1,5 +1,5 @@
 {
-  "$comment": "Shape of jobs/<slug>/context.json — SHARED tailoring context. Both skills read/write it so resume and cover letter stay consistent. Validated by validateContext() in scripts/lib.mjs.",
+  "$comment": "Shape of jobs/<slug>/context.json — SHARED tailoring context. Both skills read/write it so resume and cover letter stay consistent. Validated by validateContext() in scripts/lib/lib.mjs.",
   "type": "object",
   "required": ["slug", "analysis", "resume", "cover_letter"],
   "properties": {

@@ -68,7 +68,11 @@ Before tailoring for real applications. If it is false, warn the user first.
 
 Greenhouse, Ashby and Lever include one; `oracle_cloud`, `smartrecruiters`,
 `successfactors` and `workday` return none, and Adzuna returns a ~500-char
-teaser (already flagged `partial_description`). Those four need a per-posting
+teaser. **That teaser is not flagged at ingest** — nothing sets
+`partial_description` there; `screen.mjs` computes it at screen time from
+`!captured?.description`, which is a different question and, per AUDIT **H5**,
+true for nearly every lead. Do not rely on the flag to tell you a description is
+a teaser. Those four boards need a per-posting
 detail fetch — `scripts/leads/enrich.mjs`, one fetcher per ATS, URLs derived
 from the lead's own `url`/`id` rather than from `job-sources.yaml`.
 
@@ -255,6 +259,50 @@ already a function and skip installing when it was. A board defining that global
 was therefore "ready", the real scanner never loaded, and the board supplied the
 whole scan. The scanner now installs unconditionally and is called through a
 local binding, never through the global. The check saved about 1ms.
+
+`scan.driver.mjs` — the MCP path — **cannot** be fixed the same way, and it is
+worth knowing which file you are reading. That driver runs inside
+`browser_run_code_unsafe`'s vm, which has no `fs`, so it has no scanner text to
+install and no local binding to call: it must go through `window.__ajScan` and
+cannot know whose function answered. So it does the only thing left — records
+whether the global was pre-owned, strips every `labelExact` off the scan
+Playwright-side, and appends a `scan not vouched` signal. Reading the
+unconditional-install rule as covering both files is the mistake; only
+`scan-engine.mjs` gets the strong version.
+
+### A checkbox or radio group never auto-acts unattended
+
+A `datum` classification licenses filling a **text field**. It says nothing
+about whether ticking a control the **board** owns is safe with nobody watching,
+because a checkbox or radio group is an act rather than a value — the fact that
+the answer bank could answer the underlying question is not a licence to perform
+the act.
+
+This was measured, not reasoned about. Against the real 49-entry fact base, on a
+page where every label and option was wording the user had banked verbatim
+(Country, Gender, Veteran Status — all classified `datum`), **all 34 non-CONFIRM
+check-verb fields auto-ticked** before the guard landed. Now 0.
+
+So `buildPlan`'s check-verb branch defers **every** check-verb resolution,
+whatever `r.status` and whatever the class said, and with no exemption for a
+group offering only two or three options: a hostile board defeats an
+option-count exemption by adding decoy options to the one box it cares about,
+which is the same one-line bypass the class gate alone had.
+
+**The marker is `why: "confirm-widget"`, and it is a different string from the
+class gate's `why: "confirm"` on purpose.** An earlier draft of the readiness
+exemption keyed on `why === "confirm"` — the marker `resolveFields()` stamps on
+an assertion-class bank answer it stopped short of auto-acting on — and that
+re-marked a page whose only defer was an **unreviewed work-authorisation
+assertion** as `ready: true`. Do not merge the two markers.
+
+`readiness()` exempts a `confirm-widget` defer only when the form itself does
+**not** mark the field required (`d.why === "confirm-widget" && !d.req`), on the
+same reasoning as a consent box: it sits there unticked on a form the user is
+already looking at, at zero extra model turns. A **required** `confirm-widget`
+defer is not rescued — the form insists on an answer and nobody has reviewed
+one, so it blocks like any other unresolved required field. `submitReadiness()`
+is blocked by both kinds, as it is by every defer.
 
 ---
 

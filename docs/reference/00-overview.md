@@ -57,7 +57,7 @@ Everything else is a script.
      APPLICATION    │  scan page → fill plan → fill → hand off│
                     │  scripts/apply/ + .claude/skills/apply-job│
                     └──────────────────┬──────────────────────┘
-                                       │  the user clicks Submit
+                                       │  the user reviews and clicks Submit
                     ┌──────────────────▼──────────────────────┐
      RECORD         │  applications table, follow-ups, outcomes│
                     │  scripts/applications/                  │
@@ -71,6 +71,24 @@ Everything else is a script.
 
 `scripts/lib/` sits underneath all five. `scripts/maintenance/` handles the
 store's lifecycle. `scripts/hooks/` + `.claude/hooks/` enforce the guardrails.
+
+> **On the APPLICATION row's hand-off.** Hard rule 6 was rewritten on
+> 2026-07-31 (user decision) to permit an unattended submit — but only on a
+> board that passes a **mechanical** trust gate, with nothing on the form that
+> required a judgement, and everything else deferring **with a stated reason**.
+> That path would live in `scripts/auto/`. As of 2026-07-31 that directory holds
+> `guard.mjs` (filesystem boundary, `jobs/.auto/STOP` kill switch, read-only
+> profile hashing) and `audit.mjs` (the run record) — **the checks, not the
+> runner**. Neither file opens a browser or contains a click, there is no trust
+> gate, and `docs/application-limits.yaml` has no `auto_apply` block. It would
+> ship `enabled: false, dry_run: true` for the user to turn on after reading a
+> dry-run report they trust. So the arrow above is what happens today.
+>
+> The word doing the work is _mechanical_: a board would be trusted because it
+> is a known ATS on an allowlist the user controls and the lead cleared every
+> screening stage — **never** because a model read the posting and found it
+> convincing. Hard rule 0 applies at full force here, and a page that looks
+> trustworthy is exactly the one worth worrying about.
 
 ## Where state lives, and who owns it
 

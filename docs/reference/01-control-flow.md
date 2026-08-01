@@ -182,6 +182,10 @@ PHASE 2  read the form BEFORE tailoring
       │
       │  scan.driver.mjs (runs Playwright-side, has real locators)
       │  ├─ addInitScript + addScriptTag  scan-page.js → window.__ajScan
+      │  │    ONLY if the page did not already own __ajScan; if it did, the
+      │  │    driver records that and strips every labelExact vouch (this vm
+      │  │    has no fs, so it cannot install through a local binding the way
+      │  │    scripts/apply/scan-engine.mjs does)
       │  ├─ __ajScan(false)               inventory the page, stamp data-aj="fN"
       │  └─ for each combo with no options:
       │         real Playwright click → read [class*='__option'] → Escape
@@ -212,7 +216,16 @@ PHASE 2  read the form BEFORE tailoring
       │                                  pattern-matched still lands here
       │     file field                → upload, matched by label then order
       │     UNKNOWN/NEEDS-CHOICE/MAYBE→ defer if required, skip if optional
-      │     otherwise                 → { how: fill|select|check|combo|type }
+      │     CONFIRM (assertion class) → defer why:"confirm" — the user
+      │                                  asserts this, they don't state it
+      │     any radio/checkbox        → defer why:"confirm-widget", ALWAYS.
+      │                                  A tick is assent on a control the
+      │                                  BOARD owns, not a value; 34 of them
+      │                                  auto-ticked before this guard
+      │     otherwise                 → { how: fill|select|combo|type }
+      │       how:"check" now has ONE producer left — the allowlisted-consent
+      │       branch — and it needs a vouch this CLI's scan-file path cannot
+      │       supply, so no plan built today contains one
       ├─ recordCache()                remember this form for next time
       └─ writes fill-plan.js — a SELF-CONTAINED bootstrap with the engine
          text and the plan embedded as string literals (it does NOT set
@@ -221,10 +234,14 @@ PHASE 2  read the form BEFORE tailoring
          and the exact browser bootstrap for step D
 
          ready       = "does a MODEL need to think before the engine runs?"
-                       A consent-only defer does NOT block it (H10, closed
-                       2026-07-31) — the user ticks the box in the browser.
+                       Two defers do NOT block it: consent (H10, closed
+                       2026-07-31) and a NON-REQUIRED confirm-widget — both
+                       sit unticked on a form the user is reviewing anyway.
+                       A REQUIRED confirm-widget still blocks.
          submitReady = "is anything at all left undecided?" Any defer blocks
-                       it, consent included.
+                       it, consent and confirm-widget included.
+         NEITHER flag authorises a submit click. Nothing on this flow clicks
+         one; the unattended submit rule 6 permits is Phase 3 and unbuilt.
 
    C. decide (0 calls)  cover letter needed? PDFs needed? reuse an existing resume?
       node scripts/apply/pending-questions.mjs   ← every unanswerable question,
@@ -256,7 +273,10 @@ PHASE 5  fill and verify — ONE browser call
    └─ returns { ok, failed, deferred, failures, verify, defer, next }
 
    F. `next` is reported but there is deliberately NO verb that clicks a button.
-      Advancing is an explicit browser_click you make. Submitting is the user.
+      Advancing is an explicit browser_click you make. Submitting is the user
+      — on THIS flow, structurally, because the engine cannot express a click.
+      Rule 6's unattended submit would be a separate Phase 3 runner that does
+      not exist; it would never be this engine growing a click verb.
 
 AFTER  log-application.mjs <slug> --company … --title …   (only once the user
                                                             confirms they sent it)

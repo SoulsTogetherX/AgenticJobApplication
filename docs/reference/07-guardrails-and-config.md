@@ -164,8 +164,10 @@ LinkedIn ads are syndicated from one), capture from that canonical source, and s
 the LinkedIn URL in `notes` for provenance. If no public canonical source exists, ask
 the user to paste the text.
 
-> **Stale:** this skill's frontmatter and two body lines still say the store is
-> `jobs/leads.json`. AUDIT **M16**.
+> ~~**Stale:** this skill's frontmatter and two body lines still say the store is
+> `jobs/leads.json`. AUDIT **M16**.~~ **Fixed 2026-07-31 (`doc-scribe`)** — all
+> three now say `jobs/leads.db`, and the third states that no standing
+> `leads.json` exists rather than leaving the reader to infer it.
 
 ---
 

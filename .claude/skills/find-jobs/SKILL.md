@@ -3,7 +3,7 @@ name: find-jobs
 description:
   Search ethical public job sources (Hacker News, Greenhouse/Lever/Ashby
   boards including Anthropic, or a user-given site/URL) for Full-Stack roles that
-  pass docs/application-limits.yaml, and store leads in jobs/leads.json to
+  pass docs/application-limits.yaml, and store leads in jobs/leads.db to
   recommend later. Use when the user asks to find, search for, scan, or recommend
   jobs, or gives a job board URL or place to look.
 ---
@@ -59,7 +59,7 @@ into a document; if unconfigured, `all` skips it with a warning.
   (JS-heavy), extract postings, normalize each to
   `{ company, title, location, url, posted_at }`, write the array to a temp
   JSON file, and run `node scripts/leads/find-jobs.mjs import <file>` so the same
-  limits/dedupe apply. Never hand-edit jobs/leads.json.
+  limits/dedupe apply. Never hand-edit the lead store.
 - Fortune 500 companies mostly run Workday/Taleo (no public API): use their
   public careers-site search page via this capture flow, or WebSearch
   `site:<company careers domain> full stack`.
@@ -100,4 +100,7 @@ When asked "what did you find" / "recommend jobs":
 4. `node scripts/leads/find-jobs.mjs mark <id> --status recommended` for the ones
    surfaced; `--status dismissed --notes "why"` for the ones the user rejects.
 
-The store lives at `jobs/leads.json` (gitignored, like all personal data).
+The store lives at `jobs/leads.db` — SQLite, gitignored like all personal data.
+There is **no standing `jobs/leads.json`**: a second copy went stale the moment
+a sweep ran. Take a point-in-time snapshot with
+`node scripts/maintenance/migrate.mjs --export <file>` if you need one.

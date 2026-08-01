@@ -55,22 +55,22 @@ goal, and it's the part that's currently missing.
 
 ## Decisions taken
 
-| Question    | Your decision                                                                                               |
-| ----------- | ----------------------------------------------------------------------------------------------------------- |
-| Limits      | Sweep and store everything; auto-apply only within `application-limits.yaml`                                |
-| Slim odds   | L2 fit must **not** reject on the auto path — it becomes ranking-only there                                 |
-| Auto-submit | Green tier fills **and submits**, notify after. Hard rule 6 gets rewritten                                  |
-| Sequencing  | Security first; autonomy ships only when a hostile board can't move the engine                              |
-| Recruiters  | All six sources: HN, already-fetched payloads, careers pages, staffing agencies, dev-community, own history |
-| Doc format  | Enforce `ats-lint` as a gate, simplify the template, prove extraction works                                 |
-| Structure   | Algorithms over reasoning; where reasoning is unavoidable, batch it into one parallel fan-out               |
-| Rewrites    | Destroy and replace where patching has run out — see the rewrite backlog                                    |
-| Commits     | Granular commits to `dev` only (rule 7 unchanged); a commit is the rollback unit                            |
-| Regressions | Innovators keep a measurement ledger and may request a rollback; worker confirms regression vs. in-progress |
-| Models      | Fable 5, Opus and Sonnet all in play; per-role assignment is measured, not asserted                         |
-| Roles       | Six, not four — `cicd` and `scribe` are distinct roles, not worker specialisations                          |
-| Checking    | Every agent verifies another, manager included; a self-report is a claim, not evidence                      |
-| Skills      | New skills welcome; dev-only ones marked `scaffolding` and reaped by a CI check, not by memory              |
+| Question    | Your decision                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------- |
+| Limits      | Sweep and store everything; auto-apply only within `application-limits.yaml`                                        |
+| Slim odds   | L2 fit must **not** reject on the auto path — it becomes ranking-only there                                         |
+| Auto-submit | Green tier fills **and submits**, notify after. Hard rule 6 rewritten 2026-07-31 (`fa97436`); the runner is unbuilt |
+| Sequencing  | Security first; autonomy ships only when a hostile board can't move the engine                                      |
+| Recruiters  | All six sources: HN, already-fetched payloads, careers pages, staffing agencies, dev-community, own history         |
+| Doc format  | Enforce `ats-lint` as a gate, simplify the template, prove extraction works                                         |
+| Structure   | Algorithms over reasoning; where reasoning is unavoidable, batch it into one parallel fan-out                       |
+| Rewrites    | Destroy and replace where patching has run out — see the rewrite backlog                                            |
+| Commits     | Granular commits to `dev` only (rule 7 unchanged); a commit is the rollback unit                                    |
+| Regressions | Innovators keep a measurement ledger and may request a rollback; worker confirms regression vs. in-progress         |
+| Models      | Fable 5, Opus and Sonnet all in play; per-role assignment is measured, not asserted                                 |
+| Roles       | Six, not four — `cicd` and `scribe` are distinct roles, not worker specialisations                                  |
+| Checking    | Every agent verifies another, manager included; a self-report is a claim, not evidence                              |
+| Skills      | New skills welcome; dev-only ones marked `scaffolding` and reaped by a CI check, not by memory                      |
 
 ---
 
@@ -748,9 +748,29 @@ doesn't move.
 
 ### 3.4 Blast radius
 
+> **Read every sentence in this section as a specification, not a description.**
+> The present-tense phrasing below ("checked at start", "the runner **writes it
+> itself**") describes what the runner **must do when it is built**. This
+> warning is here because the struck clause further down shipped in the
+> indicative for a control that did not exist, and got believed in instead of
+> built — the correction underneath it says so in as many words. Do not let it
+> happen twice to the kill switch.
+>
+> **State as of 2026-07-31, checked by opening the files:** `scripts/auto/` now
+> holds `guard.mjs` (the `assertInsideJobs` boundary, the `jobs/.auto/STOP`
+> switch with its three checkpoints, `readOnlyProfile` hashing) and `audit.mjs`
+> (the JSONL + table run record, and `capCheck`). **Those are the checks. There
+> is no runner** — neither file opens a browser, and neither contains a click.
+> `guard.mjs`'s own header says it: "Read nothing here as evidence that an
+> unattended run is currently guarded — there is no unattended run." Still
+> missing: the runner, the tier classifier
+> (`scripts/apply/automatability.mjs`), the trust gate, and the `auto_apply`
+> key in `docs/application-limits.yaml`, which is the user's file to add.
+
 New `auto_apply` block in `docs/application-limits.yaml` — your file, so
-auto-submit authorisation lives where you control it. **Ships `enabled: false`,
-`dry_run: true`.**
+auto-submit authorisation lives where you control it. **Would ship
+`enabled: false`, `dry_run: true`**, and the user turns it on only after reading
+a dry-run report they trust.
 
 Caps: `per_run_max: 3`, `per_day_max: 5`, **`per_company_max_per_week: 1`** — the
 last one is the important one, because carpet-bombing one employer is the
@@ -911,8 +931,11 @@ the `documents` table has no on-disk backup, so the scheduled run should copy
 These are dated user decisions in `CLAUDE.md`, in the file's existing
 convention — not silent overrides:
 
-- **Rule 6** ("never auto-submit") → scoped exception for green tier under
-  `auto_apply` caps, with the tier preconditions written in as its replacement.
+- ~~**Rule 6** ("never auto-submit") → scoped exception for green tier under
+  `auto_apply` caps, with the tier preconditions written in as its replacement.~~
+  **Done, 2026-07-31, `fa97436`** — see the supersession note below. The
+  replacement text is in `CLAUDE.md`; the preconditions it names are still
+  unbuilt, which the rule says of itself.
 - **Rule 2** (an application is recorded only when you confirm) → the runner
   writes it with `submitted_by: "auto"` and the run id.
 - **Rule 5** (approval before rendering PDFs) → the runner renders
@@ -936,6 +959,32 @@ convention — not silent overrides:
 > not a documentation task done ahead of it. Until then rule 6 stands unamended
 > and the user is on the submit button. If anyone wants them written earlier,
 > that is the user's call to make explicitly, not an inference from this plan.
+
+> **SUPERSEDED for rule 6, later the same day — 2026-07-31, commit `fa97436`.**
+> The note above is kept because its reasoning is still right about rules 2, 5
+> and 10, which remain unamended; only its rule-6 half was overtaken.
+>
+> **The user made that call explicitly**, which is the exception the note itself
+> named. `build-manager` wrote the replacement into `CLAUDE.md` directly —
+> `doc-scribe`'s file — as an exception taken knowingly, on the grounds that a
+> hard-rule rewrite is a policy record and paraphrase risk on a safety rule
+> outweighs the ownership ceremony. Both the decision and the exception are in
+> `docs/team-roster.md`'s log.
+>
+> **The hazard the note warned about was answered rather than ignored**, and
+> that is the part worth carrying forward. The fear was a permission in force
+> with nothing behind it, read as current by an agent on every turn. The shipped
+> rule 6 blocks that three ways: it is explicitly marked **NOT BUILT YET**
+> naming `scripts/auto/`, the `auto_apply` block, the trust gate and the caps;
+> it states that the operative rule **today** is that the user is on the submit
+> button for every application; and it ships `enabled: false, dry_run: true`,
+> off until the user turns it on after a dry-run report they trust.
+>
+> Verified 2026-07-31 by opening the files, not by reading the commit message:
+> `scripts/auto/` contains guards and an audit record and **no runner** (see
+> §3.4's state note), and `docs/application-limits.yaml` has no `auto_apply`
+> key. So the rule currently permits something nothing can do — which is the
+> intended state, not an oversight, and the rule says so about itself.
 
 ---
 

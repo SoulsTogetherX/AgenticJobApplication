@@ -521,6 +521,11 @@ That defeats the flag's stated purpose. `apply-job/SKILL.md` says:
 > "On `ready=true` there is nothing here to think about: go straight to D, fill, and
 > hand the user the submit button."
 
+<!-- Quoted as the skill read on the audit date. The wording is now "hand over"
+     (doc-scribe, 2026-07-31, after hard rule 6 was rewritten); the quote is left
+     verbatim because an audit finding that silently tracks its target's current
+     text stops being evidence of anything. -->
+
 …and separately lists `consent` as one of the expected defer reasons. Both cannot
 hold. `pending-questions.mjs` already treats consent as a different category and
 excludes it, so the two scripts disagree about whether a consent box is outstanding
@@ -899,6 +904,40 @@ path, and `pending-questions.mjs` pays it a second time.
 | `check-applied.mjs:40-41`                                           | "falls back to the YAML … if that file has been edited more recently" | no mtime comparison exists anywhere                               |
 | `schemas/*.schema.json` `$comment`                                  | validated by `scripts/lib.mjs`                                        | `scripts/lib/lib.mjs`                                             |
 | `.claude/settings.local.json:4-5`                                   | allowlists `scripts/find-jobs.mjs`                                    | dead path (harmless)                                              |
+
+> **Status, 2026-07-31 (`doc-scribe`) — re-checked row by row against the files,
+> not against this table.** Fixed: `README.md:20` and `apply-job/SKILL.md`'s ATS
+> path were already correct when re-read; `find-jobs/SKILL.md` (all three
+> places) now says `jobs/leads.db`; `pipeline-jobs/SKILL.md` now sends the
+> reader to `application-limits.yaml` for `repost_age_days` instead of quoting
+> 45, which is only `screen.mjs`'s fallback while the user's file says **30**;
+> `context.schema.json`'s `$comment` now says `scripts/lib/lib.mjs`
+> (`job.schema.json` was already right); `CLAUDE.md:5-8` now states that
+> `title_keywords` is wider than "full-stack + back-end" and lists what else it
+> admits.
+>
+> Two rows are now stale in the other direction and were re-verified as fixed
+> upstream: `package.json`'s `verify` script runs
+> `scripts/documents/verify-claims.mjs`, and `.claude/settings.local.json`
+> allowlists `scripts/leads/find-jobs.mjs`.
+>
+> **Still open, and not `doc-scribe`'s to fix** — filed, not edited:
+>
+> - `check-applied.mjs:40-41` says the read "falls back to the YAML
+>   automatically if that file has been edited more recently." **There is no
+>   mtime comparison anywhere.** `resolveApplicationSource()`
+>   (`scripts/lib/db.mjs:454`) falls back to YAML only when `jobs/leads.db` does
+>   **not exist**. This one is worth more than a path typo: a user who believes
+>   that comment and hand-edits `profile/applications.yaml` has their edit
+>   silently ignored for as long as the database exists.
+> - `.claude/agents/job-worker.md` (`summary ≤40`, `next_step ≤25`) and
+>   `pipeline-jobs/SKILL.md` (`≤50` / `≤30`) still give the same agent two
+>   different return caps. `pipeline-jobs/SKILL.md` is `doc-scribe`'s and
+>   `job-worker.md` is not, so **neither** was changed: picking a winner
+>   unilaterally would just move the contradiction. Needs one owner to rule.
+> - `.claude/agents/*` and `scripts/applications/*` have **no owner** in
+>   `docs/team-roster.md`. Raised to the manager as unowned file sets rather
+>   than quietly adopted.
 
 ---
 

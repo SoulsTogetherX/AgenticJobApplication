@@ -22,6 +22,11 @@ Two design rules explain every step below:
 ## Hard boundaries (never cross these)
 
 - **NEVER click a button the scan classifies `r: "submit"`.** The user submits.
+  Hard rule 6 was rewritten on 2026-07-31 to permit an unattended submit — but
+  only on the Phase 3 auto path, behind a **mechanical** trust gate, and that
+  runner does not exist (`scripts/auto/` holds guards and an audit record, not
+  a runner). **This skill is not that path**, whatever ships there, and no
+  reading of rule 6 authorises it to click submit.
 - **Never click `r: "start"` on a page that already has fields** — on most ATSs
   the final button is worded "Apply"/"Submit Application" and the scanner cannot
   tell the difference by text alone.
@@ -147,11 +152,16 @@ guess) and writes `jobs/<slug>/fill-plan.js` + `.json`. It prints:
 
 - **`ready=true|false`** — whether any model judgment is still required. On
   `ready=true` there is nothing here to think about: go straight to D, fill,
-  and hand the user the submit button. On `ready=false` the `reason=` says why,
+  and hand over. On `ready=false` the `reason=` says why,
+- **`submitReady=true|false`** — the stricter twin: is anything at all left
+  undecided, consent included? **Neither flag authorises a submit click**, and
+  nothing on this path clicks one.
 - `items=<n>` — fields that will be filled with no model involvement,
-- one `defer` line per field a human must answer, each with a reason:
-  `consent` (an agreement — always yours to accept, never mine), `unknown`,
-  `needs-choice`, `maybe`,
+- one `defer` line per field a human must answer (`defer\t<key>\t<why>\t<label>`),
+  each with a reason: `consent` (an agreement — always yours to accept, never
+  mine), **`confirm-widget`** (a checkbox or radio group; see below),
+  `confirm` (an assertion the fact base would have filled, not stated),
+  `unknown`, `needs-choice`, `maybe`,
 - the exact **bootstrap** to run in step D.
 
 Only the `defer` lines need your attention. Do not read the plan file, and do
@@ -271,6 +281,18 @@ run?", and a consent box does not, because the user ticks it in the browser they
 are already reviewing. **Nothing ticks it for them** — that is hard rule 6, and
 do **not** "fix" this by auto-ticking consent. So still expect `ready=false`
 whenever a real question is unanswered, and fill either way.
+
+**A `confirm-widget` defer is a checkbox or radio group, and it is never ticked
+here either** — whatever class the answer bank gave the value. A tick carries
+**assent on a control the board owns**, not a value, and "the fact base can
+answer the underlying question" is not a licence to perform the act. Measured
+against the real 49-entry fact base on a page of verbatim-banked labels
+(Country, Gender, Veteran Status), 34 such fields auto-ticked before this guard;
+now 0. Like consent, a **non-required** `confirm-widget` defer does not make
+`ready=false` — it sits unticked on a form the user is reviewing anyway. A
+**required** one does block, because the form insists on an answer and nobody
+has reviewed one. Surface these in the approval message with the value the bank
+resolved, so the user is ticking with the answer in front of them.
 
 Then run the bootstrap it printed:
 

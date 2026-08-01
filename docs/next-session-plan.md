@@ -4,7 +4,13 @@ Hand this file to a fresh session. It is self-contained: it assumes no memory of
 the conversation that produced it.
 
 **Read `CLAUDE.md` first** — its hard rules (truthfulness, fact-base protection,
-`dev` branch only, never auto-submit) all still apply and are not repeated here.
+`dev` branch only) all still apply and are not repeated here. **Rule 6 changed
+after this plan was written** (`fa97436`, 2026-07-31, user decision): it is no
+longer "never auto-submit" but "auto-submit on a board passing a **mechanical**
+trust gate when nothing on the form needed a judgement; defer everything else
+with a stated reason." It ships off (`enabled: false, dry_run: true`) and none
+of it is built. Read the rule in `CLAUDE.md`, not the paraphrase here or the
+older phrasing further down this file.
 
 **Working preference from the user: plan before acting.** Investigate, produce a
 concrete plan, get sign-off, then implement. Do not commit unless asked.
@@ -130,8 +136,7 @@ _Design points:_
 emit an explicit `ready=true|false` (plus a reason when false). The skill then
 branches on a boolean instead of the model reading the plan and judging.
 
-When `ready=true`: scan → fill → hand the user the submit button, with no model
-judgment in between.
+When `ready=true`: scan → fill → hand over, with no model judgment in between.
 
 ### 1.4 Batch questions across jobs, not within one
 
@@ -176,9 +181,10 @@ Worth doing:
 
 Do **not** parallelize:
 
-- **The apply flow itself.** One browser, and the user is on the submit button
-  (CLAUDE.md rule 6). Two applications at once means two forms competing for one
-  browser session.
+- **The apply flow itself.** One browser session, and two applications at once
+  means two forms competing for it. Rule 6's Phase 3 runner would not change
+  this — its own blast-radius caps (`per_run_max`, `per_company_max_per_week`)
+  bound throughput far below the point where concurrency would help.
 - **Anything writing the same `jobs/<slug>/`.** One subagent per slug, always.
 
 _SQLite note:_ WAL mode allows concurrent readers, but **writers serialize**.

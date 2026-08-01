@@ -40,7 +40,7 @@ deterministically and renders ATS-friendly PDFs.
 .claude/skills/tailor-cover-letter/ skill: tailor cover letter to a job
 .claude/skills/check-applied/       skill: application history (already applied? how long ago?)
 .claude/skills/update-profile/      skill: merge replaced/updated source docs into the profile (add-only)
-.claude/skills/apply-job/           skill: apply in the browser via Playwright MCP (user clicks Submit)
+.claude/skills/apply-job/           skill: apply in the browser via Playwright MCP (fills, then hands over)
 .claude/hooks/protect-profile.js    hook: deny agent edits to the fact base
 docs/tailoring-rules.md             shared rules both skills must follow
 profile/profile.yaml                approved master fact profile (gitignored)
@@ -76,6 +76,30 @@ PDF rendering uses a locally installed Edge or Chrome in headless mode
   server from `.mcp.json`, so start Claude Code in THIS folder and approve it)
 
 The Playwright MCP server (`.mcp.json`) loads when a Claude Code session starts
-in this folder; the apply-job skill fills applications with it. The human is
-always on the submit button — the agent never submits, logs in, or handles
-credentials.
+in this folder; the apply-job skill fills applications with it. **This path fills
+and hands over. It does not submit**, and it never logs in, creates an account,
+or handles credentials.
+
+Hard rule 6 (rewritten 2026-07-31, user decision) permits an unattended submit
+in one narrowly-drawn case — a board that passes a **mechanical** trust gate,
+with nothing on the form that required a judgement — and requires everything
+else to defer **with a stated reason** the user can act on. Three things about
+that rule matter more than the permission itself:
+
+- **The thing that would submit does not exist.** `scripts/auto/` now holds the
+  guardrails (`guard.mjs` — the filesystem boundary, the `jobs/.auto/STOP` kill
+  switch, the read-only profile hash) and the audit record (`audit.mjs`). There
+  is **no runner**: nothing in that directory opens a browser, and neither file
+  contains a click. The trust gate and the tier classifier are also unwritten,
+  and `docs/application-limits.yaml` has no `auto_apply` block at all. Guards
+  existing is not the capability existing — `guard.mjs` says so about itself.
+- **It would ship off.** `enabled: false, dry_run: true` in
+  `docs/application-limits.yaml`'s `auto_apply` block, to be turned on by the
+  user only after they have read a dry-run report they trust.
+- **Trust would be mechanical, never a model's impression of a page.** A board
+  would be trusted because it is a known ATS on an allowlist the user controls
+  and the lead cleared every screening stage — never because the posting reads
+  as legitimate. A page that looks trustworthy is the one worth worrying about.
+
+Until that ships and the user enables it, the user is on the submit button for
+every application — that is what the code does today, not a preference.

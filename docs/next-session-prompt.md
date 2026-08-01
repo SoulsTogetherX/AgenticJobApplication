@@ -6,86 +6,117 @@ Paste everything below the line into a fresh session.
 
 Continue implementing `docs/autonomy-plan.md`. It is **already approved — implement it, do not re-plan it.**
 
-You are `build-manager`. Delegate to the agents in `.claude/agents/` per `docs/team-roster.md` ownership. **Only the manager commits, to `dev` only.** Read `docs/agent-protocol.md` and `docs/team-roster.md` first — they contain rules earned from real incidents, not preferences.
+You are `build-manager`. Delegate per `docs/team-roster.md` ownership. **Only the manager commits, to `dev` only.** Read `docs/agent-protocol.md` and `docs/team-roster.md` first — they are earned from real incidents, not preferences.
+
+## READ THIS FIRST: the tree is RED and that is expected
+
+Three agents died simultaneously on a session limit, two of them **mid-edit**. Their partial work is **deliberately left uncommitted** — do not revert it, and do not "clean up" the working tree.
+
+```
+ M scripts/apply/fill-plan.mjs        (+62)   w3-resolution, value-carrying-act rule
+ M tests/apply/fill-plan.test.mjs     (+51)   w3-resolution — NOT ITS FILE, see below
+ M scripts/profile/save-answer.mjs    (+265)  w1-security, locking. HALF DONE
+```
+
+All three **parse**. Test state as left:
+
+| file                                 | result                                   |
+| ------------------------------------ | ---------------------------------------- |
+| `tests/profile/save-answer.test.mjs` | 35 tests, **18 fail** — genuinely broken |
+| `tests/apply/fill-plan.test.mjs`     | 98 tests, 6 fail — fails SAFE, see below |
+| `tests/security/**`                  | 138 tests, 2 fail                        |
+
+**Why the tree was not reverted.** `SendMessage` to a dead agent resumes it from its transcript. Reverting would leave a resumed agent working from the false belief that its edits exist. The partial work is worth more than a green `git status`.
+
+**The `fill-plan` failures are the rule working, not breaking.** Tests 26/27/59/68 encode the PRE-rule policy ("ordinary checkboxes stay on the normal path", "end dates are dropped once the current-role box is ticked") and fail because checkboxes now defer. 97/98 pin the pre-rule numbers. Those belong to `qa-breaker` and need updating, not reverting.
+
+**One failure is a WIN and must not be "fixed" back.** `tests/security` #111 —
+`LANDS (shapes B/C, reworded)` — asserts the reworded-assertion attack
+_succeeds_. It now FAILS, meaning the value-carrying-act rule closes the hole
+`innov-resilience` proved reclassification could never close. The rule reads no
+words, so a wording the pattern list misses cannot get past it. Have
+`qa-adversary` rewrite it to pin the fix.
+
+**`save-answer.mjs` is the dangerous one.** Half-inserted locking in the writer
+for the user's fact base. The shell guard denies it without
+`--file` / `--user-approved` / `--rescan`, so accidental real-bank writes are
+blocked — but do not run it against anything real until `w1-security` finishes.
+
+**Ownership violation to resolve:** `w3-resolution` edited
+`tests/apply/fill-plan.test.mjs`, which is `qa-breaker`'s, contrary to its brief.
+Assess the edit on merit; do not assume it is wrong. Then re-state the boundary.
 
 ## Where things stand
 
-Branch `dev`, HEAD was `f4e537e`, 38 commits since tag `baseline-pre-autonomy`. Suite: **1121 tests, 1117 pass, 0 fail, 4 skipped (all reasoned), 0 todo.** Security gate: **201, 198 pass, 0 fail, 3 skipped.**
+Branch `dev`, HEAD `fa97436`, **5 commits this session**:
 
-**Phase 1 (security) is essentially done.** The round-trip RCE is closed; a posting's title can no longer whitelist a résumé claim through verify-claims R6; `untrusted.mjs` is real and sanitises at ingest before `textSnippet` flattens the HTML; L3 injection findings now **reject** rather than merely flag; a government ID can no longer enter `answers.yaml` (exit 4, two-factor, measured 0 false positives across 5940 pairs); `save-answer.mjs` exits 2 on an unrecognised flag. `tests/fixtures/boards/` is a local fake ATS — Greenhouse, Lever and Ashby replicas plus hostile variants, served on `127.0.0.1` — and `tests/fixtures/boards/dom.mjs` runs the **real `scan-page.js`** with no browser.
+| commit    | what                                                      |
+| --------- | --------------------------------------------------------- |
+| `e19e87e` | Guardrails sealed on the shell path, not just Edit/Write  |
+| `9a3eaef` | `--rescan`: audit the fact base already stored            |
+| `d945871` | The consent gate wired at the consumer                    |
+| `3f67326` | An unrun browser test is now a failure; reaper wired      |
+| `fa97436` | Hard rule 6 replaced: auto-submit allowed, off by default |
 
-**Phase 2 (latency) has only its baseline.** `scripts/dev/bench-apply.mjs` exists: 5 round trips, 450ms unconditional sleep, 12 model turns, measured against the fake board. The tuning table in the plan is untouched, except that `ready=` was redefined to mean _"no model turn is needed"_ rather than _"nothing is deferred"_ — the plan's own highest-leverage Phase 2 item.
+Last green gate, on a quiet tree: **1186 tests, 1185 pass, 0 fail, 1 reasoned skip.** Floors are set to 1186 / 224.
 
-**Phase 3 (autonomy) has not been started at all.** `scripts/auto/`, `lock.mjs`, `automatability.mjs`, the `auto_apply` block in `application-limits.yaml`, `jobs/.auto/` — none of it exists. Nothing applies to anything unattended today.
+**Chromium is installed** (~701MB, `%LOCALAPPDATA%\ms-playwright`). All three browser legs run and pass, including Ashby's nonce CSP — previously an assumption. **The user wants it uninstalled when the build work is done**: `node node_modules/playwright-core/cli.js uninstall`. Removing it sends those three back to skipping, so it is a real trade, not just cleanup.
 
-## Do these first, in this order
+## The finding that dominates everything else
 
-**1. Wire the consent classifier to its consumer. This is a live defect.**
+`innov-resilience`, verified by execution against the real 49-entry bank:
 
-`w1-security` built `answerClass` / `mayAutoActUnattended` in `scripts/lib/untrusted.mjs`: an answer is `datum` (a fact — email, phone, years of experience) or `assertion` (something the user asserts — work authorisation, relocation, background check, arbitration). An assertion must never auto-act unattended.
+> **A `datum` classification licenses the agent to tick a control the BOARD owns, and a tick carries no value — it carries assent.**
 
-**Nothing consumes it.** `grep -c "answerClass" scripts/apply/fill-plan.mjs` returns 0, so in running code these tests pass, meaning the attack still works:
+On a page whose labels are all wordings the user banked, wired to `agree_arbitration`: **34 of 49 entries auto-tick, `ready: true`, no model step.** The class gate that shipped in `d945871` removed 14 of 48 (29%) — a real gain — and reclassifying answers closes **none** of the remaining 34.
 
-```
-ok 21 - LANDS (shape B): a tickbox whose own label is 'Yes' is auto-ticked, and the tick POSTs into an arbitration waiver
-ok 22 - LANDS (shape C): the commonest real ATS rendering — a Yes/No radio pair — ticks the same waiver
-```
+The fix, mid-implementation in the working tree: **a checkbox or radio group never auto-acts unattended, whatever the answer's class.** Measured 34 → 0.
 
-The spec is in the git log for commit `f4e537e` and in `w1-security`'s own header comments. Key points: parse `/^(a-\d+)@/` off `r.source` and classify **that one row** (~1 µs/field; classifying the whole bank per field costs 86 µs). Do **not** branch on `f.t` anywhere in the gate — that is what shape C defeats. Do **not** reuse `UNKNOWN`, which routes to `pending-questions.mjs` and would re-ask a question the user already answered, globally, forever; use a distinct `CONFIRM` status carrying the value, the pick, and `describeClass(info)`. Owner: **`w3-resolution`**.
+**Two things about it that must not be re-derived or weakened:**
 
-Measured cost, so nobody rediscovers it: 1 of 8 resolved fields defers across the honest board fixtures (12.5%) — the work-authorisation field, which legally must.
+1. **Its defers MUST use a distinct `why` — `"confirm-widget"`, not `"confirm"`.** `innov-resilience` nearly shipped a readiness exemption keyed on `why === "confirm"`, which is the class gate's own marker; it re-marked the arbitration pages as `ready: true`. Only `confirm-widget` defers on **non-required** fields are non-blocking.
+2. **Do NOT narrow it to "groups with fewer than 3 options carry a value."** Defeated by a board adding two decoy options. `innov-resilience` pre-rejected this and said it would file against it.
 
-**2. Shape E — scanner blindness. Sequence it AFTER item 1.**
+Latency cost, measured: **0** added model turns on both real Greenhouse fixtures, 0 on an optional EEO block, 0 on selects, **1** on a form with a required radio/checkbox group the bank can answer.
 
-A `<div role="checkbox">` produces **zero** scanned fields, and `readiness()` returns `ready: true` on a form carrying an unanswered required consent the user was never told existed. Owner: **`w2-engine`** (`scan-page.js` field collection).
+## User decisions from this session
 
-`qa-adversary` flagged the ordering hazard itself and it is real: making that control **visible** before it can **defer** converts a blindness into a bad tick, because shapes B and C prove the ordinary branch will tick whatever it can see. Item 1 must land first.
+- **Hard rule 6 is rewritten** (`fa97436`). Auto-submit is permitted on a board passing a **mechanical** trust gate when nothing needed a judgement; everything else defers **with a stated reason**. Ships `enabled: false, dry_run: true`. None of it is built.
+- **Priority: start Phase 2 and Phase 3.** Fix security holes as they surface; run a **full Phase 1 security sweep at the end**, not now. The user's reasoning is borne out by this session — every serious finding came from building, not auditing.
+- **Real-job testing: not yet.** The user deferred to the recommendation to land the value-carrying-act rule first.
+- **`.claude/hooks/` and `.claude/settings*.json` are the user's**, sealed on both paths. Hook and permission changes go to them.
+- **`zz-test-co` removed** from the application store: 12 applications, 10 companies.
 
-**3. Build the `--rescan` I approved.** Report-only, no writes, over the stored answer bank. Owner: **`w1-security`**. Two fact-base contaminations happened in one session and nothing rescans what is already stored.
+## Open, with owners
 
-**4. Raise the test floors.** `package.json` `testGate.full.floor` 946 → 1121 and `testGate.security.floor` 147 → 201. The gate prints this request itself. Owner: **`ci-engineer`** (it owns `package.json`; nobody else may edit it).
+| item                                                                                                | owner           |
+| --------------------------------------------------------------------------------------------------- | --------------- |
+| Finish the locking; fix `--rescan --source model` exiting 0; stale comment at `save-answer.mjs:169` | `w1-security`   |
+| Finish the value-carrying-act rule                                                                  | `w3-resolution` |
+| Shape E (`div[role=checkbox]` scans as nothing) + E1/E3/E4/E5/E6/E8                                 | `w2-engine`     |
+| E7 — the planner plans a login wall as if it were a form                                            | `w3-resolution` |
+| Rewrite security #111 to pin the fix                                                                | `qa-adversary`  |
+| Update 26/27/59/68/97/98 for the new policy                                                         | `qa-breaker`    |
+| An honest single-page fixture that reaches `ready: true`                                            | `qa-adversary`  |
+| `bench-apply` never produces a `CONFIRM`, so the gate's latency cost is unmeasured                  | `qa-breaker`    |
+| Sweep docs for rule 6; `npm run reap`, `--self-test`, column-0 frontmatter                          | `doc-scribe`    |
+| Wire `gate-audit.mjs` — needs a committed fixture lead store                                        | `w5-leads`      |
 
-## Then: Phase 2, then Phase 3
+## Things measured this session, so nobody re-derives them
 
-Phase 2's tuning table is in the plan. Every latency claim must be a **number from `bench-apply.mjs` against the local fake board, before and after** — `innov-perf` owns `docs/measurements.md` and may reject an optimisation that does not move a number. Phase 3 builds the unattended runner, and **auto-submit ships `enabled: false, dry_run: true`** regardless of what else is done.
-
-## Real-job testing — the user's explicit instruction
-
-The user wants the team to **test against real job postings once it is sure the pipeline works**, and to **record every detail and failure so the team improves from them**. Sequence it carefully, because this is where an irreversible mistake becomes possible:
-
-1. **Fake board first.** Everything must be green against `tests/fixtures/boards/` before any real posting is touched.
-2. **Install Chromium** (`npx playwright install chromium`, ~150MB — `playwright-core` is already a devDependency). Three tests are skipped for want of it, and one says in its own skip reason _"run it before trusting consent auto-tick."_ Ask the user before downloading.
-3. **No subagent ever drives a real employer's form.** That is a plan-level rule and it is what keeps the tree bounded. Real-board runs happen in the **main session with the user present**, via the `apply-job` skill and Playwright MCP. QA agents build fixtures; they do not visit employers.
-4. **Hard rule 6 stands: the user clicks Submit.** Nothing auto-submits, on any path, until Phase 3 ships it disabled and the user turns it on after reading a dry-run report they trust.
-5. **Record everything.** Each real run gets its failures, deferred fields and surprises written up, and each one becomes a fixture in `tests/fixtures/boards/` or `tests/fixtures/hostile/` so the same failure cannot recur silently. That is the improvement loop the user is asking for — a real failure that does not become a test is a failure that will happen twice.
-
-## Researcher → QA: what a real posting looks like
-
-The user's instruction: **the `researcher` should be helping the QA agents know what an accurate job posting and application form actually look like.** This is a standing collaboration, not a one-off.
-
-Today's fixtures were built from the codebase's own knowledge of Greenhouse, Lever and Ashby. They are good, but they are inferred. `researcher` (owns `docs/research/*`, reads the open web) should supply QA with the real shapes: which ATS products actually dominate, how their forms are really structured, what field labels and consent wordings genuinely appear, which knockout questions are common, and how postings are really written. `qa-adversary` and `qa-breaker` then build fixtures against **observed** reality rather than inferred reality.
-
-`researcher`'s first output is already committed under `docs/research/` — read it before re-researching. Its highest-value finding for this work: **mainstream ATS do not auto-reject on résumé content; the only true auto-reject is knockout questions**, which puts the answer bank at a higher-leverage layer than any keyword work.
-
-**One correction to carry forward**: that report's question-3 recommendation does not survive checking. Observability/Kubernetes/Incident-response appear as top demanded skills only with `--include-dismissed`; among pursuable leads they are 3, 2 and 4 with `req=0`, and the 50 dismissed ones were dropped for relocation, staff-level seniority and non-software roles — none for lacking those skills. Counts were right, the inference from them was not.
+- **`npm test` is not reproducible in a live shared tree.** Three consecutive identical runs: 4 fail → 6 fail → 0 fail. Separately, duration inflated 56% (59.8s → 93.3s) purely from contention. **A gate number taken mid-wave is not evidence.**
+- **Concurrent `save-answer.mjs` writers silently lose answers.** 6 writers, 5 trials, 4 lost 1–3 of 6 — every process exiting 0. Reproduced independently by the manager.
+- **Zero honest board fixtures reach `ready: true` today.** All four that do are hostile and minimal. Phase 2's headline item has never been demonstrated firing on an honest form — that reframes what Phase 2 is optimising.
+- **`--rescan` cannot detect well-formed fabrication.** Two of the four entries that actually contaminated the bank pass it silently. It validates shape, never truth.
+- **The classifier's inferred leg is a pattern list and every real entry takes it.** Four wordings of "are you authorized to work here" classify two ways. Rates measured at 11/13 and 5/13 on different question sets — **the rate is unestablished; the hole is not.**
+- **`.claude/hooks/` was open on the shell path.** Found by probing, after reading the files produced the wrong conclusion twice.
 
 ## Standing rules that cost something to relearn
 
-- **Clear a full agent's context between jobs.** Resuming keeps context, which is right _mid-job_ and wrong _between_ jobs. An agent that died on a session limit is always cleared. A cleared agent is **owed a handoff** — ownership belongs to the role, not the instance. Four agents were lost to session limits in one session, one partway through an owned file set.
-- **Never run a whole-tree git command** while agents are live — no `stash`, `checkout .`, `reset --hard`, `add -A`. Ownership is exclusive _per file_ and does not protect the working tree. Path-scoped only; `git status` first.
-- **A self-report is a claim, not evidence.** Verify against artifacts — read the diff, run the command. Several agents caught real defects this way, including one that found an error in a commit message I had written.
-- **Use the third lens.** When two agents disagree, a third with a different lens breaks the tie. It was used twice and both times found something _both_ sides had missed — including that a control everyone believed was holding had never fired at all.
-- **An auxiliary assertion placed before a finding assertion masks the finding.** Found twice in one day. Where a test pins a defect, the defect assertion must be the one that cannot be pre-empted.
-- **Commit messages carry the reasoning, not just the change.** They are the durable record; this project's history is its documentation.
-
-## Two things the user still owes, and one is blocking
-
-**BLOCKING — the fact base holds 4 fabricated entries.** Two agents hit the same bug (`save-answer.mjs` silently ignoring an unknown flag, since fixed) and wrote `a-050`–`a-053` to `profile/answers.yaml`, falsely stamped `source: user`. `a-051` is a **fabricated phone number** that resolves `OK` on a label appearing on virtually every form — verified: `f1 OK a-051@exact 702-555-0134`. **No agent can remove them; rule 2 and a hook make `profile/` the user's alone.** Confirm with the user before any real-job run:
-
-```bash
-head -n 234 profile/answers.yaml > answers.tmp && mv answers.tmp profile/answers.yaml
-```
-
-That restores exactly 49 entries ending at `a-049`. **Check this has been done** — do not assume.
-
-**Optional — Chromium** for the three skipped browser legs (see real-job testing above).
+- **Clear a full agent's context between jobs; an agent that died on a session limit is ALWAYS cleared** — except where its transcript holds mid-edit work, as now. A cleared agent is owed a handoff; ownership belongs to the role, not the instance.
+- **Never run a whole-tree git command** while agents are live — no `stash`, `checkout .`, `reset --hard`, `add -A`. Path-scoped only; `git status` first.
+- **A self-report is a claim, not evidence.** Every significant finding this session was verified by re-running it, and two agents caught errors in their own work that way.
+- **Use the third lens.** It was used once here and overturned the question rather than answering it.
+- **An auxiliary assertion placed before a finding assertion masks the finding.**
+- **A `git commit -m` whose message names `.claude/hooks/` and contains a mutator word is denied** by the new guard. Use `git commit -F <file>`. This is documented, deliberate, and it already bit twice.
+- **Commit messages carry the reasoning, not just the change.** This project's history is its documentation.

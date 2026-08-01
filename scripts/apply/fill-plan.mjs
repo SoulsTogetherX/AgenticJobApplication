@@ -963,10 +963,23 @@ export function buildPlan({
 
     if (f.t === "file") {
       // Greenhouse labels both attachment inputs just "Attach" — the real
-      // heading sits outside the element the scanner reads. So match on the
-      // label when it is informative, and otherwise fall back to document
-      // order, which every one of these boards renders resume-first.
+      // heading sits outside the element the scanner reads, which is exactly
+      // what scan-page.js's `section` now carries (see that file's own
+      // header comment on why it is REPORTED, never merged into `l`). Match
+      // on the label first — it is the more specific signal when the board
+      // bothers to write one — then fall back to the section heading above
+      // the field, using the SAME regexes fileFields already defines (a
+      // second reading of one rule, not a second rule to keep in sync), and
+      // only THEN fall back to document order, which every one of these
+      // boards renders resume-first. Before this, two same-labelled "Attach"
+      // inputs were told apart by position alone: a board that ever renders
+      // cover-letter-first (fileOrder assumes it never does) silently
+      // uploaded the résumé into the cover-letter slot with no signal
+      // anywhere that anything went wrong.
       let spec = (adapter.fileFields ?? []).find((s) => s.match.test(label))
+      if (!spec && f.section) {
+        spec = (adapter.fileFields ?? []).find((s) => s.match.test(f.section))
+      }
       if (!spec) {
         const want = (adapter.fileOrder ?? ["resume", "cover"])[fileIndex]
         spec = (adapter.fileFields ?? []).find((s) => s.doc === want)

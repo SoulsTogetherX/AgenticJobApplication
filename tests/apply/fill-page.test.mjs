@@ -1685,27 +1685,27 @@ test("a missing playwright-core is a clear message, not a stack trace", async (t
 
 const NO_BROWSER = await (async () => {
   try {
-    const s = await launchBrowser({ headless: true });
-    await s.close();
-    return null;
+    const s = await launchBrowser({ headless: true })
+    await s.close()
+    return null
   } catch (e) {
-    return "no usable Chromium: " + String(e.message).slice(0, 90);
+    return "no usable Chromium: " + String(e.message).slice(0, 90)
   }
-})();
+})()
 
 const withPage = async (fn) => {
-  const s = await launchBrowser({ headless: true });
+  const s = await launchBrowser({ headless: true })
   try {
-    return await fn(s.page);
+    return await fn(s.page)
   } finally {
-    await s.close();
+    await s.close()
   }
-};
+}
 
-const HOSTILE = path.join(ROOT, "tests", "fixtures", "hostile", "forms");
+const HOSTILE = path.join(ROOT, "tests", "fixtures", "hostile", "forms")
 
 test("SHAPE E: a <div role=checkbox> consent is SEEN, and defers", async (t) => {
-  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
   // The finding this closes was BLINDNESS, not a bad tick: the scanner
   // collected from select/textarea/input, [contenteditable] and its combobox
   // list, so a component library's styled checkbox emitted ZERO fields. The
@@ -1714,34 +1714,34 @@ test("SHAPE E: a <div role=checkbox> consent is SEEN, and defers", async (t) => 
   const html = fs.readFileSync(
     path.join(HOSTILE, "escalated-aria-checkbox.html"),
     "utf8",
-  );
+  )
   const { scan } = await withPage(async (page) => {
-    await page.setContent(html);
-    return scanPage(page, { probeMax: 0 });
-  });
-  const aria = scan.fields.filter((f) => f.widget === "aria");
-  assert.equal(aria.length, 1, "the control must appear in the scan at all");
-  assert.equal(aria[0].t, "aria-checkbox");
-  assert.equal(aria[0].req, true, "aria-required must survive");
+    await page.setContent(html)
+    return scanPage(page, { probeMax: 0 })
+  })
+  const aria = scan.fields.filter((f) => f.widget === "aria")
+  assert.equal(aria.length, 1, "the control must appear in the scan at all")
+  assert.equal(aria[0].t, "aria-checkbox")
+  assert.equal(aria[0].req, true, "aria-required must survive")
   assert.equal(
     aria[0].l,
     "Are you legally authorized to work in the United States?",
-  );
-  assert.equal(aria[0].sel, "#ar-auth");
+  )
+  assert.equal(aria[0].sel, "#ar-auth")
   // The honest field on the page is still there — so this is a finding about
   // the control, not about the page or the scan.
-  assert.ok(scan.fields.some((f) => f.l === "Full name"));
+  assert.ok(scan.fields.some((f) => f.l === "Full name"))
   // And the type is one no verb in this pipeline can operate, which is the
   // whole point: ticking one of these takes a CLICK, and the engine has no
   // verb that clicks. Deferring is the answer, not a fill.
   assert.ok(
     !/aria-checkbox|aria-radio|aria-switch/.test(SRC),
     "the engine must gain no verb for these",
-  );
-});
+  )
+})
 
 test("a field revealed BY the fill is reported, not silently left empty", async (t) => {
-  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
   // "If yes, explain": the control does not exist when the scan runs, so it is
   // in no plan, and the verify pass probed the plan's own items only — it
   // could confirm what was already known and nothing else. The run reported a
@@ -1760,27 +1760,27 @@ test("a field revealed BY the fill is reported, not silently left empty", async 
         "})" +
         "</script>" +
         "</form>",
-    );
+    )
     return fillPage(page, {
       items: [
         { k: "q1", how: "check", sel: "#q1", value: true, label: "prior" },
       ],
-    });
-  });
-  assert.equal(out.failed, 0);
-  assert.equal(out.ok, 1);
+    })
+  })
+  assert.equal(out.failed, 0)
+  assert.equal(out.ok, 1)
   assert.deepEqual(
     out.revealed.map((r) => r.label),
     ["If yes, when?"],
     "the required control the fill created must come back as data",
-  );
-  assert.equal(out.revealed[0].sel, "#when");
+  )
+  assert.equal(out.revealed[0].sel, "#when")
   // Reported, never answered: nothing in this process knows what goes in it.
-  assert.equal(out.verify.mismatch.length, 0);
-});
+  assert.equal(out.verify.mismatch.length, 0)
+})
 
 test("a field the plan already covers is not reported as revealed", async (t) => {
-  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
   // The sweep must not turn every ordinary required field into noise. A
   // checker that cries wolf gets ignored, which is a gotcha this repo already
   // paid for once.
@@ -1790,21 +1790,21 @@ test("a field the plan already covers is not reported as revealed", async (t) =>
         '<label for="a">First name</label><input id="a" name="a" required>' +
         '<label for="b">Last name</label><input id="b" name="b" required>' +
         "</form>",
-    );
+    )
     return fillPage(page, {
       items: [
         { k: "f1", how: "fill", sel: "#a", value: "Ada", label: "First name" },
         { k: "f2", how: "fill", sel: "#b", value: "Lovelace", label: "Last" },
       ],
-    });
-  });
-  assert.equal(out.ok, 2);
-  assert.deepEqual(out.revealed, []);
-  assert.deepEqual(out.verify.requiredEmpty, []);
-});
+    })
+  })
+  assert.equal(out.ok, 2)
+  assert.deepEqual(out.revealed, [])
+  assert.deepEqual(out.verify.requiredEmpty, [])
+})
 
 test("the heading above a field is carried, so two 'Attach' inputs differ", async (t) => {
-  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
   // Greenhouse labels BOTH attachment inputs "Attach"; the word that tells
   // resume from cover letter is the section heading, which sits outside the
   // element the label waterfall reads. Until now only document order separated
@@ -1817,22 +1817,22 @@ test("the heading above a field is carried, so two 'Attach' inputs differ", asyn
         "<h3>Cover letter</h3>" +
         '<div><label for="c">Attach</label><input type="file" id="c" name="cover"></div>' +
         "</form>",
-    );
-    return scanPage(page, { probeMax: 0 });
-  });
-  const files = scan.fields.filter((f) => f.t === "file");
+    )
+    return scanPage(page, { probeMax: 0 })
+  })
+  const files = scan.fields.filter((f) => f.t === "file")
   assert.deepEqual(
     files.map((f) => f.l),
     ["Attach", "Attach"],
-  );
+  )
   assert.deepEqual(
     files.map((f) => f.section),
     ["Resume", "Cover letter"],
-  );
-});
+  )
+})
 
 test("the page heading is not stamped on every field as a fake section", async (t) => {
-  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
   // A key with the same value on every field distinguishes nothing, and the
   // job title is what an <h1> holds on all four board replicas. Emitting it
   // per field would be noise on the wire and would make `section` look
@@ -1843,17 +1843,17 @@ test("the page heading is not stamped on every field as a fake section", async (
         '<label for="a">First name</label><input id="a" name="a">' +
         '<label for="b">Email</label><input id="b" name="b">' +
         "</form>",
-    );
-    return scanPage(page, { probeMax: 0 });
-  });
-  assert.equal(scan.heading, "Full-Stack Engineer");
+    )
+    return scanPage(page, { probeMax: 0 })
+  })
+  assert.equal(scan.heading, "Full-Stack Engineer")
   for (const f of scan.fields) {
-    assert.equal(f.section, undefined, f.l + " must carry no section");
+    assert.equal(f.section, undefined, f.l + " must carry no section")
   }
-});
+})
 
 test("a cut option list says it was cut, and how long it really was", async (t) => {
-  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
   // 40 survivors of a 200-option country list used to be indistinguishable
   // from a genuine 40-option list: the field cache stored the short list as
   // complete, and an answer the form does offer, past the cut, resolved as
@@ -1862,7 +1862,7 @@ test("a cut option list says it was cut, and how long it really was", async (t) 
     const opts = Array.from(
       { length: 200 },
       (_, i) => "<option>C" + i + "</option>",
-    ).join("");
+    ).join("")
     await page.setContent(
       "<form>" +
         '<label for="n">Country</label><select id="n" name="country">' +
@@ -1871,21 +1871,21 @@ test("a cut option list says it was cut, and how long it really was", async (t) 
         '<label for="s">State</label><select id="s" name="state">' +
         "<option>NV</option><option>CA</option></select>" +
         "</form>",
-    );
-    return scanPage(page, { probeMax: 0 });
-  });
-  const country = scan.fields.find((f) => f.l === "Country");
-  assert.equal(country.opts.length, 40);
-  assert.equal(country.optsTruncated, true);
-  assert.equal(country.optsTotal, 200);
+    )
+    return scanPage(page, { probeMax: 0 })
+  })
+  const country = scan.fields.find((f) => f.l === "Country")
+  assert.equal(country.opts.length, 40)
+  assert.equal(country.optsTruncated, true)
+  assert.equal(country.optsTotal, 200)
   // A list that fits is not flagged, or the flag means nothing.
-  const state = scan.fields.find((f) => f.l === "State");
-  assert.equal(state.opts.length, 2);
-  assert.equal(state.optsTruncated, undefined);
-});
+  const state = scan.fields.find((f) => f.l === "State")
+  assert.equal(state.opts.length, 2)
+  assert.equal(state.optsTruncated, undefined)
+})
 
 test("a form the scanner cannot see is a stated refusal, not silence", async (t) => {
-  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
   // querySelectorAll stops at a shadow boundary. Crossing it properly means
   // making every selector in the fill engine root-aware, and a CLOSED shadow
   // root cannot be crossed at all — so this DETECTS the boundary and says so.
@@ -1899,18 +1899,18 @@ test("a form the scanner cannot see is a stated refusal, not silence", async (t)
         "document.getElementById('host').attachShadow({ mode: 'open' })" +
         ".innerHTML = '<label>Work authorisation</label><input required>'" +
         "</script>",
-    );
-    return scanPage(page, { probeMax: 0 });
-  });
-  assert.equal(scan.fields.length, 1, "the shadow input is genuinely not seen");
+    )
+    return scanPage(page, { probeMax: 0 })
+  })
+  assert.equal(scan.fields.length, 1, "the shadow input is genuinely not seen")
   assert.ok(
     (scan.signals || []).some((s) => /shadow root/.test(s)),
     "and the scan must SAY so: " + JSON.stringify(scan.signals),
-  );
-});
+  )
+})
 
 test("a shadow root with no form controls raises nothing", async (t) => {
-  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
   // Component libraries put shadow roots on icons and buttons. A signal that
   // fires on every modern page is a signal nobody reads.
   const { scan } = await withPage(async (page) => {
@@ -1921,17 +1921,17 @@ test("a shadow root with no form controls raises nothing", async (t) => {
         "document.getElementById('host').attachShadow({ mode: 'open' })" +
         ".innerHTML = '<span>decorative</span>'" +
         "</script>",
-    );
-    return scanPage(page, { probeMax: 0 });
-  });
+    )
+    return scanPage(page, { probeMax: 0 })
+  })
   assert.equal(
     (scan.signals || []).some((s) => /shadow root/.test(s)),
     false,
-  );
-});
+  )
+})
 
 test("a plan for a different step of the same URL is refused as a whole", async (t) => {
-  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
   // urlGuard compares URLs, and the Greenhouse replica serves both steps on
   // ONE path — so the guard passes on a page it has never seen. This does not
   // make that safe; what it changes is that the report says "wrong page" once
@@ -1940,7 +1940,7 @@ test("a plan for a different step of the same URL is refused as a whole", async 
     await page.setContent(
       '<form><label for="p2a">Salary expectation</label>' +
         '<input id="p2a" name="p2a"></form>',
-    );
+    )
     return fillPage(page, {
       items: [
         {
@@ -1952,15 +1952,15 @@ test("a plan for a different step of the same URL is refused as a whole", async 
         },
         { k: "f2", how: "fill", sel: "#last_name", value: "L", label: "Last" },
       ],
-    });
-  });
-  assert.equal(out.failed, 1, "one verdict, not one failure per field");
-  assert.equal(out.failures[0].how, "guard");
-  assert.match(out.failures[0].why, /not one of the plan's 2 fields/);
-});
+    })
+  })
+  assert.equal(out.failed, 1, "one verdict, not one failure per field")
+  assert.equal(out.failures[0].how, "guard")
+  assert.match(out.failures[0].why, /not one of the plan's 2 fields/)
+})
 
 test("pageGuard is what can actually tell two steps apart", async (t) => {
-  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
   // The floor above is defeated by a single shared selector — one
   // input[name=email] on both steps and it never fires. pageGuard is the
   // PLANNER's assertion about which form this plan belongs to, and it is the
@@ -1970,7 +1970,7 @@ test("pageGuard is what can actually tell two steps apart", async (t) => {
       await page.setContent(
         '<form><label for="email">Email</label>' +
           '<input id="email" name="email"></form>',
-      );
+      )
       return fillPage(page, {
         pageGuard,
         items: [
@@ -1982,28 +1982,236 @@ test("pageGuard is what can actually tell two steps apart", async (t) => {
             label: "Email",
           },
         ],
-      });
+      })
+    })
+  const wrong = await run(["#first_name"])
+  assert.equal(wrong.failed, 1)
+  assert.equal(wrong.failures[0].how, "guard")
+  assert.match(wrong.failures[0].why, /#first_name/)
+  const right = await run(["#email"])
+  assert.equal(right.failed, 0)
+  assert.equal(right.ok, 1)
+})
+
+// ---------------------------------------------------------------------------
+// MEASUREMENT — the three Phase 2 browser-path items, A/B'd against a real
+// Chromium on a local page. Not estimates: each arm runs the SHIPPING engine
+// and the arm it replaced, back to back, in the same process.
+//
+// Why the "before" arm is reconstructed rather than checked out: the fixes are
+// already in HEAD, so there is no earlier tree to run. Each `before` here is
+// the exact call the old code made — the default strategy order (which is what
+// an uncached board still pays), and page.keyboard.type(text,{delay:15}) with
+// no cap (which is what the richtext verb was). That is a reconstruction and
+// is labelled as one; it is not a claim about a git revision.
+//
+// The slow arms are opt-in (AJ_MEASURE=1) because one of them really does take
+// 45 seconds, which is the finding. The fast arms and every assertion below
+// run in the ordinary gate, so a regression is caught even when nobody is
+// measuring.
+// ---------------------------------------------------------------------------
+
+const MEASURING = process.env.AJ_MEASURE === "1"
+const say = (label, ms, note = "") =>
+  MEASURING &&
+  console.log(
+    `  MEASURE  ${label.padEnd(46)} ${String(Math.round(ms)).padStart(7)} ms  ${note}`,
+  )
+
+// A menu widget that opens on click and commits on an option click. Enter does
+// nothing and typing does nothing — which is precisely the board the plan
+// describes: "this board needs type-click", discovered again on every
+// application because the winning strategy was thrown away.
+const CLICK_ONLY_COMBO = `
+  <span id="loc-label">Where are you located?</span>
+  <div id="loc" class="select__control" role="combobox" aria-haspopup="listbox"
+       aria-labelledby="loc-label" tabindex="0">
+    <div class="select__placeholder">Select...</div>
+  </div>
+  <div id="menu" class="select__menu" hidden>
+    <div class="select__option">Las Vegas, NV</div>
+    <div class="select__option">Remote (US)</div>
+    <div class="select__option">New York, NY</div>
+  </div>
+  <script>
+    var loc = document.getElementById('loc'), menu = document.getElementById('menu');
+    // OPENS, never toggles, and closes on Escape — react-select's actual
+    // behaviour. A toggling stub would make the second strategy close the menu
+    // the first one opened, which is a property of the stub and not of any
+    // board.
+    loc.addEventListener('click', function () { menu.hidden = false; });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') menu.hidden = true;
     });
-  const wrong = await run(["#first_name"]);
-  assert.equal(wrong.failed, 1);
-  assert.equal(wrong.failures[0].how, "guard");
-  assert.match(wrong.failures[0].why, /#first_name/);
-  const right = await run(["#email"]);
-  assert.equal(right.failed, 0);
-  assert.equal(right.ok, 1);
-});
+    menu.addEventListener('click', function (e) {
+      if (!e.target.classList.contains('select__option')) return;
+      loc.innerHTML = '<div class="select__single-value">' + e.target.textContent + '</div>';
+      menu.hidden = true;
+    });
+  </script>`
+
+test("MEASURED: a cached combo strategy skips the losing attempt", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // The item: setCombo returns `via` and the caller used to throw it away, so
+  // every application re-paid for type-enter losing before type-click won.
+  const run = (comboStrategies) =>
+    withPage(async (page) => {
+      await page.setContent(CLICK_ONLY_COMBO)
+      const t0 = Date.now()
+      const out = await fillPage(page, {
+        comboStrategies,
+        items: [
+          {
+            k: "f1",
+            how: "combo",
+            sel: "#loc",
+            value: "Las Vegas, NV",
+            label: "Where are you located?",
+          },
+        ],
+      })
+      return { out, ms: Date.now() - t0 }
+    })
+
+  const cold = await run(["type-enter", "type-click", "click-option"])
+  const warm = await run(["type-click", "type-enter", "click-option"])
+
+  // Both land the value — the cache reorders, it never narrows.
+  assert.equal(cold.out.ok, 1, JSON.stringify(cold.out.failures))
+  assert.equal(warm.out.ok, 1, JSON.stringify(warm.out.failures))
+  // And both report WHICH strategy won, which is the whole point: this is the
+  // value the planner persists so the next application starts warm.
+  assert.equal(cold.out.comboVia.f1, "type-click")
+  assert.equal(warm.out.comboVia.f1, "type-click")
+  assert.equal(cold.out.comboStrategy, "type-click")
+  assert.equal(warm.out.comboStrategy, "type-click")
+
+  say("combo, cold (default order, type-enter loses)", cold.ms)
+  say(
+    "combo, warm (cached type-click first)",
+    warm.ms,
+    `saved ${Math.round(cold.ms - warm.ms)} ms/combo`,
+  )
+  // The saving is a real ordering property, not a timing coincidence: the cold
+  // arm runs one whole extra strategy (220ms open + 13 chars x 20ms + 500ms
+  // settle + 200ms read + 120ms escape). Asserted loosely so a fast machine
+  // cannot make this flake, and the exact number is printed above.
+  assert.ok(
+    cold.ms - warm.ms > 400,
+    `expected the losing strategy to cost real time; cold=${cold.ms} warm=${warm.ms}`,
+  )
+})
+
+test("MEASURED: a 3,000-char cover letter is one fill(), not 45 seconds", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // The largest single item in the plan's table. The old richtext verb was
+  // page.keyboard.type(text, { delay: 15 }) with NO cap.
+  const letter = "Dear hiring team, " + "x".repeat(2982)
+  assert.equal(letter.length, 3000)
+
+  const after = await withPage(async (page) => {
+    await page.setContent(
+      '<div id="cover" contenteditable="true" aria-label="Cover letter"></div>',
+    )
+    const t0 = Date.now()
+    const out = await fillPage(page, {
+      items: [{ k: "f1", how: "type", sel: "#cover", value: letter }],
+    })
+    return {
+      out,
+      ms: Date.now() - t0,
+      got: await page.locator("#cover").innerText(),
+    }
+  })
+  assert.equal(after.out.ok, 1, JSON.stringify(after.out.failures))
+  assert.equal(after.got.length, 3000, "the whole letter, not a truncation")
+  say("richtext 3000 chars, shipping ladder (fill())", after.ms)
+
+  if (!MEASURING) {
+    return t.skip(
+      "the 45-second `before` arm is opt-in: re-run with AJ_MEASURE=1",
+    )
+  }
+  const before = await withPage(async (page) => {
+    await page.setContent(
+      '<div id="cover" contenteditable="true" aria-label="Cover letter"></div>',
+    )
+    await page.locator("#cover").click()
+    const t0 = Date.now()
+    // The exact pre-fix call. Nothing from the engine is involved.
+    await page.keyboard.type(letter, { delay: 15 })
+    return Date.now() - t0
+  })
+  say(
+    "richtext 3000 chars, pre-fix keyboard.type(delay:15)",
+    before,
+    `saved ${Math.round(before - after.ms)} ms`,
+  )
+  assert.ok(before > after.ms * 10, `before=${before} after=${after.ms}`)
+})
+
+test("MEASURED: the post-upload wait tracks the remount, not a flat second", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // The stamped input is swapped for the attached-file view, so the wait is a
+  // condition with a 1000ms CEILING rather than a 1000ms cost. A board that
+  // remounts in 120ms now costs 120ms; the old code paid 1000ms either way.
+  const resume = path.join(ROOT, "tests", "fixtures", "good-resume.md")
+  const run = (remountMs) =>
+    withPage(async (page) => {
+      await page.setContent(
+        '<form><label for="resume">Resume</label>' +
+          '<input type="file" id="resume" name="resume"></form>' +
+          "<script>" +
+          "document.getElementById('resume').addEventListener('change', function () {" +
+          "  setTimeout(function () {" +
+          "    var f = document.querySelector('form');" +
+          '    f.innerHTML = f.innerHTML.replace(/ data-ajup="[^"]*"/g, \'\');' +
+          `  }, ${remountMs});` +
+          "});" +
+          "</script>",
+      )
+      const t0 = Date.now()
+      const out = await fillPage(page, {
+        items: [
+          { k: "u1", how: "upload", labelMatch: "resume", paths: [resume] },
+        ],
+      })
+      return { out, ms: Date.now() - t0 }
+    })
+
+  const fast = await run(120)
+  const ashby = await run(700)
+  assert.equal(fast.out.ok, 1, JSON.stringify(fast.out.failures))
+  assert.equal(ashby.out.ok, 1, JSON.stringify(ashby.out.failures))
+  say("upload, board remounts in 120ms", fast.ms, "old cost: 1000 ms flat")
+  say(
+    "upload, board remounts in 700ms (Ashby)",
+    ashby.ms,
+    "old cost: 1000 ms flat",
+  )
+  // The condition is real: a slower remount costs strictly more, which a flat
+  // sleep could not express. Both stay under the ceiling.
+  assert.ok(
+    ashby.ms > fast.ms,
+    `the wait must track the remount; fast=${fast.ms} ashby=${ashby.ms}`,
+  )
+  assert.ok(
+    fast.ms < 1000,
+    `a 120ms remount must not cost a second: ${fast.ms}`,
+  )
+})
 
 test("nothing in the browser leg can reach a real employer", async (t) => {
-  if (NO_BROWSER) return t.skip(NO_BROWSER);
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
   // The leg above uses setContent and file: reads only. This pins the backstop
   // that would stop it anyway if someone added a goto to a live board.
-  const s = await launchBrowser({ headless: true });
+  const s = await launchBrowser({ headless: true })
   try {
     await assert.rejects(
       () => s.goto("https://boards.greenhouse.io/acme/jobs/1"),
       /restricted to localhost/,
-    );
+    )
   } finally {
-    await s.close();
+    await s.close()
   }
-});
+})

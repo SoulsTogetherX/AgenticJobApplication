@@ -27,12 +27,18 @@
 //               that tells resume from cover letter is this heading, which
 //               sits outside the element the label waterfall reads. REPORTED,
 //               never merged into `l` — see the block that computes it.
-//   widget      "aria" on a control that is a DIV wearing a form control's
-//               role. No verb in this pipeline can operate one; see the block
-//               that collects them for why that is deliberate.
-// `t` is correspondingly "aria-checkbox" / "aria-radio" / "aria-switch" for
-// those, which is a type fill-plan.mjs has no verb for — so they DEFER rather
-// than being acted on, which is the whole point of emitting them.
+//   widget      "aria" on any FOCUSABLE NON-NATIVE control — a div, span or
+//               custom element with tabindex >= 0 or contenteditable that none
+//               of the native loops collected. No verb in this pipeline can
+//               operate one; see the block that collects them for why that is
+//               deliberate, and for why the DETECTOR is focusability rather
+//               than a list of roles.
+// `t` is correspondingly "aria-<role>" when the element declares a role this
+// file recognises ("aria-checkbox", "aria-menuitemradio", "aria-option", ...)
+// and the generic "widget" when it does not. BOTH are types fill-plan.mjs's
+// VERB map has no entry for, so both DEFER rather than being acted on, which
+// is the whole point of emitting them. The role only picks the string; it never
+// decides whether the control is reported.
 //
 // WHAT THE ELEMENT SAYS IT IS, reported as fields of its own rather than left
 // inside `sel` for a consumer to reverse-engineer out of a selector string:
@@ -138,6 +144,30 @@ window.__ajScan = async (PROBE = true) => {
     el.setAttribute("data-aj", k)
     elOf.set(k, el)
     return k
+  }
+
+  // "IS THIS ELEMENT ALREADY COLLECTED **BY THIS RUN**?" — and the emphasis is
+  // the whole point. Every collecting loop below used to ask
+  // `el.closest("[data-aj]")`, which reads a DOM ATTRIBUTE THAT SURVIVES THE
+  // SCAN THAT WROTE IT. A second scan of the same document therefore skipped
+  // every control the first scan had stamped, and came back with a form made
+  // only of native <input>s — which is not a theoretical path: scan-engine.mjs
+  // and scan.driver.mjs both RE-SCAN when the first pass found no buttons (the
+  // React-hydration tell), so on a page that hydrates slowly the second scan
+  // silently lost every combo, every richtext box and every custom widget.
+  // Found by Shape F's own tests, whose pages have no button and so always take
+  // the re-scan path; the same defect was already live for combos and richtext.
+  //
+  // `elOf` is rebuilt on every run, so a stamp this run did not write fails the
+  // identity check and the element is collected again — with a fresh key.
+  const claimedNow = (el) => {
+    let p = el
+    while (p) {
+      const k = p.getAttribute && p.getAttribute("data-aj")
+      if (k && elOf.get(k) === p) return true
+      p = p.parentElement
+    }
+    return false
   }
 
   // data-aj stamps are DOM attributes and do NOT survive a React remount —
@@ -576,7 +606,7 @@ window.__ajScan = async (PROBE = true) => {
   const claimed = new Set()
   const combos = []
   for (const el of document.querySelectorAll(COMBO_SEL)) {
-    if (el.tagName === "SELECT" || !vis(el) || el.closest("[data-aj]"))
+    if (el.tagName === "SELECT" || !vis(el) || claimedNow(el))
       continue
     const dc = labelDetail(el)
     const label = txt(dc.text)
@@ -703,7 +733,7 @@ window.__ajScan = async (PROBE = true) => {
   }
 
   for (const el of document.querySelectorAll("[contenteditable='true']")) {
-    if (!vis(el) || el.closest("[data-aj]")) continue
+    if (!vis(el) || claimedNow(el)) continue
     fields.push({
       k: stamp(el, "f"),
       sel: stableSel(el),
@@ -715,53 +745,258 @@ window.__ajScan = async (PROBE = true) => {
     })
   }
 
+  // --- buttons ------------------------------------------------------------
+  // THIS LOOP RUNS BEFORE THE WIDGET SWEEP BELOW, AND THE ORDER IS
+  // LOAD-BEARING. It stamps every button-shaped control with data-aj, and the
+  // sweep skips anything already stamped — which is how "a button is not a
+  // field" gets expressed STRUCTURALLY (already collected) instead of as one
+  // more selector list to be walked around. Moving it back down re-opens that.
+  // Nothing else depends on where it runs: `b` keys have their own counter, so
+  // no `f` key moves, and `kind` reads `btns` at the very end.
+  const roleOf = (t) =>
+    /^(submit|send)\b|submit application|send application|finish|complete application/i.test(
+      t,
+    )
+      ? "submit"
+      : /save (and|&) continue|^continue|^next|^review|proceed/i.test(t)
+        ? "next"
+        : /^back|^previous/i.test(t)
+          ? "back"
+          : /apply|get started|^start|^begin/i.test(t)
+            ? "start"
+            : /upload|attach|choose file|browse|add file/i.test(t)
+              ? "upload"
+              : /sign ?in|log ?in|create account|register|continue with (google|linkedin)/i.test(
+                    t,
+                  )
+                ? "auth"
+                : "other"
+
+  const btns = []
+  for (const el of document.querySelectorAll(
+    "button,[role='button'],input[type='submit'],input[type='button'],a[href]",
+  )) {
+    if (!vis(el) || el.disabled || claimedNow(el)) continue
+    // A CONTROL THAT CARRIES STATE IS A VALUE, NOT AN ACTION, so it is left for
+    // the widget sweep below rather than filed away as a button. Without this
+    // the sweep's own aria-checked/-pressed/-selected escape hatch is DEAD
+    // CODE — measured: <div role="button" tabindex="0" aria-pressed="false">I
+    // certify the above is true</div> was consumed here and produced zero
+    // fields, so a board could render a consent tick as a toggle button and it
+    // would never defer. The cost is that a genuine toolbar toggle ("Bold" in
+    // a rich-text editor) reports as an unfillable field instead of a button,
+    // which is a visible defer rather than a silent miss.
+    if (
+      el.hasAttribute("aria-checked") ||
+      el.hasAttribute("aria-pressed") ||
+      el.hasAttribute("aria-selected")
+    )
+      continue
+    const label = txt(el.innerText || el.value || labelOf(el), 60)
+    if (!label) continue
+    const r = roleOf(label)
+    if (el.tagName === "A" && r === "other") continue
+    btns.push({ k: stamp(el, "b"), l: label, r })
+    if (btns.length >= 40) break
+  }
+
   // --- controls that are not elements the loops above collect ---------------
-  // SHAPE E, and it is BLINDNESS RATHER THAN DEFENCE. A component library
-  // renders a checkbox as <div role="checkbox" aria-checked="false"> with a
-  // keyboard handler and no <input> anywhere. The loops above collect from
-  // select/textarea/input, [contenteditable] and the combobox selector list,
-  // so such a control matched NONE of them and this scanner emitted zero
-  // fields for it. On tests/fixtures/hostile/forms/escalated-aria-checkbox.html
-  // that control is a REQUIRED work-authorisation consent: it was not ticked,
-  // which is safe, but it was also not DEFERRED, so it never reached the
-  // approval message, pending-questions.mjs, or the plan's defer list. The
-  // submit then fails, or the board defaults the answer, and nothing in the
-  // run log says why. A silence is not a refusal.
+  // SHAPE E WAS BLINDNESS RATHER THAN DEFENCE; SHAPE F INVERTS THE DEFAULT.
   //
-  // WHY THE TYPE IS `aria-checkbox` AND NOT `checkbox`. Ticking one of these
-  // takes a CLICK, and the fill engine deliberately has no verb that clicks —
-  // that absence is what stops an injected plan from submitting an
-  // application, and it is not being traded away for a consent tick. So these
-  // carry a type fill-plan.mjs has no verb for, which lands them in its
-  // `unsupported field type` defer: reported to the user, blocking the
-  // unattended path, never acted on. That is the whole intended outcome, and
-  // it is why this is a scanner change and not an engine one.
+  // The original defect: a component library renders a checkbox as
+  // <div role="checkbox" aria-checked="false"> with a keyboard handler and no
+  // <input> anywhere. The loops above collect from select/textarea/input,
+  // [contenteditable] and the combobox selector list, so such a control matched
+  // NONE of them and this scanner emitted zero fields for it. On
+  // tests/fixtures/hostile/forms/escalated-aria-checkbox.html that control is a
+  // REQUIRED work-authorisation consent: it was not ticked, which is safe, but
+  // it was also not DEFERRED, so it never reached the approval message,
+  // pending-questions.mjs, or the plan's defer list. The submit then fails, or
+  // the board defaults the answer, and nothing in the run log says why.
+  // A silence is not a refusal.
   //
-  // A native <input type=checkbox role="checkbox"> is already collected above;
-  // it is excluded here so it cannot be reported twice.
-  const ARIA_CONTROL = "[role='checkbox'],[role='radio'],[role='switch']"
+  // SHAPE E FIXED THAT WITH A SELECTOR LIST — [role='checkbox'],[role='radio'],
+  // [role='switch'] — WHICH IS THE SAME DEFECT ONE REWORDING LATER.
+  // role="menuitemcheckbox", role="option" inside a listbox, and a bare
+  // <span tabindex="0"> with a click handler all returned to the original
+  // blindness, and blindness is the WORSE failure mode because it is a silence
+  // rather than a refusal. This is the 26th-rewording problem that made
+  // looksLikeAgreementProse a second door behind isConsent.
+  //
+  // SO THE DETECTOR IS NO LONGER THE ROLE LIST. It is focusability:
+  // tabindex >= 0 or contenteditable, minus native tags, minus anything already
+  // collected. The role list survives only as a LABELLING NICETY — it decides
+  // what `t` reads as, and a role outside it reports as the generic `widget`,
+  // which is equally verb-less. NOTHING IS SKIPPED FOR BEING ABSENT FROM IT.
+  // Today a control is invisible unless a selector names it; after this it is
+  // visible unless it is a known-safe native control.
+  //
+  // WHY THE TYPE IS `aria-checkbox`/`widget` AND NEVER `checkbox`. Operating
+  // one of these takes a CLICK, and the fill engine deliberately has no verb
+  // that clicks — that absence is what stops an injected plan from submitting
+  // an application, and it is not being traded away for a consent tick. So
+  // these carry a type fill-plan.mjs's VERB map has no entry for, which lands
+  // them in its `unsupported field type` defer: reported to the user, blocking
+  // the unattended path, never acted on. REPORTING IS NOT A VERB. That is why
+  // this is a scanner change and not an engine one, and it is why widening the
+  // net costs no new capability.
+  //
+  // THE THREE EXCLUSIONS, each structural rather than a name:
+  //   1. NATIVE tags. An <input type=checkbox role="checkbox"> is collected
+  //      above; excluding it here stops a double report.
+  //   2. Already stamped, or inside something stamped — combos, fields,
+  //      richtext and (because of the ordering above) buttons.
+  //   3. Not a leaf. A focusable element that CONTAINS controls is a scroll
+  //      region or a focus wrapper, not a control: real pages put tabindex="0"
+  //      on a scrollable <div> holding the form. A custom checkbox contains an
+  //      icon and a text span and no control, so it still passes.
+  //
+  // AND ONE NAME LIST, THREE ENTRIES, WHICH IS THE RESIDUAL HOLE AND IS STATED
+  // AS ONE. button/link/menuitem are ACTIONS, not values, and role="button" in
+  // particular is already reported in full by the loop directly above — sweeping
+  // icon-only buttons in as unlabelled defers is how a checker starts crying
+  // wolf and gets ignored. The escape hatch is STATE: a control carrying
+  // aria-checked / aria-pressed / aria-selected holds a value the form submits,
+  // so a board rendering a consent tick as role="button" lands HERE rather than
+  // vanishing into `btns`. What is left uncovered is a STATELESS custom control
+  // wearing one of those three roles — which by its own markup declares itself
+  // an action with no value.
   const NATIVE = { INPUT: 1, SELECT: 1, TEXTAREA: 1, BUTTON: 1, OPTION: 1 }
-  for (const el of document.querySelectorAll(ARIA_CONTROL)) {
+  const CONTROL_ROLE = {
+    checkbox: 1,
+    radio: 1,
+    switch: 1,
+    combobox: 1,
+    listbox: 1,
+    option: 1,
+    textbox: 1,
+    searchbox: 1,
+    spinbutton: 1,
+    slider: 1,
+    menuitemcheckbox: 1,
+    menuitemradio: 1,
+    tab: 1,
+    treeitem: 1,
+  }
+  // NATIVE ELEMENTS THAT ARE FOCUSABLE BUT ARE NOT FORM CONTROLS. `a[href]`,
+  // <summary>, <iframe> and the media elements are all tab stops with an
+  // implicit role no page had to declare, and every board has policy links. A
+  // measured false positive, not a hypothetical: before this list, a probe of
+  // <a href="/privacy" tabindex="0">Privacy policy</a> reported a `widget`
+  // field with an EMPTY label, and an <iframe> already reported in `iframes`
+  // was reported a second time as a control. They are skipped UNLESS the page
+  // overrode the implicit role with a control role or gave the element state,
+  // so <a role="checkbox" aria-checked> is still seen.
+  const NATIVE_NONFORM = {
+    A: 1,
+    IFRAME: 1,
+    SUMMARY: 1,
+    DETAILS: 1,
+    AUDIO: 1,
+    VIDEO: 1,
+    EMBED: 1,
+    OBJECT: 1,
+  }
+  const ACTION_ROLE = { button: 1, link: 1, menuitem: 1 }
+  const STATE_ATTR = ["aria-checked", "aria-pressed", "aria-selected"]
+  const CONTAINS_CONTROL =
+    "input,select,textarea,button,[data-aj],[tabindex],[contenteditable],[role='button']"
+  // The cut is STATED, never silent — same reasoning as optsTruncated. A form
+  // with more than this many unrecognised focusable controls is not a form this
+  // pipeline should be filling unattended, and saying so beats reporting 200.
+  const MAX_WIDGET = 25
+  let widgetCut = 0
+  // THE ROLE LIST IS STILL IN THE SELECTOR, AND THAT IS NOT A RELAPSE — IT IS A
+  // UNION, NEVER A FILTER. Shape E collected [role='checkbox'] with no
+  // focusability test at all, so a <div role="checkbox"> carrying NO tabindex
+  // (it is reachable by click, and screen readers announce it) was reported.
+  // Detecting on focusability ALONE would have silently dropped it: a probe of
+  // exactly that markup came back with zero fields. Narrowing coverage while
+  // claiming to widen it is the worst possible outcome here, so the two
+  // detectors are OR'd — declared control role, OR focusable — and nothing
+  // Shape E saw can stop being seen.
+  const SWEEP_SEL =
+    "[tabindex],[contenteditable]," +
+    Object.keys(CONTROL_ROLE)
+      .map((r) => "[role='" + r + "']")
+      .join(",")
+  for (const el of document.querySelectorAll(SWEEP_SEL)) {
     if (NATIVE[el.tagName]) continue
-    if (!vis(el) || el.closest("[data-aj]")) continue
-    if (el.getAttribute("aria-disabled") === "true") continue
-    const da = labelDetail(el)
-    const label = txt(da.text)
+    if (claimedNow(el)) continue
     const role = full(el.getAttribute("role")).toLowerCase()
+    const stateful = STATE_ATTR.some((a) => el.hasAttribute(a))
+    if (NATIVE_NONFORM[el.tagName] && !CONTROL_ROLE[role] && !stateful) continue
+    // tabindex >= 0 only: a negative one is programmatic focus (modals, focus
+    // traps), not a tab stop, and is not a control the user can reach.
+    const ti = el.getAttribute("tabindex")
+    const ce = el.getAttribute("contenteditable")
+    const tabbable = ti !== null && /^\s*\d+\s*$/.test(ti)
+    const editable = ce !== null && !/^(false|inherit)$/i.test(full(ce))
+    if (!tabbable && !editable && !CONTROL_ROLE[role]) continue
+    if (!vis(el)) continue
+    if (el.getAttribute("aria-disabled") === "true") continue
+    if (el.getAttribute("aria-hidden") === "true") continue
+    let hasControl = false
+    try {
+      hasControl = !!el.querySelector(CONTAINS_CONTROL)
+    } catch {}
+    if (hasControl) continue
+    if (ACTION_ROLE[role] && !stateful) continue
+    widgetCut++
+    if (widgetCut > MAX_WIDGET) continue
+    const da = labelDetail(el)
+    // A CONTROL WITH NO LABEL IS IDENTIFIED BY ITS OWN TEXT, or it is not
+    // identified at all. <span tabindex="0">I agree to the terms</span> has no
+    // label by any DECLARED route, and reporting it with l:"" puts an anonymous
+    // row in the approval message — a defer the user cannot act on, i.e. barely
+    // better than the silence this block exists to end.
+    //
+    // AND THE PRECEDENCE IS NOT "LABEL FIRST". This is the E8 trap in its exact
+    // shape, measured here rather than reasoned about: the waterfall's `near`
+    // route walks ANCESTORS for a label-ish element, so on
+    //   <label for="n">Full name</label><input id="n">
+    //   <span tabindex="0">I agree to binding arbitration</span>
+    // it stamped "Full name" onto the consent span. A wrong label is worse than
+    // an empty one, because the user acts on it.
+    //
+    // So a label the CONTROL ITSELF declares (aria-labelledby, aria-label,
+    // <label for>, an enclosing <label>) wins; otherwise the element's own
+    // rendered text wins, because that is how these controls are authored —
+    // <div role="checkbox">I agree</div> carries its label as content; and only
+    // when there is neither does an INFERRED label get used, marked as inferred
+    // so nothing downstream mistakes it for the control's own words.
+    const INFERRED = { near: 1, legend: 1, attr: 1 }
+    const declared = INFERRED[da.src] ? "" : txt(da.text)
+    const ownText = txt(el.innerText)
+    const label = declared || ownText || txt(da.text)
+    const inferred = !declared && !ownText && !!label
+    const checked = el.getAttribute("aria-checked")
     fields.push({
       k: stamp(el, "f"),
       sel: stableSel(el),
       ...identityOf(el),
-      t: "aria-" + role,
+      t: CONTROL_ROLE[role] ? "aria-" + role : "widget",
       l: label,
-      lSeen: seenOf(el, da),
+      lSeen: declared ? seenOf(el, da) : undefined,
+      labelWhy: inferred
+        ? "label inferred from a nearby element, not declared by the control"
+        : undefined,
       req: isReq(el, label) || undefined,
-      v: el.getAttribute("aria-checked") === "true" ? "true" : undefined,
+      v:
+        (checked === "true" ? "true" : undefined) ??
+        (editable ? txt(el.innerText, 60) || undefined : undefined),
       h: helpOf(el) || undefined,
       // Stated so a consumer does not have to parse the type string: this is
       // a control no verb in this pipeline can operate.
       widget: "aria",
     })
+  }
+  if (widgetCut > MAX_WIDGET) {
+    signals.push(
+      widgetCut -
+        MAX_WIDGET +
+        " further focusable control(s) this scanner has no verb for were not reported — fill this form by hand",
+    )
   }
 
   fields.push(...combos)
@@ -843,39 +1078,6 @@ window.__ajScan = async (PROBE = true) => {
       ? -1
       : 1
   })
-
-  // --- buttons ------------------------------------------------------------
-  const roleOf = (t) =>
-    /^(submit|send)\b|submit application|send application|finish|complete application/i.test(
-      t,
-    )
-      ? "submit"
-      : /save (and|&) continue|^continue|^next|^review|proceed/i.test(t)
-        ? "next"
-        : /^back|^previous/i.test(t)
-          ? "back"
-          : /apply|get started|^start|^begin/i.test(t)
-            ? "start"
-            : /upload|attach|choose file|browse|add file/i.test(t)
-              ? "upload"
-              : /sign ?in|log ?in|create account|register|continue with (google|linkedin)/i.test(
-                    t,
-                  )
-                ? "auth"
-                : "other"
-
-  const btns = []
-  for (const el of document.querySelectorAll(
-    "button,[role='button'],input[type='submit'],input[type='button'],a[href]",
-  )) {
-    if (!vis(el) || el.disabled || el.hasAttribute("data-aj")) continue
-    const label = txt(el.innerText || el.value || labelOf(el), 60)
-    if (!label) continue
-    const r = roleOf(label)
-    if (el.tagName === "A" && r === "other") continue
-    btns.push({ k: stamp(el, "b"), l: label, r })
-    if (btns.length >= 40) break
-  }
 
   // --- probe custom dropdowns (batched) -----------------------------------
   if (PROBE) {

@@ -32,6 +32,12 @@ import {
   isLocalUrl,
   launchBrowser,
 } from "../../scripts/apply/browser.mjs"
+// Shape F's false-positive arm needs the REAL scanner run over the REAL served
+// board HTML, and dom.mjs is the harness that does exactly that without a
+// browser. Read-only use of a fixture owned by qa-adversary.
+import { runScanner } from "../fixtures/boards/dom.mjs"
+import { buildPlan } from "../../scripts/apply/fill-plan.mjs"
+import greenhouseAdapter from "../../scripts/apply/ats/greenhouse.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -1737,6 +1743,265 @@ test("SHAPE E: a <div role=checkbox> consent is SEEN, and defers", async (t) => 
   assert.ok(
     !/aria-checkbox|aria-radio|aria-switch/.test(SRC),
     "the engine must gain no verb for these",
+  )
+})
+
+// ---------------------------------------------------------------------------
+// SHAPE F — the detector is focusability, and the role list is a nicety.
+//
+// Shape E fixed the blindness with a SELECTOR LIST, which is the same defect
+// one rewording later: role="menuitemcheckbox", role="option" inside a listbox
+// and a bare <span tabindex="0"> with a click handler all fell straight back
+// into the original silence. The axis these tests pin: ANY focusable non-native
+// control with no verb is reported BY DEFAULT, and the role only decides what
+// `t` reads as.
+//
+// The safety property is unchanged and is asserted alongside: reporting is not
+// a verb, and the engine still cannot click.
+// ---------------------------------------------------------------------------
+
+const BOARD_PAGES = path.join(ROOT, "tests", "fixtures", "boards", "pages")
+const formPage = (body) =>
+  "<html><body><h1>Apply</h1><form>" + body + "</form></body></html>"
+
+test("SHAPE F: a control with NO role at all is reported, not skipped", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // The 26th rewording. Nothing here names a role, so every selector list in
+  // the scanner misses it — and it is a consent tick with a click handler.
+  const scan = await withPage(async (page) => {
+    await page.setContent(
+      formPage(
+        '<label for="n">Full name</label><input id="n">' +
+          '<span id="agree" tabindex="0">I agree to binding arbitration</span>' +
+          '<my-toggle id="rel" tabindex="0" aria-label="Willing to relocate"></my-toggle>',
+      ),
+    )
+    return (await scanPage(page, { probeMax: 0 })).scan
+  })
+  const swept = scan.fields.filter((f) => f.widget === "aria")
+  assert.equal(swept.length, 2, "both unnamed controls must be seen")
+  assert.deepEqual(
+    swept.map((f) => f.t),
+    ["widget", "widget"],
+    "a role this file does not recognise is the GENERIC verb-less type",
+  )
+  assert.deepEqual(swept.map((f) => f.l).sort(), [
+    "I agree to binding arbitration",
+    "Willing to relocate",
+  ])
+  assert.equal(swept[0].sel, "#agree")
+  // The honest field is untouched, so this is a finding about the controls.
+  assert.ok(scan.fields.some((f) => f.l === "Full name" && f.t === "text"))
+})
+
+test("SHAPE F: the role list only names the type; it never gates detection", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  const scan = await withPage(async (page) => {
+    await page.setContent(
+      formPage(
+        '<div id="arb" role="menuitemcheckbox" tabindex="0" aria-checked="false"' +
+          ' aria-label="I accept binding arbitration"></div>' +
+          '<div role="listbox" aria-label="Country">' +
+          '<div id="us" role="option" tabindex="0">United States</div></div>' +
+          '<div id="pl" contenteditable aria-label="Cover letter"></div>',
+      ),
+    )
+    return (await scanPage(page, { probeMax: 0 })).scan
+  })
+  const byKey = Object.fromEntries(scan.fields.map((f) => [f.sel, f]))
+  assert.equal(byKey["#arb"].t, "aria-menuitemcheckbox")
+  assert.equal(byKey["#us"].t, "aria-option")
+  assert.equal(
+    byKey["#us"].l,
+    "United States",
+    "own text names an unlabelled control",
+  )
+  // A bare `contenteditable` is NOT `contenteditable="true"`, so the richtext
+  // loop never saw it. It is reported WITHOUT the `type` verb on purpose: a
+  // broad sweep hands out no verbs, only reports.
+  assert.equal(byKey["#pl"].t, "widget")
+  assert.equal(byKey["#pl"].widget, "aria")
+})
+
+test("SHAPE F: Shape E's coverage did not narrow — role, no tabindex", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // THE REGRESSION THIS ALMOST SHIPPED. Shape E collected [role='checkbox']
+  // with no focusability test at all, so a <div role="checkbox"> carrying NO
+  // tabindex was reported. Detecting on focusability ALONE silently dropped it
+  // — narrowing coverage while claiming to widen it. The detectors are OR'd.
+  const scan = await withPage(async (page) => {
+    await page.setContent(
+      formPage(
+        '<div id="c1" role="checkbox" aria-label="I certify this is true"></div>' +
+          '<div id="c2" role="checkbox" tabindex="-1" aria-label="Background check"></div>',
+      ),
+    )
+    return (await scanPage(page, { probeMax: 0 })).scan
+  })
+  assert.deepEqual(
+    scan.fields
+      .filter((f) => f.widget === "aria")
+      .map((f) => f.sel)
+      .sort(),
+    ["#c1", "#c2"],
+    "a declared control role is reported whatever its tabindex",
+  )
+})
+
+test("SHAPE F: a toggle that carries STATE is a field, not a button", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // Measured dead code, caught before shipping: the button loop stamps every
+  // [role='button'] first, so the sweep's aria-pressed escape hatch never ran
+  // and this control produced ZERO fields. A board can render a consent tick as
+  // a toggle button; a control with state is a value, not an action.
+  const scan = await withPage(async (page) => {
+    await page.setContent(
+      formPage(
+        '<div id="cert" role="button" tabindex="0" aria-pressed="false">' +
+          "I certify the above is true</div>" +
+          '<div id="go" role="button" tabindex="0">Submit application</div>',
+      ),
+    )
+    return (await scanPage(page, { probeMax: 0 })).scan
+  })
+  const swept = scan.fields.filter((f) => f.widget === "aria")
+  assert.deepEqual(
+    swept.map((f) => f.sel),
+    ["#cert"],
+  )
+  assert.deepEqual(
+    scan.btns.map((b) => b.l),
+    ["Submit application"],
+    "a stateless button stays a button and never becomes a field",
+  )
+})
+
+test("SHAPE F: links, iframes, wrappers and hidden nodes are NOT fields", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // THE FALSE-POSITIVE ARM, and every entry here was a MEASURED false positive
+  // in an intermediate build of this sweep, not a hypothetical. A checker that
+  // cries wolf gets ignored, and auto-apply blocks on any unsupported field, so
+  // one spurious defer per board would end the unattended path entirely.
+  const scan = await withPage(async (page) => {
+    await page.setContent(
+      formPage(
+        '<div id="wrap" tabindex="0"><label for="n">Full name</label>' +
+          '<input id="n"></div>' +
+          '<a id="pp" href="/privacy" tabindex="0">Privacy policy</a>' +
+          // ACTION_ROLE's own two cases, which the button loop does NOT stamp
+          // and so are the only thing that guard actually catches: a div
+          // wearing role="link" (never selected by the button loop) and an
+          // icon-only role="button" (selected, but DROPPED there for having no
+          // accessible name, so it arrives here unstamped).
+          '<div id="ln" role="link" tabindex="0">Terms of service</div>' +
+          '<div id="icon" role="button" tabindex="0"><svg width="8" height="8"></svg></div>' +
+          '<details><summary tabindex="0">More info</summary><p>x</p></details>' +
+          '<div id="dec" tabindex="0" aria-hidden="true">decoration</div>' +
+          '<div id="off" tabindex="0" aria-disabled="true" aria-label="Not yet"></div>' +
+          '<div id="gone" tabindex="0" style="display:none">hidden</div>',
+      ),
+    )
+    return (await scanPage(page, { probeMax: 0 })).scan
+  })
+  assert.deepEqual(
+    scan.fields.filter((f) => f.widget === "aria").map((f) => f.sel),
+    [],
+    "no focusable wrapper, link, summary, hidden or disabled node is a field",
+  )
+  assert.ok(scan.fields.some((f) => f.l === "Full name" && f.t === "text"))
+})
+
+test("SHAPE F: the honest board pages gain not one field", async () => {
+  // The broadest false-positive check available without a live employer: run
+  // the REAL scanner over the REAL served HTML of every board page in
+  // tests/fixtures/boards/pages/ and assert the sweep contributes NOTHING. No
+  // browser needed, so this arm runs everywhere and cannot skip into silence.
+  const files = fs.readdirSync(BOARD_PAGES).filter((f) => f.endsWith(".html"))
+  assert.ok(files.length >= 5, "the board corpus must not have shrunk away")
+  for (const f of files) {
+    const scan = await runScanner(
+      fs.readFileSync(path.join(BOARD_PAGES, f), "utf8"),
+    )
+    assert.deepEqual(
+      scan.fields.filter((x) => x.widget === "aria").map((x) => x.l),
+      [],
+      f + " must gain no swept field",
+    )
+    assert.ok(scan.fields.length > 0, f + " must still scan as a form")
+  }
+})
+
+test("SHAPE F: everything the sweep reports DEFERS, and gains no verb", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // The end of the chain, asserted on behaviour rather than on a comment: a
+  // swept control reaches buildPlan and comes back as a defer with NO item, so
+  // nothing unattended can act on it. Reporting is not a verb.
+  const scan = await withPage(async (page) => {
+    await page.setContent(
+      formPage(
+        '<span id="agree" tabindex="0">I agree to binding arbitration</span>' +
+          '<div id="arb" role="menuitemcheckbox" tabindex="0" aria-checked="false"' +
+          ' aria-label="Preferred start date"></div>',
+      ),
+    )
+    return (await scanPage(page, { probeMax: 0 })).scan
+  })
+  const swept = scan.fields.filter((f) => f.widget === "aria")
+  assert.equal(swept.length, 2)
+  const plan = buildPlan({
+    scan,
+    resolved: swept.map((f) => ({ k: f.k, status: "OK", value: "Yes" })),
+    adapter: greenhouseAdapter,
+    files: {},
+  })
+  const why = {}
+  for (const f of swept) {
+    assert.ok(
+      !plan.items.some((i) => i.k === f.k),
+      f.t + " must produce no fillable item",
+    )
+    const d = plan.defer.find((x) => x.k === f.k)
+    assert.ok(d, f.t + " must produce a defer")
+    why[f.sel] = d.why
+  }
+  // The neutral one proves the VERB gate specifically: nothing about its label
+  // is special, and it still cannot be acted on, because `t` has no verb.
+  assert.match(why["#arb"], /unsupported field type aria-menuitemcheckbox/)
+  // The consent one defers EARLIER, on the consent gate, which is stronger
+  // still — asserted rather than assumed so a future reorder cannot silently
+  // turn "deferred twice over" into "deferred not at all".
+  assert.equal(why["#agree"], "consent")
+  // And the engine gained nothing. "no verb that clicks a BUTTON" is pinned by
+  // its own two tests above ("the engine cannot express clicking a button",
+  // "neither engine has a verb that clicks a button") and is deliberately not
+  // re-asserted here as a bare /\.click\(/ grep — the combo verb opens a picker
+  // with a real click, so that grep is red on correct code and would be
+  // "fixed" by weakening the real test. What THIS case owns is narrower and
+  // exact: widening the scanner handed the engine no new verb.
+  assert.ok(
+    !/"widget"|aria-menuitemcheckbox|aria-option/.test(SRC),
+    "the engine must gain no verb for a swept control",
+  )
+})
+
+test("SHAPE F: the sweep's cut is stated, never silent", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // Same reasoning as optsTruncated: 40 survivors of a 200-option list are
+  // indistinguishable from a genuine 40. A cut that says nothing is a silence,
+  // which is the exact failure this whole shape exists to end.
+  let body = ""
+  for (let i = 0; i < 30; i++)
+    body += '<span tabindex="0">Consent item ' + i + "</span>"
+  const scan = await withPage(async (page) => {
+    await page.setContent(formPage(body))
+    return (await scanPage(page, { probeMax: 0 })).scan
+  })
+  assert.equal(scan.fields.filter((f) => f.widget === "aria").length, 25)
+  assert.ok(
+    (scan.signals ?? []).some((s) =>
+      /5 further focusable control\(s\) this scanner has no verb for/.test(s),
+    ),
+    "the 5 dropped controls must be stated: " + JSON.stringify(scan.signals),
   )
 })
 

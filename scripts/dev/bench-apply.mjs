@@ -11,9 +11,15 @@
 //
 // WHAT THIS HARNESS CAN AND CANNOT MEASURE — read this before quoting a number.
 //
-// There is no Playwright and no browser in this repo (a deliberate ~150MB
-// avoidance; see scripts/apply/browser.mjs). So every number below carries a
-// `method` and the CLI prints it:
+// THE DEFAULT RUN OPENS NO BROWSER, and that is a choice about cost, not a
+// fact about the repo. This comment used to read "there is no Playwright and
+// no browser in this repo" — that stopped being true when `playwright-core`
+// became a committed devDependency and Chromium was installed, and it was
+// still here on 2026-07-31, which is how a stale comment turns into three
+// agents believing a number could not be taken (innov-perf found it;
+// qa-breaker wired the leg). `playwright` is still avoided — its postinstall
+// pulls ~150MB — but `playwright-core` + an installed Chromium is present, so
+// `--browser` is real. Every number carries a `method` and the CLI prints it:
 //
 //   measured   — produced by EXECUTING product code or real I/O in this run.
 //                The sleep columns are measured this way: the real engines run
@@ -32,10 +38,14 @@
 //                NEVER as an estimate. An estimate printed in a measurement
 //                column is exactly what Rule C exists to stop.
 //
-// The browser legs slot in without changing the schema: pass --browser and, if
-// playwright-core is installed, the same fields are filled from a real page and
-// flip from `unmeasured` to `measured`. Absent the dependency they stay null
-// and say why.
+// The browser leg slots in without changing the schema: `--browser` runs the
+// real engines against the loopback fixture in real Chromium, and the
+// `unmeasured` entries it closes flip to `measured` with `closed_by:
+// "--browser"`. It closes five of the six; `react_select_behaviour` stays
+// unmeasured on purpose, because the fixture's combos are the fixture's, not a
+// real react-select, and reporting them as one would be the estimate this
+// harness exists to refuse. Absent the dependency the leg reports why it did
+// not run and every entry stays open.
 //
 // SLEEP IS ACCOUNTED, NOT SLEPT. page.waitForTimeout(450) records 450 and
 // returns immediately, so a full sweep costs milliseconds instead of minutes.
@@ -59,7 +69,10 @@ import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
 import scanPage from "../apply/scan-engine.mjs"
-import { start as startBoard } from "../../tests/fixtures/boards/server.mjs"
+import {
+  ROUTES,
+  start as startBoard,
+} from "../../tests/fixtures/boards/server.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const ROOT = path.resolve(HERE, "..", "..")
@@ -1604,9 +1617,378 @@ export function unmeasuredList() {
 }
 
 // ---------------------------------------------------------------------------
-// The optional browser leg. Absent playwright-core it reports why, and it never
-// points anywhere but the loopback fixture.
+// The optional browser leg (--browser). WIRED 2026-07-31 (qa-breaker).
+//
+// It was a stub for two waves and three agents were blocked on it, so what it
+// does and does not claim is written here rather than inferred.
+//
+// WHAT IT MEASURES, and how. The accounted harness above records the ARGUMENT
+// of every wait; it cannot record what a wait COSTS, because a conditional
+// wait costs whatever the DOM takes to satisfy it. So this leg wraps a real
+// Playwright page in `clockedPage()` — a thin recorder that times each wait
+// instead of replacing it — and runs the real engines against the real
+// loopback fixture through it. Every number it reports is a wall clock over
+// product code, not a model of one.
+//
+// The one thing it must never become is a second opinion generator: a leg that
+// silently reported zeros when the scan failed would look like the fast path.
+// Every sub-leg is individually try/caught and records `error` with the
+// message; a leg that did not run reports null and says so, exactly like the
+// unmeasured list it is closing entries out of.
+//
+// IT ONLY EVER POINTS AT LOOPBACK. The URL comes from the fixture server's own
+// pageUrl(), and launchBrowser()'s session.goto re-checks it against
+// assertAllowedTarget — so this cannot be aimed at an employer by editing one
+// argument.
 // ---------------------------------------------------------------------------
+
+// A recorder, not a double. It forwards to the real page and times the calls
+// whose COST is the thing this harness could not previously see. Two buckets,
+// kept apart for the same reason the three columns are:
+//   slept_ms      — waitForTimeout: a flat sleep, paid in full, every time.
+//   conditional_ms — waitFor/waitForLoadState/waitForSelector: paid only until
+//                    the DOM satisfies it, which is the number the source
+//                    cannot tell you and the accounted harness reports as the
+//                    ceiling.
+export function clockedPage(page) {
+  const cost = {
+    slept_ms: 0,
+    conditional_ms: 0,
+    conditional_calls: 0,
+    conditional_ceiling_ms: 0,
+    cdp_calls: 0,
+    waits: [],
+  }
+  const clock = async (label, ceiling, fn) => {
+    const t = performance.now()
+    try {
+      return await fn()
+    } finally {
+      const ms = performance.now() - t
+      cost.conditional_ms += ms
+      cost.conditional_calls++
+      cost.conditional_ceiling_ms += ceiling || 0
+      if (cost.waits.length < 60)
+        cost.waits.push({ label, ms: round(ms), ceiling_ms: ceiling || null })
+    }
+  }
+  const wrapLocator = (loc) =>
+    new Proxy(loc, {
+      get(t, p, r) {
+        const v = Reflect.get(t, p, r)
+        if (p === "waitFor" && typeof v === "function") {
+          return (o = {}) =>
+            clock("locator.waitFor:" + (o.state || "visible"), o.timeout, () =>
+              v.call(t, o),
+            )
+        }
+        if (p === "first" || p === "last" || p === "nth") {
+          return (...a) => wrapLocator(v.apply(t, a))
+        }
+        if (typeof v === "function") {
+          return (...a) => {
+            cost.cdp_calls++
+            return v.apply(t, a)
+          }
+        }
+        return v
+      },
+    })
+  const proxy = new Proxy(page, {
+    get(t, p, r) {
+      const v = Reflect.get(t, p, r)
+      if (p === "waitForTimeout" && typeof v === "function") {
+        return async (ms) => {
+          const t0 = performance.now()
+          await v.call(t, ms)
+          cost.slept_ms += performance.now() - t0
+        }
+      }
+      if (p === "waitForLoadState" && typeof v === "function") {
+        return (...a) =>
+          clock("waitForLoadState:" + (a[0] ?? "load"), null, () =>
+            v.apply(t, a),
+          )
+      }
+      if (p === "waitForSelector" && typeof v === "function") {
+        return (...a) =>
+          clock("waitForSelector", a[1]?.timeout, () => v.apply(t, a))
+      }
+      if (p === "locator" && typeof v === "function") {
+        return (...a) => {
+          cost.cdp_calls++
+          return wrapLocator(v.apply(t, a))
+        }
+      }
+      if (typeof v === "function") {
+        return (...a) => {
+          cost.cdp_calls++
+          return v.apply(t, a)
+        }
+      }
+      return v
+    },
+  })
+  return { page: proxy, cost }
+}
+
+// The unmeasured ids this leg can close. Named as a constant so the CLI, the
+// summary and the tests all agree on what --browser is claiming; a hand-kept
+// list in three places is how a closed entry stays printed as open.
+export const BROWSER_CLOSES = [
+  "conditional_wait_actual",
+  "cdp_latency",
+  "label_resolution",
+  "page_side_scanner",
+  "csp_enforcement",
+]
+
+export async function benchBrowser({ board, boardName, pings = 20 } = {}) {
+  const { launchBrowser } = await import("../apply/browser.mjs")
+  const out = { ran: false, board: boardName, legs: {}, closes: [] }
+  let session
+  try {
+    session = await launchBrowser({ headless: true })
+  } catch (e) {
+    return { ...out, error: String(e.message).split("\n")[0].slice(0, 160) }
+  }
+  out.ran = true
+  const url = board.pageUrl(boardName)
+  out.url = url
+  try {
+    // --- nav: a real navigation to the loopback fixture -------------------
+    const t0 = performance.now()
+    const resp = await session.goto(url)
+    out.legs.nav = {
+      ms: round(performance.now() - t0),
+      status: resp ? resp.status() : null,
+      method: "measured",
+    }
+
+    // --- cdp_latency: what ONE Playwright round trip actually costs -------
+    // The derived round_trips column counts calls; it has never been able to
+    // price one. n is reported so a single sample cannot be quoted as a rate.
+    const pings_ms = []
+    for (let i = 0; i < pings; i++) {
+      const t = performance.now()
+      await session.page.evaluate(() => 1)
+      pings_ms.push(performance.now() - t)
+    }
+    out.legs.cdp_round_trip = { ...stats(pings_ms), method: "measured" }
+    out.closes.push("cdp_latency")
+
+    // --- the real scan, through the clock ---------------------------------
+    const { page: clocked, cost } = clockedPage(session.page)
+    try {
+      const t = performance.now()
+      const res = await scanPage(clocked)
+      const ms = performance.now() - t
+      const { scan } = unwrapScan(res)
+      out.legs.scan = {
+        ms: round(ms),
+        method: "measured",
+        fields: scan?.fields?.length ?? null,
+        kind: scan?.kind ?? null,
+        probe: scan?.probe ?? null,
+        conditional_actual_ms: round(cost.conditional_ms),
+        conditional_ceiling_ms: cost.conditional_ceiling_ms,
+        slept_ms: round(cost.slept_ms),
+        cdp_calls: cost.cdp_calls,
+        waits: cost.waits,
+      }
+      out.closes.push("conditional_wait_actual")
+
+      // --- label_resolution: does the real DOM produce the labels the
+      // committed scan fixture claims? A fixture that has drifted from its
+      // page makes every accounted number above a measurement of fiction,
+      // so this is a fixture-drift detector as much as a browser leg.
+      try {
+        const fixture = JSON.parse(
+          fs.readFileSync(fixtureScanPath(boardName, 1), "utf8"),
+        )
+        // JOIN KEY. Three wrong choices were tried before this one and each
+        // produced a confident, false answer, which is why the reasoning is
+        // written down rather than the result:
+        //   f.label — the wire key is `l`. Reported NINE phantom mismatches.
+        //   f.k     — assigned in DOM order, so one inserted field renames
+        //             every later key and the whole form reads as drift.
+        //   f.sel   — a react-select combo has NO selector: greenhouse-step1
+        //             has two such fields (f1 "Country *", g1 the work
+        //             authorisation radio group), they both key on
+        //             `undefined`, the Map collapses them into one, and the
+        //             leg reports a mismatch that is its own bug.
+        // So: selector when there is one, else the form control's name, else
+        // the label itself — and the count of unjoinable fields is reported,
+        // because a join that silently drops rows is the same failure again.
+        const joinKey = (f) =>
+          f.sel || (f.n ? "name:" + f.n : f.l ? "label:" + f.l : null)
+        const live = new Map()
+        let liveUnjoinable = 0
+        for (const f of scan?.fields ?? []) {
+          const k = joinKey(f)
+          if (k === null) liveUnjoinable++
+          else live.set(k, f.l ?? null)
+        }
+        const rows = []
+        let fixtureUnjoinable = 0
+        for (const f of fixture.fields ?? []) {
+          const k = joinKey(f)
+          if (k === null) {
+            fixtureUnjoinable++
+            continue
+          }
+          const got = live.has(k) ? live.get(k) : undefined
+          if (got !== (f.l ?? null))
+            rows.push({
+              key: k,
+              fixture: f.l ?? null,
+              live: got === undefined ? "(no such field live)" : got,
+            })
+        }
+        out.legs.label_resolution = {
+          method: "measured",
+          fixture_fields: (fixture.fields ?? []).length,
+          live_fields: (scan?.fields ?? []).length,
+          unjoinable: { fixture: fixtureUnjoinable, live: liveUnjoinable },
+          mismatches: rows.slice(0, 20),
+          agree: rows.length === 0 && !fixtureUnjoinable && !liveUnjoinable,
+        }
+        out.closes.push("label_resolution")
+      } catch (e) {
+        out.legs.label_resolution = {
+          method: "unmeasured",
+          error: String(e.message).slice(0, 160),
+        }
+      }
+    } catch (e) {
+      out.legs.scan = {
+        method: "unmeasured",
+        error: String(e.message).split("\n")[0].slice(0, 160),
+      }
+    }
+
+    // --- page_side_scanner: __ajScan(true), the PROBE path -----------------
+    // Neither engine calls it (both pass false), so its 200ms + 80ms x
+    // MAX_PROBE sleeps have never appeared in any column. This is the only
+    // place they can be clocked, because they only exist page-side.
+    try {
+      const t = performance.now()
+      // __ajScan is `async (PROBE = true) =>` — awaited, or the probe sleeps
+      // are not in the clock and `.fields` is read off a Promise.
+      const probed = await session.page.evaluate(async () => {
+        if (typeof window.__ajScan !== "function") return null
+        const s = await window.__ajScan(true)
+        return { fields: (s.fields || []).length, probe: s.probe ?? null }
+      })
+      out.legs.page_side_probe = probed
+        ? { ms: round(performance.now() - t), method: "measured", ...probed }
+        : {
+            method: "unmeasured",
+            error: "window.__ajScan was not installed on this page",
+          }
+      if (probed) out.closes.push("page_side_scanner")
+    } catch (e) {
+      out.legs.page_side_probe = {
+        method: "unmeasured",
+        error: String(e.message).split("\n")[0].slice(0, 160),
+      }
+    }
+
+    // --- csp_enforcement: the gotcha, executed instead of asserted --------
+    // "The bootstrap loads by filename, never addScriptTag" is a load-bearing
+    // rule (CLAUDE.md, Gotchas A) whose evidence was a served header. On the
+    // ashby fixture the policy is nonce-based, so addScriptTag must be
+    // REFUSED while page.evaluate over CDP still works. Both halves are
+    // recorded; one without the other proves nothing.
+    try {
+      const csp = ROUTES.find((r) => r.name === "ashby" && r.csp)
+      if (!csp) throw new Error("no csp fixture route named ashby")
+      await session.goto(board.pageUrl("ashby"))
+      let injected = null
+      try {
+        await session.page.addScriptTag({ content: "window.__ajCsp = 1" })
+        injected = await session.page.evaluate(() => window.__ajCsp ?? null)
+      } catch (e) {
+        injected = "refused: " + String(e.message).split("\n")[0].slice(0, 80)
+      }
+      const viaCdp = await session.page.evaluate(() => {
+        window.__ajCdp = 1
+        return window.__ajCdp
+      })
+      out.legs.csp = {
+        method: "measured",
+        add_script_tag_result: injected,
+        add_script_tag_blocked: injected !== 1,
+        page_evaluate_works: viaCdp === 1,
+      }
+      out.closes.push("csp_enforcement")
+    } catch (e) {
+      out.legs.csp = {
+        method: "unmeasured",
+        error: String(e.message).split("\n")[0].slice(0, 160),
+      }
+    }
+  } finally {
+    await session.close()
+  }
+  out.still_unmeasured = BROWSER_CLOSES.filter((id) => !out.closes.includes(id))
+  return out
+}
+
+function printBrowser(b) {
+  const L = (s) => process.stdout.write(s + "\n")
+  L("")
+  if (!b.ran) {
+    L(`browser leg: DID NOT RUN — ${b.error}`)
+    return
+  }
+  L(`browser leg — real Chromium against ${b.url}`)
+  const g = b.legs
+  if (g.nav) L(`  nav                 ${g.nav.ms} ms   (HTTP ${g.nav.status})`)
+  if (g.cdp_round_trip)
+    L(
+      `  cdp round trip      ${round(g.cdp_round_trip.median)} ms median  ` +
+        `(n=${g.cdp_round_trip.n}, ${round(g.cdp_round_trip.min)}–${round(g.cdp_round_trip.max)}, sd ${g.cdp_round_trip.stddev})`,
+    )
+  if (g.scan)
+    L(
+      g.scan.error
+        ? `  scan                DID NOT RUN — ${g.scan.error}`
+        : `  scan (real DOM)     ${g.scan.ms} ms   fields=${g.scan.fields}  ` +
+            `conditional actual=${g.scan.conditional_actual_ms} ms of a ` +
+            `${g.scan.conditional_ceiling_ms} ms ceiling, flat sleep=${g.scan.slept_ms} ms`,
+    )
+  if (g.label_resolution)
+    L(
+      g.label_resolution.error
+        ? `  label resolution    DID NOT RUN — ${g.label_resolution.error}`
+        : `  label resolution    ${g.label_resolution.agree ? "fixture AGREES with the live DOM" : `DRIFT: ${g.label_resolution.mismatches.length} field(s) differ`}` +
+            ` (fixture ${g.label_resolution.fixture_fields}, live ${g.label_resolution.live_fields}` +
+            (g.label_resolution.unjoinable.fixture ||
+            g.label_resolution.unjoinable.live
+              ? `, unjoinable f=${g.label_resolution.unjoinable.fixture}/l=${g.label_resolution.unjoinable.live}`
+              : "") +
+            ")",
+    )
+  if (g.page_side_probe)
+    L(
+      g.page_side_probe.error
+        ? `  page-side probe     DID NOT RUN — ${g.page_side_probe.error}`
+        : `  page-side probe     ${g.page_side_probe.ms} ms  fields=${g.page_side_probe.fields}  (__ajScan(true), the path neither engine takes)`,
+    )
+  if (g.csp)
+    L(
+      g.csp.error
+        ? `  csp enforcement     DID NOT RUN — ${g.csp.error}`
+        : `  csp enforcement     addScriptTag blocked=${g.csp.add_script_tag_blocked}, ` +
+            `page.evaluate works=${g.csp.page_evaluate_works}`,
+    )
+  L(`  closed: ${b.closes.join(", ") || "(none)"}`)
+  if (b.still_unmeasured.length)
+    L(`  STILL UNMEASURED: ${b.still_unmeasured.join(", ")}`)
+  L("")
+}
+
 // ---------------------------------------------------------------------------
 // Provenance. A baseline is only reproducible if you can tell WHICH bytes were
 // measured, and a sha alone cannot do that while other agents have uncommitted
@@ -1715,23 +2097,35 @@ const USAGE = `bench-apply.mjs — scan -> plan -> fill against the local fake A
                                     ceiling the planner cannot currently reach
   --runs N                          samples (default 5); a single one is not a measurement
   --real-sleep                      actually sleep instead of accounting (proves the accounting)
-  --browser                         attempt the real-page legs (needs playwright-core)
+  --browser                         run the real-Chromium legs against the loopback
+                                    fixture: cdp round-trip cost, the scan's ACTUAL
+                                    conditional wait vs its ceiling, fixture-vs-live
+                                    label drift, __ajScan(true)'s page-side probe, and
+                                    the Ashby nonce-CSP block. Closes 5 of the 6
+                                    unmeasured entries; react_select_behaviour stays open
   --json                            full record
   --ledger                          a paste-ready docs/measurements.md entry
 
 Nothing here touches a live employer's board. See tests/fixtures/boards/README.md.`
 
-export function ledgerEntry(sum, prov) {
+// `browserRun` is optional and the METHOD LINE depends on it. That line used
+// to say "conditional-wait actuals unmeasured (no browser)" unconditionally,
+// which would have gone into docs/measurements.md as a false claim the moment
+// --browser started working. A provenance line that lies about its method is
+// worse than a missing number.
+export function ledgerEntry(sum, prov, browserRun = null) {
   const c = sum.columns
   const shape = sum.shape ? `shape=${sum.shape}` : `board=${sum.board}`
   const dirty =
     prov.dirty_measured_files && prov.dirty_measured_files.length
       ? ` (+${prov.dirty_measured_files.length} uncommitted measured file(s))`
       : ""
-  return [
+  const browserOk = browserRun?.ran && !browserRun.legs?.scan?.error
+  const lines = [
     `- harness:  node scripts/dev/bench-apply.mjs --board ${sum.board}` +
       (sum.shape ? ` --shape ${sum.shape}` : "") +
-      ` --profile ${sum.profile} --runs ${sum.runs}`,
+      ` --profile ${sum.profile} --runs ${sum.runs}` +
+      (browserRun ? " --browser" : ""),
     `- baseline: ${prov.sha}${dirty} — round_trips=${c.round_trips.value} ` +
       `sleep_ms=${c.sleep_ms.value} model_turns=${c.model_turns.value} ` +
       `wall_ms=${c.wall_ms.value}`,
@@ -1740,12 +2134,37 @@ export function ledgerEntry(sum, prov) {
       `${c.sleep_ms.conditional_ceiling_ms}) ${shape}`,
     `- method:   round_trips/model_turns derived (PROTOCOL citations); ` +
       `sleep measured by executing the engines; conditional-wait actuals ` +
-      `unmeasured (no browser)`,
+      (browserOk
+        ? `MEASURED in real Chromium (--browser)`
+        : `unmeasured (no browser leg in this run)`),
+  ]
+  if (browserRun) {
+    const s = browserRun.legs?.scan
+    const cdp = browserRun.legs?.cdp_round_trip
+    lines.push(
+      `- browser:  ` +
+        (browserRun.ran
+          ? (s && !s.error
+              ? `scan ${s.ms}ms wall, conditional ${s.conditional_actual_ms}ms ` +
+                `of a ${s.conditional_ceiling_ms}ms ceiling; `
+              : `scan DID NOT RUN (${s?.error}); `) +
+            (cdp
+              ? `cdp round trip ${round(cdp.median)}ms median n=${cdp.n}; `
+              : "") +
+            `closed [${browserRun.closes.join(", ")}]` +
+            (browserRun.still_unmeasured?.length
+              ? `; STILL OPEN [${browserRun.still_unmeasured.join(", ")}]`
+              : "")
+          : `DID NOT RUN — ${browserRun.error}`),
+    )
+  }
+  lines.push(
     `- bytes:    ` +
       Object.entries(prov.file_sha1)
         .map(([f, h]) => `${h} ${path.basename(f)}`)
         .join("  "),
-  ].join("\n")
+  )
+  return lines.join("\n")
 }
 
 function printHuman(sum) {
@@ -1934,23 +2353,45 @@ async function main() {
     }
 
     const browser = await browserAvailable()
+    // --browser is opt-in because it launches Chromium and costs seconds; the
+    // accounted columns above are unaffected by it either way, so a run with
+    // and a run without are directly comparable.
+    const browserRun = opts.browser
+      ? await benchBrowser({ board, boardName: opts.board })
+      : null
+    if (browserRun?.closes?.length) {
+      for (const sum of results) {
+        for (const u of sum.unmeasured) {
+          if (browserRun.closes.includes(u.id)) {
+            u.method = "measured"
+            u.closed_by = "--browser"
+          }
+        }
+      }
+    }
     const prov = await provenance()
 
     if (opts.json) {
       process.stdout.write(
-        JSON.stringify({ provenance: prov, browser, results }, null, 2) + "\n",
+        JSON.stringify(
+          { provenance: prov, browser, browser_run: browserRun, results },
+          null,
+          2,
+        ) + "\n",
       )
     } else if (opts.ledger) {
       for (const sum of results) {
-        process.stdout.write(ledgerEntry(sum, prov) + "\n\n")
+        process.stdout.write(ledgerEntry(sum, prov, browserRun) + "\n\n")
       }
     } else {
       for (const sum of results) printHuman(sum)
-      process.stdout.write(
-        browser.ok
-          ? "browser leg: playwright-core present (schema reserved, not yet wired)\n"
-          : `browser leg: UNMEASURED — ${browser.why}\n`,
-      )
+      if (browserRun) printBrowser(browserRun)
+      else
+        process.stdout.write(
+          browser.ok
+            ? "browser leg: playwright-core present — pass --browser to run it\n"
+            : `browser leg: UNAVAILABLE — ${browser.why}\n`,
+        )
       process.stdout.write(`sha=${prov.sha}`)
       if (prov.dirty_measured_files && prov.dirty_measured_files.length) {
         process.stdout.write(

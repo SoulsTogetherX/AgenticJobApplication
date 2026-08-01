@@ -65,6 +65,7 @@ import {
 } from "../../scripts/apply/fill-plan.mjs"
 import greenhouse from "../../scripts/apply/ats/greenhouse.mjs"
 import { instrumentedPage, unwrapScan } from "../../scripts/dev/bench-apply.mjs"
+import { launchBrowser } from "../../scripts/apply/browser.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -75,6 +76,33 @@ const BOARDS = path.join(ROOT, "tests", "fixtures", "boards")
 const SCANS = path.join(BOARDS, "scans")
 const readScan = (n) => JSON.parse(fs.readFileSync(path.join(SCANS, n), "utf8"))
 const src = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8")
+
+// --- real Chromium, for the cases a fake page cannot decide ----------------
+// This file's header says "NO BROWSER RUNS HERE", and that is now true of
+// everything EXCEPT E6. It stopped being true on 2026-07-31 because
+// playwright-core is a committed dependency and Chromium is installed, and
+// because the E6 assertion could not be made honest without a DOM: the reveal
+// is created by an onchange handler, so no instrumented double can produce it.
+// Probed once at load; a missing browser SKIPS with a stated reason, because a
+// leg that skips silently is indistinguishable from one that passed.
+const NO_BROWSER = await (async () => {
+  try {
+    const s = await launchBrowser({ headless: true })
+    await s.close()
+    return null
+  } catch (e) {
+    return "no usable Chromium: " + String(e.message).slice(0, 90)
+  }
+})()
+
+const withPage = async (fn) => {
+  const s = await launchBrowser({ headless: true })
+  try {
+    return await fn(s.page)
+  } finally {
+    await s.close()
+  }
+}
 
 // ---------------------------------------------------------------------------
 // E1 — a 200-option dropdown
@@ -451,32 +479,96 @@ test("FINDING (w2-engine): E5 BREAKS — the engine has no frameLocator, so an i
 // E6 — a conditional reveal ("if yes, explain")
 // ---------------------------------------------------------------------------
 
-test("FINDING (w2-engine): E6 BREAKS — a field revealed BY the fill is never verified", async () => {
-  // The verify pass probes exactly the plan's own items (fill-engine.mjs
-  // builds `probes` from `items`). A required field that only exists once
-  // "Yes" is picked is therefore not in the plan, not in the probes, and not
-  // in requiredEmpty — so the run reports a clean fill of an incomplete form.
-  const rig = instrumentedPage({
-    elements: { "#q1": { kind: "input", value: "" } },
+// E6 CLOSED 2026-07-31 by w2-engine (fill-engine.mjs:735-778, the page-wide
+// sweep inside the verify evaluate). REWRITTEN 2026-07-31 by qa-breaker,
+// because the test that was here COULD NOT DETECT THE FIX.
+//
+// The old assertion was `deepEqual(probed, ["q1"])` on the ARGUMENT passed to
+// the verify evaluate. The fix adds a document-wide sweep INSIDE that
+// evaluate and deliberately leaves the probe list alone — so the old test was
+// green before the fix, green after it, and would stay green if the sweep were
+// deleted again tomorrow. That is the protocol's "asserts nothing meaningful"
+// signature and it is the third source/argument-shaped assertion in this file
+// to be proven blind.
+//
+// It is replaced by a behavioural test against real Chromium. The reveal is
+// produced by an onchange handler, so there is no instrumented double that can
+// produce it — the browser is the only thing that can decide this case.
+//
+// CANARIED: with the `res.revealed.push(...)` block deleted in a sandbox copy
+// of scripts/apply/, this test fails on the `["If yes, when?"]` assertion.
+const E6_FORM = `<!doctype html><form>
+<label for="q1">Have you worked here before?</label>
+<input type="checkbox" id="q1" name="q1">
+<div id="reveal" hidden></div>
+<script>
+document.getElementById('q1').addEventListener('change', function () {
+  var d = document.getElementById('reveal')
+  if (!this.checked) { d.hidden = true; d.innerHTML = ''; return }
+  d.hidden = false
+  d.innerHTML =
+    '<label for="when">If yes, when?</label>' +
+    '<input id="when" name="when" required>' +
+    '<label for="proof">Proof of employment</label>' +
+    '<input id="proof" name="proof" type="file" required>'
+})
+<\/script></form>`
+
+const E6_PLAN = {
+  items: [{ k: "q1", how: "check", sel: "#q1", value: true, label: "Yes" }],
+}
+
+test("E6 HANDLED [w2-engine]: a field revealed BY the fill comes back in report.revealed", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  const report = await withPage(async (page) => {
+    await page.setContent(E6_FORM)
+    return fillPage(page, E6_PLAN)
   })
-  const seen = []
-  const realEval = rig.page.evaluate.bind(rig.page)
-  rig.page.evaluate = async (fn, arg) => {
-    if (String(fn).includes("requiredEmpty")) seen.push(arg)
-    return realEval(fn, arg)
-  }
-  const report = await fillPage(rig.page, {
-    items: [{ k: "q1", how: "check", sel: "#q1", value: true, label: "Yes" }],
-  })
+  // The tick itself must succeed, or the reveal never happens and the
+  // assertion below would pass for the wrong reason.
+  assert.equal(report.ok, 1)
   assert.equal(report.failed, 0)
-  const probed = seen[0].map((p) => p.k)
   assert.deepEqual(
-    probed,
-    ["q1"],
-    "THE DEFECT: the verify sweep can only see fields the plan already knew " +
-      "about, so a conditional reveal is invisible to it",
+    report.revealed.map((r) => r.label),
+    ["If yes, when?"],
+    "the required text field that only exists once the box is ticked must " +
+      "come back as data for the caller to defer on",
+  )
+  // Reported, never filled: there is no answer for it in this process.
+  assert.equal(report.revealed[0].sel, "#when")
+  assert.equal(report.revealed[0].type, "text")
+})
+
+test("FINDING (w2-engine): E6 RESIDUAL — a required file input revealed by the fill is invisible to the sweep", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // Stated by w2-engine against its own fix, and reproduced here so it is a
+  // failing-when-fixed test rather than a note: SKIP_TYPE in fill-engine.mjs
+  // excludes `file`, because a file input's value is unreadable from the page
+  // and every un-uploaded slot on the form would otherwise report as revealed.
+  //
+  // The cost of that trade is this: a REQUIRED attachment that the reveal
+  // created, and that nobody uploaded, reaches neither `revealed` nor
+  // `requiredEmpty`. On the unattended path that is a form which looks
+  // complete and is not. The same page carries both fields, so this is the
+  // exact blind spot beside the exact thing that works.
+  const report = await withPage(async (page) => {
+    await page.setContent(E6_FORM)
+    return fillPage(page, E6_PLAN)
+  })
+  const labels = report.revealed.map((r) => r.label)
+  assert.equal(
+    labels.includes("Proof of employment"),
+    false,
+    "THE REMAINING DEFECT: flip this to true when the sweep learns to report " +
+      "an empty required file input",
   )
   assert.deepEqual(report.verify.requiredEmpty, [])
+  // Pin the reason, so a later reader does not read the absence as an
+  // oversight and 'fix' it by dropping the skip without solving readability.
+  assert.match(
+    src("scripts/apply/fill-engine.mjs"),
+    /const SKIP_TYPE = \{[^}]*file: 1/s,
+  )
 })
 
 // ---------------------------------------------------------------------------

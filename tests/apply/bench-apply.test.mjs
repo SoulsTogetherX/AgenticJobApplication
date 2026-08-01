@@ -24,15 +24,18 @@ import { fileURLToPath } from "node:url"
 
 import fillPage from "../../scripts/apply/fill-engine.mjs"
 import {
+  BROWSER_CLOSES,
   COVER_LETTER,
   GATE_MATRIX,
   GATE_SHAPES,
   MEASURED_FILES,
   PROFILES,
   PROTOCOL,
+  benchBrowser,
   benchPlan,
   benchServe,
   benchVerbCosts,
+  clockedPage,
   fixtureScanPath,
   gateBreakdown,
   instrumentedPage,
@@ -425,10 +428,55 @@ test("the ledger entry names the command and the method", async () => {
         jobsDir: dir,
       }),
     ])
-    const entry = ledgerEntry(sum, await provenance())
+    const prov = await provenance()
+    const entry = ledgerEntry(sum, prov)
     assert.match(entry, /- harness: {2}node scripts\/dev\/bench-apply\.mjs/)
     assert.match(entry, /round_trips=\d+ sleep_ms=\d+ model_turns=\d+/)
-    assert.match(entry, /unmeasured \(no browser\)/)
+    assert.match(entry, /unmeasured \(no browser leg in this run\)/)
+    assert.equal(
+      /- browser:/.test(entry),
+      false,
+      "a run with no browser leg must not print a browser line at all",
+    )
+
+    // THE METHOD LINE MUST TRACK THE RUN, not the day the string was written.
+    // Before --browser was wired it read "unmeasured (no browser)" whatever
+    // happened, so the first real browser run would have pasted a false
+    // method into docs/measurements.md. Feeding it a browser result here is
+    // the regression guard for that, and it needs no browser to run.
+    const withBrowser = ledgerEntry(sum, prov, {
+      ran: true,
+      closes: ["cdp_latency", "conditional_wait_actual"],
+      still_unmeasured: ["react_select_behaviour"],
+      legs: {
+        scan: {
+          ms: 400,
+          conditional_actual_ms: 88,
+          conditional_ceiling_ms: 380,
+        },
+        cdp_round_trip: { median: 1.05, n: 20 },
+      },
+    })
+    assert.match(
+      withBrowser,
+      /conditional-wait actuals MEASURED in real Chromium/,
+    )
+    assert.match(
+      withBrowser,
+      /- browser: {2}scan 400ms wall, conditional 88ms of a 380ms ceiling/,
+    )
+    assert.match(withBrowser, /STILL OPEN \[react_select_behaviour\]/)
+    assert.match(withBrowser, /--runs \d+ --browser/)
+
+    // And a browser leg that FAILED must say so rather than vanish, or the
+    // ledger reads as though the numbers were taken and were merely absent.
+    const failed = ledgerEntry(sum, prov, {
+      ran: false,
+      closes: [],
+      error: "no usable Chromium",
+    })
+    assert.match(failed, /- browser: {2}DID NOT RUN — no usable Chromium/)
+    assert.match(failed, /unmeasured \(no browser leg in this run\)/)
   } finally {
     await board.stop()
     fs.rmSync(dir, { recursive: true, force: true })
@@ -470,6 +518,150 @@ test("unmeasuredList names the browser-only quantities", () => {
     "csp_enforcement",
   ]) {
     assert.ok(ids.includes(id), `missing declared gap: ${id}`)
+  }
+})
+
+// --- 4b. the browser leg ---------------------------------------------------
+//
+// WIRED 2026-07-31. Before that `--browser` printed "schema reserved, not yet
+// wired" and did nothing, which is the worst state a flag can be in: present
+// in the usage text, so three separate agents planned around a measurement it
+// could not take.
+//
+// Two things are tested WITHOUT a browser, because they are the parts that can
+// be wrong silently: the claim-bookkeeping (BROWSER_CLOSES vs unmeasuredList)
+// and clockedPage's arithmetic. The end-to-end leg is tested with a browser and
+// SKIPS with a stated reason when there is none.
+
+test("BROWSER_CLOSES only names ids that unmeasuredList actually declares", () => {
+  // A typo here would report an entry as closed that no reader can find, or
+  // silently leave a real gap open. Checked in both directions.
+  const ids = new Set(unmeasuredList().map((u) => u.id))
+  for (const id of BROWSER_CLOSES) {
+    assert.ok(
+      ids.has(id),
+      `--browser claims to close an id nobody declares: ${id}`,
+    )
+  }
+  assert.equal(
+    BROWSER_CLOSES.includes("react_select_behaviour"),
+    false,
+    "the fixture's combos are the fixture's, not a real react-select; " +
+      "claiming that one is closed would be exactly the estimate this " +
+      "harness refuses to print",
+  )
+})
+
+test("clockedPage separates a flat sleep from a conditional wait, and forwards to the real page", async () => {
+  // A recorder, not a double: the underlying calls must still happen, or the
+  // 'measured' numbers are of nothing. `hits` proves the forwarding.
+  const hits = []
+  const fake = {
+    async waitForTimeout(ms) {
+      hits.push(["sleep", ms])
+      await new Promise((r) => setTimeout(r, ms))
+    },
+    async waitForLoadState(s) {
+      hits.push(["loadstate", s])
+      await new Promise((r) => setTimeout(r, 20))
+    },
+    locator(sel) {
+      hits.push(["locator", sel])
+      return {
+        async waitFor(o) {
+          hits.push(["waitFor", sel, o.state, o.timeout])
+          await new Promise((r) => setTimeout(r, 15))
+        },
+        first() {
+          return this
+        },
+      }
+    },
+    url: () => "http://127.0.0.1/x",
+  }
+  const { page, cost } = clockedPage(fake)
+  await page.waitForTimeout(30)
+  await page.waitForLoadState("load")
+  await page
+    .locator("button")
+    .first()
+    .waitFor({ state: "attached", timeout: 1500 })
+
+  assert.deepEqual(hits, [
+    ["sleep", 30],
+    ["loadstate", "load"],
+    ["locator", "button"],
+    ["waitFor", "button", "attached", 1500],
+  ])
+  // The two buckets must not bleed into each other — collapsing them is the
+  // exact mistake that let ~24s of waitForTimeout be described as network time.
+  assert.ok(cost.slept_ms >= 25, `flat sleep not recorded: ${cost.slept_ms}`)
+  assert.equal(cost.conditional_calls, 2)
+  assert.ok(
+    cost.conditional_ms >= 25,
+    `conditional not clocked: ${cost.conditional_ms}`,
+  )
+  // The ceiling is what the source could already tell you; the actual is the
+  // number this leg exists to add. Reporting only the sum would hide it.
+  assert.equal(cost.conditional_ceiling_ms, 1500)
+  assert.ok(
+    cost.conditional_ms < cost.conditional_ceiling_ms,
+    "a wait that fires early must cost less than its ceiling, or the two " +
+      "columns are measuring the same thing",
+  )
+  assert.deepEqual(
+    cost.waits.map((w) => w.label),
+    ["waitForLoadState:load", "locator.waitFor:attached"],
+  )
+})
+
+test("benchBrowser measures against real Chromium, or says why it did not", async (t) => {
+  const board = await start()
+  try {
+    const run = await benchBrowser({ board, boardName: "greenhouse" })
+    if (!run.ran) return t.skip("no usable Chromium: " + run.error)
+
+    // It only ever points at loopback. Asserted on the URL it actually used,
+    // not on the source.
+    assert.match(run.url, /^http:\/\/127\.0\.0\.1:\d+\//)
+
+    assert.equal(run.legs.nav.status, 200)
+    assert.ok(
+      run.legs.cdp_round_trip.n >= 5,
+      "a rate needs more than one sample",
+    )
+    assert.ok(run.legs.cdp_round_trip.median > 0)
+
+    // The number the accounted harness could never take.
+    const s = run.legs.scan
+    assert.equal(s.error, undefined, "the scan leg must actually run")
+    assert.ok(s.fields > 0, "a scan that found no fields measured nothing")
+    assert.ok(
+      s.conditional_actual_ms < s.conditional_ceiling_ms,
+      `actual ${s.conditional_actual_ms}ms should be under the ` +
+        `${s.conditional_ceiling_ms}ms ceiling on a page that hydrates fast`,
+    )
+
+    // The fixture is only a valid stand-in for the live DOM while it agrees
+    // with it. This is the drift detector, and it found its own join bug
+    // before it found anything else — see the joinKey comment in the harness.
+    assert.equal(
+      run.legs.label_resolution.agree,
+      true,
+      "greenhouse-step1.scan.json has drifted from greenhouse-step1.html: " +
+        JSON.stringify(run.legs.label_resolution.mismatches),
+    )
+
+    // The CSP gotcha, executed rather than asserted from a served header.
+    assert.equal(run.legs.csp.add_script_tag_blocked, true)
+    assert.equal(run.legs.csp.page_evaluate_works, true)
+
+    for (const id of BROWSER_CLOSES) {
+      assert.ok(run.closes.includes(id), `leg did not close ${id}`)
+    }
+    assert.deepEqual(run.still_unmeasured, [])
+  } finally {
+    await board.stop()
   }
 })
 

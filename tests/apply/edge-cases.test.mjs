@@ -7,24 +7,44 @@
 //
 // Each case is one of two kinds, and the difference is stated in the test name:
 //
-//   HANDLED — the product code already copes, and the test pins that so a
+//   "E<n> HANDLED [<owner>]: ..."
+//             the product code already copes, and the test pins that so a
 //             later change cannot quietly undo it.
-//   BREAKS  — the product code does the wrong thing today. The assertion
+//   "FINDING (<owner>): E<n> BREAKS — ..."
+//             the product code does the wrong thing today. The assertion
 //             describes the WRONG behaviour, so the test is green now and goes
 //             red the moment it is fixed, at which point the assertion flips
 //             and the finding closes. That is deliberate: a test that fails on
 //             HEAD blocks everyone else's wave, and this file's job is to make
 //             the gap findable and falsifiable, not to hold the build hostage.
-//             Every BREAKS case names its owner.
+//
+// THE `FINDING (<owner>):` PREFIX IS LOAD-BEARING, not decoration. It is what
+// .github/workflows/test-gate.mjs's OWNED_RE — /^FINDING \(([^)]+)\)/, anchored
+// at the start of the test name — matches to route a red into the "known,
+// owned" bucket instead of "UNEXPECTED — nobody owns these". These tests used
+// to be named `E8 BREAKS [w2-engine]: ...`; square brackets do not match, and
+// mid-name does not match either, so an owned failure was reported as
+// unattributed, which is exactly the noise that split exists to remove
+// (ci-engineer, 2026-07-31). The classification is reporting only — it cannot
+// make a red run green — but a mis-bucketed red is a red nobody reads.
 //
 // NO BROWSER RUNS HERE. The project has no Playwright (see
 // scripts/apply/browser.mjs), so cases that need a live DOM — react-select
 // opening, shadow roots, a real remount — are exercised either against the
 // engine with an instrumented page, or as a STRUCTURAL assertion about the
-// source (the absence of frameLocator is a fact about the code, not a guess
-// about the browser). Where neither works, the case is named in
-// tests/apply/edge-cases.test.mjs's final test as an open gap rather than
-// silently dropped.
+// source. Where neither works, the case is named in this file's final test as
+// an open gap rather than silently dropped.
+//
+// A SOURCE GREP IS A LAST RESORT, AND SAYS SO WHERE IT IS USED. A test that
+// matches its subject's source passes the moment the string appears: it cannot
+// tell a live guard from a commented-out one, and it breaks when somebody
+// improves a comment — which is how three tests in this file went red in one
+// session (2026-07-31) on a string rather than on behaviour. Two greps are
+// legitimate and both are labelled in place: an ABSENCE (no frameLocator, no
+// shadowRoot API, the engine never branching on `signals`), which no input can
+// exhibit, and DOM-only code that cannot be executed without a browser. Never
+// grep for a comment's wording; never grep for something the code can be made
+// to demonstrate. Each surviving grep names its behavioural sibling.
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -43,6 +63,7 @@ import {
   readiness,
   submitReadiness,
 } from "../../scripts/apply/fill-plan.mjs"
+import greenhouse from "../../scripts/apply/ats/greenhouse.mjs"
 import { instrumentedPage, unwrapScan } from "../../scripts/dev/bench-apply.mjs"
 
 const ROOT = path.resolve(
@@ -64,6 +85,11 @@ const src = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8")
 // both scanners now record `optsTruncated` and the real `optsTotal`, so the
 // flag field-cache.mjs has always read defensively finally arrives.
 test("E1 HANDLED [w2-engine]: the 200 -> 40 cut still happens but is now RECORDED, in both scanners", () => {
+  // GREP, DELIBERATELY, AND SAID SO: scan-page.js is DOM-only and cannot be
+  // executed here. Its behavioural sibling is the very next test, which runs
+  // scan-engine.mjs against an instrumented page and reads the flag off the
+  // returned scan; this one exists only to prove the OTHER scanner — the one
+  // that runs on a live board — was not left behind by a half-fix.
   const engine = src("scripts/apply/scan-engine.mjs")
   const scanner = src(".claude/skills/apply-job/scan-page.js")
 
@@ -110,7 +136,7 @@ test("E1 HANDLED [w2-engine]: a probe whose page-side list was cut comes back fl
   assert.equal(f2.optsTruncated, undefined, "a complete list carries no flag")
 })
 
-test("E1 BREAKS [w3-resolution]: 40 of 200 is cached as if it were the whole list", () => {
+test("FINDING (w3-resolution): E1 BREAKS — 40 of 200 is cached as if it were the whole list", () => {
   // The cache caps at MAX_CACHED_OPTS=60 and flags `optsTruncated` only when
   // ITS OWN cap bites. A list already cut from 200 to 40 upstream is under
   // that cap, so it is stored with no flag at all and re-served as complete.
@@ -238,7 +264,7 @@ test("E3 HANDLED [w3-resolution]: two scans in a job dir is an error, not a gues
   }
 })
 
-test("E3 BREAKS [w2-engine]: urlGuard cannot tell page 2 from page 1", async () => {
+test("FINDING (w2-engine): E3 BREAKS — urlGuard cannot tell page 2 from page 1", async () => {
   // The Greenhouse fixture is one URL serving two steps (GET vs POST). The
   // guard compares URLs with the query and hash stripped, so it passes on a
   // page it has never seen. The fixture exists precisely to pin this.
@@ -380,7 +406,7 @@ test("E5 HANDLED [w2-engine]: a shadow root holding form controls is detected an
   assert.match(scanner, /querySelector\(HIDDEN_CONTROL\)/)
 })
 
-test("E5 BREAKS [w2-engine]: detecting a shadow root is not filling one — no API in either engine can cross the boundary", () => {
+test("FINDING (w2-engine): E5 BREAKS — detecting a shadow root is not filling one — no API in either engine can cross the boundary", () => {
   // Method: read the two files that actually touch elements and search for
   // every API that can cross a shadow boundary. Absence is the finding. The
   // scanner is excluded from this sweep on purpose — it now legitimately
@@ -400,7 +426,7 @@ test("E5 BREAKS [w2-engine]: detecting a shadow root is not filling one — no A
   }
 })
 
-test("E5 BREAKS [w2-engine]: the engine has no frameLocator, so an iframe form is unfillable", () => {
+test("FINDING (w2-engine): E5 BREAKS — the engine has no frameLocator, so an iframe form is unfillable", () => {
   const engine = src("scripts/apply/fill-engine.mjs")
   assert.equal(
     /frameLocator|page\.frames\(|contentFrame/.test(engine),
@@ -425,7 +451,7 @@ test("E5 BREAKS [w2-engine]: the engine has no frameLocator, so an iframe form i
 // E6 — a conditional reveal ("if yes, explain")
 // ---------------------------------------------------------------------------
 
-test("E6 BREAKS [w2-engine]: a field revealed BY the fill is never verified", async () => {
+test("FINDING (w2-engine): E6 BREAKS — a field revealed BY the fill is never verified", async () => {
   // The verify pass probes exactly the plan's own items (fill-engine.mjs
   // builds `probes` from `items`). A required field that only exists once
   // "Yes" is picked is therefore not in the plan, not in the probes, and not
@@ -458,8 +484,12 @@ test("E6 BREAKS [w2-engine]: a field revealed BY the fill is never verified", as
 // ---------------------------------------------------------------------------
 
 test("E7 HANDLED [w2-engine]: a password field classifies the page as login", () => {
-  // The classification exists and is what the skill branches on. Asserted
-  // against the scanner's source because running it needs a DOM.
+  // GREP, DELIBERATELY, AND SAID SO: the classification is computed from a live
+  // DOM, so it cannot be executed here. Its behavioural siblings are the
+  // buildPlan refusal tests further down, which take `kind: "login"` and
+  // `signals: ["iframe:recaptcha challenge"]` as INPUT and prove the consumer
+  // acts on them — so what stays unproven is only that a real page produces
+  // them, which the open-gaps test at the bottom names.
   const scanner = src(".claude/skills/apply-job/scan-page.js")
   assert.match(scanner, /password field — login wall, hand off to the user/)
   assert.match(scanner, /signals\.some\(\(s\) => s\.startsWith\("password"\)\)/)
@@ -486,38 +516,94 @@ const LOGIN_ADAPTER = {
   fileOrder: [],
 }
 
-test("E7 HANDLED [w3-resolution]: the planner reads scan.kind and signals, as a BRANCH not a mention", () => {
-  const planner = src("scripts/apply/fill-plan.mjs")
-  assert.match(
-    planner,
-    /scan\.kind === "login"/,
-    "the planner must read the scanner's own login classification",
+// REWRITTEN 2026-07-31 (qa-breaker). This test used to prove "the guard
+// short-circuits BEFORE the field loop" with a source regex —
+// /if \(captchaSignal \|\| blockedKind\) \{[\s\S]{0,600}?items: \[\],/ — on the
+// stated grounds that "the behavioural tests below cannot tell 'returned early'
+// from 'produced no items for some other reason'". They can, and this is how:
+// give the guard a scan whose OTHER fields would each leave an unmistakable
+// fingerprint if the loop ran. Empty `items` alone is ambiguous; empty `items`
+// AND the absence of two defers the loop is guaranteed to emit is not.
+test("E7 HANDLED [w3-resolution]: the page-shape guard returns BEFORE the field loop — proven by the defers the loop would have left", () => {
+  // f2 and f3 are chosen because buildPlan's field loop cannot process either
+  // one silently: a file input with no rendered document defers "unrecognised
+  // attachment slot", and an unknown type defers "unsupported field type". If
+  // the guard ran after the loop, or merely annotated the plan, both would be
+  // in plan.defer.
+  const fields = [
+    { k: "f1", sel: "#e", n: "email", t: "text", l: "Email", req: true },
+    { k: "f2", sel: "#r", t: "file", l: "Attach", req: true },
+    { k: "f3", sel: "#z", t: "nonsense", l: "What?", req: true },
+  ]
+  const bankOpts = {
+    profile: path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+    answers: path.join(ROOT, "tests", "fixtures", "answers.yaml"),
+  }
+  const planFor = (extra) => {
+    const scan = {
+      url: "https://job-boards.greenhouse.io/x/jobs/1",
+      fields,
+      ...extra,
+    }
+    return buildPlan({
+      scan,
+      resolved: resolveFields(fields, bankOpts),
+      adapter: LOGIN_ADAPTER,
+      url: scan.url,
+    })
+  }
+
+  // The control FIRST, so the login case below is a measured difference rather
+  // than a planner that refuses everything: on an ordinary form the loop runs
+  // and leaves exactly the two fingerprints.
+  const ok = planFor({ kind: "form", heading: "Apply", signals: [] })
+  assert.deepEqual(
+    ok.items.map((i) => i.k),
+    ["f1"],
   )
-  assert.match(planner, /captcha/i, "and its CAPTCHA signal")
-  // A mention is not a branch. Every non-comment line naming scan.kind must
-  // sit in control flow — the same method the old BREAKS test used against
-  // fill-engine.mjs's signals, inverted.
-  const kindLines = src("scripts/apply/fill-plan.mjs")
-    .split(/\r?\n/)
-    .filter((l) => /scan\.kind/.test(l) && !/^\s*\/\//.test(l))
-  assert.ok(kindLines.length > 0, "scan.kind must appear outside comments")
-  assert.ok(
-    kindLines.some((l) => /===|!==|\bif\b/.test(l)),
-    `scan.kind is read but never compared: ${JSON.stringify(kindLines)}`,
+  assert.deepEqual(
+    ok.defer.map((d) => `${d.k}|${d.why}`),
+    ["f2|unrecognised attachment slot", "f3|unsupported field type nonsense"],
+    "precondition: the field loop DOES leave these two marks when it runs",
   )
-  // ...and the comparison must short-circuit rather than annotate: the guard
-  // returns a whole plan of its own. Asserted on the source because the
-  // behavioural tests below cannot tell "returned early" from "produced no
-  // items for some other reason".
-  assert.match(
-    planner,
-    /if \(captchaSignal \|\| blockedKind\) \{[\s\S]{0,600}?items: \[\],/,
-    "the guard must return a plan with empty items, before the field loop",
+
+  // The login wall: one defer, naming the page, and neither fingerprint.
+  const blocked = planFor({ kind: "login", heading: "Sign in", signals: [] })
+  assert.deepEqual(blocked.items, [])
+  assert.equal(
+    blocked.defer.length,
+    1,
+    "not one defer per field — the loop never ran. Got: " +
+      JSON.stringify(blocked.defer),
   )
-  // The engine's `signals` are still data only — that has NOT changed, and it
-  // is correct: the stop belongs in the planner, which runs before anything
-  // touches the page. Kept so a future "fix" that moves the branch into the
-  // engine has to say so.
+  assert.match(blocked.defer[0].why, /login wall/i)
+  assert.equal(
+    blocked.defer.some((d) => d.k === "f2" || d.k === "f3"),
+    false,
+    "a per-field defer here would mean the guard annotated rather than " +
+      "short-circuited, and a plan built past a login wall is one that can " +
+      "type the user's email into a sign-in box",
+  )
+
+  // Same proof for the CAPTCHA door, which is a signal rather than a kind and
+  // is therefore a genuinely separate branch.
+  const captcha = planFor({
+    kind: "form",
+    heading: "Apply",
+    signals: ["iframe:recaptcha challenge"],
+  })
+  assert.deepEqual(captcha.items, [])
+  assert.equal(captcha.defer.length, 1)
+  assert.match(captcha.defer[0].why, /captcha/i)
+
+  // GREP, DELIBERATELY, AND SAID SO: the remaining assertion is an ABSENCE —
+  // fill-engine.mjs must carry `signals` as data and never branch on them. An
+  // absence cannot be demonstrated by running the code (no input exhibits a
+  // branch that is not there), so a source sweep is the only available method,
+  // and it is a fact about the file rather than a guess about the browser. Its
+  // behavioural sibling is the whole block above: the stop lives in the
+  // planner, which runs before anything touches the page. Kept so a future
+  // "fix" that moves the branch into the engine has to say so.
   const signalLines = src("scripts/apply/fill-engine.mjs")
     .split(/\r?\n/)
     .filter((l) => /\bsignals\b/.test(l) && !/^\s*\/\//.test(l))
@@ -702,56 +788,157 @@ test("E7 HANDLED [w2-engine]: when NOT ONE of the plan's fields exists, the engi
 // E8 — a field whose label sits under a heading that says something else
 // ---------------------------------------------------------------------------
 
-test("E8 HANDLED [w3-resolution]: two inputs both labelled 'Attach' are told apart by order", () => {
-  // The Greenhouse replica labels BOTH file inputs "Attach"; the heading that
-  // distinguishes resume from cover letter is outside the element the scanner
-  // reads. The planner falls back to document order, which every one of these
-  // boards renders resume-first.
+// E8 CLOSED 2026-07-31, both halves: w2-engine made the scanner report the
+// section heading a field sits under, and w3-resolution made buildPlan match on
+// it BEFORE falling back to document order.
+//
+// REWRITTEN 2026-07-31 (qa-breaker). The previous version of this test asserted
+// the fallback by regex-matching a COMMENT in fill-plan.mjs
+// (/fall back to document\s*\n?\s*\/\/ order/). w3-resolution improved the
+// comment while improving the behaviour, and the test went red on the string
+// rather than on the code — the exact failure mode the protocol calls "a test
+// that passes because it asserts nothing meaningful". A source grep cannot tell
+// a live branch from a commented-out one; every assertion below runs buildPlan.
+const uploadsOf = (scan) => {
+  const resolved = resolveFields(scan.fields, {
+    profile: path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+    answers: path.join(ROOT, "tests", "fixtures", "answers.yaml"),
+  })
+  const plan = buildPlan({
+    scan,
+    resolved,
+    adapter: greenhouse,
+    url: scan.url,
+    files: { resume: "/x/resume.pdf", cover: "/x/cover.pdf" },
+  })
+  return plan.items
+    .filter((i) => i.how === "upload")
+    .map((i) => ({ k: i.k, doc: i.label, path: i.paths[0], m: i.labelMatch }))
+}
+
+// Swapping the DOM order of two identically-labelled inputs, or swapping their
+// sections, is the only way to tell "read the heading" apart from "count from
+// the top" — with a resume-first board they agree on every field.
+const swapFileSections = (scan) => {
+  const out = structuredClone(scan)
+  for (const f of out.fields) {
+    if (f.t === "file")
+      f.section = f.section === "Resume" ? "Cover Letter" : "Resume"
+  }
+  return out
+}
+const reverseFileOrder = (scan) => {
+  const out = structuredClone(scan)
+  const idx = out.fields
+    .map((f, i) => (f.t === "file" ? i : -1))
+    .filter((i) => i >= 0)
+  const [a, b] = idx
+  ;[out.fields[a], out.fields[b]] = [out.fields[b], out.fields[a]]
+  return out
+}
+
+test("E8 HANDLED [w3-resolution]: two inputs both labelled 'Attach' are told apart by their SECTION, and the plan uploads each file into the right slot", () => {
   const scan = readScan("greenhouse-step1.scan.json")
   const files = scan.fields.filter((f) => f.t === "file")
   assert.equal(files.length, 2)
   assert.deepEqual(
     files.map((f) => f.l),
     ["Attach", "Attach"],
-    "the fixture must keep both labels identical or this case is not tested",
+    "the fixture must keep both labels identical, or the label branch " +
+      "answers this before the section branch is ever reached and the test " +
+      "measures nothing",
+  )
+  assert.deepEqual(
+    files.map((f) => f.section),
+    ["Resume", "Cover Letter"],
+    "and it must keep the two headings distinct",
   )
 
-  const adapter = src("scripts/apply/ats/greenhouse.mjs")
-  assert.match(adapter, /fileOrder: \["resume", "cover"\]/)
-  const planner = src("scripts/apply/fill-plan.mjs")
-  assert.match(
-    planner,
-    /fall back to document\s*\n?\s*\/\/ order/,
-    "the order fallback must stay documented as the reason this works",
-  )
+  // The ordinary, resume-first board. Both signals agree here, so this alone
+  // proves nothing about WHICH one decided — it is the baseline the two
+  // disagreement cases below are measured against.
+  assert.deepEqual(uploadsOf(scan), [
+    { k: "f6", doc: "resume", path: "/x/resume.pdf", m: "resume|\\bcv\\b" },
+    { k: "f7", doc: "cover", path: "/x/cover.pdf", m: "cover letter" },
+  ])
 })
 
-test("E8 BREAKS [w2-engine]: the label is all the scanner reports; the heading above it is dropped", () => {
-  // A field whose visible label says one thing while the section heading above
-  // it says another is indistinguishable, in the scan, from a field with a
-  // correct label. Nothing carries the heading, so nothing downstream can
-  // notice the contradiction.
+test("E8 HANDLED [w3-resolution]: a board that renders COVER LETTER FIRST still gets the résumé into the résumé slot", () => {
+  // THE PROPERTY THIS FILE EXISTS FOR. fileOrder assumes resume-first; a board
+  // that does not silently uploaded the résumé as the cover letter, with no
+  // signal anywhere. Here the DOM order is reversed and the headings stay
+  // truthful, so position and section disagree — position alone misassigns.
+  const scan = reverseFileOrder(readScan("greenhouse-step1.scan.json"))
+  const got = uploadsOf(scan)
+  assert.deepEqual(
+    got.map((u) => u.k),
+    ["f7", "f6"],
+    "precondition: the cover-letter input is now first in the DOM",
+  )
+  assert.deepEqual(got, [
+    { k: "f7", doc: "cover", path: "/x/cover.pdf", m: "cover letter" },
+    { k: "f6", doc: "resume", path: "/x/resume.pdf", m: "resume|\\bcv\\b" },
+  ])
+  // labelMatch is not decoration: it is the text the ENGINE re-finds the input
+  // by after the first upload remounts the form and kills every stamp. A plan
+  // with the right path and the wrong labelMatch uploads to the wrong input.
+  assert.equal(got[0].m, "cover letter")
+})
+
+test("E8 HANDLED [w3-resolution]: when section and position disagree, SECTION decides", () => {
+  // The same disagreement from the other direction — DOM order untouched, the
+  // headings swapped. If position still won, f6 would take the résumé.
+  const scan = swapFileSections(readScan("greenhouse-step1.scan.json"))
+  assert.deepEqual(uploadsOf(scan), [
+    { k: "f6", doc: "cover", path: "/x/cover.pdf", m: "cover letter" },
+    { k: "f7", doc: "resume", path: "/x/resume.pdf", m: "resume|\\bcv\\b" },
+  ])
+})
+
+test("E8 HANDLED [w3-resolution]: with NO section the order fallback still works — and that fallback is the residual limit", () => {
+  // The fallback must not have been deleted by the section branch: an ATS that
+  // renders no headings at all is the common case, and document order is right
+  // for every board this adapter has been seen on.
+  const bare = readScan("greenhouse-step1.scan.json")
+  for (const f of bare.fields) delete f.section
+  assert.deepEqual(uploadsOf(bare), [
+    { k: "f6", doc: "resume", path: "/x/resume.pdf", m: "resume|\\bcv\\b" },
+    { k: "f7", doc: "cover", path: "/x/cover.pdf", m: "cover letter" },
+  ])
+
+  // THE RESIDUAL, pinned so nobody reads E8 as fully closed: cover-letter-first
+  // AND no headings is still misassigned, and cannot be fixed from this scan —
+  // there is no signal left to read. Not a defect of w2 or w3; a limit of the
+  // page. It is why the section branch above is load-bearing rather than an
+  // optimisation.
+  const worst = reverseFileOrder(bare)
+  const got = uploadsOf(worst)
+  assert.equal(
+    got[0].path,
+    "/x/resume.pdf",
+    "the résumé goes into the FIRST input, which here is the cover-letter one",
+  )
+  assert.equal(got[0].k, "f7", "and f7 is the cover-letter input")
+})
+
+test("E8 HANDLED [w2-engine]: the scan fixture carries the sections the scanner is proven to emit", () => {
+  // NOT A GREP, and it was nearly one. The first draft of this test matched
+  // /f\.section = s/ in scan-page.js and declared the runtime behaviour "a gap
+  // needing a Playwright leg". That was wrong: tests/apply/scan-page.test.mjs
+  // already runs the REAL scanner text against a hand-built DOM, and sectionOf()
+  // only needs querySelectorAll, contains() and compareDocumentPosition — all of
+  // which that harness has. Six behavioural cases now live there ("section: ..."),
+  // including the two-identical-"Attach"-inputs shape, the fieldset legend that
+  // must NOT leak onto the control after it, and a no-headings negative control.
+  //
+  // What is left here is the FIXTURE contract, which is a different claim: this
+  // file's four buildPlan tests consume greenhouse-step1.scan.json, so that
+  // hand-written artifact must keep carrying what the scanner is proven to emit.
+  // Nothing else joins the two — a fixture that drifted would make the planner
+  // tests pass over a shape no scanner produces.
   const scan = readScan("greenhouse-step1.scan.json")
-  for (const f of scan.fields) {
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(f, "section"),
-      false,
-      "THE DEFECT: no field carries the heading it sits under, so 'Attach' " +
-        "under 'Resume' and 'Attach' under 'Cover letter' are the same string",
-    )
-  }
-  // The consequence is already visible in the fixture: the only thing telling
-  // the two apart is their index.
-  // STALE: this used to pin the literal keys ("f5","f6"), which is a scanner
-  // STAMPING detail (combos are stamped before file inputs), not the
-  // property this test is about. qa-adversary regenerating the fixture from
-  // the real scanner (2184cc1) shifted the numbering to f6/f7 and broke a
-  // pin that was never the point — fixed to assert what actually matters:
-  // exactly two distinct file inputs, indistinguishable by anything but
-  // document order, which is the whole defect this test exists to show.
-  const keys = scan.fields.filter((f) => f.t === "file").map((f) => f.k)
-  assert.equal(keys.length, 2, "both file inputs must still be present")
-  assert.equal(new Set(keys).size, 2, "the two file inputs must be distinct")
+  const sections = scan.fields.filter((f) => f.section).map((f) => f.section)
+  assert.deepEqual(sections, ["Resume", "Cover Letter"])
 })
 
 // ---------------------------------------------------------------------------
@@ -779,10 +966,17 @@ test("the open gaps are named, not silently dropped", () => {
       needs: "a Playwright leg",
     },
     {
-      id: "labelOf() tier selection",
+      id: "CSS LAYOUT under the scanner's visibility rules",
       why:
-        "which of the four label tiers fires is a DOM property. The scan " +
-        "fixtures assert what the scanner SHOULD produce, not that it does.",
+        "NARROWED 2026-07-31 (qa-breaker) — this entry used to read 'labelOf() " +
+        "tier selection ... the scan fixtures assert what the scanner SHOULD " +
+        "produce, not that it does', and that was already false when written: " +
+        "tests/apply/scan-page.test.mjs runs the scanner's REAL text against a " +
+        "hand-built DOM and pins arialabel / fieldset legend / near / section " +
+        "selection by name. What that harness cannot supply is LAYOUT — " +
+        "getBoundingClientRect, inherited getComputedStyle and elementFromPoint " +
+        "are stubs, so every visibility-driven refusal rests on the stub's " +
+        "fidelity rather than on a rendering engine.",
       needs: "a Playwright leg",
     },
     {

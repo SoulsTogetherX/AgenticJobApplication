@@ -1293,3 +1293,172 @@ test("the harness itself can see a broken vouch (negative control)", async () =>
   assert.equal(good.labelExact, true)
   assert.equal(good.l, "I agree to the terms of service")
 })
+
+// ---------------------------------------------------------------------------
+// sectionOf() — the heading a field sits under
+// ---------------------------------------------------------------------------
+//
+// ADDED 2026-07-31 (qa-breaker), replacing a source grep in
+// tests/apply/edge-cases.test.mjs that matched `f.section = s` and called the
+// runtime behaviour "a gap needing a Playwright leg". It is not: the fake DOM
+// above already supports everything sectionOf() touches — querySelectorAll with
+// attribute selectors, contains(), compareDocumentPosition() and
+// parentElement — so the branch can be RUN, and a grep here was a last resort
+// that was never actually last. Downstream, tests/apply/edge-cases.test.mjs's
+// E8 block proves buildPlan USES `section`; these prove the scanner produces
+// one, and the pair closes E8 end to end without a browser.
+
+const attachForm = (headingTag = "h3") =>
+  h("body", {}, [
+    h("form", {}, [
+      h("div", {}, [
+        h(headingTag, {}, ["Resume"]),
+        h("label", { for: "r" }, ["Attach"]),
+        h("input", { type: "file", id: "r", name: "job_application[resume]" }),
+      ]),
+      h("div", {}, [
+        h(headingTag, {}, ["Cover Letter"]),
+        h("label", { for: "c" }, ["Attach"]),
+        h("input", { type: "file", id: "c", name: "job_application[cover]" }),
+      ]),
+    ]),
+  ])
+
+const filesOf = (out) => out.fields.filter((f) => f.t === "file")
+
+test("section: two identically-labelled file inputs come back with DIFFERENT headings", async () => {
+  const files = filesOf(await scan(attachForm()))
+  assert.equal(files.length, 2)
+  assert.deepEqual(
+    files.map((f) => f.l),
+    ["Attach", "Attach"],
+    "precondition: the labels really are identical, or `section` is not what " +
+      "is being measured",
+  )
+  assert.deepEqual(
+    files.map((f) => f.section),
+    ["Resume", "Cover Letter"],
+    "the heading above each input is the only thing that tells them apart",
+  )
+})
+
+test("section: a <legend> counts as a heading, and a heading only speaks for its OWN container", async () => {
+  // The greenhouse-step2 incident, verbatim: a fieldset's legend CLOSES before
+  // the next control is rendered, so by document order it precedes a field it
+  // has nothing to do with. `owns()` is what stops it being stamped on.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("fieldset", {}, [
+          h("legend", {}, ["Voluntary Self-Identification of Disability"]),
+          h("label", { for: "d" }, ["Disability status"]),
+          h("input", { type: "text", id: "d" }),
+        ]),
+        h("div", {}, [
+          h("label", { for: "c1" }, ["I certify the above is accurate"]),
+          h("input", { type: "checkbox", id: "c1" }),
+        ]),
+      ]),
+    ]),
+  )
+  const inside = out.fields.find((f) => f.l === "Disability status")
+  assert.equal(
+    inside.section,
+    "Voluntary Self-Identification of Disability",
+    "a field INSIDE the fieldset does sit under its legend",
+  )
+  const outside = out.fields.find((f) => f.t === "checkbox")
+  assert.equal(
+    outside.section,
+    undefined,
+    "and the checkbox after it does NOT — 'the last heading before this " +
+      "control' alone got exactly this wrong on the first real page",
+  )
+})
+
+test("section: the page's own <h1> is never a section", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("h1", {}, ["Apply for Senior Engineer"]),
+      h("label", { for: "e" }, ["Email"]),
+      h("input", { type: "email", id: "e" }),
+    ]),
+  )
+  const f = out.fields.find((x) => x.l === "Email")
+  assert.equal(
+    f.section,
+    undefined,
+    "the page heading is on every field or none, so stamping it " +
+      "distinguishes nothing — which is the whole property `section` supplies",
+  )
+})
+
+test("section: a body-level heading that is NOT the page h1 is still refused", async () => {
+  // WRITTEN BECAUSE THE CANARY CAUGHT THE TEST, not the code. Deleting the
+  // `p.tagName === "BODY"` line from owns() left the h1 test above green: that
+  // case is suppressed by the SEPARATE `t === pageHeading` rule, so the h1 test
+  // never exercised the BODY branch it claimed to. This one does — an <h2>
+  // directly under <body>, with a different h1 present, so pageHeading cannot
+  // be what refuses it. Removing the BODY guard turns this red.
+  const out = await scan(
+    h("body", {}, [
+      h("h1", {}, ["Careers at Example"]),
+      h("h2", {}, ["Application"]),
+      h("label", { for: "e" }, ["Email"]),
+      h("input", { type: "email", id: "e" }),
+    ]),
+  )
+  const f = out.fields.find((x) => x.l === "Email")
+  assert.equal(
+    f.section,
+    undefined,
+    "a heading whose parent is BODY contains every field on the page; " +
+      "stamping 'Application' on all of them is the same as stamping nothing",
+  )
+})
+
+test("section: a heading that merely repeats the label is suppressed", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("div", {}, [
+          h("h3", {}, ["Email"]),
+          h("label", { for: "e" }, ["Email"]),
+          h("input", { type: "email", id: "e" }),
+        ]),
+      ]),
+    ]),
+  )
+  const f = out.fields.find((x) => x.l === "Email")
+  assert.equal(
+    f.section,
+    undefined,
+    "a section equal to the label tells a consumer nothing the label did not",
+  )
+})
+
+test("section: a form with no headings at all leaves every field unstamped", async () => {
+  // The negative control. Without it, a sectionOf() that returned the same
+  // string for everything would satisfy the first test above.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("div", {}, [
+          h("label", { for: "r" }, ["Attach"]),
+          h("input", { type: "file", id: "r" }),
+        ]),
+        h("div", {}, [
+          h("label", { for: "c" }, ["Attach"]),
+          h("input", { type: "file", id: "c" }),
+        ]),
+      ]),
+    ]),
+  )
+  for (const f of out.fields) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(f, "section"),
+      false,
+      `no heading exists, so nothing may be invented: ${JSON.stringify(f)}`,
+    )
+  }
+})

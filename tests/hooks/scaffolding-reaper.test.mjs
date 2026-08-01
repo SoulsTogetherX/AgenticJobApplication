@@ -293,8 +293,84 @@ test("--self-test proves the checker can go red, and exits 0 when it can", () =>
     timeout: 30_000,
   })
   assert.equal(res.status, 0, res.stdout + res.stderr)
-  assert.match(res.stdout, /the checker can go red\. 5\/5\./)
+  assert.match(res.stdout, /the checker can go red/)
   assert.doesNotMatch(res.stdout, /NOT OK/)
+})
+
+// The gap doc-scribe filed on 2026-07-31: --self-test drove judge() ALONE, so
+// a break in readDeclaration/frontmatterBlock/findArtifacts printed 5/5 here
+// AND "declared 0 — that is a real pass" on the real run. Two greens over a
+// checker that inspected nothing.
+//
+// This asserts the three sections exist and pins a FLOOR on the case count,
+// for the same reason package.json pins a floor on the test count: a self-test
+// that silently lost half its cases still prints N/N and still exits 0.
+test("--self-test covers the parser and the walk, not judge() alone", () => {
+  const res = spawnSync(process.execPath, [REAPER, "--self-test"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    timeout: 30_000,
+  })
+  assert.match(res.stdout, /-- verdict \(judge\)/)
+  assert.match(res.stdout, /-- parser \(/, "no parser section in --self-test")
+  assert.match(res.stdout, /-- walk \(/, "no walk section in --self-test")
+
+  const m = /can go red[^.]*\. (\d+)\/(\d+)\./.exec(res.stdout)
+  assert.ok(m, `no N/N summary line in:\n${res.stdout}`)
+  assert.equal(m[1], m[2], "some self-test case did not pass")
+  assert.ok(
+    Number(m[2]) >= 18,
+    `--self-test is down to ${m[2]} cases, was 18. Cases were deleted, or the ` +
+      `summary stopped counting them. Either way the self-test is weaker than ` +
+      `the last time anyone looked; raise this floor deliberately, never down.`,
+  )
+})
+
+// The parser section must itself be able to fail. Proven by mutating a COPY of
+// the reaper — the same canary qa-breaker runs against the pipeline, applied
+// one level down to the thing that certifies the pipeline. Two mutations, each
+// invisible to the old judge()-only self-test:
+//   - readDeclaration always returns null  → the walk finds nothing
+//   - frontmatterBlock slices one char too many → only bites a file whose
+//     FIRST frontmatter key is the declaration
+test("--self-test goes RED when the parser is broken (canary, on a copy)", () => {
+  const src = fs.readFileSync(REAPER, "utf8")
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reaper-canary-"))
+  const mutations = [
+    [
+      "readDeclaration returns null",
+      src.replace(
+        "  if (!DECL_RE.scaffolding.test(block)) return null",
+        "  if (!DECL_RE.scaffolding.test(block)) return null\n  return null",
+      ),
+    ],
+    [
+      "frontmatterBlock off-by-one",
+      src.replace("return norm.slice(4, end)", "return norm.slice(5, end)"),
+    ],
+  ]
+  try {
+    for (const [why, mutated] of mutations) {
+      assert.notEqual(mutated, src, `the ${why} mutation did not apply`)
+      const file = path.join(dir, "canary.mjs")
+      fs.writeFileSync(file, mutated)
+      const res = spawnSync(process.execPath, [file, "--self-test"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        timeout: 30_000,
+      })
+      assert.equal(
+        res.status,
+        1,
+        `--self-test still exited 0 with "${why}" broken. That is the exact ` +
+          `defect this covers: a green self-test over a parser that reads ` +
+          `nothing.\n${res.stdout}${res.stderr}`,
+      )
+      assert.match(res.stdout, /NOT OK/, `no NOT OK line for "${why}"`)
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 // ------------------------------------------------- the real tree, honestly

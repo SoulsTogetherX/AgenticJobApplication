@@ -25,12 +25,16 @@ import { fileURLToPath } from "node:url"
 import fillPage from "../../scripts/apply/fill-engine.mjs"
 import {
   COVER_LETTER,
+  GATE_MATRIX,
+  GATE_SHAPES,
   MEASURED_FILES,
   PROFILES,
   PROTOCOL,
   benchPlan,
   benchServe,
   benchVerbCosts,
+  fixtureScanPath,
+  gateBreakdown,
   instrumentedPage,
   ledgerEntry,
   loadScanDriver,
@@ -467,4 +471,202 @@ test("unmeasuredList names the browser-only quantities", () => {
   ]) {
     assert.ok(ids.includes(id), `missing declared gap: ${id}`)
   }
+})
+
+// --- 5. the gate shapes: the harness can make each gate fire ---------------
+//
+// Why these exist: until 2026-07-31 the harness could not produce a `CONFIRM`
+// OR a `confirm-widget` defer on any input, so the latency cost of both
+// plan-side gates was unmeasured and "it costs about nothing" had nothing
+// behind it. These are the standing guard against that quietly returning — a
+// shape that stops making its gate fire reports a SMALLER number, which is the
+// direction nobody notices.
+
+test("a bench answer id can reach the classifier at all", () => {
+  // THE DEFECT THAT HID THE GATE. resolveFields() only runs answerClass() on a
+  // row whose source matches fill-plan.mjs's BANK_ID_RE = /^(a-\d+)@/. The
+  // bench used to write `bench-001`, so every bench answer resolved OK
+  // whatever it said and a CONFIRM was structurally unreachable — the gate
+  // read as free because it never ran once.
+  const dir = tmp("ids")
+  const file = writeBenchAnswers(dir, [
+    { question: "Q one", answer: "A one" },
+    { question: "Q two", answer: "A two" },
+  ])
+  const text = fs.readFileSync(file, "utf8")
+  const ids = [...text.matchAll(/^\s*- id:\s*(\S+)/gm)].map((m) => m[1])
+  assert.equal(ids.length, 3, "one base answer plus the two extras")
+  for (const id of ids) {
+    assert.match(
+      id,
+      /^a-\d+$/,
+      `bench answer id ${id} can never match fill-plan.mjs's BANK_ID_RE, so ` +
+        `the datum/assertion classifier will never run on it`,
+    )
+  }
+  assert.equal(new Set(ids).size, ids.length, "ids must be unique")
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test("every gate shape builds, and each differs from gate-base by exactly one field", () => {
+  const url = "http://127.0.0.1/x"
+  const base = syntheticScan("gate-base", url).scan
+  assert.equal(base.fields.length, 3)
+  for (const kind of GATE_SHAPES) {
+    const { scan, answers } = syntheticScan(kind, url)
+    assert.equal(scan.url, url)
+    assert.ok(scan.btns.length > 0, `${kind} must have a submit button`)
+    assert.equal(
+      scan.fields.length,
+      kind === "gate-base" ? 3 : 4,
+      `${kind} must differ from gate-base by exactly one field, or its delta ` +
+        `cannot be attributed to the gate`,
+    )
+    // The first three fields are identical across every shape.
+    assert.deepEqual(scan.fields.slice(0, 3), base.fields)
+    if (kind !== "gate-base") {
+      assert.ok(answers.length <= 1, `${kind} adds at most one stored answer`)
+    }
+  }
+})
+
+test("the gate shapes each make their OWN gate fire, and no other", async (t) => {
+  // The point of the whole harness change, asserted end to end through the
+  // real fill-plan.mjs subprocess. Every expectation here is the CLAIM the
+  // measurement rests on; if the planner's policy moves, this goes red and the
+  // number in the report has to be re-taken rather than re-quoted.
+  const board = await start()
+  const jobsDir = tmp("gate")
+  t.after(async () => {
+    await board.stop()
+    fs.rmSync(jobsDir, { recursive: true, force: true })
+  })
+  const url = board.pageUrl("greenhouse")
+
+  const expected = {
+    "gate-base": { confirm: 0, widget: 0, req: 0, ready: true },
+    "gate-select": { confirm: 0, widget: 0, req: 0, ready: true },
+    "gate-radio-opt": { confirm: 0, widget: 1, req: 0, ready: true },
+    "gate-radio-req": { confirm: 0, widget: 1, req: 1, ready: false },
+    "gate-confirm": { confirm: 1, widget: 0, req: 0, ready: false },
+  }
+  for (const kind of GATE_SHAPES) {
+    const synth = syntheticScan(kind, url)
+    const answersFile = writeBenchAnswers(jobsDir, synth.answers)
+    const leg = benchPlan({
+      scan: synth.scan,
+      url,
+      jobsDir,
+      slug: "gate-" + kind,
+      answersFile,
+    })
+    const e = expected[kind]
+    assert.equal(
+      leg.gate.confirm,
+      e.confirm,
+      `${kind}: confirm defers — got ${JSON.stringify(leg.gate.why)}`,
+    )
+    assert.equal(
+      leg.gate.confirm_widget,
+      e.widget,
+      `${kind}: confirm-widget defers — got ${JSON.stringify(leg.gate.why)}`,
+    )
+    assert.equal(leg.gate.confirm_widget_required, e.req, `${kind}: required`)
+    assert.equal(
+      leg.ready,
+      e.ready,
+      `${kind}: ready — reason ${leg.reason ?? "(none)"}`,
+    )
+    // Nothing else may defer, or the delta measures that instead of the gate.
+    assert.equal(
+      leg.gate.other,
+      0,
+      `${kind}: an unrelated defer contaminates the measurement: ${JSON.stringify(leg.gate.why)}`,
+    )
+  }
+})
+
+test("gateBreakdown counts `confirm` and `confirm-widget` as DISTINCT markers", () => {
+  // A prefix match here would report the two gates as one, which is the same
+  // conflation that once re-marked an unreviewed work-authorisation page as
+  // ready (see readiness()'s own comment). The harness must not be able to
+  // launder that into a single number.
+  const g = gateBreakdown({
+    defer: [
+      { k: "a", why: "confirm" },
+      { k: "b", why: "confirm-widget", req: true },
+      { k: "c", why: "confirm-widget" },
+      { k: "d", why: "consent" },
+      { k: "e", why: "unknown" },
+    ],
+  })
+  assert.equal(g.confirm, 1, "a prefix match would say 3 here")
+  assert.equal(g.confirm_widget, 2)
+  assert.equal(g.confirm_widget_required, 1)
+  assert.equal(g.consent, 1)
+  assert.equal(g.other, 1)
+  assert.deepEqual(g.why, [
+    "a:confirm",
+    "b:confirm-widget(req)",
+    "c:confirm-widget",
+    "d:consent",
+    "e:unknown",
+  ])
+})
+
+test("every GATE_MATRIX baseline names a row that exists, and no row is its own baseline", () => {
+  const ids = new Set(GATE_MATRIX.map((r) => r.id))
+  assert.equal(ids.size, GATE_MATRIX.length, "row ids must be unique")
+  for (const r of GATE_MATRIX) {
+    assert.ok(r.claim.length > 10, `${r.id} must state what it claims`)
+    if (!r.baseline) continue
+    assert.ok(ids.has(r.baseline), `${r.id} compares against a missing row`)
+    assert.notEqual(r.baseline, r.id)
+  }
+})
+
+test("fixtureScanPath refuses a page it has no fixture for, instead of measuring page 1", () => {
+  const dir = path.join(ROOT, "tests", "fixtures", "boards", "scans")
+  assert.match(
+    fixtureScanPath("greenhouse", 1, dir),
+    /greenhouse-step1\.scan\.json$/,
+  )
+  assert.match(
+    fixtureScanPath("greenhouse", 2, dir),
+    /greenhouse-step2\.scan\.json$/,
+  )
+  // THE FAILURE THAT MUST NOT BE SILENT: a page with no fixture used to fall
+  // back to page 1, so `--page 3` would report page 1's plan under page 3's
+  // round trips. Same class as the planner always reading scan-p1.json.
+  assert.throws(
+    () => fixtureScanPath("greenhouse", 3, dir),
+    /Refusing to measure a different page/,
+  )
+  assert.throws(() => fixtureScanPath("nosuchboard", 1, dir), /no scan fixture/)
+})
+
+test("the instrumented page can express both probe shapes and both verify outcomes", async () => {
+  // The double's two new degrees of freedom, asserted directly — a spec option
+  // that silently did nothing would make the tests depending on it (E1's
+  // truncation flag, E4's reconciliation) pass for the wrong reason.
+  const probe = () => "__option"
+  const verify = () => "requiredEmpty"
+
+  const bare = await instrumentedPage({ menuOptions: 3 }).page.evaluate(probe)
+  assert.ok(Array.isArray(bare), "no menuTotal -> the bare pre-flag array")
+  assert.equal(bare.length, 3)
+
+  const cut = await instrumentedPage({
+    menuOptions: 3,
+    menuTotal: 200,
+  }).page.evaluate(probe)
+  assert.equal(cut.total, 200, "menuTotal -> the {opts,total} shape")
+  assert.equal(cut.opts.length, 3)
+
+  const noLand = await instrumentedPage({}).page.evaluate(verify)
+  assert.equal(noLand.landed, undefined, "no verifyLanded -> no landed key")
+  const landed = await instrumentedPage({
+    verifyLanded: ["f1"],
+  }).page.evaluate(verify)
+  assert.deepEqual(landed.landed, ["f1"])
 })

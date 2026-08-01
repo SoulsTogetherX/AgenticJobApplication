@@ -616,6 +616,60 @@ export function buildPlan({
   // branch below for why that is the honest state today, not a degradation.
   vouchedLabels,
 }) {
+  // FIX (E7, w3-resolution): scan-page.js already classifies the page —
+  // `kind: "login"` when it saw a password field, and a CAPTCHA iframe pushes
+  // its own `signals` entry — but nothing downstream ever READ either one.
+  // The hand-off ("stop, this needs a human") was written only in
+  // apply-job/SKILL.md, i.e. it existed purely as an instruction a MODEL
+  // reads before calling this file. Phase 3's unattended runner has no model
+  // on its green path, so a login wall or a CAPTCHA page walked straight
+  // through buildPlan exactly like a real application form: whatever fields
+  // happen to sit on the page (a site-wide search box, a newsletter signup)
+  // would get resolved and planned as though they were the job application.
+  // tests/apply/edge-cases.test.mjs's "E7 BREAKS" pins this by grepping this
+  // file's own source for `scan.kind`, `signals`, "CAPTCHA" — proof the
+  // check did not exist anywhere in the planner, not just in this function.
+  //
+  // This is the ONLY mechanical stop on that path. `readiness()` cannot catch
+  // it on its own — a login page's stray fields can resolve OK from the fact
+  // base same as any other text input, so nothing would ever reach `defer`.
+  // So this runs BEFORE the per-field loop and short-circuits with an empty
+  // `items` (nothing for an unattended fill-engine to act on, even if some
+  // future caller ignored readiness) and exactly one blocking defer that
+  // names why. `why` is deliberately not "consent" or "confirm-widget" — a
+  // page-shape refusal is not a field a user ticks in the browser, it is
+  // "this is not the form", and it must block both `readiness()` and
+  // `submitReadiness()` unconditionally.
+  const captchaSignal = (scan.signals ?? []).some((s) =>
+    /captcha/i.test(String(s ?? "")),
+  )
+  const blockedKind =
+    scan.kind === "login"
+      ? "password field on the page — this is a login wall, not an application form"
+      : scan.kind === "confirm"
+        ? "page reads as an already-submitted confirmation, not an application form"
+        : null
+  if (captchaSignal || blockedKind) {
+    return {
+      v: 1,
+      slug: scan.slug ?? null,
+      ats: adapter.id,
+      urlGuard: url ?? scan.url ?? null,
+      comboStrategies: adapter.comboStrategies,
+      valueAliases: adapter.valueAliases ?? [],
+      items: [],
+      defer: [
+        {
+          k: "__page__",
+          label: scan.heading || "(page)",
+          why: captchaSignal
+            ? "CAPTCHA present — hand off to the user"
+            : blockedKind,
+        },
+      ],
+    }
+  }
+
   const vouchedSet = new Set(
     Array.from(vouchedLabels ?? [], (l) => normalizeQuestion(l)).filter(
       Boolean,
@@ -999,13 +1053,38 @@ export function buildPlan({
         })
         continue
       }
-      items.push({
-        k: r.pick,
-        sel: r.pickSel,
-        how: "check",
-        value: "true",
-        label: `${displayLabel} → ${r.value}`,
+      // FINDING (innov-resilience): a `datum` classification licenses filling
+      // a TEXT field — it says nothing about whether ticking a control the
+      // BOARD owns is safe unattended. A checkbox/radio group is an ACT, not
+      // a value, and an unattended act must carry a value of its own — the
+      // fact that the bank could answer the underlying question is not that.
+      // Measured against the real 49-entry fact base on a page where every
+      // label and option was a wording the user banked verbatim (Country,
+      // Gender, Veteran Status — all `datum`), all 34 non-CONFIRM check-verb
+      // fields auto-ticked here before this guard. So this defers ANY
+      // check-verb resolution, whatever r.status/class said, with no
+      // exception for a group offering only two or three options — a
+      // hostile board defeats an option-count exemption by adding decoy
+      // options to the one box it cares about, the same one-line bypass the
+      // class gate alone had.
+      //
+      // `why: "confirm-widget"` is deliberately DISTINCT from `why: "confirm"`
+      // (the class gate's own marker just above) — see readiness()'s own
+      // comment for the trap that conflating the two markers opens: an
+      // exemption keyed on the marker alone would silently re-mark an
+      // unreviewed work-authorisation defer as needing no human. Only a
+      // confirm-widget defer on a field the form itself does NOT mark
+      // required is exempt from blocking readiness; a required one is not
+      // rescued, and correctly still forces a human before the fast path.
+      defer.push({
+        k: f.k,
+        label: displayLabel,
         ...mLabel(),
+        why: "confirm-widget",
+        value: r.value,
+        pick: r.pick,
+        pickSel: r.pickSel,
+        req: !!f.req,
       })
       continue
     }
@@ -1027,8 +1106,24 @@ export function buildPlan({
 
   // A ticked "current role" box disables the end-date pair on every one of
   // these boards, so asking the user to fill them is noise.
+  //
+  // FIX (w3-resolution, value-carrying-act rule): a "Current role" checkbox
+  // is itself a checkbox GROUP now, so it never lands in `items` as
+  // `how: "check"` any more — it defers as `confirm-widget`, same as every
+  // other check-verb resolution. The bank still resolved it (the defer entry
+  // carries `pick`/`value` exactly like the old auto-ticked item did), so the
+  // signal "the user IS in this role right now" still exists; only where it
+  // lives moved from `items` to `defer`. Reading only `items` here silently
+  // stopped dropping End Date fields the moment the rule shipped, without a
+  // test failing anywhere else in this function — caught by
+  // "end dates are dropped once the current-role box is ticked".
   if (
-    items.some((i) => i.how === "check" && /current role/i.test(i.label ?? ""))
+    items.some(
+      (i) => i.how === "check" && /current role/i.test(i.label ?? ""),
+    ) ||
+    defer.some(
+      (d) => d.why === "confirm-widget" && /current role/i.test(d.label ?? ""),
+    )
   ) {
     for (let i = defer.length - 1; i >= 0; i--) {
       if (/\bend date\b/i.test(defer[i].label ?? "")) {
@@ -1102,9 +1197,32 @@ export function buildPlan({
 // untouched by either function's answer, and an unticked consent box simply
 // sits on the filled form for the user to tick themselves before they click
 // Submit — visible, not hidden, not guessed at.
+//
+// A CONFIRM-WIDGET defer (buildPlan's check-verb branch, above — a checkbox
+// or radio group this pipeline stopped short of auto-ticking, whatever the
+// bank answer's class) gets the SAME treatment as consent, and ONLY when the
+// form itself does not mark the field required: the box still sits there
+// unticked for the user to review before Submit, at zero extra model turns,
+// same reasoning as a consent box. A REQUIRED confirm-widget defer is NOT
+// exempt — the form insists on an answer and nobody has reviewed one yet, so
+// it blocks exactly like any other unresolved required field.
+//
+// THE TRAP THIS GUARDS AGAINST (innov-resilience, caught before landing): an
+// earlier draft of this exemption keyed on `why === "confirm"` — the SAME
+// marker resolveFields()'s class gate stamps on an assertion-class bank
+// answer stopped short of auto-acting. That re-marked a page whose ONLY
+// defer was an unreviewed work-authorisation assertion as `ready: true`.
+// `why: "confirm-widget"` is a distinct string for exactly this reason: a
+// `confirm` defer (the class gate's) stays blocking regardless of req,
+// unconditionally, on the line below — this exemption reads ONLY
+// `confirm-widget`, and only combined with `!d.req`.
 export function readiness(plan) {
   const fillable = (plan.items ?? []).filter((i) => i.how !== "skip")
-  const blocking = (plan.defer ?? []).filter((d) => d.why !== "consent")
+  const blocking = (plan.defer ?? []).filter((d) => {
+    if (d.why === "consent") return false
+    if (d.why === "confirm-widget" && !d.req) return false
+    return true
+  })
   if (blocking.length) {
     return {
       ready: false,

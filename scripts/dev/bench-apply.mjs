@@ -243,6 +243,20 @@ const asleep = (ms) => new Promise((r) => setTimeout(r, ms))
  * @param {object} [spec.scan]          what a scan evaluate returns
  * @param {object} [spec.elements]      selector -> { kind, value, options }
  * @param {number} [spec.menuOptions]   options a probe click reveals
+ * @param {number} [spec.menuTotal]     how many options the page ACTUALLY has,
+ *                                      when the page-side scanner cut the list
+ *                                      at MAX_OPTS. Makes the probe return
+ *                                      `{opts, total}` instead of a bare array,
+ *                                      which is the shape scan-engine.mjs
+ *                                      reads to set optsTruncated/optsTotal.
+ *                                      Absent -> bare array, the pre-truncation
+ *                                      shape, which must still work.
+ * @param {string[]} [spec.verifyLanded] keys the verify pass reports as having
+ *                                      their value on the page after all. The
+ *                                      engine promotes a STALE failure whose
+ *                                      key is here back to `ok`; that is the
+ *                                      only rescue path and it needs a double
+ *                                      that can say "it landed".
  * @param {boolean} [spec.menuRenders]  does the __option wait resolve early
  * @param {string}  [spec.comboWinner]  which strategy actually sets the value
  * @param {boolean} [spec.richtextTakesFill]
@@ -257,6 +271,8 @@ export function instrumentedPage(spec = {}) {
     scan = { fields: [], btns: [{ k: "b1", l: "Submit", r: "submit" }] },
     elements = {},
     menuOptions = 12,
+    menuTotal = null,
+    verifyLanded = null,
     menuRenders = true,
     comboWinner = "type-enter",
     richtextTakesFill = true,
@@ -493,14 +509,23 @@ export function instrumentedPage(spec = {}) {
       if (src.includes("__ajLastScan")) return undefined
       if (src.includes("data-ajup")) return true
       if (src.includes("requiredEmpty")) {
-        return { mismatch: [], errors: [], requiredEmpty: [] }
+        return {
+          mismatch: [],
+          errors: [],
+          requiredEmpty: [],
+          ...(verifyLanded ? { landed: [...verifyLanded] } : {}),
+        }
       }
       if (src.includes("activeElement")) return undefined
       if (src.includes("__option")) {
-        return Array.from(
+        const opts = Array.from(
           { length: menuOptions },
           (_, i) => "Option " + (i + 1),
         )
+        // Two shapes, both real: a bare array is what the probe returned
+        // before the truncation flag existed, `{opts,total}` is what it
+        // returns once the page-side cut at MAX_OPTS has bitten.
+        return menuTotal == null ? opts : { opts, total: menuTotal }
       }
       if (src.includes("window.__ajScan")) {
         // `typeof window.__ajScan === "function"` -> false (nothing preowns it)
@@ -592,6 +617,84 @@ export const COVER_LETTER = "Lorem ipsum dolor sit amet. ".repeat(
   Math.ceil(COVER_LETTER_CHARS / 28),
 )
 
+// ---------------------------------------------------------------------------
+// The GATE shapes — what a CONFIRM and a confirm-widget defer actually cost.
+//
+// Two plan-side gates decide whether a page needs a human, and until now this
+// harness could not make either of them fire: the fixture boards produce a
+// CONFIRM only alongside three unrelated blockers, so the gate's own cost was
+// buried in theirs, and no shape produced a `confirm-widget` defer at all.
+// An unmeasured gate is an unbudgeted one.
+//
+// The design is an A/B on the INPUT, not on the code, because the pre-rule
+// planner is not available to run: five shapes that differ by exactly one
+// field, so the delta between any two IS the cost of the thing that differs.
+//
+//   gate-base        3 profile facts. ready=true. The floor.
+//   gate-select      + the SAME question, as a <select>          -> fills
+//   gate-radio-opt   + the SAME question, as an OPTIONAL radio   -> confirm-widget, !req
+//   gate-radio-req   + the SAME question, as a REQUIRED radio    -> confirm-widget, req
+//   gate-confirm     + an assertion-class question as text       -> confirm
+//
+// gate-select vs gate-radio-* is the whole experiment: identical question,
+// identical stored answer, identical resolution — only the WIDGET differs, and
+// the rule says a widget carries assent rather than a value. Whatever these
+// two shapes differ by in the three columns is what the check-widget rule
+// costs, with nothing else moving.
+// ---------------------------------------------------------------------------
+export const GATE_BASE_FIELDS = [
+  {
+    k: "f1",
+    sel: '[data-aj="f1"]',
+    n: "name",
+    t: "text",
+    l: "Full name",
+    req: true,
+  },
+  {
+    k: "f2",
+    sel: '[data-aj="f2"]',
+    n: "email",
+    t: "text",
+    l: "Email",
+    req: true,
+  },
+  {
+    k: "f3",
+    sel: '[data-aj="f3"]',
+    n: "phone",
+    t: "text",
+    l: "Phone",
+    req: true,
+  },
+]
+
+// A `datum`-class question (a fact ABOUT the user, not something they assert).
+// This is the case the rule is really about: the bank CAN answer it, and the
+// old planner ticked the box for it with no human in the loop.
+export const GATE_DATUM_Q = "What is your highest level of education?"
+export const GATE_DATUM_A = "Bachelor's degree"
+export const GATE_DATUM_OPTS = [
+  "High school",
+  GATE_DATUM_A,
+  "Master's degree",
+  "Doctorate",
+]
+
+// An `assertion`-class question — something the user ASSERTS rather than
+// states. resolveFields() stamps CONFIRM on it whatever the widget is, which
+// is the gate that already existed. It is the base bench answer, so no extra
+// stored answer is needed to make it resolve.
+export const GATE_ASSERTION_Q = "Are you authorized to work in the US?"
+
+export const GATE_SHAPES = [
+  "gate-base",
+  "gate-select",
+  "gate-radio-opt",
+  "gate-radio-req",
+  "gate-confirm",
+]
+
 /**
  * @param {string} kind
  * @param {string} url
@@ -612,6 +715,49 @@ export function syntheticScan(kind, url) {
     base.btns = [{ k: "b1", l: "Submit application", r: "submit" }]
     for (let i = 0; i < n; i++) {
       answers.push({ question: `Dropdown ${i + 1} *`, answer: "Option 1" })
+    }
+    return { scan: base, answers }
+  }
+  if (GATE_SHAPES.includes(kind)) {
+    base.heading = `${kind} (synthetic gate probe)`
+    base.fields = GATE_BASE_FIELDS.map((f) => ({ ...f }))
+    base.btns = [{ k: "b1", l: "Submit application", r: "submit" }]
+    if (kind === "gate-select") {
+      base.fields.push({
+        k: "s1",
+        sel: '[data-aj="s1"]',
+        n: "education",
+        t: "select",
+        l: GATE_DATUM_Q,
+        req: true,
+        opts: [...GATE_DATUM_OPTS],
+      })
+      answers.push({ question: GATE_DATUM_Q, answer: GATE_DATUM_A })
+    } else if (kind === "gate-radio-opt" || kind === "gate-radio-req") {
+      base.fields.push({
+        k: "g1",
+        t: "radio",
+        l: GATE_DATUM_Q,
+        ...(kind === "gate-radio-req" ? { req: true } : {}),
+        o: GATE_DATUM_OPTS.map((l, i) => ({
+          k: "o" + (i + 1),
+          sel: '[data-aj="o' + (i + 1) + '"]',
+          n: "education",
+          l,
+        })),
+      })
+      answers.push({ question: GATE_DATUM_Q, answer: GATE_DATUM_A })
+    } else if (kind === "gate-confirm") {
+      base.fields.push({
+        k: "a1",
+        sel: '[data-aj="a1"]',
+        n: "work_auth",
+        t: "text",
+        l: GATE_ASSERTION_Q,
+        req: true,
+      })
+      // No extra answer: GATE_ASSERTION_Q is writeBenchAnswers' base entry, so
+      // the resolution comes from the same bank every other shape uses.
     }
     return { scan: base, answers }
   }
@@ -636,20 +782,31 @@ export function syntheticScan(kind, url) {
 // The bench's own answer file, written into a temp directory at run time.
 // NEVER profile/answers.yaml (hard rule 2) and never tests/fixtures/, which is
 // another agent's tree — this is generated input, not a fixture.
+//
+// THE IDS MUST BE `a-NNN`. Found 2026-07-31 while trying to make the assertion
+// gate fire: resolveFields() only runs answerClass() on a row whose `source`
+// matches fill-plan.mjs:306's `BANK_ID_RE = /^(a-\d+)@/`, so the bench's
+// previous `bench-001` ids made a CONFIRM structurally unreachable — every
+// bench answer resolved OK no matter what it said, and the class gate's cost
+// read as zero because the gate never ran. A harness that cannot reproduce a
+// gate is not evidence that the gate is cheap. The 900 block is used so a
+// bench id can never be confused with a real stored answer.
+export const BENCH_ANSWER_ID_BASE = 900
+
 export function writeBenchAnswers(dir, extra = []) {
   const base = JSON.parse(
     JSON.stringify([
       {
-        id: "bench-001",
+        id: "a-" + BENCH_ANSWER_ID_BASE,
         question: "Are you authorized to work in the US?",
-        answer: "Yes",
+        answer: "Yes, US citizen, no sponsorship needed.",
         added: "2026-07-31",
       },
     ]),
   )
   const rows = base.concat(
     extra.map((a, i) => ({
-      id: "bench-" + String(i + 100),
+      id: "a-" + String(BENCH_ANSWER_ID_BASE + 1 + i),
       question: a.question,
       answer: a.answer,
       added: "2026-07-31",
@@ -924,8 +1081,43 @@ export function benchPlan({
     ).length,
     needsRender: parsed.plan.defer.some((d) => /no rendered/.test(d.why)),
     probeNeeded: (parsed.probeNeeded || []).length,
+    gate: gateBreakdown(parsed.plan),
     plan: parsed.plan,
     planFile: path.join(jobDir, "fill-plan.js"),
+  }
+}
+
+/**
+ * The two plan-side gates, counted separately, because they are not the same
+ * thing and readiness() does not treat them the same.
+ *
+ *   confirm         an ASSERTION-class bank answer the class gate stopped
+ *                   short of auto-filling. Blocks readiness unconditionally.
+ *   confirm-widget  ANY check-verb resolution — a checkbox or radio group,
+ *                   whatever the answer's class. Blocks readiness only when
+ *                   the form itself marks the field required.
+ *   consent         a tickbox the user must tick themselves. Never blocks
+ *                   readiness; always blocks submitReadiness.
+ *
+ * Counting them apart is what makes "the gate cost N turns" falsifiable — a
+ * single `defers` number cannot tell you which gate you paid for. It also
+ * fails loudly if the markers are ever conflated: `confirm` and
+ * `confirm-widget` are DISTINCT strings on purpose (an exemption keyed on the
+ * shared prefix re-marked unreviewed work-authorisation pages as ready), and
+ * an exact-match count here is the harness-side witness to that.
+ */
+export function gateBreakdown(plan) {
+  const d = plan.defer || []
+  const widget = d.filter((x) => x.why === "confirm-widget")
+  return {
+    confirm: d.filter((x) => x.why === "confirm").length,
+    confirm_widget: widget.length,
+    confirm_widget_required: widget.filter((x) => x.req).length,
+    consent: d.filter((x) => x.why === "consent").length,
+    other: d.filter(
+      (x) => !["confirm", "confirm-widget", "consent"].includes(x.why),
+    ).length,
+    why: d.map((x) => `${x.k}:${x.why}${x.req ? "(req)" : ""}`),
   }
 }
 
@@ -983,6 +1175,37 @@ export async function benchFill({ planFile, plan, url, behaviour, realSleep }) {
   return { ms, cost: rig.cost, report }
 }
 
+/**
+ * Which fixture scan a `--page N` run measures.
+ *
+ * `--page` used to move the PROTOCOL column (page 1 pays a browser_navigate)
+ * without moving the scan, so `--page 2` measured page 1's form and reported
+ * page 2's round trips. That is the same class of bug the planner's own
+ * `scan-p1.json` default has (docs/next-session-plan.md, multi-page forms
+ * sharing one URL), and a harness that reproduces it silently is worse than
+ * one that cannot see page 2 at all. So it REFUSES rather than falling back:
+ * a page with no fixture is an error, never page 1's numbers under page 2's
+ * label.
+ */
+export function fixtureScanPath(boardName, page = 1, dir = FIXTURE_SCANS) {
+  const stepped = path.join(dir, `${boardName}-step${page}.scan.json`)
+  if (fs.existsSync(stepped)) return stepped
+  if (page === 1) {
+    const bare = path.join(dir, `${boardName}.scan.json`)
+    if (fs.existsSync(bare)) return bare
+  }
+  const have = fs.existsSync(dir)
+    ? fs
+        .readdirSync(dir)
+        .filter((f) => f.startsWith(boardName) && f.endsWith(".scan.json"))
+    : []
+  throw new Error(
+    `no scan fixture for board=${boardName} page=${page} (looked for ` +
+      `${path.basename(stepped)}). Refusing to measure a different page ` +
+      `under this page's label. Available: ${have.join(", ") || "none"}`,
+  )
+}
+
 // ---------------------------------------------------------------------------
 // One full sample.
 // ---------------------------------------------------------------------------
@@ -1009,11 +1232,9 @@ export async function runOnce(opts) {
     scan = synth.scan
     extraAnswers = synth.answers
   } else {
-    const f = path.join(FIXTURE_SCANS, boardName + "-step1.scan.json")
-    const file = fs.existsSync(f)
-      ? f
-      : path.join(FIXTURE_SCANS, boardName + ".scan.json")
-    scan = JSON.parse(fs.readFileSync(file, "utf8"))
+    scan = JSON.parse(
+      fs.readFileSync(fixtureScanPath(boardName, opts.page), "utf8"),
+    )
     scan.url = url
   }
   const answersFile = writeBenchAnswers(jobsDir, extraAnswers)
@@ -1101,6 +1322,155 @@ function legSleep(c) {
 }
 
 // ---------------------------------------------------------------------------
+// The gate matrix. Seven runs whose only interesting differences are the one
+// field that changes between neighbours, so a delta in the three columns can
+// be attributed to that field and nothing else.
+//
+// `baseline` names the row this row is compared against. Comparing every row
+// to a single global baseline would attribute the fixture boards' own
+// unrelated blockers (an unprobed required combo, two unrecognised attachment
+// slots) to the gate.
+// ---------------------------------------------------------------------------
+export const GATE_MATRIX = [
+  {
+    id: "greenhouse-p1",
+    board: "greenhouse",
+    page: 1,
+    baseline: null,
+    claim: "0 added turns: the page was already not-ready for other reasons",
+  },
+  {
+    id: "greenhouse-p2",
+    board: "greenhouse",
+    page: 2,
+    baseline: null,
+    claim: "0 added turns: the optional EEO block",
+  },
+  {
+    id: "gate-base",
+    shape: "gate-base",
+    baseline: null,
+    claim: "the floor — three profile facts, no gate fires, ready=true",
+  },
+  {
+    id: "gate-select",
+    shape: "gate-select",
+    baseline: "gate-base",
+    claim: "0 added turns: the same question as a <select> just fills",
+  },
+  {
+    id: "gate-radio-opt",
+    shape: "gate-radio-opt",
+    baseline: "gate-select",
+    claim: "0 added turns: an OPTIONAL widget defer is exempt from readiness",
+  },
+  {
+    id: "gate-radio-req",
+    shape: "gate-radio-req",
+    baseline: "gate-select",
+    claim: "the number under test: a REQUIRED widget the bank CAN answer",
+  },
+  {
+    id: "gate-confirm",
+    shape: "gate-confirm",
+    baseline: "gate-base",
+    claim: "the pre-existing class gate, for comparison — an assertion as text",
+  },
+]
+
+export async function runGateMatrix({ board, jobsDir, runs, profileName }) {
+  const rows = []
+  for (const spec of GATE_MATRIX) {
+    const samples = []
+    for (let i = 0; i < runs; i++) {
+      samples.push(
+        await runOnce({
+          boardName: spec.board ?? "greenhouse",
+          shape: spec.shape ?? null,
+          page: spec.page ?? 1,
+          profileName,
+          board,
+          jobsDir,
+        }),
+      )
+    }
+    const sum = summarize(samples)
+    rows.push({ ...spec, summary: sum })
+  }
+  for (const r of rows) {
+    const b = r.baseline && rows.find((x) => x.id === r.baseline)
+    r.delta = b
+      ? {
+          round_trips:
+            r.summary.columns.round_trips.value -
+            b.summary.columns.round_trips.value,
+          sleep_ms:
+            r.summary.columns.sleep_ms.value - b.summary.columns.sleep_ms.value,
+          model_turns:
+            r.summary.columns.model_turns.value -
+            b.summary.columns.model_turns.value,
+          added_steps: r.summary.columns.model_turns.steps.filter(
+            (s) => !b.summary.columns.model_turns.steps.includes(s),
+          ),
+        }
+      : null
+  }
+  return rows
+}
+
+function printGate(rows) {
+  const L = (s) => process.stdout.write(s + "\n")
+  L("")
+  L("gate cost matrix — what a CONFIRM and a confirm-widget defer cost")
+  L("")
+  L(
+    "row               ready  gate(c/w/wreq/cons)  trips  sleep  turns   vs baseline",
+  )
+  L("-".repeat(94))
+  for (const r of rows) {
+    const c = r.summary.columns
+    const g = r.summary.plan.gate
+    const d = r.delta
+    L(
+      `${r.id.padEnd(17)} ${String(r.summary.plan.ready).padEnd(6)} ` +
+        `${`${g.confirm}/${g.confirm_widget}/${g.confirm_widget_required}/${g.consent}`.padEnd(20)} ` +
+        `${String(c.round_trips.value).padEnd(6)} ${String(c.sleep_ms.value).padEnd(6)} ` +
+        `${String(c.model_turns.value).padEnd(7)} ` +
+        (d
+          ? `${r.baseline}: ${signed(d.round_trips)}/${signed(d.sleep_ms)}/${signed(d.model_turns)}`
+          : "—"),
+    )
+  }
+  L("")
+  L("per row: what fired, and what it cost")
+  for (const r of rows) {
+    L(`  ${r.id}`)
+    L(`    claim   ${r.claim}`)
+    L(`    defers  ${r.summary.plan.gate.why.join(", ") || "none"}`)
+    L(`    reason  ${r.summary.plan.reason ?? "(ready)"}`)
+    if (r.delta) {
+      L(
+        `    DELTA   round_trips ${signed(r.delta.round_trips)}  ` +
+          `sleep_ms ${signed(r.delta.sleep_ms)}  ` +
+          `model_turns ${signed(r.delta.model_turns)}` +
+          (r.delta.added_steps.length
+            ? `  (added: ${r.delta.added_steps.join(", ")})`
+            : ""),
+      )
+    }
+  }
+  L("")
+  L(
+    "model_turns is DERIVED from the PROTOCOL step list, not clocked — each\n" +
+      "added step names the SKILL.md line that prescribes it, so a reader who\n" +
+      "thinks a step is unnecessary on this path can say which one and why.",
+  )
+  L("")
+}
+
+const signed = (n) => (n > 0 ? `+${n}` : String(n))
+
+// ---------------------------------------------------------------------------
 // Statistics. A single sample is not a measurement (agent-protocol.md, "a
 // single sample presented as a trend"), so the CLI always runs several and
 // reports the spread. The accounted columns are deterministic by construction
@@ -1185,6 +1555,7 @@ export function summarize(samples) {
       items: first.plan.items,
       defers: first.plan.defers,
       probe_needed: first.plan.probeNeeded,
+      gate: first.plan.gate,
     },
     fill_report: {
       ok: first.fill.report.ok,
@@ -1321,6 +1692,7 @@ function parseArgs(argv) {
     else if (a === "--browser") o.browser = true
     else if (a === "--all-profiles") o.allProfiles = true
     else if (a === "--verbs") o.verbs = true
+    else if (a === "--gate") o.gate = true
     else if (a === "--help" || a === "-h") o.help = true
     else throw new Error("unknown option " + a)
   }
@@ -1330,7 +1702,12 @@ function parseArgs(argv) {
 const USAGE = `bench-apply.mjs — scan -> plan -> fill against the local fake ATS
 
   --board <greenhouse|lever|ashby>  fixture board (default greenhouse)
-  --shape <combo14|combo23|richtext>  synthetic form shape instead of a fixture
+  --shape <combo14|combo23|richtext|gate-*>  synthetic form shape instead of a fixture
+                                    gate-base / gate-select / gate-radio-opt /
+                                    gate-radio-req / gate-confirm differ by ONE
+                                    field, so their deltas isolate the gates
+  --gate                            run the whole gate matrix and print the
+                                    added cost of a CONFIRM and a confirm-widget
   --profile <best|typical|worst>    widget behaviour model (default typical)
   --page N                          which page of the form (page 1 pays a navigate)
   --all-profiles                    run all three and print the range
@@ -1418,6 +1795,14 @@ function printHuman(sum) {
     `plan: ready=${sum.plan.ready} items=${sum.plan.items} defer=${sum.plan.defers} probe_needed=${sum.plan.probe_needed}` +
       (sum.plan.reason ? ` reason=${sum.plan.reason}` : ""),
   )
+  const g = sum.plan.gate
+  if (g) {
+    L(
+      `gate: confirm=${g.confirm} confirm-widget=${g.confirm_widget} ` +
+        `(required ${g.confirm_widget_required}) consent=${g.consent} other=${g.other}` +
+        (g.why.length ? `  [${g.why.join(", ")}]` : ""),
+    )
+  }
   L(
     `fill: ok=${sum.fill_report.ok} failed=${sum.fill_report.failed} deferred=${sum.fill_report.deferred}`,
   )
@@ -1484,6 +1869,50 @@ async function main() {
   const board = await startBoard()
   const jobsDir = fs.mkdtempSync(path.join(os.tmpdir(), "bench-apply-"))
   try {
+    if (opts.gate) {
+      const rows = await runGateMatrix({
+        board,
+        jobsDir,
+        runs: opts.runs,
+        profileName: opts.profile,
+      })
+      const prov = await provenance()
+      if (opts.json) {
+        process.stdout.write(
+          JSON.stringify(
+            {
+              provenance: prov,
+              rows: rows.map((r) => ({
+                id: r.id,
+                claim: r.claim,
+                baseline: r.baseline,
+                ready: r.summary.plan.ready,
+                gate: r.summary.plan.gate,
+                columns: {
+                  round_trips: r.summary.columns.round_trips.value,
+                  sleep_ms: r.summary.columns.sleep_ms.value,
+                  model_turns: r.summary.columns.model_turns.value,
+                  wall_ms: r.summary.columns.wall_ms.value,
+                },
+                steps: r.summary.columns.model_turns.steps,
+                delta: r.delta,
+              })),
+            },
+            null,
+            2,
+          ) + "\n",
+        )
+      } else {
+        printGate(rows)
+        process.stdout.write(`sha=${prov.sha}`)
+        process.stdout.write(
+          prov.dirty_measured_files?.length
+            ? ` DIRTY (${prov.dirty_measured_files.length} measured file(s) uncommitted)\n`
+            : " clean\n",
+        )
+      }
+      return
+    }
     const profiles = opts.allProfiles ? Object.keys(PROFILES) : [opts.profile]
     const results = []
     for (const profileName of profiles) {

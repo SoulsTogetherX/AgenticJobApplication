@@ -522,7 +522,21 @@ test("the same defeating wording DOES auto-tick once vouched and allowlisted —
   assert.equal(plan.items[0].why, "consent:allowlisted")
 })
 
-test("looksLikeAgreementProse ignores short, ordinary checkboxes — 'Current role' stays on the normal path", () => {
+// UPDATED for the check-widget rule (2026-07-31): a checkbox or radio group
+// never auto-acts unattended, whatever the answer's class, so the pre-rule
+// assertion `plan.items[0].how === "check"` is no longer available to these
+// two tests and asserting it would be asserting the old policy.
+//
+// What they still pin, unchanged in force, is the DISCRIMINATION the consent
+// heuristic makes — `looksLikeAgreementProse` must not swallow an ordinary
+// factual toggle. That is still observable, and it still matters, because the
+// two markers are NOT interchangeable downstream: `consent` never blocks
+// readiness at all, while `confirm-widget` blocks whenever the form marks the
+// field required. Mislabelling one as the other is a live defect, and these
+// two tests are where it surfaces. Canaried by making
+// `looksLikeAgreementProse` return true unconditionally: both go red on the
+// `why` assertion.
+test("looksLikeAgreementProse ignores short, ordinary checkboxes — 'Current role' defers as a WIDGET, not as consent", () => {
   const scan = scanOf([
     {
       k: "g1",
@@ -545,12 +559,19 @@ test("looksLikeAgreementProse ignores short, ordinary checkboxes — 'Current ro
     adapter: greenhouse,
     files,
   })
+  assert.equal(plan.items.length, 0, "no checkbox auto-acts unattended")
+  assert.equal(plan.defer.length, 1)
   assert.equal(
-    plan.items[0].how,
-    "check",
+    plan.defer[0].why,
+    "confirm-widget",
     "a short factual toggle must not be swept into consent",
   )
-  assert.equal(plan.defer.length, 0)
+  // The whole value travels onto the defer, so the approval message shows what
+  // WOULD have been ticked rather than re-asking the question from scratch.
+  assert.equal(plan.defer[0].value, "Current role")
+  assert.equal(plan.defer[0].pick, "f9")
+  assert.equal(plan.defer[0].pickSel, "#cr")
+  assert.equal(plan.defer[0].req, false)
 })
 
 test("looksLikeAgreementProse requires BOTH length and sentence shape — a long question is not consent-shaped", () => {
@@ -572,12 +593,15 @@ test("looksLikeAgreementProse requires BOTH length and sentence shape — a long
     adapter: greenhouse,
     files,
   })
+  assert.equal(plan.items.length, 0, "no checkbox auto-acts unattended")
+  assert.equal(plan.defer.length, 1)
   assert.equal(
-    plan.items[0].how,
-    "check",
+    plan.defer[0].why,
+    "confirm-widget",
     "a factual question must not be swept into consent by length alone",
   )
-  assert.equal(plan.defer.length, 0)
+  assert.equal(plan.defer[0].value, "Yes")
+  assert.equal(plan.defer[0].pick, "f9")
 })
 
 test("the allowlist match is exact text, never a pattern — even when vouched", () => {
@@ -1113,7 +1137,19 @@ test("field types map to the right verb", () => {
   )
 })
 
-test("checkbox groups target the option element, not the group", () => {
+// UPDATED for the check-widget rule (2026-07-31). The property is unchanged —
+// a radio/checkbox GROUP has no element of its own, so the option's key and
+// selector must survive onto whatever record the group produces — but the
+// record is now a defer rather than an item, because no checkbox auto-acts
+// unattended. Losing `pick`/`pickSel` here would be exactly as bad as losing
+// `k`/`sel` was before: the approval message could name the question but not
+// the control, and the user would be asked to tick something the pipeline can
+// no longer point at.
+//
+// The ITEM form of this property is still asserted, on the one branch that
+// still emits `how: "check"` — see "an allowlisted, scanner-vouched consent
+// checkbox is auto-checked" above, which pins items[0].k === "f0" / sel #c0.
+test("checkbox groups carry the option element onto the record, not the group", () => {
   const scan = scanOf([
     {
       k: "g1",
@@ -1136,9 +1172,13 @@ test("checkbox groups target the option element, not the group", () => {
     adapter: greenhouse,
     files,
   })
-  assert.equal(plan.items[0].k, "f9", "a group has no element of its own")
-  assert.equal(plan.items[0].sel, "#cr")
-  assert.equal(plan.items[0].how, "check")
+  assert.equal(plan.items.length, 0)
+  assert.equal(plan.defer.length, 1)
+  const d = plan.defer[0]
+  assert.equal(d.k, "g1", "the record is keyed by the FIELD, i.e. the group")
+  assert.equal(d.pick, "f9", "a group has no element of its own")
+  assert.equal(d.pickSel, "#cr")
+  assert.equal(d.why, "confirm-widget")
 })
 
 test("unresolved REQUIRED fields are deferred, never guessed", () => {
@@ -1288,7 +1328,17 @@ test("the picker half of a phone widget is skipped, not filled", () => {
   assert.equal(plan.items.find((i) => i.k === "f2").how, "fill")
 })
 
-test("end dates are dropped once the current-role box is ticked", () => {
+// UPDATED for the check-widget rule (2026-07-31), and split in two, because
+// the original test conflated two mechanisms and only one of them was ever
+// really being exercised.
+//
+// The original asserted `defer.length === 0` and two skips on a form whose end
+// dates were OPTIONAL. Optional-and-unresolved fields become skips on their
+// own path (buildPlan's `if (!f.req)` branch), so those two assertions held
+// whether or not the current-role suppression ran at all. Found by making the
+// end dates REQUIRED, which is the only input under which the suppression
+// block is reachable.
+test("optional end dates are never turned into questions, current-role box or not", () => {
   const scan = scanOf([
     {
       k: "g1",
@@ -1315,8 +1365,84 @@ test("end dates are dropped once the current-role box is ticked", () => {
     adapter: greenhouse,
     files,
   })
-  assert.equal(plan.defer.length, 0, "end dates must not be asked about")
-  assert.equal(plan.items.filter((i) => i.how === "skip").length, 2)
+  const skipped = plan.items.filter((i) => i.how === "skip")
+  assert.deepEqual(
+    skipped.map((i) => i.k),
+    ["f2", "f3"],
+    "both end-date fields must be recorded as skipped, not silently dropped",
+  )
+  assert.deepEqual(
+    plan.defer.map((d) => d.k),
+    ["g1"],
+    "only the current-role widget itself is left for the user",
+  )
+})
+
+// QB-1, filed and fixed within the same wave. THE INPUT IS THE POINT: the end
+// dates here are REQUIRED, because a required unresolved field is the only one
+// that reaches `defer` and therefore the only one the suppression block can
+// act on. The original test used optional end dates, which become skips on
+// their own path, so it went green whether or not the suppression ran — it
+// could not have caught this.
+//
+// What it now catches: the suppression was gated on
+// `items.some(i => i.how === "check" && /current role/)`, and since the
+// check-widget rule the only branch that emits `how: "check"` is the
+// allowlisted-and-vouched CONSENT one, which "Current role" can never take.
+// The signal moved from `items` to `defer` and the block had to follow it.
+// Canaried by deleting the `defer.some(...)` half of the condition in
+// fill-plan.mjs: this test goes red on both assertions, and no other test in
+// the file moves.
+test("end dates are dropped once the current-role box RESOLVES — the signal lives on the defer now, not on an item", () => {
+  const scan = scanOf([
+    {
+      k: "g1",
+      t: "checkbox",
+      l: "Current role",
+      o: [{ k: "f9", l: "Current role", sel: "#cr" }],
+    },
+    { k: "f2", t: "combo", l: "End date month", req: true },
+    { k: "f3", t: "text", l: "End date year", req: true },
+  ])
+  const plan = buildPlan({
+    scan,
+    resolved: [
+      {
+        k: "g1",
+        status: "OK",
+        value: "Current role",
+        pick: "f9",
+        pickSel: "#cr",
+      },
+      { k: "f2", status: "UNKNOWN", value: "" },
+      { k: "f3", status: "UNKNOWN", value: "" },
+    ],
+    adapter: greenhouse,
+    files,
+  })
+  // The precondition, asserted so a future reader cannot mistake this for the
+  // old items-based path quietly still working: the current-role box resolved
+  // OK with a pick and produced NO item at all.
+  assert.equal(
+    plan.items.some((i) => i.how === "check"),
+    false,
+    "no checkbox auto-acts unattended, so the suppression cannot be reading an item",
+  )
+  assert.deepEqual(
+    plan.defer.map((d) => `${d.k}:${d.why}`),
+    ["g1:confirm-widget"],
+    "the two REQUIRED end dates must not be asked about; only the widget is left",
+  )
+  const skipped = plan.items.filter((i) => i.how === "skip")
+  assert.deepEqual(
+    skipped.map((i) => i.k).sort(),
+    ["f2", "f3"],
+    "and they must be recorded as skipped, not silently dropped",
+  )
+  assert.ok(
+    skipped.every((i) => /current role/i.test(i.why)),
+    `each skip must say WHY it was dropped; got ${JSON.stringify(skipped.map((i) => i.why))}`,
+  )
 })
 
 // --- plan shape -----------------------------------------------------------
@@ -2212,8 +2338,15 @@ test("the assertion gate did not collapse: over the honest board fixtures exactl
     "a confirm defer must block ready, unlike a consent defer",
   )
 
-  // And the EEO radio must reach the plan as a real CHECK, not a defer —
-  // resolving OK is worth nothing if buildPlan defers it anyway.
+  // UPDATED (innov-resilience finding, w3-resolution): the EEO radio group no
+  // longer reaches the plan as a real CHECK, resolving OK or not — a checkbox
+  // or radio group never auto-acts unattended, whatever the answer's class
+  // (see buildPlan's own check-verb comment). It resolves OK from a
+  // structural rule (a `datum`, not an assertion) and still must not become
+  // an item: proof the new guard is not a repaint of the class gate, which
+  // would have left this field untouched. Optional (this fixture's g1 has no
+  // `req`), so it still does not block `readiness()` — only `submitReadiness`,
+  // same treatment as a consent defer.
   const step2Plan = buildPlan({
     scan: step2.scan,
     resolved: step2Rows,
@@ -2225,24 +2358,110 @@ test("the assertion gate did not collapse: over the honest board fixtures exactl
     },
     url: step2.scan.url,
   })
-  assert.ok(
+  assert.equal(
     step2Plan.items.some((i) => i.how === "check"),
-    "the EEO radio group must still auto-check; if it defers, the gate has collapsed onto the widget",
+    false,
+    "the EEO radio group auto-checked — a checkbox/radio group must never act unattended, whatever the answer's class",
+  )
+  const eeoDefer = step2Plan.defer.find((d) => d.k === "g1")
+  assert.equal(eeoDefer.why, "confirm-widget")
+  assert.equal(eeoDefer.req, false, "this EEO field is not marked required")
+  assert.equal(eeoDefer.value, "I do not wish to answer")
+  assert.equal(eeoDefer.pick, "f6", "the pick must survive the defer")
+
+  // CORRECTED (qa-breaker, 2026-07-31). The version of this block written
+  // when the rule landed asserted `readiness(step2Plan).ready === true`, and
+  // that was never true — before or after the rule. This fixture's
+  // "How did you hear about this job? *" is REQUIRED and comes back
+  // needs-choice (its options were never probed), so the plan has always had
+  // a blocker that has nothing to do with the EEO widget. Asserting the bare
+  // boolean here reads the widget's exemption off a number that is decided by
+  // an unrelated field, which is exactly the assertion that cannot fail for
+  // the reason it claims. So: assert WHICH defers block.
+  const r2 = readiness(step2Plan)
+  assert.equal(r2.ready, false)
+  assert.equal(
+    r2.reason,
+    "1 deferred field(s) need a human",
+    "exactly one blocker, and it is not the EEO widget",
+  )
+  const blocking = step2Plan.defer.filter(
+    (d) => !(d.why === "consent" || (d.why === "confirm-widget" && !d.req)),
+  )
+  assert.deepEqual(
+    blocking.map((d) => `${d.k}:${d.why}`),
+    ["f1:needs-choice"],
+    "the EEO widget and the certify box must both be exempt; only the unprobed required combo blocks",
+  )
+  // And the exemption proved rather than inferred: strike the unrelated
+  // required field and the optional confirm-widget plus the consent box
+  // together leave the plan ready. If the `!d.req` exemption were dropped this
+  // goes false, and this is the assertion that catches it.
+  assert.equal(
+    readiness({
+      ...step2Plan,
+      defer: step2Plan.defer.filter((d) => d.k !== "f1"),
+    }).ready,
+    true,
+    "an optional confirm-widget defer must not, by itself, block the fast path",
+  )
+  assert.equal(
+    submitReadiness(step2Plan).ready,
+    false,
+    "but it still blocks the stricter zero-defers gate, same as consent",
+  )
+
+  // THE CONFLATION TRAP, asserted at the readiness() boundary so it cannot be
+  // reintroduced by a one-word edit. An earlier draft of this exemption keyed
+  // on `why === "confirm"` — the class gate's own marker — which silently
+  // re-marked step1's unreviewed work-authorisation defer as ready. These
+  // three plans are identical but for the marker and the `req` flag; if any
+  // one of them agrees with another, the exemption has widened.
+  const oneItem = [{ k: "x", sel: "#x", how: "fill", value: "v" }]
+  assert.equal(
+    readiness({
+      items: oneItem,
+      defer: [{ k: "g", why: "confirm", req: false }],
+    }).ready,
+    false,
+    'a "confirm" defer blocks regardless of req — it is an unreviewed assertion, not a widget',
+  )
+  assert.equal(
+    readiness({
+      items: oneItem,
+      defer: [{ k: "g", why: "confirm-widget", req: false }],
+    }).ready,
+    true,
+    "only an OPTIONAL confirm-widget defer is exempt",
+  )
+  assert.equal(
+    readiness({
+      items: oneItem,
+      defer: [{ k: "g", why: "confirm-widget", req: true }],
+    }).ready,
+    false,
+    "a REQUIRED confirm-widget defer is not rescued — the form insists and nobody has reviewed it",
   )
   // The consent path must also survive intact and stay DISTINCT — the certify
-  // checkbox is a `consent` defer, not swallowed into `confirm`. They are
-  // treated differently by readiness(), so conflating them is a live defect.
+  // checkbox is a `consent` defer, not swallowed into `confirm` or
+  // `confirm-widget`. They are treated differently by readiness(), so
+  // conflating any of them is a live defect.
   const certify = step2Plan.defer.find((d) => d.why === "consent")
   assert.ok(certify, "the certify checkbox must still defer as consent")
   assert.match(certify.label, /I certify/i)
 })
 
-test("ready=true is still reachable: a form of pure `datum` fields needs no human, radio group included", () => {
-  // Every field here is a datum — three profile contact facts and one BANK
-  // answer (a-004, "What is your highest level of education?") rendered as a
-  // radio group. The bank answer is the point: if the gate had been written as
-  // "anything that came out of answers.yaml is suspect", or as "any radio
-  // group is suspect", this form would defer and ready would be false.
+test("ready=true is still reachable: pure `datum` TEXT fields need no human, and an OPTIONAL datum-class radio group defers WITHOUT blocking them", () => {
+  // UPDATED (innov-resilience finding, w3-resolution): a checkbox/radio group
+  // never auto-acts unattended, whatever the answer's class — so the radio
+  // group below (a-004, "What is your highest level of education?", a
+  // `datum`) now defers too, same as every other check-verb resolution. The
+  // point this test still pins: that defer must NOT cost a model turn when
+  // the field is optional, or the highest-leverage latency fix in the plan
+  // (docs/autonomy-plan.md Phase 2) is undone by the very guard that closed
+  // the arbitration hole. If the gate had been written as "anything that came
+  // out of answers.yaml is suspect", the three profile facts below would defer
+  // too — they do not.
   const scan = scanOf([
     { k: "f1", sel: "#n", n: "name", t: "text", l: "Full name", req: true },
     { k: "f2", sel: "#e", n: "email", t: "text", l: "Email", req: true },
@@ -2271,22 +2490,153 @@ test("ready=true is still reachable: a form of pure `datum` fields needs no huma
   assert.match(edu.source, /^a-\d+@/, "must be a bank-resolved answer")
   assert.equal(edu.classDescription, undefined)
 
-  const plan = buildPlan({
-    scan,
-    resolved,
-    adapter: {
-      id: "generic",
-      comboStrategies: [],
-      fileFields: [],
-      fileOrder: [],
+  const adapter = {
+    id: "generic",
+    comboStrategies: [],
+    fileFields: [],
+    fileOrder: [],
+  }
+  const plan = buildPlan({ scan, resolved, adapter, url: scan.url })
+
+  // The three profile facts still fill with no human in the loop. If the gate
+  // had been written as "anything the fact base produced is suspect", or as
+  // "any field on a form that has a radio group is suspect", this is where it
+  // would show.
+  assert.deepEqual(
+    plan.items.filter((i) => i.how !== "skip").map((i) => `${i.k}:${i.how}`),
+    ["f1:fill", "f2:fill", "f3:fill"],
+  )
+  // The radio group does not, whatever its class. Asserted as the WHOLE defer
+  // list, so a second unrelated field starting to defer cannot hide here.
+  assert.deepEqual(plan.defer, [
+    {
+      k: "g1",
+      label: "What is your highest level of education?",
+      n: "edu",
+      why: "confirm-widget",
+      value: "Bachelor's degree",
+      pick: "f4",
+      pickSel: "#e1",
+      req: false,
     },
-    url: scan.url,
-  })
-  assert.deepEqual(plan.defer, [], "a pure-datum form must defer nothing")
-  assert.equal(plan.items.filter((i) => i.how !== "skip").length, 4)
+  ])
+
+  // THE LATENCY HALF, and the reason this test kept its name. An optional
+  // confirm-widget defer must cost ZERO model turns: the box sits unticked on
+  // the filled form for the user to review before Submit, exactly like a
+  // consent box. If this goes false, the guard that closed the arbitration
+  // hole has also undone the fast path, and every form with an optional EEO
+  // block pays a full approval round trip again.
   assert.deepEqual(readiness(plan), { ready: true, reason: null })
-  // The stricter twin must agree here too: nothing at all is left undecided,
-  // so the plan-side half of the Phase 3 pre-submit gate is satisfied. (Hard
-  // rule 6 is enforced independently of what either function returns.)
-  assert.equal(submitReadiness(plan).ready, true)
+  // The stricter twin does NOT agree, and must not: submitReadiness is the
+  // zero-defers gate in front of an unattended click (hard rule 6), and
+  // nobody has assented to that tick.
+  assert.equal(submitReadiness(plan).ready, false)
+
+  // THE SAFETY HALF, same form, one flag different. Marking the group
+  // required is the whole difference between "leave it for the user to glance
+  // at" and "the form will not submit without an answer nobody reviewed", and
+  // readiness() must tell them apart at the buildPlan boundary, not just as a
+  // unit.
+  const reqScan = scanOf(
+    scan.fields.map((f) => (f.k === "g1" ? { ...f, req: true } : f)),
+  )
+  const reqPlan = buildPlan({
+    scan: reqScan,
+    resolved: resolveFields(reqScan.fields, {
+      profile: HOSTILE_PROFILE,
+      answers: HOSTILE_ANSWERS,
+    }),
+    adapter,
+    url: reqScan.url,
+  })
+  assert.equal(reqPlan.defer.length, 1)
+  assert.equal(reqPlan.defer[0].why, "confirm-widget")
+  assert.equal(reqPlan.defer[0].req, true)
+  assert.equal(
+    readiness(reqPlan).ready,
+    false,
+    "a REQUIRED confirm-widget defer must block: the form insists on an answer and nobody has reviewed one",
+  )
+})
+
+// The measured finding the check-widget rule exists for, mechanised at fixture
+// scale so it re-runs on every stored answer rather than on a hand-picked one.
+//
+// Against the real 49-entry fact base, on a page whose labels were all
+// wordings the user had banked and whose controls were wired to
+// `agree_arbitration`, 34 of 49 entries auto-ticked with ready:true and no
+// model step. That fact base is gitignored (hard rule 2) and cannot appear in
+// a test, so the same sweep runs over tests/fixtures/answers-bank.yaml: EVERY
+// stored answer, rendered as a radio group whose option text matches it
+// exactly — the most favourable possible input for an auto-tick — must
+// produce zero items and a confirm-widget defer.
+//
+// The denominator is asserted first, so a shrunken bank cannot make the sweep
+// look clean, and it moves on its own when the bank grows.
+test("no stored answer auto-ticks a widget: swept over the whole fixture answer bank, the auto-tick count is 0", () => {
+  const bank = fs.readFileSync(HOSTILE_ANSWERS, "utf8")
+  const questions = [...bank.matchAll(/^\s*question:\s*(.+)$/gm)].map((m) =>
+    m[1].trim().replace(/^["']|["']$/g, ""),
+  )
+  assert.ok(
+    questions.length >= 5,
+    `tests/fixtures/answers-bank.yaml must still carry at least 5 entries; got ${questions.length}`,
+  )
+
+  const adapter = {
+    id: "generic",
+    comboStrategies: [],
+    fileFields: [],
+    fileOrder: [],
+  }
+  const ticked = []
+  const deferred = []
+  for (const [i, q] of questions.entries()) {
+    // The option text is the stored ANSWER's own most likely rendering, but
+    // the selector is the arbitration checkbox: the label says one thing and
+    // the control the tick lands on is the board's, which is the entire
+    // reason a tick is assent rather than a value.
+    const scan = scanOf([
+      {
+        k: "g1",
+        t: "checkbox",
+        l: q,
+        o: [
+          { k: "o1", sel: "#agree_arbitration", l: "Yes" },
+          { k: "o2", sel: "#agree_arbitration_no", l: "No" },
+        ],
+      },
+    ])
+    // Hand-fed OK with a pick, i.e. the state AFTER the bank matched — the
+    // most favourable input an auto-tick could have. Nothing here depends on
+    // the classifier, which is the point: the class gate alone was the hole.
+    const plan = buildPlan({
+      scan,
+      resolved: [
+        { k: "g1", status: "OK", value: "Yes", pick: "o1", pickSel: "#agree" },
+      ],
+      adapter,
+      files,
+      url: scan.url,
+    })
+    if (plan.items.some((it) => it.how === "check")) ticked.push(`${i}:${q}`)
+    const d = plan.defer.find((x) => x.k === "g1")
+    if (d) deferred.push(d.why)
+  }
+  assert.deepEqual(
+    ticked,
+    [],
+    `these stored answers auto-ticked a board-owned control: ${ticked.join(" | ")}`,
+  )
+  assert.equal(
+    deferred.length,
+    questions.length,
+    "every one must produce a defer, not vanish",
+  )
+  assert.deepEqual(
+    [...new Set(deferred)],
+    ["confirm-widget"],
+    `every widget defer must carry the widget marker; got ${JSON.stringify([...new Set(deferred)])}`,
+  )
 })

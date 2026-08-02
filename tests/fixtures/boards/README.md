@@ -16,11 +16,15 @@ absence of every outbound primitive in `server.mjs`.
 ```
 node tests/fixtures/boards/server.mjs             # ephemeral port, prints the URL
 node tests/fixtures/boards/server.mjs --port 8899 # fixed port
+node tests/fixtures/boards/server.mjs --origins 8 # 8 distinct loopback origins
+node tests/fixtures/boards/server.mjs --latency   # ~300ms nav / 150ms XHR
+node tests/fixtures/boards/server.mjs --latency nav=300,xhr=150
 ```
 
 It prints every route and stays up until Ctrl-C. `GET /` is an index page and
 `GET /routes.json` is the same list as JSON, so `bench-apply.mjs` and a human
-read one source and it cannot drift from what is served.
+read one source and it cannot drift from what is served. `GET /latency.json` is
+the declared latency model, for the same reason.
 
 ## Use it from a test
 
@@ -31,10 +35,88 @@ const board = await start() // listen(0) — read the port, never hardcode one
 const url = board.pageUrl("ashby")
 // ...
 await board.stop()
+
+const many = await start({ origins: 8 })
+many.origins // 8 distinct http://127.0.0.1:<port>
+many.applyUrls(50) // 50 job URLs across 8 origins and 8 tenants
+many.jobUrl({ origin: 3, employer: 2, job: 7, ats: "lever" })
 ```
 
 `listen(0)` is not a style choice: CI runs legs in parallel and a fixed port is
 a flake waiting for a second job.
+
+## The latency contract — do not merge the two columns
+
+By default the server adds **no delay**: it is loopback, and a fetch costs what
+a loopback socket costs. `--latency` (or `start({ latency: true })`) turns on a
+**declared** model instead — ~300ms per document navigation, ~150ms per data
+request — so the runner can be measured against something shaped like a real
+board's RTT.
+
+> **A latency-modelled number and a loopback number are different populations.**
+> Never average, sum, or merge them into one column, and never compare a
+> baseline recorded under one mode against a run under the other.
+
+That is enforced from the bytes, not from memory. Every response carries:
+
+| header               | value                                                              |
+| -------------------- | ------------------------------------------------------------------ |
+| `x-aj-latency-mode`  | `loopback` \| `modelled`                                           |
+| `x-aj-latency-class` | `nav` (returns a document) \| `xhr` (anything else, 404s included) |
+| `x-aj-latency-ms`    | the delay charged to **this** response                             |
+
+A consumer that groups its samples by `x-aj-latency-mode` cannot average the two
+together by accident. One that groups by the flag it was passed at startup can,
+and eventually will.
+
+The model is **declared, not measured**: it is a fixed sleep, so it reproduces
+the _shape_ of a remote board (a nav costs more than an XHR) and none of its
+variance. A p95 taken under it is a p95 of this constant.
+
+`/latency.json` also reports `page_remount_ms` (700). That one is **page-side** —
+`pages/ashby.html`'s own `setTimeout` — so only a real browser pays it, and a
+harness that models the fill path without a browser is charging **zero** for the
+longest wait on the worst board unless it accounts this number explicitly.
+`tests/security/fixture-origins.test.mjs` pins the served HTML against the
+exported `ASHBY_REMOUNT_MS` so the declaration cannot drift from the page.
+
+## Origins — why `origins: N` binds N listeners
+
+§4.2 of `docs/autonomy-plan-v2.md` (correction C9) makes the in-flight exclusion
+key the **registrable origin** of `apply_url`, not `board_key`: cookies and
+`localStorage` are origin-scoped, `board_key` is tenant-scoped.
+
+So `fixture-emp-1 … fixture-emp-8` on one port is eight **tenants** and exactly
+**one origin**. Phase 0.10 asks for "≥8 distinct origins/tenants" as if those
+were interchangeable; they are not, and under an origin-scoped exclusion rule a
+`--apps 50 --concurrency 8` run against a single-origin fixture serialises all
+50 and reports **N=1 throughput under the label N=8**.
+
+**Distinct origins therefore come from distinct ports.** `start({ origins: 8 })`
+binds 8 ephemeral listeners on `127.0.0.1`; an origin is scheme+host+**port**, so
+that is 8 origins with no DNS, no hosts file, and **no widening of
+`assertLoopback`** — every listener is still `127.0.0.1`.
+
+**`*.localhost` was tested and rejected.** `emp1.localhost` does not resolve on
+win32 (`dns.lookup` → `ENOTFOUND`, verified 2026-08-01) while Chromium resolves
+it internally, so the fixture would have worked under a browser leg and failed
+under every `fetch` leg — a split that surfaces as a harness bug, not a DNS one.
+It would also have cost a widening of the one security assertion in this tree,
+which is a bad place to pay for a hostname.
+
+**Tenants are still parameterised**, because distinct `board_key`s are what
+exercise the per-board cap and the paused-board list:
+
+| board      | path                                              |
+| ---------- | ------------------------------------------------- |
+| greenhouse | `/boards.greenhouse.io/fixture-emp-<n>/jobs/<id>` |
+| lever      | `/jobs.lever.co/fixture-emp-<n>/<uuid>/apply`     |
+| ashby      | `/jobs.ashbyhq.com/fixture-emp-<n>/<uuid>`        |
+
+Each response echoes `x-aj-employer` and `x-aj-board-key`, so a harness asserting
+that 50 jobs spanned 8 tenants reads it off the response rather than re-parsing
+the URL it just built. Named fixture routes always win on an exact path match, so
+a tenant URL can never shadow a hostile fixture.
 
 ## Determinism
 
@@ -234,7 +316,12 @@ approval message and `pending-questions.mjs`. `readiness()` returns
 
 ## What else lives here
 
-- `pages/` — the honest replicas.
+- `pages/` — the honest replicas, plus `ashby-remounted.html`: the Ashby form
+  **after** the resume-parse remount, served for a `POST` to the same URL. Same
+  trick as `greenhouse-step2.html`, different trait — one URL, two DOMs. Three
+  things differ from step 1 and each is the point: every `data-aj` stamp is
+  gone, the board has written values the agent did not supply, and the status
+  node says so. `bench-apply.mjs --board ashby --page 2` measures it.
 - `scans/*.scan.json` — what `scan-page.js` produces for each page. There is no
   browser in this suite, so consumer tests feed product code these. That is one
   step from asserting the mock, so **every one of them is generated by running

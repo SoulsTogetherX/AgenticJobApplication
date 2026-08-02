@@ -59,6 +59,13 @@ const PAIRS = [
   ["honest-greenhouse", "honest-greenhouse", "GET"],
   ["greenhouse-step1", "greenhouse", "GET"],
   ["greenhouse-step2", "greenhouse", "POST"],
+  // The two boards bench-apply.mjs could not measure at all until Phase 0.10,
+  // because fixtureScanPath() throws rather than report Greenhouse's numbers
+  // under Ashby's label. ashby-step2 is the POST — the post-upload REMOUNT,
+  // served at the same URL for the same reason greenhouse-step2 is.
+  ["ashby-step1", "ashby", "GET"],
+  ["ashby-step2", "ashby", "POST"],
+  ["lever-step1", "lever", "GET"],
   ["label-injection", "hostile-labels", "GET"],
   ["consent-decoupled", "hostile-consent", "GET"],
   ["destructive-combobox", "hostile-combobox", "GET"],

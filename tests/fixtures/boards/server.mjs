@@ -28,10 +28,45 @@
 // form, where the SAME URL returns step 1 to a GET and step 2 to a POST —
 // that is the trait being reproduced, and it is deterministic per method.
 //
+// THE LATENCY CONTRACT — read this before you put a number in a column
+//
+// By default this server adds NO delay: it is loopback, and a fetch of a
+// fixture page costs what a loopback socket costs. `--latency` turns on a
+// DECLARED model instead (~300ms per document navigation, ~150ms per data
+// request) so the runner can be measured against something shaped like a real
+// board's RTT.
+//
+//   A LATENCY-MODELLED NUMBER AND A LOOPBACK NUMBER ARE DIFFERENT
+//   POPULATIONS. They must never be averaged, summed, or merged into one
+//   column, and a baseline recorded under one mode may not be compared against
+//   a run under the other.
+//
+// That is not a convention this file hopes callers remember. Every response
+// carries `x-aj-latency-mode: loopback|modelled` and `x-aj-latency-ms`, and
+// GET /latency.json returns the whole model, so a harness that merges the two
+// populations is doing it against bytes that say not to.
+//
+// The model is DECLARED, not measured: it is a fixed sleep, so it reproduces
+// the SHAPE of a remote board (a nav costs more than an XHR) and none of its
+// variance. A p95 taken under it is a p95 of this constant, not of a board.
+//
+// ORIGINS — why `start({ origins: 8 })` binds eight listeners
+//
+// §4.2 (C9) of the autonomy plan makes the in-flight exclusion key the
+// registrable ORIGIN of apply_url, not board_key: cookies and localStorage are
+// origin-scoped and board_key is tenant-scoped. Eight `fixture-emp-<n>`
+// segments on one port are eight TENANTS and ONE origin — so a 50-app run at
+// concurrency 8 would serialise on the exclusion key and report N=1 throughput
+// under the label N=8. Distinct ports are distinct origins; that is why the
+// count is a listener count. `*.localhost` was rejected — see ORIGINS in the
+// README and the note above `start`.
+//
 // RUN IT BY HAND
 //
 //   node tests/fixtures/boards/server.mjs            # prints a URL, stays up
 //   node tests/fixtures/boards/server.mjs --port 8899
+//   node tests/fixtures/boards/server.mjs --origins 8 --latency
+//   node tests/fixtures/boards/server.mjs --latency nav=300,xhr=150
 //
 // USE IT FROM A TEST
 //
@@ -39,6 +74,10 @@
 //   const board = await start()          // ephemeral port, never hardcoded
 //   ...                                  // board.url, board.pageUrl("ashby")
 //   await board.stop()
+//
+//   const many = await start({ origins: 8 })
+//   many.origins                         // 8 distinct http://127.0.0.1:<port>
+//   many.applyUrls(50)                   // 50 job URLs across 8 origins/tenants
 import http from "node:http"
 import fs from "node:fs"
 import path from "node:path"
@@ -51,6 +90,71 @@ const HOSTILE = path.resolve(HERE, "..", "hostile")
 
 // Fixed so the same URL returns the same bytes. See DETERMINISM above.
 export const ASHBY_NONCE = "ajfixturenonce"
+
+// The Ashby resume-parse remount, in ms. It is PAGE-SIDE (pages/ashby.html's
+// own setTimeout), so only a real browser pays it — this constant exists so a
+// harness can account it as a declared number instead of pretending it is
+// zero, and so the served page and the model can never disagree: a test asserts
+// the number in the HTML equals this one.
+export const ASHBY_REMOUNT_MS = 700
+
+// The declared latency model. OFF unless asked for — see THE LATENCY CONTRACT.
+//
+//   nav_ms  a document navigation: any route that returns HTML.
+//   xhr_ms  a data request: /routes.json, /latency.json, /scans/*, /postings/*.
+//
+// The classification is by RESPONSE KIND, not by a request header, because a
+// fixture must return the same bytes and the same delay to `fetch`, to a
+// browser navigation and to curl. Every response says which class it was
+// charged as in `x-aj-latency-class`.
+export const DEFAULT_LATENCY = Object.freeze({ nav_ms: 300, xhr_ms: 150 })
+
+/**
+ * Parse the `--latency` value.
+ *
+ * Accepted: absent/false/"off" -> loopback (no delay); true/"" -> the defaults
+ * above; "300/150"; "nav=300,xhr=150"; {nav_ms, xhr_ms}.
+ *
+ * @returns {{mode: "loopback"|"modelled", nav_ms: number, xhr_ms: number}}
+ */
+export function parseLatency(arg) {
+  const off = { mode: "loopback", nav_ms: 0, xhr_ms: 0 }
+  if (arg == null || arg === false || arg === "off" || arg === "0") return off
+  const on = (nav, xhr) => ({
+    mode: "modelled",
+    nav_ms: Number(nav),
+    xhr_ms: Number(xhr),
+  })
+  if (arg === true || arg === "" || arg === "on") {
+    return on(DEFAULT_LATENCY.nav_ms, DEFAULT_LATENCY.xhr_ms)
+  }
+  if (typeof arg === "object") {
+    return on(
+      arg.nav_ms ?? DEFAULT_LATENCY.nav_ms,
+      arg.xhr_ms ?? DEFAULT_LATENCY.xhr_ms,
+    )
+  }
+  const s = String(arg)
+  const slash = s.match(/^(\d+)\s*\/\s*(\d+)$/)
+  if (slash) return on(slash[1], slash[2])
+  const kv = { nav: DEFAULT_LATENCY.nav_ms, xhr: DEFAULT_LATENCY.xhr_ms }
+  let sawOne = false
+  for (const part of s.split(",")) {
+    const m = part.trim().match(/^(nav|xhr)\s*=\s*(\d+)$/)
+    if (!m) {
+      throw new Error(
+        `--latency: cannot parse ${JSON.stringify(s)}. Use "off", "on", ` +
+          `"300/150", or "nav=300,xhr=150"`,
+      )
+    }
+    kv[m[1]] = Number(m[2])
+    sawOne = true
+  }
+  if (!sawOne) throw new Error(`--latency: empty value`)
+  return on(kv.nav, kv.xhr)
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // Loopback only. Not a preference — a rule. The hostile fixtures in this tree
 // are real attack strings, and the only thing that makes them safe to keep in
@@ -124,6 +228,13 @@ export const ROUTES = [
     name: "ashby",
     path: "/jobs.ashbyhq.com/fixture-analytics/11111111-2222-3333-4444-555555555555",
     file: path.join(PAGES, "ashby.html"),
+    // The page AFTER the resume-parse remount. Same URL, same trick as
+    // Greenhouse's two steps: a GET is the form as first served, a POST is the
+    // subtree the board swapped in ~700ms after the upload. It is a separate
+    // file rather than a second route because that is what the browser sees —
+    // one URL, two DOMs — and because it is the only way a scan fixture can
+    // exist for the post-remount state without a browser in the loop.
+    post: path.join(PAGES, "ashby-remounted.html"),
     ats: "ashby",
     csp: true,
     proves:
@@ -228,6 +339,87 @@ export const ROUTES = [
 
 const byName = new Map(ROUTES.map((r) => [r.name, r]))
 
+// --- the parameterised employer routes -------------------------------------
+//
+// Phase 0.10 asks for `/boards.greenhouse.io/fixture-emp-<n>/jobs/<id>` so a
+// 50-application run spans more than one tenant. These are a PATTERN, not
+// entries in ROUTES: ROUTES is the enumerated fixture set that /routes.json
+// publishes and that board-fidelity.test.mjs fetches one by one, and pouring
+// 8 employers x 3 boards into it would turn that list into noise.
+//
+// WHAT THEY GIVE AND WHAT THEY DO NOT. Distinct `fixture-emp-<n>` segments are
+// distinct TENANTS — distinct board_key, which is what exercises the per-board
+// cap and the paused-board list. They are NOT distinct origins, and under
+// §4.2's origin-scoped exclusion key the origin is the number that decides
+// whether 50 jobs run 8-wide or one at a time. Origins come from `origins: N`
+// on start(); see the note there.
+const EMPLOYER_PATTERNS = [
+  {
+    ats: "greenhouse",
+    re: /^\/boards\.greenhouse\.io\/fixture-emp-(\d+)\/jobs\/(\d+)$/,
+    build: (emp, job) => `/boards.greenhouse.io/fixture-emp-${emp}/jobs/${job}`,
+    file: path.join(PAGES, "greenhouse-step1.html"),
+    post: path.join(PAGES, "greenhouse-step2.html"),
+  },
+  {
+    ats: "lever",
+    re: /^\/jobs\.lever\.co\/fixture-emp-(\d+)\/([0-9a-f-]{36})\/apply$/,
+    build: (emp, job) =>
+      `/jobs.lever.co/fixture-emp-${emp}/${fixtureUuid(job)}/apply`,
+    file: path.join(PAGES, "lever.html"),
+  },
+  {
+    ats: "ashby",
+    re: /^\/jobs\.ashbyhq\.com\/fixture-emp-(\d+)\/([0-9a-f-]{36})$/,
+    build: (emp, job) =>
+      `/jobs.ashbyhq.com/fixture-emp-${emp}/${fixtureUuid(job)}`,
+    file: path.join(PAGES, "ashby.html"),
+    post: path.join(PAGES, "ashby-remounted.html"),
+    csp: true,
+  },
+]
+
+const byAts = new Map(EMPLOYER_PATTERNS.map((p) => [p.ats, p]))
+
+// A deterministic v4-shaped id from an integer, so two runs asking for job 7
+// get the same URL and a scan fixture's `url` stays stable.
+function fixtureUuid(n) {
+  const hex = Number(n).toString(16).padStart(12, "0").slice(-12)
+  return `00000000-0000-4000-8000-${hex}`
+}
+
+/**
+ * The canonical path for one fixture employer's job. Exported so a harness
+ * builds URLs the same way the server matches them, instead of by string
+ * concatenation that can drift.
+ *
+ * @param {{ats?: "greenhouse"|"lever"|"ashby", employer?: number, job?: number}} [o]
+ */
+export function employerPath({
+  ats = "greenhouse",
+  employer = 1,
+  job = 1,
+} = {}) {
+  const p = byAts.get(ats)
+  if (!p) {
+    throw new Error(
+      `no employer route for ats=${ats} (have: ${[...byAts.keys()].join(", ")})`,
+    )
+  }
+  if (!Number.isInteger(employer) || employer < 1) {
+    throw new Error(`employer must be a positive integer, got ${employer}`)
+  }
+  return p.build(employer, job)
+}
+
+function matchEmployer(pathname) {
+  for (const p of EMPLOYER_PATTERNS) {
+    const m = pathname.match(p.re)
+    if (m) return { pattern: p, employer: Number(m[1]), job: m[2] }
+  }
+  return null
+}
+
 const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".json": "application/json; charset=utf-8",
@@ -265,7 +457,7 @@ ${rows}
 `
 }
 
-function send(res, status, body, type = TYPES[".html"], extraHeaders = {}) {
+function rawSend(res, status, body, type, extraHeaders) {
   const buf = Buffer.isBuffer(body) ? body : Buffer.from(body, "utf8")
   res.writeHead(status, {
     "content-type": type,
@@ -279,120 +471,282 @@ function send(res, status, body, type = TYPES[".html"], extraHeaders = {}) {
   res.end(buf)
 }
 
-function handle(req, res) {
-  let url
-  try {
-    url = new URL(req.url, "http://127.0.0.1")
-  } catch {
-    return send(res, 400, "bad request", TYPES[".txt"])
-  }
-  const pathname = decodeURIComponent(url.pathname)
-
-  if (pathname === "/" || pathname === "/index.html") {
-    return send(res, 200, indexHtml(`http://${req.headers.host}`))
-  }
-
-  // A machine-readable route table, so bench-apply.mjs and a human get the
-  // same list and it can never drift from what is actually served.
-  if (pathname === "/routes.json") {
-    return send(
-      res,
-      200,
-      JSON.stringify(
-        ROUTES.map(({ name, path: p, ats, proves }) => ({
-          name,
-          path: p,
-          ats,
-          proves,
-        })),
-        null,
-        2,
-      ),
-      TYPES[".json"],
-    )
-  }
-
-  if (pathname.startsWith("/postings/") || pathname.startsWith("/scans/")) {
-    // Postings are hostile input; scans are derived artifacts describing what
-    // the scanner sees, so they live beside the boards they describe.
-    const isPosting = pathname.startsWith("/postings/")
-    const dir = isPosting ? "postings" : "scans"
-    const root = isPosting ? path.join(HOSTILE, "postings") : SCANS
-    const rel = pathname.slice(dir.length + 2)
-    const file = safeJoin(root, rel)
-    if (!file || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
-      return send(res, 404, "not found", TYPES[".txt"])
+function makeHandler(latency) {
+  return function handle(req, res) {
+    // Every response is charged as exactly one of two classes and SAYS SO in
+    // its headers. `nav` is anything that returns a document; everything else
+    // — the JSON route table, scans, postings, and 404s — is `xhr`. A consumer
+    // that wants to keep the two populations apart (it must: see THE LATENCY
+    // CONTRACT) reads x-aj-latency-mode off the response rather than
+    // remembering which flag the run was started with.
+    const send = (status, body, type = TYPES[".html"], extra = {}) => {
+      const cls = type === TYPES[".html"] ? "nav" : "xhr"
+      const ms =
+        latency.mode === "modelled"
+          ? cls === "nav"
+            ? latency.nav_ms
+            : latency.xhr_ms
+          : 0
+      const headers = {
+        "x-aj-latency-mode": latency.mode,
+        "x-aj-latency-class": cls,
+        "x-aj-latency-ms": String(ms),
+        ...extra,
+      }
+      if (!ms) return rawSend(res, status, body, type, headers)
+      // Delay BEFORE the response head, so a caller timing the fetch pays it
+      // the way it would pay a remote board's RTT.
+      return sleep(ms).then(() => rawSend(res, status, body, type, headers))
     }
-    const type = TYPES[path.extname(file)] ?? TYPES[".txt"]
-    return send(res, 200, fs.readFileSync(file), type)
+
+    let url
+    try {
+      url = new URL(req.url, "http://127.0.0.1")
+    } catch {
+      return send(400, "bad request", TYPES[".txt"])
+    }
+    const pathname = decodeURIComponent(url.pathname)
+
+    if (pathname === "/" || pathname === "/index.html") {
+      return send(200, indexHtml(`http://${req.headers.host}`))
+    }
+
+    // A machine-readable route table, so bench-apply.mjs and a human get the
+    // same list and it can never drift from what is actually served.
+    if (pathname === "/routes.json") {
+      return send(
+        200,
+        JSON.stringify(
+          ROUTES.map(({ name, path: p, ats, proves }) => ({
+            name,
+            path: p,
+            ats,
+            proves,
+          })),
+          null,
+          2,
+        ),
+        TYPES[".json"],
+      )
+    }
+
+    // The declared model, machine-readable, for the same reason /routes.json
+    // is: a harness that has to be TOLD which population a number came from
+    // will eventually be told wrong.
+    if (pathname === "/latency.json") {
+      return send(
+        200,
+        JSON.stringify(
+          {
+            ...latency,
+            // Page-side, not server-side: pages/ashby.html's own setTimeout.
+            // Only a real browser pays it, and a harness that models the fill
+            // path without a browser must account it explicitly or admit it is
+            // charging zero for the worst wait on the worst board.
+            page_remount_ms: ASHBY_REMOUNT_MS,
+            page_remount_where: "pages/ashby.html, after a file input change",
+            never_merge:
+              "a modelled number and a loopback number are different " +
+              "populations: never average, sum or baseline them together",
+          },
+          null,
+          2,
+        ),
+        TYPES[".json"],
+      )
+    }
+
+    if (pathname.startsWith("/postings/") || pathname.startsWith("/scans/")) {
+      // Postings are hostile input; scans are derived artifacts describing what
+      // the scanner sees, so they live beside the boards they describe.
+      const isPosting = pathname.startsWith("/postings/")
+      const dir = isPosting ? "postings" : "scans"
+      const root = isPosting ? path.join(HOSTILE, "postings") : SCANS
+      const rel = pathname.slice(dir.length + 2)
+      const file = safeJoin(root, rel)
+      if (!file || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+        return send(404, "not found", TYPES[".txt"])
+      }
+      const type = TYPES[path.extname(file)] ?? TYPES[".txt"]
+      return send(200, fs.readFileSync(file), type)
+    }
+
+    // Named fixture first, then the parameterised employer pattern. The named
+    // routes win on an exact path match so a tenant URL can never shadow one.
+    const named = ROUTES.find((r) => r.path === pathname)
+    const emp = named ? null : matchEmployer(pathname)
+    const route = named ?? emp?.pattern
+    if (!route) return send(404, "not found", TYPES[".txt"])
+
+    // Greenhouse's multi-step form: SAME URL, different step. A POST (what
+    // "Save and Continue" does) advances; ?step=2 is the deterministic
+    // fetch-without-a-browser equivalent for a test. Ashby uses the same
+    // mechanism for a different trait: step 2 there is the post-upload
+    // REMOUNT, the subtree the board swaps in ~700ms after a file is chosen.
+    const wantsStep2 =
+      req.method === "POST" || url.searchParams.get("step") === "2"
+    const file = wantsStep2 && route.post ? route.post : route.file
+
+    const headers = {}
+    if (route.csp) {
+      // The policy that broke a live application when the bootstrap used
+      // addScriptTag. 'nonce-...' with NO 'unsafe-inline'.
+      headers["content-security-policy"] =
+        `script-src 'nonce-${ASHBY_NONCE}' https://cdn.ashbyprd.com; ` +
+        `object-src 'none'; base-uri 'none'`
+    }
+    if (emp) {
+      // The tenant this URL belongs to, echoed back. A harness asserting that
+      // 50 jobs spanned 8 tenants can read it from the response instead of
+      // re-parsing the URL it just built.
+      headers["x-aj-employer"] = `fixture-emp-${emp.employer}`
+      headers["x-aj-board-key"] = `${route.ats}:fixture-emp-${emp.employer}`
+    }
+    return send(200, fs.readFileSync(file), TYPES[".html"], headers)
   }
-
-  const route = ROUTES.find((r) => r.path === pathname)
-  if (!route) return send(res, 404, "not found", TYPES[".txt"])
-
-  // Greenhouse's multi-step form: SAME URL, different step. A POST (what
-  // "Save and Continue" does) advances; ?step=2 is the deterministic
-  // fetch-without-a-browser equivalent for a test.
-  const wantsStep2 =
-    req.method === "POST" || url.searchParams.get("step") === "2"
-  const file = wantsStep2 && route.post ? route.post : route.file
-
-  const headers = {}
-  if (route.csp) {
-    // The policy that broke a live application when the bootstrap used
-    // addScriptTag. 'nonce-...' with NO 'unsafe-inline'.
-    headers["content-security-policy"] =
-      `script-src 'nonce-${ASHBY_NONCE}' https://cdn.ashbyprd.com; ` +
-      `object-src 'none'; base-uri 'none'`
-  }
-  return send(res, 200, fs.readFileSync(file), TYPES[".html"], headers)
 }
 
 /**
  * Start the fake ATS.
  *
- * @param {{port?: number, host?: string}} [opts] port 0 (the default) asks the
- *   OS for an ephemeral port; the caller reads the assigned one off the return
- *   value. Never hardcode a port — CI runs legs in parallel.
- * @returns {Promise<{url: string, port: number, host: string, server: import("node:http").Server,
- *   routes: Route[], pageUrl: (name: string) => string, stop: () => Promise<void>}>}
+ * @param {{port?: number, host?: string, origins?: number, employers?: number,
+ *   latency?: boolean|string|{nav_ms?: number, xhr_ms?: number}}} [opts]
+ *
+ *   `port` 0 (the default) asks the OS for an ephemeral port; the caller reads
+ *   the assigned one off the return value. Never hardcode a port — CI runs legs
+ *   in parallel.
+ *
+ *   `origins` binds that many listeners, each on its own ephemeral port. WHY A
+ *   PORT AND NOT A HOSTNAME: an origin is scheme+host+PORT, so N ports are N
+ *   origins with no DNS, no hosts file, and no widening of assertLoopback —
+ *   every listener is still 127.0.0.1. The alternative, `emp1.localhost`, was
+ *   tested and rejected: it does not resolve on win32 (`dns.lookup` ->
+ *   ENOTFOUND, verified 2026-08-01), while Chromium resolves it internally, so
+ *   the fixture would work under a browser leg and fail under every `fetch`
+ *   leg — a split that would show up as a harness bug, not a DNS one.
+ *
+ *   `employers` is how many distinct `fixture-emp-<n>` tenants applyUrls()
+ *   cycles through; it defaults to the origin count, and tenants are cheap
+ *   (they are a path segment) so it may exceed it.
+ *
+ *   `latency` — see THE LATENCY CONTRACT at the top of this file. Default off.
+ *
+ * @returns {Promise<object>} `url`/`port`/`host`/`server` describe the FIRST
+ *   origin and keep every existing caller working; `origins` is the full list.
  */
-export function start({ port = 0, host = "127.0.0.1" } = {}) {
+export async function start({
+  port = 0,
+  host = "127.0.0.1",
+  origins = 1,
+  employers = null,
+  latency = null,
+} = {}) {
   assertLoopback(host)
-  const server = http.createServer(handle)
-  // A hung fixture request must not hold a test suite open.
-  server.keepAliveTimeout = 1000
-  server.headersTimeout = 2000
-  return new Promise((resolve, reject) => {
-    server.once("error", reject)
-    server.listen(port, host, () => {
-      const addr = server.address()
-      const h = addr.family === "IPv6" ? `[${addr.address}]` : addr.address
-      const url = `http://${h}:${addr.port}`
-      resolve({
-        url,
-        port: addr.port,
-        host: addr.address,
-        server,
-        routes: ROUTES,
-        pageUrl(name) {
-          const r = byName.get(name)
-          if (!r) {
-            throw new Error(
-              `no such fixture: ${name} (have: ${[...byName.keys()].join(", ")})`,
-            )
-          }
-          return url + r.path
-        },
-        stop() {
-          return new Promise((done) => {
-            server.closeAllConnections?.()
-            server.close(() => done())
-          })
-        },
+  if (!Number.isInteger(origins) || origins < 1) {
+    throw new Error(`origins must be a positive integer, got ${origins}`)
+  }
+  if (origins > 1 && port !== 0) {
+    // N listeners cannot share one fixed port, and silently ignoring the port
+    // would hand back an origin set the caller did not ask for.
+    throw new Error(
+      `origins=${origins} requires port 0 (ephemeral): a fixed port is one origin`,
+    )
+  }
+  const model = parseLatency(latency)
+  const handler = makeHandler(model)
+
+  const servers = []
+  const urls = []
+  for (let i = 0; i < origins; i++) {
+    const server = http.createServer(handler)
+    // A hung fixture request must not hold a test suite open. The headers
+    // timeout is raised past the modelled nav delay when one is in force, or
+    // the model would time out the requests it is modelling.
+    server.keepAliveTimeout = 1000
+    server.headersTimeout = 2000 + model.nav_ms * 2
+    await new Promise((resolve, reject) => {
+      server.once("error", reject)
+      server.listen(port, host, () => {
+        const addr = server.address()
+        const h = addr.family === "IPv6" ? `[${addr.address}]` : addr.address
+        urls.push(`http://${h}:${addr.port}`)
+        servers.push(server)
+        resolve()
       })
     })
-  })
+  }
+
+  const first = servers[0].address()
+  const url = urls[0]
+  // Tenants are a path segment, so they are free, and Phase 0.10 wants ≥8 of
+  // them regardless of how many listeners are bound — a single-origin run must
+  // still exercise the per-board cap with 8 distinct board_keys.
+  const tenants = employers ?? Math.max(origins, 8)
+
+  return {
+    url,
+    port: first.port,
+    host: first.address,
+    server: servers[0],
+    servers,
+    origins: urls,
+    latency: model,
+    routes: ROUTES,
+    pageUrl(name, { origin = 0 } = {}) {
+      const r = byName.get(name)
+      if (!r) {
+        throw new Error(
+          `no such fixture: ${name} (have: ${[...byName.keys()].join(", ")})`,
+        )
+      }
+      return originUrl(urls, origin) + r.path
+    },
+    /** One parameterised employer job URL. */
+    jobUrl({ origin = 0, employer = 1, job = 1, ats = "greenhouse" } = {}) {
+      return originUrl(urls, origin) + employerPath({ ats, employer, job })
+    },
+    /**
+     * `count` job URLs spread across every bound origin and every tenant, so a
+     * 50-application run measures concurrency instead of measuring the
+     * exclusion key. Origin advances fastest: the first N URLs are already on N
+     * distinct origins, so a run that stops early still spans them.
+     */
+    applyUrls(count, { ats = "greenhouse" } = {}) {
+      const out = []
+      for (let i = 0; i < count; i++) {
+        out.push(
+          originUrl(urls, i % urls.length) +
+            employerPath({
+              ats,
+              employer: 1 + (i % tenants),
+              job: 1000001 + i,
+            }),
+        )
+      }
+      return out
+    },
+    stop() {
+      return Promise.all(
+        servers.map(
+          (s) =>
+            new Promise((done) => {
+              s.closeAllConnections?.()
+              s.close(() => done())
+            }),
+        ),
+      ).then(() => undefined)
+    },
+  }
+}
+
+function originUrl(urls, i) {
+  if (!Number.isInteger(i) || i < 0 || i >= urls.length) {
+    throw new Error(
+      `origin ${i} was not bound: this server has ${urls.length} ` +
+        `(start({ origins: N }) to get more)`,
+    )
+  }
+  return urls[i]
 }
 
 // Runnable directly, so a human or bench-apply.mjs can point a browser at it.
@@ -400,11 +754,33 @@ if (
   process.argv[1] &&
   fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
 ) {
-  const i = process.argv.indexOf("--port")
-  const port = i !== -1 ? Number(process.argv[i + 1]) : 0
-  const board = await start({ port })
+  const argv = process.argv.slice(2)
+  const flag = (name, fallback = null) => {
+    const i = argv.indexOf(name)
+    if (i === -1) return fallback
+    const next = argv[i + 1]
+    return next == null || next.startsWith("--") ? true : next
+  }
+  const port = Number(flag("--port", 0)) || 0
+  const originCount = Number(flag("--origins", 1)) || 1
+  const board = await start({
+    port,
+    origins: originCount,
+    latency: flag("--latency", null),
+  })
   console.log(`local fake ATS listening on ${board.url}`)
   for (const r of ROUTES) console.log(`  ${board.url}${r.path}  (${r.ats})`)
+  if (board.origins.length > 1) {
+    console.log(`\n${board.origins.length} distinct origins:`)
+    for (const o of board.origins) console.log(`  ${o}`)
+  }
+  console.log(
+    `\nlatency: ${board.latency.mode}` +
+      (board.latency.mode === "modelled"
+        ? ` (nav ${board.latency.nav_ms}ms / xhr ${board.latency.xhr_ms}ms) — ` +
+          `NEVER merge these numbers with a loopback run's`
+        : " (no delay added)"),
+  )
   console.log("\nnothing here reaches a real employer. Ctrl-C to stop.")
   process.on("SIGINT", async () => {
     await board.stop()

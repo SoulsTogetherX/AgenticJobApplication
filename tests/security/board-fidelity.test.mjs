@@ -333,3 +333,83 @@ test("every hostile fixture says, in the file, that it exists to be blocked", ()
     )
   }
 })
+
+// ---------------------------------------------------------------------------
+// FINDING (w2-engine), found while generating lever-step1.scan.json for
+// Phase 0.10. Asserted AT THE CONSUMER, because "the scanner picked a poor
+// label" is a scanner-isolation observation and this is not one: it decides
+// what the USER is asked.
+// ---------------------------------------------------------------------------
+test("FINDING (w2-engine): Lever's sponsorship question reaches the user as the word 'Yes'", async () => {
+  // WHAT LEVER RENDERS. The question text lives in a <div class=
+  // "application-label"> that is a SIBLING of the <ul> of options; each radio
+  // is wrapped in its own <label> whose text is the ANSWER. That is the
+  // commonest yes/no rendering on the board, and pages/lever.html reproduces it
+  // exactly (its own header comment says "<legend>", which is wrong about its
+  // own markup — a second, smaller finding).
+  //
+  // WHAT THE SCANNER DOES. The wrapping-<label> tier wins before the
+  // four-ancestor [class*='label'] walk can reach the sibling div, so the group
+  // takes its first option's text. `labelWhy: "more than one control shares
+  // this label"` records the collision and nothing acts on it.
+  //
+  // WHY IT MATTERS, and why it is not "it defers anyway, so it is safe":
+  //
+  //   1. The deferral the user reads is `label: "Yes", options: [Yes, No]`.
+  //      CLAUDE.md rule 6: "an application the agent declined to send must say
+  //      why, in terms the user can act on." Nobody can act on that.
+  //   2. It defers on EVERY Lever application, forever. The stored answer
+  //      "Will you now or in the future require sponsorship…" can never match a
+  //      field whose label is "Yes", so the answer bank cannot learn its way
+  //      out of this one.
+  //   3. The escape hatch is worse than the problem. Answering it through
+  //      pending-questions saves an answer keyed on the question text "Yes" —
+  //      a key that then matches ANY field labelled "Yes" on ANY board, which
+  //      is corpus poisoning arrived at by the user doing what the tool asked.
+  //
+  // NOT a wrong submit: a radio group is a confirm-widget defer regardless.
+  // The damage is an unactionable deferral and a poisoned key, and both are
+  // consumer-visible, which is why they are asserted here.
+  const { resolveFields, buildPlan, readiness } =
+    await import("../../scripts/apply/fill-plan.mjs")
+  const { detectAts } = await import("../../scripts/apply/ats/index.mjs")
+
+  const s = scan("lever-step1")
+  const url =
+    "http://127.0.0.1:1/jobs.lever.co/fixture-robotics/00000000-0000-4000-8000-000000000001/apply"
+  // The user HAS answered this question. That is the point: a fact base that
+  // holds the answer still cannot supply it.
+  const answers = {
+    answers: [
+      {
+        id: "a-1",
+        question:
+          "Will you now or in the future require sponsorship for employment visa status?",
+        answer: "No",
+        added: "2026-08-01",
+      },
+    ],
+  }
+  const resolved = resolveFields(s.fields, { profile: {}, answers })
+  const g1 = resolved.find((r) => r.k === "g1")
+  assert.equal(
+    g1.status,
+    "UNKNOWN",
+    "if this now resolves, the label fix landed — update this test, do not delete it",
+  )
+  assert.equal(g1.label, "Yes")
+
+  const plan = buildPlan({ scan: s, resolved, adapter: detectAts(url), url })
+  const deferred = plan.defer.find((d) => d.k === "g1")
+  assert.deepEqual(
+    { label: deferred.label, options: deferred.options, why: deferred.why },
+    { label: "Yes", options: ["Yes", "No"], why: "unknown" },
+    "the question put to the user is the word 'Yes' with the options Yes and No",
+  )
+  assert.equal(readiness(plan).ready, false)
+
+  // The fixture must keep saying so in its own file, or the next reader
+  // regenerates the scan and assumes the label is correct.
+  const raw = fs.readFileSync(path.join(SCANS, "lever-step1.scan.json"), "utf8")
+  assert.match(JSON.parse(raw)._finding_g1, /group label is "Yes"/)
+})

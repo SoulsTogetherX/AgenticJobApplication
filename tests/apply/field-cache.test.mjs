@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import {
   fingerprint,
+  hostOf,
   loadCache,
   saveCache,
   applyCache,
@@ -64,6 +65,113 @@ test("a redesigned form gets a different key, so it re-probes", () => {
 test("the same shape on a different ATS is a different key", () => {
   const s = scanOf([{ k: "f1", t: "text", l: "First Name", req: true }])
   assert.notEqual(fingerprint(s, "greenhouse"), fingerprint(s, "lever"))
+})
+
+// --- Phase 0.5: the host is part of the key --------------------------------
+//
+// The old basis was `atsId + "|" + labels`, cross-tenant by construction: any
+// two employers whose REQUIRED labels agree (name, email, resume — the common
+// case) shared one fingerprint, so employer B was served employer A's
+// remembered option lists and selectors. That is wrong data, not a missed
+// optimisation: a "How did you hear about us?" list is written per employer.
+test("two different hosts with identical label sets are different keys", () => {
+  const fields = [
+    { k: "f1", t: "text", l: "First Name", req: true },
+    { k: "f2", t: "text", l: "Email", req: true },
+  ]
+  const a = { url: "https://acme.wd5.myworkdayjobs.com/careers/job/1", fields }
+  const b = {
+    url: "https://globex.wd5.myworkdayjobs.com/careers/job/1",
+    fields,
+  }
+  assert.notEqual(fingerprint(a, "workday"), fingerprint(b, "workday"))
+})
+
+test("the host is normalized: case and a leading www. do not fork the key", () => {
+  const fields = [{ k: "f1", t: "text", l: "First Name", req: true }]
+  const plain = { url: "https://jobs.lever.co/acme/1", fields }
+  const shouty = { url: "https://JOBS.LEVER.CO/acme/1", fields }
+  const dubdub = { url: "https://www.jobs.lever.co/acme/1", fields }
+  assert.equal(fingerprint(plain, "lever"), fingerprint(shouty, "lever"))
+  assert.equal(fingerprint(plain, "lever"), fingerprint(dubdub, "lever"))
+})
+
+test("a scan with no URL, or an unparseable one, keys on a sentinel instead of throwing", () => {
+  // fingerprint() runs on the plan path before anything is filled, and a scan
+  // fixture without a URL is a legitimate input. It must not throw, and it
+  // must not silently share a key with a real board.
+  const fields = [{ k: "f1", t: "text", l: "First Name", req: true }]
+  const none = fingerprint({ fields }, "greenhouse")
+  const empty = fingerprint({ url: "", fields }, "greenhouse")
+  const junk = fingerprint({ url: "not a url", fields }, "greenhouse")
+  const real = fingerprint(
+    { url: "https://job-boards.greenhouse.io/acme/jobs/1", fields },
+    "greenhouse",
+  )
+  assert.equal(none, empty)
+  assert.equal(none, junk, "no URL and an unparseable URL are the same unknown")
+  assert.notEqual(none, real, "and neither may collide with a real host")
+})
+
+test("hostOf strips the port and the path, keeps the subdomain", () => {
+  assert.equal(
+    hostOf("https://boards.greenhouse.io:8443/acme/jobs/1"),
+    "boards.greenhouse.io",
+  )
+  assert.equal(
+    hostOf("https://acme.wd5.myworkdayjobs.com/x"),
+    "acme.wd5.myworkdayjobs.com",
+  )
+  assert.equal(hostOf(undefined), "?")
+})
+
+// THE RESIDUAL, PINNED DELIBERATELY. Phase 0.5 says "registrable host", and
+// that is what shipped — but the host does NOT separate path-based tenancy,
+// which is the majority board shape here. Two employers on Greenhouse (or
+// Lever) with identical required labels STILL share a fingerprint after this
+// change. This is asserted rather than left unstated so nobody reads
+// "cross-tenant fixed" off the item title. Closing it means keying on the
+// first path segment, which over-fragments embedded Greenhouse
+// (`/embed/job_app?token=<per-posting>`) into a cache that never hits — the
+// silent-amber failure the v2/v3 discard bug already cost this project once.
+// If someone closes it, THIS TEST GOES RED, and that is the intended signal to
+// come read this comment.
+test("KNOWN RESIDUAL: same host, different tenant path still collides", () => {
+  const fields = [
+    { k: "f1", t: "text", l: "First Name", req: true },
+    { k: "f2", t: "text", l: "Email", req: true },
+  ]
+  const empA = { url: "https://job-boards.greenhouse.io/emp-a/jobs/1", fields }
+  const empB = { url: "https://job-boards.greenhouse.io/emp-b/jobs/2", fields }
+  assert.equal(
+    fingerprint(empA, "greenhouse"),
+    fingerprint(empB, "greenhouse"),
+    "not a passing property — a documented, priced-out gap (see the comment)",
+  )
+})
+
+test("the v3 cache written before the host was in the basis is discarded", (t) => {
+  // The bump is deliberate, not a ride on the accident that the on-disk file
+  // was already stale: every v3 fingerprint was computed WITHOUT the host, so
+  // re-serving one would hand a remembered shape to the wrong tenant.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "field-cache-v3-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const f = path.join(dir, "c.json")
+  fs.writeFileSync(
+    f,
+    JSON.stringify({ v: 3, forms: { old: { ats: "greenhouse", fields: {} } } }),
+  )
+  const restore = console.error
+  console.error = () => {}
+  let loaded
+  try {
+    loaded = loadCache(f)
+  } finally {
+    console.error = restore
+  }
+  assert.equal(CACHE_VERSION, 4, "0.5 bumped it; a silent revert is a re-serve")
+  assert.deepEqual(loaded.forms, {})
+  assert.equal(loaded.discarded.fromVersion, 3)
 })
 
 test("cached options fill in a scan that skipped the probe", () => {

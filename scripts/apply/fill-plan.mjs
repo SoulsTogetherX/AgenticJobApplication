@@ -1397,8 +1397,48 @@ export function readiness(plan) {
 // UNKNOWN field: something on the page was not understood, so it blocks
 // exactly like a defer would, even though the plan itself was clean and
 // resolved everything it knew about.
+//
+// `labelFlag` (Phase 0.2, this half): labelHazard() marks a field whose label
+// carried instruction-shaped text of one of the DISQUALIFYING kinds. It
+// deliberately does not change `how`, `status` or `value` — on the ATTENDED
+// path a flag is metadata for the approval message and a human decides,
+// because a board that could force a human round trip by decorating an
+// ordinary question with an imperative sentence would have a trivial DoS
+// against the fast path. THIS FUNCTION ANSWERS THE UNATTENDED QUESTION, where
+// there is no such human: hard rule 0 says the page is data, and a page trying
+// to talk to the agent is not a page to submit the user's name, phone and
+// résumé to with nobody watching. The DoS argument does not transfer — the
+// cost of a flagged label here is one deferral with a stated reason, and the
+// user still sees the job.
+//
+// ANY item or defer entry, INCLUDING a `skip`. This file's own CLI filters to
+// `how !== "skip"`, which is right for a report a human reads — a skipped
+// field is not being filled, so nobody needs to look at it. It is wrong for a
+// gate: the flag is evidence about the PAGE, not about the field, and a page
+// carrying one is not understood well enough to submit to whether or not we
+// happened to fill that particular input.
+//
+// §0.2 pairs this with the mirror in authorize.mjs. The two are INDEPENDENT
+// keys by design and neither reads the other's verdict — relaxing one cannot
+// widen the gate, and either standing alone still blocks.
 export function submitReadiness(plan, report = null) {
   const fillable = (plan.items ?? []).filter((i) => i.how !== "skip")
+  const flagged = [
+    ...(Array.isArray(plan.items) ? plan.items : []),
+    ...(Array.isArray(plan.defer) ? plan.defer : []),
+  ].filter((x) => x && x.labelFlag)
+  if (flagged.length) {
+    return {
+      ready: false,
+      reason:
+        `${flagged.length} field label(s) attempted to instruct the agent ` +
+        `(${flagged
+          .slice(0, 3)
+          .map((x) => x.labelFlag)
+          .join("; ")}) — hard rule 0: a page that talks to the agent is ` +
+        "not a page to submit to unattended",
+    }
+  }
   if (plan.defer?.length) {
     return {
       ready: false,

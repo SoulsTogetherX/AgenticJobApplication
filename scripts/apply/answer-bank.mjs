@@ -707,6 +707,47 @@ export function createResolver(profile = {}, answersDoc = {}) {
       return push("UNKNOWN", "-", "", "no label found — inspect the page")
     }
 
+    // IDENTITY FIRST (Phase 0.7). Name, email and phone must go out
+    // BYTE-IDENTICAL on every form, from profile.yaml and nowhere else.
+    //
+    // What this fixes: the exact-bank lookup immediately below runs before
+    // ctx.CONTACT_RULES, so an answers.yaml entry whose question normalizes to
+    // "email" or "phone" silently outranked profile.contact — and the answer
+    // bank is where a per-board plus-alias ("jane+greenhouse@...") or a
+    // differently punctuated phone number would live. Two forms would then
+    // carry two different renderings of the same identity, which is both a
+    // linkability leak across employers and the "format drift" 0.7 names.
+    //
+    // Deliberately NARROW. It applies only to rules flagged `"identity"` in
+    // CONTACT_RULES; LinkedIn, GitHub, website, location and street address
+    // are untouched, and an exact bank answer still outranks profile for all
+    // of them. It also respects CONTACT_RULES ORDER by taking the FIRST rule
+    // that matches — "Name Pronunciation" and "Middle Name" are earlier,
+    // unflagged rules, so they still resolve as they did rather than being
+    // handed the legal name.
+    //
+    // NO FALL-THROUGH when the profile is empty. If profile.contact has no
+    // phone, the field is UNKNOWN and says so; it does NOT become the bank's
+    // to answer. A single source is what makes byte-identity checkable at
+    // all, and "profile, or nobody" is that source.
+    const identityRule = (ctx.CONTACT_RULES ?? []).find(([re]) =>
+      re.test(label),
+    )
+    if (identityRule && identityRule[3] === "identity") {
+      const [, idSource, idValue] = identityRule
+      const out = typeof idValue === "function" ? idValue(label) : idValue
+      if (!out) {
+        return push("UNKNOWN", idSource, "", `not in profile.${idSource}`)
+      }
+      const m = matchOption(out, opts, { requireOptions, label })
+      return push(
+        m.needsChoice ? "NEEDS-CHOICE" : "OK",
+        idSource,
+        m.value,
+        noteFor(m),
+      )
+    }
+
     // Ahead of EEO too: if the user actually answered a self-ID question,
     // their answer is the answer — auto-declining over it would discard it.
     const exact = exactBank.get(normalizeQuestion(label))
@@ -838,12 +879,21 @@ export function createResolver(profile = {}, answersDoc = {}) {
       return parts.join("  ")
     }
 
+    // The 4th element `"identity"` marks the name/email/phone rules that
+    // resolveField() resolves BEFORE the answer bank (Phase 0.7): those three
+    // go out byte-identically on every form, from profile.yaml only. Every
+    // unflagged rule keeps the old precedence, where an exact bank answer
+    // wins. Order still matters and is unchanged — the unflagged
+    // middle-name and name-pronunciation rules sit ahead of the full-name
+    // rule on purpose, and the identity pass takes the first match, not the
+    // first identity match.
     const CONTACT_RULES = [
-      [/\b(first|given)\s*name\b/i, "contact.name", nameParts[0]],
+      [/\b(first|given)\s*name\b/i, "contact.name", nameParts[0], "identity"],
       [
         /\b(last|family|sur)\s*name\b|\bsurname\b/i,
         "contact.name",
         nameParts.length > 1 ? nameParts[nameParts.length - 1] : "",
+        "identity",
       ],
       [/\bmiddle\s*(name|initial)\b/i, null, ""],
       // "Name Pronunciation" asks how to say it, not what it is — an anchored
@@ -853,12 +903,14 @@ export function createResolver(profile = {}, answersDoc = {}) {
         /^name\s*\*?\s*:?\s*$|\b(full|legal|preferred|display) name\b|\byour name\b/i,
         "contact.name",
         contact.name ?? "",
+        "identity",
       ],
-      [/e-?mail/i, "contact.email", contact.email ?? ""],
+      [/e-?mail/i, "contact.email", contact.email ?? "", "identity"],
       [
         /\b(phone|mobile|cell|telephone)\b/i,
         "contact.phone",
         contact.phone ?? "",
+        "identity",
       ],
       [/linked-?in/i, "contact.linkedin", contact.linkedin ?? ""],
       [/git-?hub/i, "contact.github", contact.github ?? ""],

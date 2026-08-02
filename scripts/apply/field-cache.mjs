@@ -28,7 +28,15 @@ import crypto from "node:crypto"
 // cut on some labels — a field can newly read as `req:true`, which ALSO
 // feeds the fingerprint. loadCache() already starts clean on any mismatch,
 // so bumping this is the whole fix; no migration code needed.
-export const CACHE_VERSION = 3
+//
+// Bumped 3 -> 4 (Phase 0.5, 2026-08-02): `fingerprint()` now hashes the form's
+// HOST as well as its ATS id and required labels, so every fingerprint written
+// under v3 is wrong for the new basis and must not be re-served. Bumped
+// deliberately rather than leaning on the accident that the on-disk file was
+// already at v2 against a CACHE_VERSION of 3 — that accident made the change
+// free TODAY, and would silently stop making it free the moment anyone
+// regenerated the cache.
+export const CACHE_VERSION = 4
 
 // scan-page.js's own MAX_OPTS (40) already truncates a long list before it
 // ever reaches this file; this cap exists so a caller that hands recordCache
@@ -49,15 +57,56 @@ const norm = (s) =>
 // label-only key would hand the country list to the text input.
 const fieldKey = (f) => `${norm(f.l)}|${f.t ?? ""}`
 
+// The host the form was served from, lowercased, `www.` stripped, no port and
+// no path — the unit `fingerprint()` below adds to the basis (Phase 0.5).
+//
+// A scan with no URL, or one that does not parse as a URL, returns the
+// sentinel `"?"` rather than throwing or falling back to the old basis. That
+// keeps a cache entry POSSIBLE for such a scan (they still collide with each
+// other, which is no worse than before) while keeping it distinct from every
+// real host, so a URL-less scan can never be served a real board's remembered
+// shape. Deliberately not an exception: fingerprint() is called on the plan
+// path before anything is filled, and a scan fixture without a URL is a
+// legitimate input to it.
+export function hostOf(url) {
+  const raw = String(url ?? "").trim()
+  if (!raw) return "?"
+  try {
+    return new URL(raw).hostname.toLowerCase().replace(/^www\./, "") || "?"
+  } catch {
+    return "?"
+  }
+}
+
 // Required labels only: optional fields (EEO blocks especially) come and go
 // between postings on the same board and would churn the key for no reason.
+//
+// FIX (Phase 0.5, 2026-08-02): the basis was `atsId + "|" + labels`, which is
+// cross-tenant BY CONSTRUCTION — every employer on the same ATS whose required
+// fields carry the same labels (name, email, resume: the common case) shared
+// one fingerprint, so employer B was served employer A's remembered option
+// lists and selectors. That is wrong DATA, not merely a missed optimisation:
+// a "How did you hear about us?" list is written per employer, and the cache
+// would re-serve one company's list on another company's form.
+//
+// The host is the unit added. It is NOT the URL: the test above this one
+// ("the key follows the form's required shape, not its URL") encodes a
+// deliberate prior decision that two postings by the same employer must share
+// a key, and adding the host keeps that — `/x/jobs/1` and `/y/jobs/99` on one
+// host still agree. What the host does NOT separate is path-based tenancy
+// (`job-boards.greenhouse.io/<employer>/jobs/<id>`, and Lever's equivalent),
+// where two employers still collide. Closing that would mean keying on the
+// first path segment, which over-fragments embedded Greenhouse
+// (`/embed/job_app?token=<per-posting>`) into a cache that never hits — the
+// same silent-amber failure the v2/v3 discard bug was. It is a policy change
+// with a latency cost, so it is left named here rather than taken quietly.
 export function fingerprint(scan, atsId) {
   const labels = (scan.fields ?? [])
     .filter((f) => f.req)
     .map((f) => norm(f.l))
     .filter(Boolean)
     .sort()
-  const basis = `${atsId}|${labels.join("\n")}`
+  const basis = `${atsId}|${hostOf(scan.url)}|${labels.join("\n")}`
   return crypto.createHash("sha1").update(basis).digest("hex").slice(0, 16)
 }
 

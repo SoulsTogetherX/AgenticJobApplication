@@ -175,11 +175,31 @@ agent's measurement, and I re-ran none of it. I ran no tests and opened no board
 reproduce `attack:feasibility`'s ~28 leads/day figure: `leads.doc` carries no `first_seen` or
 `discovered_at` key and my query bucketed all 141 rows under an empty date. Their lead **count**
 and **dismissal rate** I reproduced exactly; their **daily rate** I take on their word and it is
-the reason Phase 0.11 exists. The 999 × 45s ÷ 8 composite in revision 1 is **withdrawn**, not
-revised — F2 invalidated its isolation model and F4 showed the fill leg is unmeasured, so there
-is currently no defensible wall-clock estimate in this document at all.
+the reason Phase 0.11 exists.
 
-### 0.3 An unowned file set — flagged, not resolved
+> **CORRECTED 2026-08-01 by Phase 0.11 (`w5-leads`).** The daily rate **is**
+> reproducible and this paragraph was wrong. `leads.doc` carries **`found_at`**, an ISO string,
+> present on **149 of 149** rows with no nulls — the query above searched for two key names,
+> did not find them, and concluded the data did not exist rather than that the key was named
+> something else. Bucketing by `found_at` gives 2026-07-27: 66, 07-28: 33, 07-29: 3, 07-30: 36,
+> 07-31: 3, 08-02: 8 — **149 ÷ 5.262 days = 28.32/day**, reproducing the figure to within 1.5%.
+> It converges independently with the live-inventory snapshot (28 solid ÷ 44 boards = 0.636/board
+> against 28.32 ÷ 44 = 0.636). Phase 0.11 was still worth hoisting, but not for this reason.
+>
+> **What 0.11 concluded on that basis: ~1,570 boards would be needed for 999 qualifying
+> leads/day** (pessimistic tail ~8,800), against 44 today. The extrapolation is optimistic, and
+> the reason is the finding that matters more than the arithmetic: **24 of the 44 boards
+> (54.5%) have never produced a single qualifying lead**, cumulative, despite thousands of live
+> postings between them (Anthropic 400, Datadog 429, Palantir 302). A board pool grown the same
+> way is likelier to resemble the dead majority than the productive minority, so **board
+> expansion is not a plan** and R-8 is confirmed as binding. Diagnosis of where the supply is
+> actually lost is open work, not a settled result.
+
+The 999 × 45s ÷ 8 composite in revision 1 is **withdrawn**, not revised — F2 invalidated its
+isolation model and F4 showed the fill leg is unmeasured, so there is currently no defensible
+wall-clock estimate in this document at all.
+
+### 0.3 An unowned file set — RESOLVED 2026-08-01
 
 `docs/team-roster.md` assigns every path I checked **except two**: `scripts/status.mjs` and
 `scripts/maintenance/*` appear nowhere in the roster (`grep -n "status\.mjs\|maintenance"
@@ -191,5 +211,10 @@ recommendation is unchanged and now has a third reason: both to `w4-autonomy`, o
 the roster used for `scripts/applications/*` — they are readers of `scripts/lib/db.mjs`, which
 `w4-autonomy` already owns, and splitting a reader from its schema is what let
 `check-applied.mjs` drift.
+
+> **RESOLVED.** `build-manager` assigned both to `w4-autonomy`, on exactly that reasoning —
+> `docs/team-roster.md:143` now carries `scripts/status.mjs` and `scripts/maintenance/*` on the
+> `w4-autonomy` row. Phase 1 is no longer blocked on this. The flag above is kept rather than
+> deleted because the recommendation and its reasoning are why the assignment went where it did.
 
 ---

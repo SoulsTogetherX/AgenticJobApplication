@@ -299,7 +299,7 @@ roles:
 auto_apply:
   enabled: false
   dry_run: true
-  per_run_max: 999
-  per_day_max: 999
+  per_run_max: 10
+  per_day_max: 10
   per_company_max_per_week: 5
   cache_max_age_days: 30

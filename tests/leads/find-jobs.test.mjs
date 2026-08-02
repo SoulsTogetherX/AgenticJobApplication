@@ -302,6 +302,52 @@ test("a real location that merely contains a digit is still gated", () => {
   assert.match(v.reasons.join(" "), /location/)
 })
 
+test("a work-arrangement-only location is flagged, not rejected", () => {
+  // Cloudflare's list payload fills location with the ARRANGEMENT ("Hybrid",
+  // "In-Office") rather than a place — measured 2026-08-02, 59 of 61 of its
+  // location rejects carried one of these two literal strings and nothing
+  // else. That carries no geography at all, same class as Workday's "2
+  // Locations" above, and was being read as "would require relocating" —
+  // a job the user never sees. It must survive as unknown, never as passing
+  // outright: it is missing data, not evidence of anything.
+  for (const location of [
+    "Hybrid",
+    "hybrid",
+    "In-Office",
+    "In Office",
+    "Onsite",
+    "On-site",
+    "On site",
+    "Office",
+  ]) {
+    const v = passesLimits(job({ location }), LIMITS, NOW)
+    assert.equal(v.ok, true, `expected pass for "${location}"`)
+    assert.ok(
+      v.flags.includes("unknown_location"),
+      `expected unknown_location for "${location}"`,
+    )
+    assert.ok(
+      !v.flags.includes("remote_unverified"),
+      `"${location}" must not be read as remote — it says nothing about where`,
+    )
+  }
+})
+
+test("a work-arrangement word attached to real cities is still gated normally", () => {
+  // The shape check must not swallow a location that actually names places —
+  // "Hybrid - San Francisco, New York City" (a real Vercel posting) is
+  // genuinely on-site in cities away from base, and must still reject as a
+  // relocation. Only the BARE arrangement word, with nothing else, is opaque.
+  const v = passesLimits(
+    job({ location: "Hybrid - San Francisco, New York City" }),
+    LIMITS,
+    NOW,
+  )
+  assert.equal(v.ok, false)
+  assert.match(v.reasons.join(" "), /relocat/)
+  assert.ok(!v.flags.includes("unknown_location"))
+})
+
 test("non-targeted titles are rejected", () => {
   for (const title of ["Accountant", "DevOps Engineer", "Product Manager"]) {
     const v = passesLimits(job({ title }), LIMITS, NOW)

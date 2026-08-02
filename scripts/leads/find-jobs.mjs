@@ -172,7 +172,18 @@ export function passesLimits(job, limits, now = new Date()) {
   // as a relocation — and multi-site postings skew towards exactly the roles
   // worth seeing. Flag for screening to resolve instead of discarding.
   const OPAQUE_LOC = /^\d+\s*locations?$/i
-  if (!loc || OPAQUE_LOC.test(loc)) {
+  // Greenhouse's own way of saying the same thing: some boards (Cloudflare,
+  // measured 2026-08-02) fill the location field with the WORK ARRANGEMENT
+  // ("Hybrid", "In-Office") instead of a place, which carries exactly as much
+  // geography as "2 Locations" does — none. Matched on shape (the ENTIRE
+  // trimmed value is nothing but an arrangement word) so a future board's own
+  // spelling of this is caught without hard-coding Cloudflare's two literals —
+  // "Hybrid - San Francisco, New York" still falls through to the real check
+  // below because it names actual cities. "Remote" is deliberately excluded
+  // from this list: unlike "Hybrid"/"In-Office" it IS informative (not tied to
+  // any office) and is read by the remote-text check below, not this one.
+  const WORK_ARRANGEMENT_ONLY = /^(in[-\s]?office|on[-\s]?site|office|hybrid)$/i
+  if (!loc || OPAQUE_LOC.test(loc) || WORK_ARRANGEMENT_ONLY.test(loc)) {
     flags.push("unknown_location")
   } else {
     // "Remote" restricted to a non-US region is still a relocation for a

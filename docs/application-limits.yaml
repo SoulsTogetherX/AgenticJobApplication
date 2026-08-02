@@ -139,6 +139,16 @@ roles:
     - game developer
     - gameplay
     - game engineer
+    # Added 2026-08-02 on the user's explicit approval, from the dead-board
+    # diagnosis: the only two titles out of ~2,700 read that cleared every
+    # other gate (non-senior, location OK) and failed ONLY the literal keyword
+    # match. "Product engineer" is the startup convention for a full-stack IC
+    # role (Linear, North America remote). "Forward deployed engineer" is
+    # hands-on at Cursor; at Palantir the same title is ~57 onsite-abroad
+    # roles, so expect it to surface true negatives that reject on LOCATION —
+    # that is the gate working, not a regression.
+    - product engineer
+    - forward deployed engineer
 
   # ===========================================================================
   # HARD FILTER — a title containing any of these is rejected at ingest.

@@ -123,6 +123,13 @@ export default async function fillPage(page, plan) {
     // then found on the page anyway. They are counted as `ok`, and listed here
     // so the promotion is never invisible.
     reconciled: [],
+    // ONE ENTRY PER UPLOAD: which file went to which input, how that input was
+    // chosen, and what the page showed afterwards. `ok` is a COUNT, and a
+    // count cannot say that the cover letter was attached on top of the resume
+    // — which is exactly what happened, was reported as ok=6 failed=0, and
+    // reached the approval message as "both files attached". Anything that
+    // tells the user what was attached must read THIS, not `ok`.
+    uploads: [],
     // What this run LEARNED, for the planner to persist. Rediscovering it per
     // field per application is the single most expensive thing in here: a
     // combo strategy that does not work still costs 1.5-2.5s before it is
@@ -385,30 +392,98 @@ export default async function fillPage(page, plan) {
   // fires — it just stalls the whole call as a pending modal. Verified on
   // Greenhouse that React does process the resulting change event and swaps
   // the input out for the attached-file view.
+  // WHICH input gets which file. This attached the WRONG FILE to a real
+  // application and reported total success — measured on the Greenhouse
+  // fixture, where both attachment inputs sit in one <form>:
+  //
+  //   [ { id: 'resume',       ajup: 'u2', files: ['cover-letter.pdf'] },
+  //     { id: 'cover_letter', ajup: null, files: []                   } ]
+  //   report ok=6 failed=0 failures=[]
+  //
+  // The cover letter went out AS the resume, no cover letter was attached at
+  // all, and every control downstream — including the approval message the
+  // user reads before pressing Submit — was told the fill succeeded. Three
+  // separate defects produced that; all three are fixed here and each one
+  // alone was enough.
+  //
+  //   1. A SHARED CONTAINER DISCRIMINATES NOTHING, and the signal is the
+  //      NEAREST labelled ancestor, not any ancestor. The old walk climbed up
+  //      to 8 levels and returned the first input in DOM order with ANY
+  //      matching ancestor, so /cover letter/ matched the <form> that wraps
+  //      BOTH inputs (its innerText reads "... Resume Attach Cover Letter
+  //      Attach ...") three levels above the RESUME input, and stamped the
+  //      resume input. Depth 8 reaches a common section on most boards, so
+  //      this was not a fixture quirk. The walk now STOPS as soon as an
+  //      ancestor holds more than one input[type=file]: such an ancestor's
+  //      text belongs to all of them and identifies none of them, and nothing
+  //      above it can be narrower. Among inputs that do have a discriminating
+  //      ancestor the nearest one wins (ties: the shorter ancestor text, then
+  //      document order), so the answer never depends on which input the DOM
+  //      happens to list first.
+  //
+  //   2. A STAMP IS A CLAIM ON AN INPUT. The resume input already carried u1
+  //      and the second pass overwrote it with u2, because nothing excluded an
+  //      input that was already spoken for. An input carrying a data-ajup, or
+  //      already holding a file, is not a candidate for anything.
+  //
+  //   3. THE FALLBACK NOW DOES WHAT ITS COMMENT ALWAYS SAID. It read "the
+  //      first input still awaiting a file" and the code was inputs[0],
+  //      unconditionally — nothing checked, so it could clobber a filled input
+  //      too. "Still awaiting a file" is rule 2's test, and it is now applied.
+  //
+  // Returns a RECORD, not a boolean, so the caller can report where each file
+  // went. A count of uploads that did not throw cannot tell this bug from a
+  // correct run; a filename against a target input can.
   const stampInput = (pattern, tag) =>
     page.evaluate(
       (arg) => {
         const re = new RegExp(arg.pattern, "i")
-        const inputs = [...document.querySelectorAll("input[type=file]")]
-        for (const el of inputs) {
+        const all = [...document.querySelectorAll("input[type=file]")]
+        // Rule 2: stamped or already filled means spoken for.
+        const free = all.filter(
+          (el) =>
+            !el.hasAttribute("data-ajup") && !(el.files && el.files.length),
+        )
+        let best = null
+        for (let order = 0; order < free.length; order++) {
+          const el = free[order]
           let n = el
-          for (let i = 0; i < 8 && n; i++) {
+          for (let depth = 1; depth <= 8; depth++) {
             n = n.parentElement
             if (!n) break
+            // Rule 1: a container of two file inputs cannot tell them apart.
+            if (n.querySelectorAll("input[type=file]").length > 1) break
             const s = (n.innerText || "").replace(/\s+/g, " ").trim()
-            if (s && re.test(s)) {
-              el.setAttribute("data-ajup", arg.tag)
-              return true
+            if (!s || !re.test(s)) continue
+            const cand = { el, depth, len: s.length, order }
+            if (
+              !best ||
+              cand.depth < best.depth ||
+              (cand.depth === best.depth && cand.len < best.len)
+            ) {
+              best = cand
             }
+            // This input's NEAREST match; a farther one cannot beat it.
+            break
           }
         }
-        // Some boards put the heading outside anything the walk can reach;
-        // fall back to the first input still awaiting a file, in plan order.
-        if (inputs.length) {
-          inputs[0].setAttribute("data-ajup", arg.tag)
-          return true
+        const how = best ? "label" : "order"
+        // Rule 3: some boards put the heading outside anything the walk can
+        // reach; fall back to the first input STILL AWAITING A FILE.
+        if (!best && free.length) best = { el: free[0], depth: null }
+        if (!best) return { ok: false, inputs: all.length, free: 0 }
+        best.el.setAttribute("data-ajup", arg.tag)
+        return {
+          ok: true,
+          how,
+          depth: best.depth,
+          // Page-controlled, so it is sliced and only ever reported as data.
+          target: String(best.el.id || best.el.getAttribute("name") || "")
+            .slice(0, 60)
+            .trim(),
+          inputs: all.length,
+          free: free.length,
         }
-        return false
       },
       { pattern, tag },
     )
@@ -417,17 +492,35 @@ export default async function fillPage(page, plan) {
   for (const item of items.filter((i) => i.how === "upload")) {
     const tag = "u" + ++uploadN
     const pattern = item.labelMatch || "resume"
-    let found = false
+    let spot = null
     try {
-      found = await stampInput(pattern, tag)
+      spot = await stampInput(pattern, tag)
     } catch (e) {
       fail(item, "file input lookup failed: " + e.message)
       continue
     }
-    if (!found) {
+    // A fake/accounted page in the bench harness answers this evaluate with a
+    // bare `true`; that is "stamped, routing unknown", not a failure.
+    if (!(spot === true || (spot && spot.ok))) {
       fail(item, "no file input left for /" + pattern + "/")
       continue
     }
+    // WHERE this file went, recorded before the upload is attempted so a
+    // failure still says which slot it was aimed at. `file` is the basename of
+    // a path WE chose off our own disk — no page-derived text.
+    const record = {
+      k: item.k,
+      tag,
+      file:
+        String((item.paths || [])[0] || "")
+          .split(/[\\/]/)
+          .pop() || null,
+      match: pattern,
+      how: spot === true ? "unknown" : spot.how,
+      target: spot === true ? null : spot.target || null,
+      attached: false,
+    }
+    out.uploads.push(record)
     try {
       await page
         .locator('[data-ajup="' + tag + '"]')
@@ -443,10 +536,46 @@ export default async function fillPage(page, plan) {
         .locator('[data-ajup="' + tag + '"]')
         .waitFor({ state: "detached", timeout: 1000 })
         .catch(() => {})
+      record.attached = true
       out.ok++
     } catch (e) {
       fail(item, e.message)
     }
+  }
+
+  // --- and did they land where the plan aimed them? ------------------------
+  // INDEPENDENT of the routing decision above: this reads the page. The whole
+  // reason a cover letter could go out as a resume undetected is that nothing
+  // ever compared what the engine decided against what the DOM ended up with —
+  // the report carried a count, and a count cannot be wrong about which file
+  // is on which input.
+  //
+  // Reported as data, never promoted to a failure on its own: a board that
+  // swaps the input for an attached-file view (Greenhouse does) legitimately
+  // has no input left to read, and calling that a failure would break a
+  // working upload. `seen: "gone"` is that case and it is normal.
+  if (out.uploads.length) {
+    try {
+      const seen = await page.evaluate(() =>
+        [...document.querySelectorAll("input[type=file]")].map((el) => ({
+          tag: el.getAttribute("data-ajup"),
+          names: el.files ? [...el.files].map((f) => f.name) : [],
+        })),
+      )
+      // A fake page answers this with something that is not a list; then there
+      // is nothing observed, and nothing is claimed.
+      if (Array.isArray(seen)) {
+        for (const rec of out.uploads) {
+          const hit = seen.find((s) => s && s.tag === rec.tag)
+          if (!hit) {
+            rec.seen = "gone"
+            continue
+          }
+          rec.seen = hit.names.length ? "attached" : "empty"
+          rec.seenFile = hit.names[0] || null
+        }
+      }
+    } catch {}
   }
 
   // --- everything else -----------------------------------------------------

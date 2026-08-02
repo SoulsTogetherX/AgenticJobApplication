@@ -35,7 +35,7 @@ import {
 // Shape F's false-positive arm needs the REAL scanner run over the REAL served
 // board HTML, and dom.mjs is the harness that does exactly that without a
 // browser. Read-only use of a fixture owned by qa-adversary.
-import { runScanner } from "../fixtures/boards/dom.mjs"
+import { parseHtml, runScanner } from "../fixtures/boards/dom.mjs"
 import { buildPlan } from "../../scripts/apply/fill-plan.mjs"
 import greenhouseAdapter from "../../scripts/apply/ats/greenhouse.mjs"
 
@@ -178,9 +178,22 @@ function fakePage({ url = "https://ats.test/apply", elements = {} } = {}) {
           "the engine must never read code back out of the page: " + src,
         )
       }
-      if (src.includes("data-ajup")) {
+      // The stamp pass WRITES; the upload readback that follows it only reads.
+      // Both mention data-ajup, so they are told apart by the write, not by
+      // the attribute name — a fake that confused them would answer the
+      // readback with the stamp's own answer and hide a misroute.
+      if (src.includes("data-ajup") && src.includes("setAttribute")) {
         log.push(["stampTrigger", arg.pattern, arg.tag])
         return elements[`[data-ajup="${arg.tag}"]`] !== undefined
+          ? { ok: true, how: "label", depth: 2, target: arg.tag }
+          : { ok: false, inputs: 0, free: 0 }
+      }
+      if (src.includes("data-ajup")) {
+        log.push(["uploadReadback"])
+        // This fake has no file inputs to read: it models locators, not a DOM.
+        // Answering with something that is not a list is how the engine is
+        // told "nothing was observed" — see the Array.isArray guard there.
+        return undefined
       }
       if (src.includes("requiredEmpty")) {
         log.push(["verify", (arg || []).length])
@@ -426,6 +439,273 @@ test("each upload is located by its own label, not by a stamp", async () => {
     plain(files),
     ["r.pdf", "c.pdf"],
     "documents must not be swapped",
+  )
+})
+
+// --- upload ROUTING, against a real DOM -----------------------------------
+//
+// The fake page above models locators, not a document, so it cannot say which
+// input a stamp landed on — and that is precisely the question the misroute
+// turned on: the engine attached the cover letter ON TOP OF the resume,
+// attached no cover letter at all, and reported ok=6 failed=0 failures=[].
+// Confirmed on the served fixture through a real Chromium
+// (`benchBrowserFill({board, boardName:"greenhouse"})`):
+//
+//   [ { id: 'resume',       ajup: 'u2', n: 1, f: 'cover-letter.pdf' },
+//     { id: 'cover_letter', ajup: null, n: 0, f: undefined } ]
+//
+// So these run the engine's REAL page-side arrow over the REAL served HTML,
+// parsed by the fixture DOM. No browser, no new dependency — the arrow is
+// self-contained by construction (it has to be; it is serialised into the
+// page), so `new Function` with a document shim runs exactly the code
+// Playwright would.
+const domPage = (html, { url = "https://board.test/apply", onUpload } = {}) => {
+  const { root } = parseHtml(html)
+  const log = []
+  const q = (sel) => root.querySelectorAll(sel)
+  const doc = {
+    querySelectorAll: (s) => q(s),
+    querySelector: (s) => q(s)[0] || null,
+  }
+  const run = (fn, arg) =>
+    new Function("document", "return (" + String(fn) + ")")(doc)(arg)
+  const mk = (sel) => ({
+    async count() {
+      return q(sel).length
+    },
+    async waitFor() {
+      log.push(["waitFor", sel])
+    },
+    async setInputFiles(paths) {
+      const el = q(sel)[0]
+      if (!el) throw new Error("no element for " + sel)
+      // What a browser does: the input now HAS files, readable back off it.
+      el.files = [].concat(paths).map((p) => ({
+        name: String(p).split(/[\\/]/).pop(),
+      }))
+      log.push(["setFiles", el.id || el.name, el.files[0].name])
+      if (onUpload) onUpload(el, root)
+    },
+    async scrollIntoViewIfNeeded() {},
+    async evaluate() {
+      return "input"
+    },
+    async fill() {},
+  })
+  return {
+    log,
+    root,
+    url: () => url,
+    locator: mk,
+    keyboard: { async type() {}, async insertText() {}, async press() {} },
+    async waitForTimeout() {},
+    async evaluate(fn, arg) {
+      const src = String(fn)
+      if (src.includes("data-ajup")) return run(fn, arg)
+      if (src.includes("requiredEmpty"))
+        return {
+          mismatch: [],
+          errors: [],
+          requiredEmpty: [],
+          landed: [],
+          revealed: [],
+        }
+      return undefined
+    },
+  }
+}
+
+const GREENHOUSE_HTML = fs.readFileSync(
+  path.join(
+    ROOT,
+    "tests",
+    "fixtures",
+    "boards",
+    "pages",
+    "greenhouse-step1.html",
+  ),
+  "utf8",
+)
+
+// The exact plan shape fill-plan.mjs emits for this page's two file fields.
+const uploadPlan = () =>
+  plan([
+    {
+      k: "f1",
+      how: "upload",
+      labelMatch: "resume|\\bcv\\b",
+      paths: ["C:\\jobs\\x\\resume.pdf"],
+    },
+    {
+      k: "f2",
+      how: "upload",
+      labelMatch: "cover letter",
+      paths: ["C:\\jobs\\x\\cover-letter.pdf"],
+    },
+  ])
+
+const inputsOf = (root) =>
+  root.querySelectorAll("input[type=file]").map((el) => ({
+    id: el.id,
+    ajup: el.getAttribute("data-ajup"),
+    files: (el.files || []).map((f) => f.name),
+  }))
+
+test("the cover letter never lands on the resume input", async () => {
+  const page = domPage(GREENHOUSE_HTML)
+  const out = await fillPage(page, uploadPlan())
+
+  assert.deepEqual(plain(inputsOf(page.root)), [
+    { id: "resume", ajup: "u1", files: ["resume.pdf"] },
+    { id: "cover_letter", ajup: "u2", files: ["cover-letter.pdf"] },
+  ])
+  assert.equal(out.ok, 2)
+  assert.equal(out.failed, 0)
+})
+
+test("a shared container is not evidence for either input", async () => {
+  // WHY the misroute happened: both inputs live in one <form> whose innerText
+  // contains BOTH headings, three levels up from each. The old walk climbed
+  // 8 levels and returned the first input in DOM order with ANY matching
+  // ancestor, so /cover letter/ matched the RESUME input there. An ancestor
+  // holding two file inputs cannot tell them apart and neither can anything
+  // above it, so the walk must stop at it — asserted directly, because the
+  // test above would also pass on a rule that merely got lucky on order.
+  const page = domPage(GREENHOUSE_HTML)
+  await fillPage(
+    page,
+    plan([
+      {
+        k: "f2",
+        how: "upload",
+        labelMatch: "cover letter",
+        paths: ["cover-letter.pdf"],
+      },
+    ]),
+  )
+  const stamped = page.root
+    .querySelectorAll("input[type=file]")
+    .filter((el) => el.getAttribute("data-ajup"))
+  assert.equal(stamped.length, 1)
+  assert.equal(
+    stamped[0].id,
+    "cover_letter",
+    "the cover letter went to the resume slot — the shared <form> was read " +
+      "as evidence about the resume input",
+  )
+})
+
+test("an input that already holds a file is never stamped again", async () => {
+  // A stamp is a CLAIM on an input. The resume input carried u1 and the second
+  // pass overwrote it with u2, because nothing excluded an input that was
+  // already spoken for. Here NEITHER pattern matches anything, so both items
+  // take the fallback — and the fallback must walk forward, not clobber.
+  const page = domPage(`<html><body><form>
+      <div><label>Upload one</label><input type="file" id="a" /></div>
+      <div><label>Upload two</label><input type="file" id="b" /></div>
+    </form></body></html>`)
+  const out = await fillPage(
+    page,
+    plan([
+      { k: "f1", how: "upload", labelMatch: "resume", paths: ["resume.pdf"] },
+      {
+        k: "f2",
+        how: "upload",
+        labelMatch: "cover letter",
+        paths: ["cover-letter.pdf"],
+      },
+    ]),
+  )
+  assert.deepEqual(plain(inputsOf(page.root)), [
+    { id: "a", ajup: "u1", files: ["resume.pdf"] },
+    { id: "b", ajup: "u2", files: ["cover-letter.pdf"] },
+  ])
+  assert.equal(out.failed, 0)
+  assert.deepEqual(
+    out.uploads.map((u) => u.how),
+    ["order", "order"],
+    "positional routing must SAY it was positional",
+  )
+})
+
+test("no input left awaiting a file is a failure, not a clobber", async () => {
+  const page = domPage(`<html><body><form>
+      <div><label>Attach</label><input type="file" id="only" /></div>
+    </form></body></html>`)
+  const out = await fillPage(
+    page,
+    plan([
+      { k: "f1", how: "upload", labelMatch: "resume", paths: ["resume.pdf"] },
+      {
+        k: "f2",
+        how: "upload",
+        labelMatch: "cover letter",
+        paths: ["cover-letter.pdf"],
+      },
+    ]),
+  )
+  assert.deepEqual(plain(inputsOf(page.root)), [
+    { id: "only", ajup: "u1", files: ["resume.pdf"] },
+  ])
+  assert.equal(out.ok, 1)
+  assert.equal(out.failed, 1)
+  assert.match(out.failures[0].why, /no file input left/)
+})
+
+test("the report says which file went to which input, not just how many", async () => {
+  // `ok` is a COUNT. The misroute produced ok=6 failed=0 while the cover letter
+  // sat on the resume input, so anything built from the count — the approval
+  // message the user reads before pressing Submit — was told a falsehood. The
+  // per-upload record is the only thing that can contradict it, and `seen` is
+  // read back off the page rather than restated from the plan.
+  const page = domPage(GREENHOUSE_HTML)
+  const out = await fillPage(page, uploadPlan())
+  assert.deepEqual(plain(out.uploads), [
+    {
+      k: "f1",
+      tag: "u1",
+      file: "resume.pdf",
+      match: "resume|\\bcv\\b",
+      how: "label",
+      target: "resume",
+      attached: true,
+      seen: "attached",
+      seenFile: "resume.pdf",
+    },
+    {
+      k: "f2",
+      tag: "u2",
+      file: "cover-letter.pdf",
+      match: "cover letter",
+      how: "label",
+      target: "cover_letter",
+      attached: true,
+      seen: "attached",
+      seenFile: "cover-letter.pdf",
+    },
+  ])
+})
+
+test("an input swapped out by the remount is 'gone', never a failure", async () => {
+  // Greenhouse replaces the input with an attached-file view. There is then
+  // nothing left to read, and reading nothing must not be reported as an
+  // upload that did not happen — that would fail every working Greenhouse run.
+  const page = domPage(GREENHOUSE_HTML, {
+    onUpload: (el) => {
+      const p = el.parentElement
+      p.childNodes = p.childNodes.filter((n) => n !== el)
+      el.parentElement = null
+    },
+  })
+  const out = await fillPage(page, uploadPlan())
+  assert.equal(out.ok, 2)
+  assert.equal(out.failed, 0)
+  assert.deepEqual(
+    out.uploads.map((u) => [u.target, u.seen]),
+    [
+      ["resume", "gone"],
+      ["cover_letter", "gone"],
+    ],
   )
 })
 

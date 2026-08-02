@@ -1,5 +1,15 @@
 # Autonomous apply pipeline: security, speed, and an agent team
 
+> **This is v1. Seven of its decisions are superseded by
+> `autonomy-plan-v2.md` §1.4 C1-C7**, and each superseded site below carries an
+> inline pointer naming its correction. The reason the pointers are inline
+> rather than a list at the top: three controls in this project were believed in
+> because a sentence in **this** document described them in the indicative when
+> they did not exist — `INBOX.md`, the 26h staleness heartbeat, and the
+> "structurally unskippable" claim in `scripts/auto/guard.mjs`. A reader who
+> lands mid-document must not act on a superseded sentence. Corrections C8-C13
+> in v2 correct v2 itself and are not marked here.
+
 ## Context
 
 The pipeline today needs a human in the loop at every step. You want it to run
@@ -432,6 +442,13 @@ board and nobody notices.
 
 ### R3 — Replace the answer-bank ladder with typed intents
 
+> **Superseded as to status — see `autonomy-plan-v2.md` §1.4 C6.** The diagnosis
+> below is right and is retained; what changed is that R3 is **no longer a
+> backlog item**. It is a shipping prerequisite (v2 Phase 2). A polarity bug
+> gives the same wrong answer on every form that asks — at 3 applications an
+> embarrassment, at 999 one systematic misstatement signed hundreds of times in
+> the user's name. Do not schedule this as optional.
+
 770 lines, nine ordered resolution tiers, a `CONCEPTS` guard, a polarity guard,
 and a known prefix bug that upgrades a banked `Yes` into `Yes, 5+ years
 professionally`. Every bug has been fixed by adding another guard on top.
@@ -475,6 +492,14 @@ lost-update hazard **by construction** rather than by the Phase 3 lock, and make
 concurrent agents safe rather than serialised.
 
 ### R6 — Split `CLAUDE.md`
+
+> **Superseded as to placement — see `autonomy-plan-v2.md` §1.4 C5.** The work
+> below is still worth doing and the reasoning still holds; it is **off the
+> autonomy critical path**. The runner has no model in it by construction, so
+> this is a developer-session cost, not a runner cost. Do not sequence autonomy
+> work behind it. (Note the collision: "R6" in this section is the CLAUDE.md
+> split; "R6" elsewhere in this file — lines about verify-claims — is a
+> different R6, the truthfulness control.)
 
 ~500 lines, re-read on every turn of every session. It is a standing latency and
 cost tax on everything, including this build. Keep a short operational core;
@@ -677,6 +702,14 @@ explicit `auth-sync.mjs` that refuses while either browser is live.
 `scripts/auto/register-task.ps1`, **run once by you** — creating a standing
 scheduled task is yours to authorise, not mine to install.
 
+> **Superseded for the time limit and the one-invocation-is-one-campaign model
+> — see `autonomy-plan-v2.md` §1.4 C3.** Sleep, a Chromium crash and a scheduler
+> kill all produce the same need, and a longer `-ExecutionTimeLimit` covers one
+> of the three. Do not tune the number; the shape is wrong. Replaced by
+> resumability from a durable ledger (v2 Phase 1 and §4.5). The rest of this
+> section — Interactive logon and the S4U/DPAPI reasoning, and the `find-jobs.mjs`
+> lock — is **not** superseded and is still the reason those choices were made.
+
 `-StartWhenAvailable` (covers sleep), `-MultipleInstances IgnoreNew`,
 `-ExecutionTimeLimit 01:00`, **Interactive logon**. Interactive is deliberate:
 "run whether logged on or not" needs a stored password or S4U, and under S4U
@@ -692,6 +725,15 @@ Results without a session: `jobs/.auto/runs/<runid>.jsonl` (append-only),
 `jobs/.auto/INBOX.md` (human-readable), a Windows toast, and a heartbeat in
 `status.mjs` that **warns when the last run is over 26h old** — the silent no-op
 is the failure nobody notices.
+
+> **Superseded — see `autonomy-plan-v2.md` §1.4 C4.** Read the sentence above
+> as an intention that was never built, because it was written in the indicative
+> and got believed instead: `git show 9e0a159:scripts/status.mjs | grep -c
+"auto_runs\|INBOX"` returns `0`, and `INBOX_PATH` (`scripts/auto/guard.mjs:76`)
+> has zero writers and zero readers. It is also the wrong statistic — once runs
+> are resumable and frequent, a run that starts, fails at job 1 and exits is
+> indistinguishable from a healthy one under a recency test. Replaced by a
+> **progress** digest, v2 Phase 4.
 
 ### 3.3 Tier classifier — a module, not a stage
 
@@ -812,6 +854,17 @@ confirmation, or a `submitReadiness` failure after a green classification.
 Self-disabling on anomaly is the real rollback, because an application cannot be
 unsent.
 
+> **Superseded for the anomaly list — see `autonomy-plan-v2.md` §1.4 C2 and
+> C13.** The kill switch itself stands; its **triggers** do not. "Two job
+> failures" is a count-based breaker, and at a 5% per-job failure rate `P(halt)`
+> is 0.49% at N=3 and 90.79% at N=999 — arithmetically a volume throttle, which
+> the user's unlimited-volume decision rejects. "A post-submit page that isn't a
+> confirmation" is worse than useless at volume: Greenhouse's Invisible
+> reCAPTCHA can dismiss a Playwright-driven submission outright, so that page is
+> an **expected environmental outcome**, not proof of malfunction. Replaced by
+> the correlation-keyed breaker (v2 §4.6) plus the typed `bot-challenge` and
+> `email-code-challenge` deferrals. Do not re-implement either trigger.
+
 New `auto_runs` table (`CREATE TABLE IF NOT EXISTS`, no migration — the schema is
 flat by design), mirrored to JSONL because the DB is gitignored. Each `submitted`
 row carries the plan sha256, the full verify block, which consent labels were
@@ -880,6 +933,13 @@ in a position to type a government ID into a form.
 > This is a boundary, not a proof.
 
 ### 3.5 The honest limitation
+
+> **Superseded — see `autonomy-plan-v2.md` §1.4 C1.** The premise below is
+> false, not merely outdated: `buildFactIndex` already stores ready bullet text
+> per fact id and `buildPlan` already computes term selection deterministically,
+> so the model's remaining contribution to a résumé is **rephrasing**. Do not
+> build the sweep-then-apply-what's-prepped loop this section describes.
+> Replaced by Phase 3 of v2 (deterministic document assembly).
 
 **The runner cannot tailor** — tailoring needs a model. So the 12h loop is
 _sweep, then apply to what's already prepped._ A fresh lead reaches green via an
@@ -1125,7 +1185,18 @@ Exits 1 if any lead became newly rejected.
 4. **Half-filled abandoned applications** on multi-page forms where a later page
    asks something the fact base can't answer. Recorded and notified. This is the
    ugliest accepted failure mode.
+
+   > **Superseded — see `autonomy-plan-v2.md` §1.4 C7.** No longer an accepted
+   > cost. At 999 attempts with a 5% multi-page defer rate that is ~50 partial
+   > records under the user's name in employers' ATSs — the one reputational
+   > cost that scales linearly through the **defer** path, not the submit path.
+   > Replaced by v2 Phase 5 W3.
+
 5. **Chromium profile corruption** losing your ATS logins. Controlled by
    separate user-data-dirs and a sync that refuses while either is running.
 6. **Silent no-op** — the task never fires and you believe it's working.
    Controlled by the 26h staleness warning in `status.mjs`.
+
+   > **Superseded — see `autonomy-plan-v2.md` §1.4 C4.** This control does not
+   > exist and never did; the sentence describes an intention. The risk is real
+   > and currently **uncontrolled**. Replaced by a progress digest, v2 Phase 4.

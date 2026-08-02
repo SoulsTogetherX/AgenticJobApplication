@@ -22,14 +22,45 @@
 
 ### 5.2 From the codebase
 
-| Deleted                                                                         | Where                        | Reason                                                                                                                                                                                                              |
-| ------------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AUTO_RUN_LOCK`                                                                 | `lock.mjs:176`               | Zero callers (verified) **and the wrong shape** — a single global run mutex is what a worker pool must not have. Leaving it invites someone to "complete" it into the thing that caps concurrency at 1. Extends R8. |
-| The file-existence `hasVerifiedResume` block                                    | `automatability.mjs:454-473` | Makes any `resume.md` on disk green, verified or not. A rule-1 hole reachable by accident, on the auto path.                                                                                                        |
-| `auto_runs`' `planned` / `deferred` / `failed` counters                         | `db.mjs:189-204`             | Counters with no rows behind them — a database with no source of truth. Derived from `auto_queue`.                                                                                                                  |
-| `auto_submissions` `PRIMARY KEY (run_id, slug)` and its `ON CONFLICT DO UPDATE` | `db.mjs:232-246`, `785-813`  | Backwards for a row whose job is to be a claim. Replaced by `(slug, mode)` + `DO NOTHING`.                                                                                                                          |
-| `auth-sync`'s `SKIP_DIRS` denylist                                              | `auth-sync.mjs:119-141`      | An allowlist costs the same and removes the class.                                                                                                                                                                  |
-| The dead consent-allowlist grant branch                                         | in flight                    | Already landing. Dead code is a lie about intent.                                                                                                                                                                   |
+Status column added 2026-08-02 (`doc-scribe`), verified against the tree at
+`d2a1dcf` rather than against a report. A row saying **DONE** means the code is
+gone now, not that a plan says it should be.
+
+| Deleted                                                                         | Where                                       | Status                      | Reason                                                                                                                                                                                                              |
+| ------------------------------------------------------------------------------- | ------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTO_RUN_LOCK`                                                                 | `lock.mjs:176`                              | **pending** — still there   | Zero callers (verified) **and the wrong shape** — a single global run mutex is what a worker pool must not have. Leaving it invites someone to "complete" it into the thing that caps concurrency at 1. Extends R8. |
+| The file-existence `hasVerifiedResume` block                                    | was `automatability.mjs:454-473`            | **DONE** — `d2a1dcf`        | Made any `resume.md` on disk green, verified or not. A rule-1 hole reachable by accident, on the auto path. Replaced by `lib/verification.mjs` + the `verifications` table; see below for what it cost.             |
+| `auto_runs`' `planned` / `deferred` / `failed` counters                         | `db.mjs` — the `auto_runs` CREATE TABLE     | **pending** — still there   | Counters with no rows behind them — a database with no source of truth. Derived from `auto_queue`.                                                                                                                  |
+| `auto_submissions` `PRIMARY KEY (run_id, slug)` and its `ON CONFLICT DO UPDATE` | `db.mjs`                                    | **DONE** — `d2a1dcf`        | Backwards for a row whose job is to be a claim. Now `(slug, mode)` + `DO NOTHING` for the claim, with a separate `DO UPDATE` acknowledgement that must never be dropped.                                            |
+| `auth-sync`'s `SKIP_DIRS` denylist                                              | `scripts/apply/auth-sync.mjs` (not `auto/`) | **DONE** — `COPY_ALLOWLIST` | An allowlist costs the same and removes the class.                                                                                                                                                                  |
+| The dead consent-allowlist grant branch                                         | `automatability.mjs:38-42` records why      | **DONE**                    | Superseded: its three supposedly independent controls all read one string the attacker chose. Nothing auto-ticks consent on any path. Dead code is a lie about intent.                                              |
+
+**What deleting the file-existence heuristic cost, and what it then gave back.**
+Three readings of the live tier counts, in order:
+
+| when                             | counts                                        |
+| -------------------------------- | --------------------------------------------- |
+| before the deletion              | `1 handoff / 145 blocked / 3 amber / 0 green` |
+| immediately after the deletion   | `1 handoff / 148 blocked / 0 amber / 0 green` |
+| after `verify-claims` was re-run | `1 handoff / 145 blocked / 3 amber / 0 green` |
+
+The middle reading is the one that looks like a regression and is not. Those
+three leads were amber **only because a `resume.md` existed** in their
+workspace — none had ever been verified, so the old classifier was reporting the
+presence of a file as evidence about its contents. Deleting the heuristic left
+seven `jobs/<slug>/resume.md` files with no verification row.
+
+All seven have since been verified (`verifications` holds seven `mode=resume`,
+`verdict=pass` rows written 2026-08-02T20:17–20:18Z, each matching the bytes on
+disk and the current `profile_sha256`), so the counts have returned to where they
+started — **but they now mean something.** Re-checked by running
+`node scripts/apply/automatability.mjs --json` against the live store, not read
+off a report: the three amber leads are amber for form-shape reasons ("no
+remembered form shape for this board", "generic ATS — no adapter"), having
+already cleared the verification gate on a real verdict.
+
+`0 green` was true before all of this and is unrelated: no real form can be green
+while consent boxes and checkbox/radio groups defer unconditionally.
 
 ### 5.3 Never build
 

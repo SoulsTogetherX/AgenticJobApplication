@@ -146,9 +146,13 @@ Four things that cause a **mistake** if you do not know them:
 - **`jobs/leads.db` is the store of record**; `profile/applications.yaml` is a
   **generated export** — the recovery input, not the record. There is no
   standing `jobs/leads.json`.
-- **The `documents` table has no on-disk source.** `migrate.mjs` rebuilds every
-  other table and never that one, so backing it up means copying `leads.db`
-  itself. The schema is flat — no version table, no migration chain.
+- **The `documents` table has no on-disk source**, so backing it up means
+  copying `leads.db` itself. `migrate.mjs` re-imports only `leads`,
+  `lead_keywords` and `applications`; it never touches `documents`,
+  `auto_submissions` or
+  `verifications`, and for `auto_queue` it can only create the table or clear it
+  (`--reset-queue`, refused while any click is unaccounted for). The schema is
+  flat — no version table, no migration chain.
 - **`profile/` and `.env` never leave this machine.** Gitignored, user-owned;
   tests use `tests/fixtures/`, and `.env` contents never go into chat or commits.
 - **The guardrails have two owners.** `scripts/hooks/*` is `ci-engineer`'s and
@@ -224,12 +228,19 @@ reasoning, and the reasoning is what stops you re-introducing the bug — so
 - `answers.yaml` question text is **not** evidence — use `evidenceText()`.
 - A fuzzy yes/no match can return the right concept with the **wrong truth
   value** ("authorized to work _without_ sponsorship"). Defer, never auto-invert.
+- `auto_submissions` is keyed **`(slug, mode)`** — `(run_id, slug)` let one slug
+  be submitted once per run, `(slug)` alone lets a dry run eat the live claim.
+- A **0** from `claimAutoJob`/`recordAutoSubmission` means another worker owns
+  the slug and this one must not click. Not an error; the normal fan-out result.
 
 ### B. Mechanical — these bite any agent, in any area
 
 - `node --test <dir>` does not recurse on Node 24; the quoted glob does.
-- **A parse is not a run** — `node --check` passes on a scope error.
+- **A parse is not a run** — `node --check` passes on a scope error, and a **NUL
+  byte** passes both prettier and `--check`; only a byte scan finds it.
 - `db.mjs`'s `SCHEMA` is a template literal; a backtick in its SQL ends it.
+- SQLite permits **NULLs in a non-INTEGER primary key's columns**, so a nullable
+  key column silently un-enforces the key (`auto_submissions.mode`).
 - `openDb` sets `busy_timeout` **before** `journal_mode = WAL`. Do not reorder.
 - `.prettierignore` entries are contracts: `scan-page.js`, `scan.driver.mjs`,
   `docs/job-sources.yaml`.

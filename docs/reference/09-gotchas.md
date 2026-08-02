@@ -58,6 +58,25 @@ fact base (hard rule 2), so the failure mode was "the user cannot record an
 answer at all". Run the thing, or run its test file. A green `--check` is not
 evidence the module loads.
 
+### A NUL byte survives BOTH prettier and `node --check`
+
+The same lesson as the entry above, with a different pair of tools. During Phase
+1 (`d2a1dcf`) a `\0` got into `scripts/lib/db.mjs` **inside the `SCHEMA` template
+literal**. Prettier reformatted the file without complaint and `node --check`
+reported it as valid. It was found by a byte scan, which is the only thing that
+was ever going to find it:
+
+```bash
+node -e "console.log(require('fs').readFileSync(process.argv[1]).includes(0))" scripts/lib/db.mjs
+```
+
+Two tools agreeing a file is fine is not two pieces of evidence when neither tool
+looks for the thing that is wrong. A formatter checks shape and a parser checks
+grammar; a NUL is legal in a string literal to both, and the damage lands
+somewhere downstream — inside SQL, in this case, where the schema is executed
+rather than parsed. If a file behaves strangely and looks correct, scan its
+bytes before rereading it a third time.
+
 ### The Playwright MCP browser profile holds real session cookies
 
 `--user-data-dir .playwright-mcp/profile` in `.mcp.json` keeps ATS logins alive
@@ -408,3 +427,45 @@ lock, so with the pragmas the other way round, **four processes opening the
 store at once have three die** on the WAL statement itself — before the timeout
 they were about to set could apply. This is what makes the pipeline's subagent
 fan-out safe. Do not reorder these two lines.
+
+### SQLite permits NULLs in the columns of a non-INTEGER primary key
+
+This is not a bug in SQLite and it will not warn you. Only `INTEGER PRIMARY KEY`
+(the rowid alias) is implicitly `NOT NULL`; in every other primary key a NULL
+column is allowed, and **a NULL conflicts with nothing**. So the key silently
+stops being enforced for exactly the rows that have one.
+
+`auto_submissions` is keyed `(slug, mode)` and that row's whole job is to be a
+**claim** — `ON CONFLICT DO NOTHING` returning 0 changes is what tells a worker
+another worker owns this slug and it must not click. Had `mode` stayed nullable,
+a NULL-mode row would have conflicted with nothing, so an unlimited number of
+un-refusable duplicates could be inserted for one slug — and the rows that would
+have had a NULL mode are the **legacy** ones written before the column existed,
+i.e. precisely the rows the new key most needed to constrain. It is
+`mode TEXT NOT NULL DEFAULT 'live'`, the rebuild in `healAutoSubmissions` maps a
+legacy NULL to `'live'`, and every write in `db.mjs` coalesces a missing mode to
+`'live'`: nothing that reached this ledger without saying it was a rehearsal gets
+the benefit of the doubt.
+
+Before you add a composite primary key to a text-keyed table, ask which of its
+columns can be NULL, because that is the column the key will not enforce.
+
+### `auto_submissions` is keyed `(slug, mode)` — not `(slug)`, not `(run_id, slug)`
+
+Both of the alternatives have been tried and both are wrong in opposite
+directions, so do not "simplify" this back.
+
+- `(run_id, slug)` let the same slug be submitted **once per run** with no
+  conflict at all — backwards for a row whose job is to refuse a duplicate. The
+  ledger could not stop a second application to the same posting tomorrow.
+- `(slug)` alone breaks the rehearsal. Dry-run rows live in this same table on
+  purpose, so their cap arithmetic is the same code a live run uses; under a
+  bare `slug` key a dry run would **pre-consume the live claim forever**, and the
+  first real run after the user enables auto-apply would find every slug taken.
+
+The migration to the current key is a table rebuild (a primary key cannot be
+changed with `ALTER TABLE`), and it loses no row: when two legacy rows collide on
+the new key, the survivor is the one that most represents a real submission and
+the loser is carried verbatim into the survivor's `doc` under `superseded`. What
+a user needs when withdrawing an application is the record of it, not a tidy
+table.

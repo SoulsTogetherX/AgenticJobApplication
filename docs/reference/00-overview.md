@@ -95,23 +95,32 @@ store's lifecycle. `scripts/hooks/` + `.claude/hooks/` enforce the guardrails.
 This is the single most important table in the project. Confusing these is how
 data gets lost.
 
-| Location                          | Owner                                              | Authoritative?      | Recoverable if deleted?                                  |
-| --------------------------------- | -------------------------------------------------- | ------------------- | -------------------------------------------------------- |
-| `profile/profile.yaml`            | **the user**, by hand                              | yes — the fact base | **no** (gitignored, no backup but `profile.backup.yaml`) |
-| `profile/answers.yaml`            | the user; agent appends via `save-answer.mjs` only | yes                 | **no**                                                   |
-| `profile/applications.yaml`       | generated                                          | **no** — an export  | yes, from the db                                         |
-| `jobs/leads.db` → `leads`         | scripts                                            | yes, once it exists | yes — re-run a sweep                                     |
-| `jobs/leads.db` → `applications`  | `log-application.mjs` after the user confirms      | **yes**             | from `applications.yaml`                                 |
-| `jobs/leads.db` → `documents`     | `archive.mjs`                                      | **yes**             | **no** — see below                                       |
-| `jobs/leads.db` → `lead_keywords` | derived at ingest                                  | no                  | yes — `migrate.mjs`                                      |
-| `jobs/leads.db` → `screens`       | `screen.mjs`                                       | history only        | no, but cheap to redo                                    |
-| `jobs/leads.db` → `board_stats`   | `find-jobs.mjs` sweep                              | no                  | yes                                                      |
-| `jobs/<slug>/`                    | scripts + the tailoring model                      | yes while live      | via `archive.mjs restore`                                |
-| `jobs/.field-cache.json`          | `fill-plan.mjs`                                    | no — a cache        | yes, by re-scanning                                      |
+| Location                             | Owner                                              | Authoritative?                     | Recoverable if deleted?                                                      |
+| ------------------------------------ | -------------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
+| `profile/profile.yaml`               | **the user**, by hand                              | yes — the fact base                | **no** (gitignored, no backup but `profile.backup.yaml`)                     |
+| `profile/answers.yaml`               | the user; agent appends via `save-answer.mjs` only | yes                                | **no**                                                                       |
+| `profile/applications.yaml`          | generated                                          | **no** — an export                 | yes, from the db                                                             |
+| `jobs/leads.db` → `leads`            | scripts                                            | yes, once it exists                | yes — re-run a sweep                                                         |
+| `jobs/leads.db` → `applications`     | `log-application.mjs` after the user confirms      | **yes**                            | from `applications.yaml`                                                     |
+| `jobs/leads.db` → `documents`        | `archive.mjs`                                      | **yes**                            | **no** — see below                                                           |
+| `jobs/leads.db` → `lead_keywords`    | derived at ingest                                  | no                                 | yes — `migrate.mjs`                                                          |
+| `jobs/leads.db` → `screens`          | `screen.mjs`                                       | history only                       | no, but cheap to redo                                                        |
+| `jobs/leads.db` → `board_stats`      | `find-jobs.mjs` sweep                              | no                                 | yes                                                                          |
+| `jobs/leads.db` → `auto_runs`        | the runner                                         | no — a query copy                  | yes — `jobs/.auto/runs/*.jsonl` is the surviving copy                        |
+| `jobs/leads.db` → `auto_submissions` | the runner, **before** each click                  | **yes** — the ledger and the claim | **no** — an application cannot be unsent                                     |
+| `jobs/leads.db` → `auto_queue`       | the runner                                         | yes, while a run is live           | no — it is run state; `migrate --reset-queue` clears it, nothing rebuilds it |
+| `jobs/<slug>/`                       | scripts + the tailoring model                      | yes while live                     | via `archive.mjs restore`                                                    |
+| `jobs/leads.db` → `verifications`    | `verify-claims.mjs`                                | **yes** — what "verified" means    | yes, by re-running `verify-claims`                                           |
+| `jobs/.field-cache.json`             | `fill-plan.mjs`                                    | no — a cache                       | yes, by re-scanning                                                          |
 
-**The one thing with no second copy** is the `documents` table. Once a workspace
-directory is folded into it and removed, the only backup is a copy of
+**The one thing with no second copy anywhere** is the `documents` table. Once a
+workspace directory is folded into it and removed, the only backup is a copy of
 `jobs/leads.db` itself. `migrate.mjs` deliberately never touches that table.
+
+`auto_submissions` is the other row to be careful with, for a different reason:
+it _can_ be re-created, but its contents cannot be re-derived — a deleted
+submission row is an application the pipeline no longer knows it sent, and the
+caps will let it send another. `migrate.mjs` never touches it either.
 
 ## The truthfulness chain, in order
 
@@ -203,7 +212,10 @@ re-derivable — except `documents`, which is why that table is fenced off.
   both tailoring skills, so they stay consistent), `resume.md`,
   `cover-letter.md`, PDFs.
 - `jobs/leads.db` — the SQLite store of record (gitignored): `leads`,
-  `lead_keywords`, `applications`, `documents`, `screens`, `board_stats`.
+  `lead_keywords`, `applications`, `documents`, `screens`, `board_stats`,
+  `auto_runs`, `auto_submissions`, `auto_queue`, `verifications`. The last two
+  arrived with Phase 1 (`d2a1dcf`); see
+  [02-lib.md](02-lib.md#the-ten-tables).
 - `scripts/` — deterministic helpers, no LLM calls, grouped by domain: `lib/`
   (`db.mjs`, `keywords.mjs` — the one lexicon, `untrusted.mjs` — hard rule 0),
   `leads/`, `applications/`, `documents/`, `apply/` (incl. the Playwright-side

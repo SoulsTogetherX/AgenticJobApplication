@@ -759,6 +759,23 @@ after the live scan, plus a new `submitReadiness()` requiring zero failures,
 zero verify mismatches, zero required-empty, zero defers, and a `submit`-role
 button. Two independent keys.
 
+> **Update, `d2a1dcf` (Phase 1) — what "no verified resume" now means, and what
+> tightening it did to the counts.** `blocked`'s verified-resume test used to be
+> `fs.existsSync(jobs/<slug>/resume.md)`. It is now a **passing `verifications`
+> row whose `doc_sha256` matches the file on disk and whose `profile_sha256`
+> matches the current fact base** (`scripts/lib/verification.mjs`).
+>
+> The live counts moved `1 handoff / 145 blocked / 3 amber / 0 green` →
+> `1 handoff / 148 blocked / 0 amber / 0 green` the moment the heuristic went.
+> **That was the hole closing, not a regression** — those three leads were amber
+> only because a file existed, and none had been verified. `verify-claims` has
+> since been re-run over all seven affected workspaces, so the counts are back to
+> `145 / 3` and now rest on seven passing verification rows. Full account, with
+> how it was re-checked: [autonomy/05-deleting.md](autonomy/05-deleting.md) §5.2.
+>
+> `0 green` was the count before, during and after — no real form can be green
+> while consent boxes and checkbox/radio groups defer unconditionally.
+
 **The consent blocker.** `isConsent()` defers unconditionally, so no real form
 can ever be green. Fix: `auto_apply.consent_allowlist` in
 `application-limits.yaml`, matched on **exact normalized labels you typed

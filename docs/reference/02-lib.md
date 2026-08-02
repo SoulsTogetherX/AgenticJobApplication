@@ -1,10 +1,17 @@
 # 02 — `scripts/lib/`: the shared foundation
 
-Four files. Everything else in the project imports from here.
+Six files. Everything else in the project imports from here.
+
+`lib.mjs`, `db.mjs`, `keywords.mjs`, `untrusted.mjs` and `verification.mjs` have
+sections below. **`lock.mjs` (487 lines) has none yet** — read its header
+comment, which is the account: single-flight advisory file locking whose whole
+mechanism is `fs.openSync(path, "wx")`, written because six concurrent
+`save-answer.mjs` writers lost 1–3 of 6 answers in four trials out of five and
+_every process exited 0_.
 
 ---
 
-## `scripts/lib/lib.mjs` (480 lines)
+## `scripts/lib/lib.mjs` (485 lines)
 
 The general-purpose toolbox. Pure and deterministic — no LLM, and the only I/O is
 `fetch` and reading files.
@@ -159,7 +166,7 @@ These mirror `schemas/job.schema.json` and `schemas/context.schema.json` in code
 
 ---
 
-## `scripts/lib/db.mjs` (651 lines)
+## `scripts/lib/db.mjs` (1650 lines)
 
 Storage. The whole schema, in one `CREATE TABLE IF NOT EXISTS` string.
 
@@ -173,16 +180,27 @@ The `ExperimentalWarning` node emits on first use is suppressed — and _only_ t
 one warning, by wrapping `process.emitWarning`. These scripts are parsed by agents
 from stdout/stderr, so a warning on every invocation is real noise.
 
-### The six tables
+### The ten tables
 
-| table           | key                  | holds                                                                                        |
-| --------------- | -------------------- | -------------------------------------------------------------------------------------------- |
-| `leads`         | `id`                 | `doc` = the whole lead verbatim; `status/company/title/posted_at` denormalized for indexing  |
-| `lead_keywords` | `(lead_id, keyword)` | tech terms extracted at ingest. A separate table so the interesting question is a `GROUP BY` |
-| `applications`  | `slug`               | `doc` = the whole application verbatim                                                       |
-| `screens`       | `(lead_id, source)`  | latest verdict per lead **per source**                                                       |
-| `documents`     | `(slug, name)`       | one row per FILE of an archived workspace, exact bytes                                       |
-| `board_stats`   | `board_id`           | sweep productivity over time                                                                 |
+| table              | key                        | holds                                                                                        |
+| ------------------ | -------------------------- | -------------------------------------------------------------------------------------------- |
+| `leads`            | `id`                       | `doc` = the whole lead verbatim; `status/company/title/posted_at` denormalized for indexing  |
+| `lead_keywords`    | `(lead_id, keyword)`       | tech terms extracted at ingest. A separate table so the interesting question is a `GROUP BY` |
+| `applications`     | `slug`                     | `doc` = the whole application verbatim                                                       |
+| `screens`          | `(lead_id, source)`        | latest verdict per lead **per source**                                                       |
+| `documents`        | `(slug, name)`             | one row per FILE of an archived workspace, exact bytes                                       |
+| `board_stats`      | `board_id`                 | sweep productivity over time                                                                 |
+| `auto_runs`        | `run_id`                   | one row per unattended run; the queryable **second** copy of `jobs/.auto/runs/*.jsonl`       |
+| `auto_submissions` | `(slug, mode)`             | the submit ledger the blast-radius caps count from — and the claim on a slug                 |
+| `auto_queue`       | `slug`                     | per-application run state, so a kill at #437 of 999 resumes by reading a row                 |
+| `verifications`    | `(slug, mode, doc_sha256)` | what `verify-claims` decided, pinned to the bytes AND the fact base it decided about         |
+
+The last four arrived with the auto path; `auto_queue` and `verifications`
+landed in `d2a1dcf` (Phase 1). **Neither has an on-disk source, for opposite
+reasons** — `auto_queue` is run state nothing outside the database ever held, so
+`migrate.mjs` can only create it and (with `--reset-queue`) clear it, never
+re-import it; `verifications` is a verdict, and re-deriving one means re-running
+`verify-claims`, not copying a file.
 
 **`screens.source` is the whole point of that table.** The mechanical screen is
 regex over stored text and costs ~125 ms for the entire store, so caching it
@@ -273,9 +291,125 @@ never pulls a megabyte of PDFs into memory to count them.
 update clause never runs and a productive board was being recorded as never having
 yielded.
 
+`updateApplication` opens `BEGIN IMMEDIATE`, and the word IMMEDIATE is the point.
+It is a read-modify-write, and SQLite's default DEFERRED transaction takes no
+write lock until its first write — so two of them both read, both merge onto the
+same base, and the second write discards the first patch. During a multi-hour
+unattended run the discarded patch is the user recording an interview by hand,
+which nothing else in the system can reconstruct.
+
+### The auto ledger and the queue — where "0" means "do not click"
+
+```js
+recordAutoSubmission(db, sub, retry) // THE CLAIM        → 1 = mine, 0 = someone else's
+acknowledgeAutoSubmission(db, sub) // THE ACKNOWLEDGEMENT → never dropped
+readAutoSubmission(db, slug, mode) // the row a refused claim collided with
+countAutoSubmissions / readAttemptsForRun / readOrphanAttempts
+withBusyRetry(fn, { attempts, backoffMs }) // bounded SQLITE_BUSY retry
+enqueueAutoJobs(db, jobs) / claimAutoJob(db, slug, opts) // → rows changed
+setAutoJobState(db, slug, state, opts) / readAutoQueue / autoQueueCounts
+readResumableAutoJobs / readStrandedAutoJobs / releaseStaleAutoClaims
+AUTO_QUEUE_STATES / AUTO_QUEUE_TERMINAL / AUTO_QUEUE_RESUMABLE
+```
+
+**A return of `0` from `claimAutoJob` or `recordAutoSubmission` is not an error.**
+It means _another worker owns this slug and this caller must not click_, and in a
+fan-out it is the ordinary outcome for **every worker but one** — the loser just
+returns. Both are a single `INSERT … ON CONFLICT`, so two workers racing one slug
+cannot both win; treating a zero as a failure to retry is how a slug gets applied
+to twice.
+
+The two write paths are deliberately opposite. A **claim** must refuse a slug
+someone already holds, so it is `DO NOTHING`; an **acknowledgement** must never be
+dropped, because an application cannot be unsent, so it is `DO UPDATE`. When they
+were one function under `DO NOTHING`, the second of the two writes per application
+vanished silently — the crash-invisible state the ledger exists to prevent.
+
+`claimAutoJob`'s conflict clause fires only for a row still in `queued`; every
+other state degrades to a plain `DO NOTHING`, which is what makes "0 changes" mean
+one unambiguous thing while still allowing a pre-planned queue to exist.
+`releaseStaleAutoClaims` returns a dead worker's `claimed/planned/authorized` rows
+to the pool after a lease, and **never touches `attempted`**: that click may
+already be an application, so it belongs to a human and the orphan-attempt brake,
+never to an automatic retry.
+
+### Verifications — a row, not a file on disk
+
+```js
+recordVerification(db, v) // upsert, keyed (slug, mode, doc_sha256)
+hasPassingVerification(db, { slug, mode, doc_sha256, profile_sha256 })
+readVerifications(db, slug)
+VERIFY_MODES // 'resume' | 'cover-letter'
+```
+
+`hasPassingVerification` compares **both** hashes and requires both. A row that
+matches `doc_sha256` alone says the document is unchanged but the facts behind it
+are not the ones it was checked against — a verdict about a corpus that no longer
+exists, which is not verification. `recordVerification` throws rather than storing
+a row missing either hash, because such a row is not evidence of anything.
+
 > **Gotcha:** `SCHEMA` is a template literal, so a backtick anywhere in its SQL
 > comments ends the string and the file stops parsing. Quote identifiers in those
-> comments with plain words.
+> comments with plain words. A **NUL byte** in it is worse — see
+> [09-gotchas.md](09-gotchas.md).
+
+---
+
+## `scripts/lib/verification.mjs` (220 lines)
+
+_Added 2026-08-02, commit `d2a1dcf` (Phase 1)._ **What "verified" means, in one
+place.**
+
+```js
+sha256File(file) // → hex, or null when it does not exist
+factBaseSha256({ profilePath, answersPath })
+slugForDocument(file, { jobsDir }) // → slug, or null
+verificationIdentity(file, opts) // → { slug, doc_sha256, profile_sha256 } | null
+hasVerifiedResume(db, slug, { hasPassing, … }) // → boolean
+verifiedResumeUrls(db, { hasPassing, … }) // → Map<apply_url, slug>
+```
+
+**The hole this closed.** Until this landed, the only evidence that a tailored
+document had passed `verify-claims` was that the file existed:
+`automatability.mjs` walked `jobs/*/` and treated any workspace holding a
+`resume.md` as verified. A draft nobody had checked, one checked and then edited,
+and one checked against a fact base the user has since rewritten all read as
+"verified" — on the path that decides whether an application may be sent
+unattended. That is a hard-rule-1 hole reachable by accident. The heuristic is
+deleted, not fixed; see [docs/autonomy/05-deleting.md](../autonomy/05-deleting.md)
+for what deleting it cost.
+
+**`factBaseSha256()` is the single function both sides use, and that is the whole
+point of the module.** `verify-claims.mjs` writes the row and
+`automatability.mjs` reads it; if the writer and the reader hashed the fact base
+differently they would agree on nothing, and the failure would be silent and
+**open** — "no matching row" reads exactly like "never verified", so a hashing
+mismatch would look like a conservative refusal right up until someone "fixed" it
+by loosening the comparison.
+
+It covers `profile.yaml` **and** `answers.yaml` — an answer can be the sole
+support for a claim, so a change there must invalidate too — hashed as raw bytes,
+named and combined in a fixed order so a byte moving between the two files
+changes the digest. A missing file contributes the literal `-` rather than
+throwing, so an absent `answers.yaml` produces a different digest from an empty
+one.
+
+Two deliberate refusals rather than defaults:
+
+- `hasVerifiedResume` and `verifiedResumeUrls` **require** db.mjs's
+  `hasPassingVerification` to be injected. The injection keeps `node:sqlite` out
+  of `verify-claims.mjs` when the document is not in a workspace; the _refusal_
+  exists because the only possible default is "no check", and a verifier that
+  defaults to no check fails open.
+- `slugForDocument` returns a slug only for a file sitting directly in
+  `<jobs>/<slug>/`. That is what keeps rows out of the store when a test (or
+  anyone) verifies a fixture, and it means a row can never exist for a slug with
+  no workspace.
+
+`verifiedResumeUrls` walks the verification **rows** and asks whether the bytes
+they vouch for are still on disk — not the directories, asking whether a resume
+is present. **The direction of the walk is the fix:** a workspace with no row is
+never reached, which is exactly the case that used to pass.
 
 ---
 
@@ -363,7 +497,7 @@ the pairs it was trying to catch.
 
 ---
 
-## `scripts/lib/untrusted.mjs` (1177 lines)
+## `scripts/lib/untrusted.mjs` (1938 lines)
 
 > **Rewritten 2026-07-31** (commit `859ef9b`, `w1-security`). Everything this
 > section said before that — 171 lines, 8 patterns, a `sample` field, and a

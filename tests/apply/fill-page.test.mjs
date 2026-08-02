@@ -183,10 +183,21 @@ function fakePage({ url = "https://ats.test/apply", elements = {} } = {}) {
       // the attribute name — a fake that confused them would answer the
       // readback with the stamp's own answer and hide a misroute.
       if (src.includes("data-ajup") && src.includes("setAttribute")) {
-        log.push(["stampTrigger", arg.pattern, arg.tag])
-        return elements[`[data-ajup="${arg.tag}"]`] !== undefined
-          ? { ok: true, how: "label", depth: 2, target: arg.tag }
-          : { ok: false, inputs: 0, free: 0 }
+        // One routine, two callers: the dry set-level pass (commit false,
+        // writes nothing) and the real per-item stamp. They are logged apart
+        // so a test can assert that the dry pass did not attach anything.
+        const specs = (arg && arg.specs) || []
+        for (const s of specs)
+          log.push([arg.commit ? "stampTrigger" : "stampDry", s.pattern, s.tag])
+        // `free: 1` because this fake models one input per pattern — each tag
+        // has its own entry in `elements`. It therefore cannot exercise the
+        // ambiguous (free >= 2) path at all; that is the real-DOM tests' job,
+        // and saying so here beats a fake quietly asserting non-ambiguity.
+        return specs.map((s) =>
+          elements[`[data-ajup="${s.tag}"]`] !== undefined
+            ? { ok: true, how: "label", depth: 2, target: s.tag, free: 1 }
+            : { ok: false, inputs: 0, free: 0 },
+        )
       }
       if (src.includes("data-ajup")) {
         log.push(["uploadReadback"])
@@ -598,11 +609,16 @@ test("a shared container is not evidence for either input", async () => {
 test("an input that already holds a file is never stamped again", async () => {
   // A stamp is a CLAIM on an input. The resume input carried u1 and the second
   // pass overwrote it with u2, because nothing excluded an input that was
-  // already spoken for. Here NEITHER pattern matches anything, so both items
-  // take the fallback — and the fallback must walk forward, not clobber.
+  // already spoken for.
+  //
+  // The resume slot IS labelled here and the second slot is not, which is the
+  // only shape where the positional fallback still runs (see the ambiguity
+  // tests below): once /resume/ has taken its input there is exactly ONE left
+  // awaiting a file, so placing the second is forced rather than guessed. The
+  // fallback must walk forward to it, not clobber the one already filled.
   const page = domPage(`<html><body><form>
-      <div><label>Upload one</label><input type="file" id="a" /></div>
-      <div><label>Upload two</label><input type="file" id="b" /></div>
+      <div><label>Resume</label><input type="file" id="a" /></div>
+      <div><label>Attach</label><input type="file" id="b" /></div>
     </form></body></html>`)
   const out = await fillPage(
     page,
@@ -621,10 +637,133 @@ test("an input that already holds a file is never stamped again", async () => {
     { id: "b", ajup: "u2", files: ["cover-letter.pdf"] },
   ])
   assert.equal(out.failed, 0)
+  assert.deepEqual(plain(out.uploads.map((u) => [u.how, u.free ?? null])), [
+    ["label", null],
+    // free: 1 — one slot left, so the placement was forced, not chosen. That
+    // number is what separates this from the refusal cases below, so the
+    // report has to carry it rather than leave `how: "order"` ambiguous.
+    ["order", 1],
+  ])
+})
+
+// --- positional routing is a guess, and a guess attaches nothing -----------
+
+const TWO_BLANK = `<html><body><form>
+    <div><label>Attach</label><input type="file" id="a" /></div>
+    <div><label>Attach</label><input type="file" id="b" /></div>
+  </form></body></html>`
+
+test("two indistinguishable slots attach NOTHING, and say why", async () => {
+  // The last remaining path by which the wrong document goes out under the
+  // user's name. Nothing on this page tells the two inputs apart, so DOM order
+  // is the only thing left to place documents by — and DOM order is a guess.
+  const page = domPage(TWO_BLANK)
+  const out = await fillPage(
+    page,
+    plan([
+      { k: "f1", how: "upload", labelMatch: "resume", paths: ["resume.pdf"] },
+      {
+        k: "f2",
+        how: "upload",
+        labelMatch: "cover letter",
+        paths: ["cover-letter.pdf"],
+      },
+    ]),
+  )
+  assert.deepEqual(plain(inputsOf(page.root)), [
+    { id: "a", ajup: null, files: [] },
+    { id: "b", ajup: null, files: [] },
+  ])
+  assert.equal(out.ok, 0)
+  assert.equal(out.failed, 2)
+  for (const f of out.failures) {
+    assert.match(f.why, /tells its 2 empty file inputs apart/)
+    assert.match(f.why, /attach them by hand/)
+    assert.ok(
+      f.why.length <= 140,
+      "the reason reaches the user verbatim; a sentence cut mid-word is not " +
+        "something anyone can act on",
+    )
+  }
+})
+
+test("the set is decided BEFORE anything is attached, never halfway", async () => {
+  // Deciding per item would attach file 1 positionally and then refuse file 2:
+  // a wrong document on the form AND an incomplete application, which is worse
+  // than either outcome alone. The dry pass exists to make that unreachable —
+  // so it must write nothing, and no file may be attached at all.
+  const page = domPage(TWO_BLANK)
+  await fillPage(
+    page,
+    plan([
+      { k: "f1", how: "upload", labelMatch: "resume", paths: ["resume.pdf"] },
+      {
+        k: "f2",
+        how: "upload",
+        labelMatch: "cover letter",
+        paths: ["cover-letter.pdf"],
+      },
+    ]),
+  )
+  assert.deepEqual(
+    page.log.filter((e) => e[0] === "setFiles"),
+    [],
+    "a set that could not be told apart attached a file anyway",
+  )
+})
+
+test("ONE empty input left is forced, not guessed, and proceeds", async () => {
+  // The boundary is the number of inputs still awaiting a file, NOT the number
+  // of uploads in the plan. With one, positional is the only possible answer
+  // and there is nothing to confuse — this is the ordinary single-attachment
+  // board and it must not start failing.
+  const page = domPage(`<html><body><form>
+      <div><label>Attach</label><input type="file" id="only" /></div>
+    </form></body></html>`)
+  const out = await fillPage(
+    page,
+    plan([
+      { k: "f1", how: "upload", labelMatch: "resume", paths: ["resume.pdf"] },
+    ]),
+  )
+  assert.deepEqual(plain(inputsOf(page.root)), [
+    { id: "only", ajup: "u1", files: ["resume.pdf"] },
+  ])
+  assert.equal(out.ok, 1)
+  assert.equal(out.failed, 0)
+  assert.equal(out.uploads[0].how, "order")
+})
+
+test("one upload item among two blank inputs is still a guess", async () => {
+  // A single-item plan never takes the dry pass, so the per-item check has to
+  // hold this on its own: one document and two empty slots is a guess about
+  // which slot, exactly as much as two documents would be. The planner having
+  // deferred the other slot does not make the choice safe.
+  const page = domPage(TWO_BLANK)
+  const out = await fillPage(
+    page,
+    plan([
+      { k: "f1", how: "upload", labelMatch: "resume", paths: ["resume.pdf"] },
+    ]),
+  )
+  assert.deepEqual(plain(inputsOf(page.root)), [
+    { id: "a", ajup: null, files: [] },
+    { id: "b", ajup: null, files: [] },
+  ])
+  assert.equal(out.failed, 1)
+  assert.match(out.failures[0].why, /tells its 2 empty file inputs apart/)
+})
+
+test("a discriminated set is not held up by the ambiguity check", async () => {
+  // The check must cost real boards nothing. Greenhouse labels both slots, so
+  // the dry pass resolves both by label and the run proceeds untouched.
+  const page = domPage(GREENHOUSE_HTML)
+  const out = await fillPage(page, uploadPlan())
+  assert.equal(out.failed, 0)
+  assert.equal(out.ok, 2)
   assert.deepEqual(
     out.uploads.map((u) => u.how),
-    ["order", "order"],
-    "positional routing must SAY it was positional",
+    ["label", "label"],
   )
 })
 

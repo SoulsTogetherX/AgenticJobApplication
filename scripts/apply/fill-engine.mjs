@@ -434,75 +434,196 @@ export default async function fillPage(page, plan) {
   // Returns a RECORD, not a boolean, so the caller can report where each file
   // went. A count of uploads that did not throw cannot tell this bug from a
   // correct run; a filename against a target input can.
-  const stampInput = (pattern, tag) =>
+  //
+  // ONE implementation, two callers, told apart by `commit`. The dry pass below
+  // needs to ask exactly the question the real pass answers — "which input
+  // would this pattern take, and did anything on the page actually say so?" —
+  // and a second copy of the walk is a second rule to keep in sync. `commit:
+  // false` resolves the whole list against a simulated pool (each spec consumes
+  // its pick, so spec 2 cannot be handed spec 1's input) and writes nothing.
+  const resolveUploads = (specs, commit) =>
     page.evaluate(
       (arg) => {
-        const re = new RegExp(arg.pattern, "i")
         const all = [...document.querySelectorAll("input[type=file]")]
-        // Rule 2: stamped or already filled means spoken for.
-        const free = all.filter(
-          (el) =>
-            !el.hasAttribute("data-ajup") && !(el.files && el.files.length),
-        )
-        let best = null
-        for (let order = 0; order < free.length; order++) {
-          const el = free[order]
-          let n = el
-          for (let depth = 1; depth <= 8; depth++) {
-            n = n.parentElement
-            if (!n) break
-            // Rule 1: a container of two file inputs cannot tell them apart.
-            if (n.querySelectorAll("input[type=file]").length > 1) break
-            const s = (n.innerText || "").replace(/\s+/g, " ").trim()
-            if (!s || !re.test(s)) continue
-            const cand = { el, depth, len: s.length, order }
-            if (
-              !best ||
-              cand.depth < best.depth ||
-              (cand.depth === best.depth && cand.len < best.len)
-            ) {
-              best = cand
+        // Rule 2: stamped, already filled, or claimed earlier in THIS pass
+        // means spoken for.
+        const taken = new Set()
+        const pool = () =>
+          all.filter(
+            (el) =>
+              !taken.has(el) &&
+              !el.hasAttribute("data-ajup") &&
+              !(el.files && el.files.length),
+          )
+        const out = []
+        for (const spec of arg.specs) {
+          const re = new RegExp(spec.pattern, "i")
+          const free = pool()
+          let best = null
+          for (let order = 0; order < free.length; order++) {
+            const el = free[order]
+            let n = el
+            for (let depth = 1; depth <= 8; depth++) {
+              n = n.parentElement
+              if (!n) break
+              // Rule 1: a container of two file inputs cannot tell them apart.
+              if (n.querySelectorAll("input[type=file]").length > 1) break
+              const s = (n.innerText || "").replace(/\s+/g, " ").trim()
+              if (!s || !re.test(s)) continue
+              const cand = { el, depth, len: s.length, order }
+              if (
+                !best ||
+                cand.depth < best.depth ||
+                (cand.depth === best.depth && cand.len < best.len)
+              ) {
+                best = cand
+              }
+              // This input's NEAREST match; a farther one cannot beat it.
+              break
             }
-            // This input's NEAREST match; a farther one cannot beat it.
-            break
           }
+          const how = best ? "label" : "order"
+          // Rule 3: some boards put the heading outside anything the walk can
+          // reach; fall back to the first input STILL AWAITING A FILE.
+          if (!best && free.length) best = { el: free[0], depth: null }
+          if (!best) {
+            out.push({ ok: false, inputs: all.length, free: 0 })
+            continue
+          }
+          taken.add(best.el)
+          // A GUESS NEVER CLAIMS AN INPUT. Positional placement among two or
+          // more empty inputs is refused by the caller, and a stamp left behind
+          // by a refused placement would mark that input as spoken for — the
+          // next upload item would then skip it and route somewhere else. The
+          // decision has to be made before the attribute is written, so it is
+          // made here, where both numbers are already in hand.
+          const claimed = arg.commit && !(how === "order" && free.length > 1)
+          if (claimed) best.el.setAttribute("data-ajup", spec.tag)
+          out.push({
+            ok: true,
+            claimed,
+            how,
+            depth: best.depth,
+            // Page-controlled, so it is sliced and only ever reported as data.
+            target: String(best.el.id || best.el.getAttribute("name") || "")
+              .slice(0, 60)
+              .trim(),
+            inputs: all.length,
+            // How many inputs were still awaiting a file when THIS choice was
+            // made. With one, positional is forced and not a choice at all;
+            // with two or more it is a guess. That distinction is the whole
+            // policy below.
+            free: free.length,
+          })
         }
-        const how = best ? "label" : "order"
-        // Rule 3: some boards put the heading outside anything the walk can
-        // reach; fall back to the first input STILL AWAITING A FILE.
-        if (!best && free.length) best = { el: free[0], depth: null }
-        if (!best) return { ok: false, inputs: all.length, free: 0 }
-        best.el.setAttribute("data-ajup", arg.tag)
-        return {
-          ok: true,
-          how,
-          depth: best.depth,
-          // Page-controlled, so it is sliced and only ever reported as data.
-          target: String(best.el.id || best.el.getAttribute("name") || "")
-            .slice(0, 60)
-            .trim(),
-          inputs: all.length,
-          free: free.length,
-        }
+        return out
       },
-      { pattern, tag },
+      { specs, commit },
     )
 
-  let uploadN = 0
-  for (const item of items.filter((i) => i.how === "upload")) {
-    const tag = "u" + ++uploadN
-    const pattern = item.labelMatch || "resume"
-    let spot = null
+  const uploadItems = items.filter((i) => i.how === "upload")
+  const patternOf = (item) => item.labelMatch || "resume"
+
+  // --- positional routing is a GUESS, and a guess does not get to place a
+  // --- document under the user's name -------------------------------------
+  //
+  // `how: "order"` means nothing on the page distinguished the inputs and the
+  // file was placed by DOM order. Whether that is acceptable turns on ONE
+  // number, and it is not "how many uploads are in the plan":
+  //
+  //   free === 1  — there is exactly one input still awaiting a file. Positional
+  //                 is FORCED, not chosen; there is nothing to confuse. Proceed
+  //                 silently. (This is the common single-attachment board, and
+  //                 also a 3-input board where the planner deferred the other
+  //                 two.)
+  //   free >= 2   — two or more empty inputs and no text told them apart. We
+  //                 would be placing documents by DOM order and hoping. This is
+  //                 the last remaining path by which the wrong document goes out
+  //                 under the user's name, which is the failure this whole
+  //                 section exists because of.
+  //
+  // WHY THE DRY PASS. The decision has to be made for the SET, before anything
+  // is attached. Deciding per item would attach file 1 positionally and then
+  // refuse file 2 — a wrong document on the form AND an incomplete application,
+  // which is worse than either outcome alone. So when the plan carries two or
+  // more uploads, the pristine DOM (best possible moment: no remount has
+  // happened yet, every input is present) is asked first, and nothing is
+  // written unless the whole set resolved by label.
+  //
+  // WHY A FAILURE RATHER THAN A QUIET SKIP. `fail()` is the only vocabulary
+  // this engine has for "this did not happen and a human has to look", and hard
+  // rule 6 already routes a failed fill to a blocked submit and a deferred
+  // application. The `why` is written to be acted on, not just recorded. The
+  // engine does not defer — that is the planner's verb — so a failure carrying
+  // its reason is the deferral, expressed in the words available here.
+  //
+  // WHY THIS DIRECTION. The costs are not symmetric. Refusing costs the user
+  // one manual attach on a board whose markup is unusual, and a human looking
+  // at the page can tell the slots apart instantly — the walk failed on markup
+  // structure, not on anything a person would find ambiguous. Attaching costs a
+  // document that is not the user's résumé going out as their résumé, silently.
+  // If this ever needs relaxing, relax it on measured board markup, not on the
+  // inconvenience of one run.
+  const ambiguous = (r) =>
+    r && r !== true && r.ok && r.how === "order" && r.free > 1
+  // Under fail()'s 140-char cap on purpose: this reaches the user verbatim and
+  // a sentence cut off mid-word is not something anyone can act on.
+  const ambiguousWhy = (n) =>
+    "nothing on this page tells its " +
+    n +
+    " empty file inputs apart, so placing documents by DOM order would be a " +
+    "guess — attach them by hand"
+  let refuseAll = null
+  if (uploadItems.length > 1) {
+    let dry = null
     try {
-      spot = await stampInput(pattern, tag)
+      dry = await resolveUploads(
+        uploadItems.map((item, i) => ({
+          pattern: patternOf(item),
+          tag: "u" + (i + 1),
+        })),
+        false,
+      )
+    } catch {}
+    // A fake/accounted page answers this evaluate with something that is not a
+    // list. Nothing was observed, so nothing is claimed and the run proceeds.
+    if (Array.isArray(dry) && dry.some(ambiguous)) {
+      refuseAll = ambiguousWhy(dry.find(ambiguous).free)
+    }
+  }
+
+  let uploadN = 0
+  for (const item of uploadItems) {
+    const tag = "u" + ++uploadN
+    const pattern = patternOf(item)
+    if (refuseAll) {
+      fail(item, refuseAll)
+      continue
+    }
+    let raw = null
+    try {
+      raw = await resolveUploads([{ pattern, tag }], true)
     } catch (e) {
       fail(item, "file input lookup failed: " + e.message)
       continue
     }
     // A fake/accounted page in the bench harness answers this evaluate with a
-    // bare `true`; that is "stamped, routing unknown", not a failure.
+    // bare `true`; that is "stamped, routing unknown", not a failure. An ARRAY
+    // with nothing in it is a different thing entirely — a real page that
+    // resolved nothing — and falls through to the refusal below.
+    const spot = Array.isArray(raw) ? raw[0] : true
     if (!(spot === true || (spot && spot.ok))) {
       fail(item, "no file input left for /" + pattern + "/")
+      continue
+    }
+    // The same boundary again, per item. The dry pass above covers the set; a
+    // remount between it and here can still change the answer, and a plan with
+    // a SINGLE upload never took the dry pass at all — yet one upload item on a
+    // page with three empty file inputs is still a guess among three.
+    // `claimed` is false here: resolveUploads did not stamp, so no input is
+    // left marked as spoken for by a placement that is not going to happen.
+    if (ambiguous(spot)) {
+      fail(item, ambiguousWhy(spot.free))
       continue
     }
     // WHERE this file went, recorded before the upload is attempted so a
@@ -518,6 +639,10 @@ export default async function fillPage(page, plan) {
       match: pattern,
       how: spot === true ? "unknown" : spot.how,
       target: spot === true ? null : spot.target || null,
+      // Only on a positional placement, and it is the number that says whether
+      // that placement was FORCED or merely first. `how: "order"` on its own
+      // reads the same either way, and only one of those is safe.
+      ...(spot !== true && spot.how === "order" ? { free: spot.free } : {}),
       attached: false,
     }
     out.uploads.push(record)
@@ -770,6 +895,23 @@ export default async function fillPage(page, plan) {
       // thing that can say which. It cannot be raced by a remount the way a
       // locator handle can, because the whole function runs in one turn of
       // the page's event loop.
+      //
+      // KEYS, NOT VALUES, AND DELIBERATELY SO — do not "complete" this by
+      // pushing `got` alongside `k`. Every key here is the `k` of an item in
+      // the plan that was passed in, so a caller HOLDING THE PLAN can join the
+      // two and get field -> value without this report carrying anything. What
+      // it would carry instead is a per-application copy of fact-base content:
+      // every value in the plan comes from profile/profile.yaml or
+      // profile/answers.yaml, and the fill report is what the unattended runner
+      // is expected to write to jobs/.auto/runs/<runid>.jsonl, which is
+      // append-only and durable. A run log full of the user's answers is the
+      // same exposure as copying profile/ with extra steps.
+      //
+      // The caller that CANNOT join is the MCP path — the agent never reads the
+      // generated plan, on purpose, so those values are not in its context. That
+      // is a real gap and the fix belongs on the plan side, where the values
+      // already exist and are ephemeral: see the note to fill-plan.mjs's owner.
+      // It is not fixed by widening a durable record.
       landed: [],
       // Required, empty, and NOT in the plan — see the sweep at the bottom.
       revealed: [],

@@ -461,6 +461,65 @@ export function classifyAll(leads, opts = {}) {
   }))
 }
 
+// Flag names `scoreFit` uses to say "I could not read this posting", including
+// the two `w5-leads` is splitting `fit_thin` into. Named here ONLY as a second
+// net: the primary test below is structural and survives a rename, so this list
+// going stale can never silently reopen the defect — see fitSortKey.
+//
+// A NAME LIST IS THE WRONG PRIMARY CHECK, and that is the whole lesson of this
+// bug: a check that matches one literal string stops working the day someone
+// renames the string, and it stops working SILENTLY, in the direction of
+// trusting a score nobody could compute.
+export const UNEVALUABLE_FIT_FLAGS = new Set([
+  "fit_thin",
+  "fit_unknown",
+  "posting_thin",
+  "lexicon_blind",
+])
+
+/**
+ * The queue's sort key for one `scoreFit` result. Unevaluable sorts LAST.
+ *
+ * THE BUG THIS FIXES, measured by innov-architect on a real data-engineering
+ * posting: `fit_score: 1` with `fit_thin` set, because 2 of roughly 10 real
+ * requirements were recognised by the lexicon and both happened to match. The
+ * queue then ordered that 1.0 above a fully-read 0.8. The caller already had
+ * the right instinct — `?? -1` sorts an unevaluable score last — but `null` is
+ * only ONE of the two ways `scoreFit` says it could not read a posting.
+ *
+ * THREE INDEPENDENT REASONS TO RETURN -1, and they are a union rather than a
+ * choice, because each covers the other's failure mode:
+ *
+ *   1. `fit_score == null`   — the pre-existing check. No body text at all.
+ *   2. TOO FEW REQUIRED TERMS — structural, computed from what `scoreFit`
+ *      itself reports (`required_terms`) against the same threshold it used.
+ *      This is the PRIMARY check: it reads no flag name, so renaming
+ *      `fit_thin` cannot break it.
+ *   3. A KNOWN UNEVALUABLE FLAG — the second net, for a future evaluability
+ *      rule that is not simply "how many terms were extracted".
+ *
+ * It can only ever push a score DOWN to -1. There is no branch that invents a
+ * usable score, promotes one, or makes the classifier more lenient — the
+ * unreadable posting still appears in the queue, at the bottom, where a number
+ * nobody could compute belongs.
+ *
+ * @param fit  a scoreFit() result, or null/undefined.
+ * @param minRequiredTerms  the threshold scoreFit used — pass
+ *   `limits?.fit?.min_required_terms ?? FIT_DEFAULTS.min_required_terms`, never
+ *   a literal, so this cannot disagree with the function it is second-guessing.
+ */
+export function fitSortKey(fit, { minRequiredTerms } = {}) {
+  if (!fit || fit.fit_score == null) return -1
+  if (
+    Number.isFinite(minRequiredTerms) &&
+    (fit.required_terms?.length ?? 0) < minRequiredTerms
+  )
+    return -1
+  if ((fit.flags ?? []).some((f) => UNEVALUABLE_FIT_FLAGS.has(String(f))))
+    return -1
+  return fit.fit_score
+}
+
 export function tierCounts(results) {
   const counts = Object.fromEntries(TIERS.map((t) => [t, 0]))
   for (const r of results) counts[r.tier] = (counts[r.tier] ?? 0) + 1
@@ -490,7 +549,7 @@ async function main() {
   const [
     { readLeadStore, openDb, readApplications },
     { evaluateStages },
-    { scoreFit },
+    { scoreFit, FIT_DEFAULTS },
   ] = await Promise.all([
     import("../lib/db.mjs"),
     import("../leads/stages.mjs"),
@@ -576,12 +635,18 @@ async function main() {
   // because an earlier version of this loop caught and zeroed it, which made
   // the ordering a no-op that still looked like it worked.
   const profileTech = extractTech(fs.readFileSync(profileFile, "utf8"))
+  // The threshold scoreFit itself uses, read the same way it reads it, so the
+  // two cannot disagree about what "evaluable" means.
+  const minRequiredTerms =
+    limits?.fit?.min_required_terms ?? FIT_DEFAULTS.min_required_terms
   for (const r of results) {
     try {
       // `fit_score`, NOT `score` — the latter is undefined, which coerced every
-      // lead to 0. `null` is a real value here (a posting with no text is
-      // unevaluable) and sorts last rather than pretending to be a zero.
-      r.fit = scoreFit(r.lead, profileTech, { limits })?.fit_score ?? -1
+      // lead to 0. An unevaluable score sorts LAST rather than pretending to be
+      // a zero or, worse, a 1.0 computed from two terms (see fitSortKey).
+      r.fit = fitSortKey(scoreFit(r.lead, profileTech, { limits }), {
+        minRequiredTerms,
+      })
     } catch (e) {
       // Never silent. A blanket catch that zeroes the sort key hides exactly
       // the class of bug described above.

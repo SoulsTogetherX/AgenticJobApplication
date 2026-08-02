@@ -9,6 +9,8 @@ import {
   boardKey,
   shapesForBoard,
   shapeBlockers,
+  fitSortKey,
+  UNEVALUABLE_FIT_FLAGS,
   tierCounts,
   TIERS,
   DEFAULT_CACHE_MAX_AGE_DAYS,
@@ -771,5 +773,124 @@ test("EVERY SHAPE THAT CLASSIFIES GREEN PRODUCES A PLAN submitReadiness ACCEPTS"
     greens > 0,
     "no case reached green, so this test asserted nothing — a vacuous pass is " +
       "the exact failure it exists to catch",
+  )
+})
+// --- the queue must not order by a number scoreFit says it could not compute --
+//
+// MEASURED by innov-architect on a real data-engineering posting: `fit_score: 1`
+// with `fit_thin` set, because 2 of roughly 10 real requirements were recognised
+// by the lexicon and both happened to match. The queue read `fit_score` and
+// ignored `flags`, so a 1.0 computed from two terms outranked a fully-read 0.8
+// — and the top of the queue is what an unattended run works through first.
+
+const fitResult = (over = {}) => ({
+  ok: true,
+  reasons: [],
+  flags: [],
+  fit_score: 0.8,
+  required_terms: ["python", "sql", "airflow", "dbt", "spark"],
+  matched_terms: ["python", "sql", "airflow", "dbt"],
+  ...over,
+})
+
+test("A 1.0 COMPUTED FROM TWO TERMS SORTS BELOW A FULLY-READ 0.8", () => {
+  const thin = fitResult({
+    fit_score: 1,
+    flags: ["fit_thin"],
+    required_terms: ["python", "sql"],
+    matched_terms: ["python", "sql"],
+  })
+  const read = fitResult()
+
+  assert.equal(fitSortKey(thin, { minRequiredTerms: 3 }), -1)
+  assert.equal(fitSortKey(read, { minRequiredTerms: 3 }), 0.8)
+  assert.ok(
+    fitSortKey(read, { minRequiredTerms: 3 }) >
+      fitSortKey(thin, { minRequiredTerms: 3 }),
+    "the unevaluable posting is still ordered above the one that was read",
+  )
+})
+
+test("the primary check is STRUCTURAL, so renaming the flag cannot reopen this", () => {
+  // w5-leads is splitting `fit_thin` into `posting_thin` and `lexicon_blind`.
+  // A check that matched one literal string would stop working that day, and
+  // stop working SILENTLY, in the direction of trusting the score.
+  for (const flags of [
+    ["fit_thin"],
+    ["posting_thin"], // announced rename
+    ["lexicon_blind"], // announced rename
+    ["some_name_nobody_has_thought_of_yet"],
+    [], // no flag at all — the term count alone must still decide
+  ]) {
+    assert.equal(
+      fitSortKey(
+        fitResult({ fit_score: 1, flags, required_terms: ["python", "sql"] }),
+        { minRequiredTerms: 3 },
+      ),
+      -1,
+      `flags=${JSON.stringify(flags)}`,
+    )
+  }
+})
+
+test("the flag list is the SECOND net, for an evaluability rule that is not a term count", () => {
+  // Enough terms to pass the structural test, but scoreFit still says it could
+  // not read the posting. Fail closed.
+  for (const flag of [...UNEVALUABLE_FIT_FLAGS]) {
+    assert.equal(
+      fitSortKey(fitResult({ fit_score: 1, flags: [flag] }), {
+        minRequiredTerms: 3,
+      }),
+      -1,
+      flag,
+    )
+  }
+})
+
+test("null and a missing result still sort last, as they did before", () => {
+  assert.equal(fitSortKey(null, { minRequiredTerms: 3 }), -1)
+  assert.equal(fitSortKey(undefined, { minRequiredTerms: 3 }), -1)
+  assert.equal(
+    fitSortKey(fitResult({ fit_score: null, flags: ["fit_unknown"] }), {
+      minRequiredTerms: 3,
+    }),
+    -1,
+    "a posting with no body text at all",
+  )
+})
+
+test("an evaluable score is returned UNCHANGED — this never invents a usable one", () => {
+  // The instruction was explicit: make an unevaluable score sort last, never
+  // manufacture a usable one. A version of this that clamped, defaulted or
+  // rounded would be a different and worse bug.
+  for (const score of [0, 0.25, 0.5, 0.8, 1]) {
+    assert.equal(
+      fitSortKey(fitResult({ fit_score: score }), { minRequiredTerms: 3 }),
+      score,
+    )
+  }
+  // And with no threshold supplied it must not invent one: only the flag net
+  // and the null check apply.
+  assert.equal(fitSortKey(fitResult({ fit_score: 1 }), {}), 1)
+  assert.equal(
+    fitSortKey(fitResult({ fit_score: 1, flags: ["fit_thin"] }), {}),
+    -1,
+  )
+})
+
+test("fit ordering never changes a TIER — an unreadable posting is still shown", () => {
+  // The tier ranking is the outer sort key; fit only orders within a tier. A
+  // -1 buries a lead at the bottom of its own tier, it never hides it, and it
+  // never turns green into amber.
+  const rank = { green: 0, amber: 1, handoff: 2, blocked: 3 }
+  const rows = [
+    { tier: "amber", fit: 0.9, id: "amber-good" },
+    { tier: "green", fit: -1, id: "green-unreadable" },
+    { tier: "green", fit: 0.4, id: "green-read" },
+  ]
+  rows.sort((a, b) => rank[a.tier] - rank[b.tier] || b.fit - a.fit)
+  assert.deepEqual(
+    rows.map((r) => r.id),
+    ["green-read", "green-unreadable", "amber-good"],
   )
 })

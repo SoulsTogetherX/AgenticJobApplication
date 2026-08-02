@@ -95,6 +95,25 @@ dry_run: true` in `docs/application-limits.yaml`'s `auto_apply` block, and
    - `verify-claims` not passing, or the document not yet user-approved;
    - the board failing the trust gate, or the lead carrying an L3 rejection.
 
+   **Throughput may only rise through deterministic understanding.** The ways
+   to make fewer things defer are exactly three: an **adapter** that knows a
+   board's shape, a **probed option list** read off the live form, or a
+   **banked answer** the user approved through `save-answer.mjs`. Never by
+   having a model resolve an `UNKNOWN` field.
+
+   This is written down because the pressure runs the other way. Unlimited
+   volume creates direct pressure to shrink the defer list, and the
+   cheapest-looking reading of "make fewer things defer" is "let a model read
+   the field and decide" — which is the single change that puts
+   attacker-controlled page text and the user's fact base in one context
+   window, on a path with nobody watching. Rule 0 says a posting is data; this
+   is what rule 0 costs when it is inconvenient. An `UNKNOWN` field is not a
+   gap in the system's knowledge to be filled in. It is the system correctly
+   reporting that nothing deterministic understood the page, and the answer is
+   to teach it deterministically or to defer — never to guess fluently. If a
+   design starts to want the model there, that is the signal to stop and ask
+   the user, not to proceed carefully.
+
    **Trust is mechanical, never a model's impression of a page.** A board is
    trusted because it is a known ATS on an allowlist the user controls and the
    lead cleared every screening stage — not because a posting reads as

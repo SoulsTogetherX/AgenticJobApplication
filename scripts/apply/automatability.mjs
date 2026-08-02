@@ -170,6 +170,7 @@ export function shapesForBoard(cache, url, atsId) {
  */
 export function shapeBlockers(fp, entry, resolvedByKey, { now, maxAgeDays }) {
   const blockers = []
+  const fieldEntries = Object.entries(entry.fields ?? {})
   const age = ageDays(entry.updated, now)
   if (age > maxAgeDays) {
     blockers.push(
@@ -179,11 +180,26 @@ export function shapeBlockers(fp, entry, resolvedByKey, { now, maxAgeDays }) {
     )
   }
 
-  for (const [key, f] of Object.entries(entry.fields ?? {})) {
+  for (const [key, f] of fieldEntries) {
     const label = f.l ?? key.split("|")[0] ?? ""
-    // Shape checks first, and they read the WIDGET, never whether the fact
-    // base has an answer. An answer being available is what made 34 boxes
-    // tick themselves; it is not evidence that ticking one is safe.
+    // SHAPE CHECKS FIRST, and the ordering is load-bearing for a mechanical
+    // reason, not a historical one.
+    //
+    // An earlier version of this comment justified the ordering with the
+    // 34-box incident. That was an ACTION failure — the planner ticked boxes
+    // because the fact base held an answer — and it was fixed structurally at
+    // the planner (fill-plan.mjs, where buildPlan now emits no check verb for
+    // any widget on any path). It is not evidence about the ORDER here, and
+    // a reader who notices the mismatch is one step from relaxing the rule.
+    //
+    // The real reason: the `req` gate below skips a field entirely, and the
+    // widget rules must be TOTAL — every checkbox, radio and consent box in the
+    // shape, required or not. An optional consent tickbox is still the user's
+    // to tick. Run the `req` gate first and every optional widget stops being
+    // examined, which is the same hole in a different place.
+    //
+    // The checks also read the WIDGET, never whether the fact base has an
+    // answer: an answer being available is not evidence that ticking is safe.
     if (
       isConsent(label) ||
       looksLikeAgreementProse({ t: f.t, l: label }, label)
@@ -216,6 +232,57 @@ export function shapeBlockers(fp, entry, resolvedByKey, { now, maxAgeDays }) {
         `required field "${label}" was matched against a truncated option list`,
       )
     }
+  }
+
+  // --- the two ways this function can be vacuously satisfied -----------------
+  //
+  // Both are appended AFTER the loop so a widget or an unsettled field stays
+  // the headline: those name a specific thing to fix, and this names an absence.
+  //
+  // 1. NOTHING TO EXAMINE. A remembered entry with no fields passes every check
+  //    above by having nothing to fail, and "no blockers" would read as "safe".
+  if (!fieldEntries.length) {
+    blockers.push(
+      "remembered form shape records no fields at all — there is nothing to check, " +
+        "which is not the same as nothing being wrong",
+    )
+    return blockers
+  }
+
+  // 2. REQUIREDNESS WAS NEVER RECORDED, and this is the one that was live.
+  //
+  //    field-cache.mjs writes `req` ONLY when it is true (`if (req) next.req =
+  //    true`), so an absent `req` is ambiguous by construction: on a modern
+  //    entry it means "optional", and on an entry written by a scanner that
+  //    never supplied requiredness it means "nobody knows". `if (!f.req)
+  //    continue` reads both as optional, so a shape recording requiredness
+  //    nowhere skips EVERY field and returns no blockers — green asserted with
+  //    nothing having been examined.
+  //
+  //    MEASURED 2026-08-02 on the real jobs/.field-cache.json: 4 of 7 remembered
+  //    shapes carry `req` on no field at all, non-adversarially, purely from
+  //    scanner vintage. Form aa5c650e (greenhouse, 26 fields, no widgets) is one
+  //    of them, and it classified GREEN. The widget rule was the only thing
+  //    masking this on the other three.
+  //
+  //    The discriminator has to be per-ENTRY, because per-field is exactly the
+  //    ambiguity: if any field in the entry carries `req`, the scanner did
+  //    record requiredness and an absent `req` on its siblings means optional.
+  //
+  //    Deliberately NOT "treat every unknown-req field as required and resolve
+  //    it". predictedFields() only emits rows for `req` fields, so resolvedByKey
+  //    holds no row for any of them and every one would come back UNRESOLVED —
+  //    a blocker dressed up as an examination. Widening predictedFields is
+  //    pending-questions.mjs's call, not this file's; until it happens, the
+  //    honest tier for a shape we cannot read is amber, which still shows the
+  //    user the job.
+  const recordsRequiredness = fieldEntries.some(([, f]) => f?.req !== undefined)
+  if (!recordsRequiredness) {
+    blockers.push(
+      `remembered form shape does not record which fields the form requires ` +
+        `(${fieldEntries.length} fields, none carrying \`req\`) — "every required field is ` +
+        `settled" cannot be checked against it, so it is not evidence of anything`,
+    )
   }
   return blockers
 }

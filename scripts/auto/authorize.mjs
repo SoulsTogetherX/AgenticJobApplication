@@ -48,7 +48,7 @@
 //      planned URL instead compares the plan against itself: the redirect the
 //      check exists for is precisely the case where the two differ.
 //
-// Every property this module provides is reachable only through those three
+// Every property this module provides is reachable only through those four
 // sentences. Two clicking call sites, or one that takes the token optionally
 // "for now" because some build step is awkward, and the gate is decoration:
 // the second site is the one that will send an application the user's file
@@ -129,6 +129,7 @@ export const SUBMIT_CHECKS = Object.freeze([
   "apply_origin",
   "screening",
   "plan_defer",
+  "label_flag",
   "submit_readiness",
   "company_known",
   "caps",
@@ -420,7 +421,61 @@ function evaluate(input) {
       : "no deferred fields",
   )
 
-  // 8. the live-scan gate: zero failures, zero verify mismatches, zero
+  // 8. A LABEL THAT TRIED TO INSTRUCT THE AGENT (Phase 0.2), read here rather
+  //    than taken on trust from anywhere else.
+  //
+  //    fill-plan.mjs's labelHazard() marks a field whose label carries
+  //    instruction-shaped text of one of the DISQUALIFYING kinds, and carries
+  //    it as `labelFlag` on the item, the defer and the skip record alike. It
+  //    deliberately does NOT change `how`, `status` or `value` — a board that
+  //    could force a human round trip by decorating an ordinary question with
+  //    an imperative sentence would have a trivial DoS against the fast path.
+  //    So on the ATTENDED path a flag is metadata for the approval message,
+  //    and a human decides.
+  //
+  //    THE UNATTENDED PATH HAS NO SUCH HUMAN, so here it blocks. Hard rule 0:
+  //    the page is data, and a page trying to talk to the agent is not a page
+  //    to submit the user's name, phone and résumé to unattended. The DoS
+  //    argument does not transfer either — the cost of a flagged label here is
+  //    one deferral with a stated reason, and the user still sees the job.
+  //
+  //    THIS IS THE MIRROR, AND IT STANDS ALONE. §0.2 pairs it with
+  //    submitReadiness gaining the same key; that half is fill-plan.mjs's and
+  //    is NOT built at the time of writing (measured: zero `labelFlag`
+  //    references in submitReadiness). So this scan is its own — it never asks
+  //    submitReadiness whether a flag was present, exactly as `plan_defer`
+  //    above duplicates submitReadiness's first branch. Two independent keys:
+  //    relaxing either one cannot widen the other, and if their half never
+  //    lands, this one still gates.
+  //
+  //    ANY item or defer entry, INCLUDING a skip. fill-plan's own CLI filters
+  //    to `how !== "skip"`, which is right for a report — a skipped field is
+  //    not being filled, so a human need not look. It is wrong here: the flag
+  //    is evidence about the PAGE, not about the field, and a page carrying
+  //    one is not understood well enough to submit to whether or not we
+  //    happened to fill that particular input.
+  const flagged = [
+    ...(Array.isArray(plan.items) ? plan.items : []),
+    ...(Array.isArray(plan.defer) ? plan.defer : []),
+  ].filter((x) => x && x.labelFlag)
+  push(
+    "label_flag",
+    flagged.length === 0,
+    flagged.length
+      ? `${flagged.length} field label(s) attempted to instruct the agent: ` +
+          flagged
+            .slice(0, 5)
+            .map(
+              (x) =>
+                `${safeText(x.label ?? x.k ?? "?", 120)} [${safeText(x.labelFlag, 80)}]`,
+            )
+            .join("; ") +
+          " — hard rule 0: a page that talks to the agent is not a page to " +
+          "submit to unattended"
+      : "no field label carried an instruction-shaped finding",
+  )
+
+  // 9. the live-scan gate: zero failures, zero verify mismatches, zero
   //    required-empty, and nothing the fill revealed that the plan never knew
   //    about.
   //    readiness.reason names the offending field, so it too carries page text.
@@ -433,7 +488,7 @@ function evaluate(input) {
       : safeText(readiness.reason, 240),
   )
 
-  // 9. per_company_max_per_week is counted BY COMPANY NAME. A lead with no
+  // 10. per_company_max_per_week is counted BY COMPANY NAME. A lead with no
   //    company would be counted against the empty string, i.e. never capped —
   //    the one cap whose failure costs the user their reputation, silently
   //    disabled by a missing field.
@@ -453,7 +508,7 @@ function evaluate(input) {
       : "the lead carries no company name, so per_company_max_per_week cannot be counted",
   )
 
-  // 10. the caps, answered from the ledgers rather than from memory.
+  // 11. the caps, answered from the ledgers rather than from memory.
   if (haveCompany && haveBlock) {
     const caps = capCheck({
       company,

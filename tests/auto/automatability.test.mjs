@@ -552,3 +552,224 @@ test("shapeBlockers reports EVERY reason, not just the first", () => {
   assert.ok(blockers.some((b) => /consent tickbox/.test(b)))
   assert.ok(blockers.some((b) => /is unresolved/.test(b)))
 })
+// --- a shape that records no requiredness is not evidence of anything --------
+//
+// THE HOLE THIS CLOSES, measured on the real jobs/.field-cache.json on
+// 2026-08-02: 4 of 7 remembered shapes carry `req` on no field at all — not
+// adversarially, purely from scanner vintage — and field-cache.mjs only ever
+// writes `req` when it is true. `if (!f.req) continue` read that as "nothing is
+// required", skipped every field, and returned no blockers. Form aa5c650e
+// (greenhouse, 26 fields, no widgets) classified GREEN with nothing having
+// examined it; the widget rule was the only thing masking the other three.
+
+// 26 text fields, none carrying `req` — aa5c650e's shape, reduced.
+const NO_REQ_FORM = Object.fromEntries(
+  Array.from({ length: 26 }, (_, i) => [
+    `question ${i}|text`,
+    { t: "text", l: `Question ${i}` },
+  ]),
+)
+
+test("A SHAPE THAT RECORDS NO REQUIREDNESS CANNOT BE GREEN", () => {
+  const blockers = shapeBlockers(
+    "fp1",
+    { ats: "greenhouse", url: GH_URL, updated: isoDay(1), fields: NO_REQ_FORM },
+    new Map(),
+    { now: today(), maxAgeDays: DEFAULT_CACHE_MAX_AGE_DAYS },
+  )
+  assert.equal(
+    blockers.length > 0,
+    true,
+    "26 unexamined fields returned no blockers — green would be asserted from nothing",
+  )
+  assert.match(blockers[0], /does not record which fields the form requires/)
+  assert.match(blockers[0], /26 fields/)
+
+  const r = classify(lead(), { ...OK_CTX, cache: cacheWith(NO_REQ_FORM) })
+  assert.equal(r.tier, "amber")
+})
+
+test("an entry that records requiredness ANYWHERE still reads absent req as optional", () => {
+  // The discriminator has to be per-ENTRY. Per-field is the ambiguity itself:
+  // on a modern entry an absent `req` genuinely means optional, and treating it
+  // as unknown would drop every healthy shape to amber.
+  const mixed = {
+    "first name|text": { t: "text", l: "First name", req: true },
+    "email|text": { t: "text", l: "Email", req: true },
+    "twitter handle|text": { t: "text", l: "Twitter handle" }, // optional
+  }
+  const blockers = shapeBlockers(
+    "fp1",
+    { ats: "greenhouse", url: GH_URL, updated: isoDay(1), fields: mixed },
+    ALL_TEXT_SETTLED,
+    { now: today(), maxAgeDays: DEFAULT_CACHE_MAX_AGE_DAYS },
+  )
+  assert.deepEqual(blockers, [])
+  assert.equal(
+    classify(lead(), { ...OK_CTX, cache: cacheWith(mixed) }).tier,
+    "green",
+  )
+})
+
+test("a remembered shape with no fields at all is not green either", () => {
+  // The same vacuity one level up: every check above passes by having nothing
+  // to fail, and "no blockers" would read as "safe".
+  const blockers = shapeBlockers(
+    "fp1",
+    { ats: "greenhouse", url: GH_URL, updated: isoDay(1), fields: {} },
+    new Map(),
+    { now: today(), maxAgeDays: DEFAULT_CACHE_MAX_AGE_DAYS },
+  )
+  assert.equal(blockers.length, 1)
+  assert.match(blockers[0], /records no fields at all/)
+  assert.equal(
+    classify(lead(), { ...OK_CTX, cache: cacheWith({}) }).tier,
+    "amber",
+  )
+})
+
+test("a widget still outranks the requiredness blocker as the stated reason", () => {
+  // The headline must name the specific thing, not the absence. Both are
+  // reported; only the order of the first one is asserted.
+  const withWidget = {
+    ...NO_REQ_FORM,
+    "i agree to the terms|checkbox": {
+      t: "checkbox",
+      l: "I agree to the terms",
+    },
+  }
+  const blockers = shapeBlockers(
+    "fp1",
+    { ats: "greenhouse", url: GH_URL, updated: isoDay(1), fields: withWidget },
+    new Map(),
+    { now: today(), maxAgeDays: DEFAULT_CACHE_MAX_AGE_DAYS },
+  )
+  assert.match(blockers[0], /consent tickbox present/)
+  assert.ok(
+    blockers.some((b) => /does not record which fields/.test(b)),
+    "the requiredness gap is still reported, just not as the headline",
+  )
+})
+// --- green, checked against the gate it claims to predict ---------------------
+//
+// The pre-filter and the real gate had NOTHING connecting them: green is
+// computed from a remembered shape by this file, and the submit is gated by
+// submitReadiness() on a plan built by fill-plan.mjs, and no test ever asked
+// whether the first predicts the second. A pre-filter nobody can falsify is a
+// pre-filter that drifts until the runner opens hundreds of pages it was told
+// were easy.
+//
+// The loop below closes it, using the REAL functions on both sides:
+//
+//   scan (scanner-shaped)
+//     -> recordCache()      the real cache writer, so the entry shape is not
+//                           hand-rolled and cannot drift from the writer
+//     -> classify()         the pre-filter
+//     -> buildPlan()        what the runner would actually build
+//     -> submitReadiness()  the gate that decides the click
+//
+// GREEN MUST IMPLY READY. The converse is not asserted: amber is allowed to be
+// pessimistic, because a shape we cannot read is still shown to the user.
+
+const FIXTURES = path.resolve(HERE, "../fixtures")
+const FIXTURE_PROFILE = path.join(FIXTURES, "profile.yaml")
+const FIXTURE_ANSWERS = path.join(FIXTURES, "answers.yaml")
+
+const scanFields = (fields) => ({ url: GH_URL, fields })
+
+// Four shapes, spanning the tiers this file can reach from a remembered form.
+const ROUND_TRIP_CASES = [
+  {
+    name: "every required field answerable from the fact base",
+    fields: [
+      { k: "f1", t: "text", l: "First Name", req: true },
+      { k: "f2", t: "text", l: "Last Name", req: true },
+      { k: "f3", t: "email", l: "Email", req: true },
+      { k: "f4", t: "tel", l: "Phone", req: true },
+    ],
+    expect: "green",
+  },
+  {
+    name: "a required field the fact base cannot answer",
+    fields: [
+      { k: "f1", t: "text", l: "First Name", req: true },
+      { k: "f2", t: "text", l: "Desired Salary", req: true },
+    ],
+    expect: "amber",
+  },
+  {
+    name: "an optional field alongside answerable required ones",
+    fields: [
+      { k: "f1", t: "text", l: "First Name", req: true },
+      { k: "f2", t: "email", l: "Email", req: true },
+      { k: "f3", t: "text", l: "Twitter handle" },
+    ],
+    expect: "green",
+  },
+  {
+    name: "a consent tickbox",
+    fields: [
+      { k: "f1", t: "text", l: "First Name", req: true },
+      { k: "f2", t: "checkbox", l: "I agree to the terms and conditions" },
+    ],
+    expect: "amber",
+  },
+]
+
+test("EVERY SHAPE THAT CLASSIFIES GREEN PRODUCES A PLAN submitReadiness ACCEPTS", async () => {
+  const { recordCache } = await import("../../scripts/apply/field-cache.mjs")
+  const { buildPlan, submitReadiness, resolveFields } =
+    await import("../../scripts/apply/fill-plan.mjs")
+  const { detectAts } = await import("../../scripts/apply/ats/index.mjs")
+  const files = { resume: "C:\\jobs\\x\\resume.pdf" }
+  const adapter = detectAts(GH_URL)
+  let greens = 0
+
+  for (const c of ROUND_TRIP_CASES) {
+    const scan = scanFields(c.fields)
+    const cache = { v: 3, forms: {} }
+    recordCache(cache, {
+      fp: "fp1",
+      scan,
+      atsId: "greenhouse",
+      url: GH_URL,
+      now: today(),
+    })
+
+    const [result] = classifyAll([lead()], {
+      cache,
+      profile: FIXTURE_PROFILE,
+      answers: FIXTURE_ANSWERS,
+      profileApproved: true,
+      perLead: () => ({
+        hasVerifiedResume: true,
+        alreadyApplied: false,
+        stages: { ok: true, stage: null, reasons: [] },
+      }),
+      now: today(),
+    })
+    assert.equal(result.tier, c.expect, `${c.name}: ${result.reason}`)
+    if (result.tier !== "green") continue
+    greens++
+
+    // The plan the runner would actually build, from the same scan, resolved
+    // from the same fact base.
+    const resolved = resolveFields(c.fields, {
+      profile: FIXTURE_PROFILE,
+      answers: FIXTURE_ANSWERS,
+    })
+    const plan = buildPlan({ scan, resolved, adapter, files, url: GH_URL })
+    const gate = submitReadiness(plan)
+    assert.equal(
+      gate.ready,
+      true,
+      `${c.name}: classified green but the submit gate refuses it — ${gate.reason}`,
+    )
+  }
+
+  assert.ok(
+    greens > 0,
+    "no case reached green, so this test asserted nothing — a vacuous pass is " +
+      "the exact failure it exists to catch",
+  )
+})

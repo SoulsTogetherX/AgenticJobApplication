@@ -361,3 +361,269 @@ sleep measurement. A row that silently reports 0 for an aborted leg is the exact
 failure that guard was written to prevent, one leg over. Suggested to
 `qa-breaker`: seed elements from `plan.defer` as well, and fail the row when
 `report.failed > 0 && report.ok === 0`.
+
+---
+
+## M7 — 0.12: green-tier prevalence by widget shape — **1 of 7** remembered forms
+
+- agent: `qa-adversary` (owns `scripts/dev/bench-green-prevalence.mjs`)
+- harness: `node scripts/dev/bench-green-prevalence.mjs --json` (human report:
+  same command without `--json`; `--self-check` validates the bucketer)
+- baseline: n/a — a **census**, not a before/after. Nothing changed.
+- after: `66937e0` — see **Provenance** below; taken twice, in two tree states,
+  identical both times
+- budget: none declared (a measurement, not a change)
+- verdict: **1 of 7 remembered form shapes can reach `green`.** Seven forms
+  cannot support a percentage and this entry does not compute one.
+- note: The plan's premise was wrong twice. There are no stored scans of 141
+  leads, and in this corpus work-auth and demographic questions do **not**
+  render as radio groups — they render as combos and block via `CONFIRM`.
+
+### The headline, with its `n` in the same sentence
+
+**1 of 7 remembered form shapes reaches `green`; 1 of 6 distinct boards reaches
+it on a best-case lead.** Seven forms is not a sample from which a rate can be
+computed. Do not turn this into a percentage, do not multiply it by 141, and do
+not read it as a property of "launch boards" — see **Limits** below.
+
+Two further counts from the same run, which matter more than the headline for
+supply math:
+
+- **5 of 7** carry at least one checkbox/radio group or consent tickbox, and are
+  therefore **permanently** amber: no re-scan and no amount of fact-base growth
+  can clear those two rules.
+- **At most 2 of 7** could ever reach green under the settled rules — the one
+  that already does, plus `aa5c650e` (Affirm), whose only blocker is a recording
+  gap a re-scan would fix.
+
+### The premise correction, because the plan text is wrong
+
+`docs/autonomy/phase-0.md` row 0.12 says this is "computed from the
+**already-stored scans** of the 141 leads". **There are no such scans.** Scanning
+is per-application. What exists on this machine is:
+
+| Source                     | Count | Used                                             |
+| -------------------------- | ----- | ------------------------------------------------ |
+| `jobs/.field-cache.json`   | 7     | the corpus                                       |
+| `jobs/<slug>/scan-p*.json` | 4     | 3 distinct forms; see the CAPTCHA result         |
+| `tests/fixtures/boards/*`  | —     | **NOT counted** — synthetic; `--self-check` only |
+
+**The fixture boards are excluded from every number above.** They appear only in
+`--self-check`, which drives the real `shapeBlockers()` over synthetic shapes to
+prove the harness's bucketing still speaks the product's language.
+
+**The cache was read raw, on purpose.** It records `v: 2`; `CACHE_VERSION` is now
+`4`, so `loadCache()` discards it and warns. That bump is about **reuse** — 0.5
+put the registrable host in the fingerprint, invalidating the keys — not about
+the recorded field shapes, which remain a valid historical record of what those
+seven forms looked like. The harness therefore `JSON.parse`s the file directly.
+`tests/dev/green-prevalence.test.mjs` pins that distinction.
+
+**No rule was re-derived.** Every verdict below is the return value of
+`automatability.mjs`'s `shapeBlockers()` / `classify()`, `fill-plan.mjs`'s
+`resolveFields()` / `buildPlan()` / `submitReadiness()`, and
+`pending-questions.mjs`'s `predictedFields()`. The harness adapts the cache's
+map-shaped `fields` into the array those functions expect and **buckets the
+strings they returned**; `bucket()` throws on any blocker it does not recognise,
+so a reworded rule cannot silently drop out of the tally.
+
+### Breakdown by widget shape — what 0.12 is actually named for
+
+Rule occurrences / forms affected: `req-not-recorded` 4/4, `required-unsettled`
+9/2, `consent` 4/3, `confirm-widget` 3/3.
+
+| fingerprint | board               | fields | `req` recorded | checkbox/radio | consent | required-unsettled | green   |
+| ----------- | ------------------- | ------ | -------------- | -------------- | ------- | ------------------ | ------- |
+| `aa5c650e`  | greenhouse/affirm   | 26     | none           | 0              | 0       | —                  | no      |
+| `b6882e3e`  | successfactors/IGT  | 42     | none           | 0              | 1       | —                  | no      |
+| `5b8bb9bf`  | greenhouse/tebra    | 33     | none           | 1              | 0       | —                  | no      |
+| `9fc7b9bb`  | greenhouse/tebra    | 34     | none           | 1              | 0       | —                  | no      |
+| `b2a4f5cd`  | motional (generic)  | 25     | 13             | 0              | 1       | 2                  | no      |
+| `0382a774`  | greenhouse/coinbase | 34     | 23             | 1              | 2       | 7                  | no      |
+| `9ecba78c`  | ashby/ramp          | 8      | 4              | 0              | 0       | 0                  | **yes** |
+
+**The finding inside the breakdown: not one of the three `confirm-widget` defers
+is a work-authorisation or demographic question.** They are Tebra's "which of the
+following technical areas do you have experience with (select all that apply)"
+(twice, two variants of one form) and Coinbase's "Current role" employment-history
+checkbox. On every Greenhouse form in this corpus, work-auth, sponsorship and EEO
+questions render as **combos**, not radio groups. So the mechanism the plan named
+is real but is not what is happening here.
+
+What blocks them instead, by resolution status across the 9 `required-unsettled`
+findings: **`CONFIRM` 4** (Motional work auth; Coinbase age-18, work auth,
+sponsorship), **`UNKNOWN` 3** (Motional "are you currently a Motional employee",
+Coinbase end-date month/year), **`NEEDS-CHOICE` 2** (Coinbase Location, School).
+
+The 4 consent defers: IGT's `* typed signature`; Motional's SMS-consent combo;
+Coinbase's arbitration/privacy-notice receipt and its AI-tools acknowledgement.
+Three of those four are **combos**, not tickboxes — they defer on
+`isConsent`/`looksLikeAgreementProse`, i.e. on topic and prose shape. The rule is
+doing work that the word "tickbox" understates.
+
+### The limiting factor, named
+
+**No single rule is the limiter, and that is the actionable result.** Lifting any
+one rule moves at most **one** form:
+
+- lift `req-not-recorded` → `aa5c650e` becomes green; the other five stay blocked.
+- lift `consent` → **0** forms move (`b6882e3e` and the two Tebra shapes are still
+  `req-not-recorded`; Motional and Coinbase still have unsettled required fields).
+- lift `confirm-widget` → **0** forms move, for the same reason.
+
+The rule that decides the **ceiling** is the pair of shape rules
+(`confirm-widget` + consent), because they are the only two that no re-scan and no
+user answer can clear: **5 of 7**. `req-not-recorded` clears on a re-scan (4 of 7,
+a scanner-vintage artifact, not a property of the forms); `required-unsettled`
+clears when the user answers (2 of 7).
+
+**The one green form is the weakest possible evidence for green.** `9ecba78c` is
+an 8-field Ashby step-1 form (Ramp) with no EEO section, no work-auth question and
+no consent box — it is green precisely because it omits the questions the rule is
+about. Its green also expires: `updated: 2026-07-30` against
+`DEFAULT_CACHE_MAX_AGE_DAYS = 30` makes it amber on **2026-08-29** with no code
+change.
+
+### The four workspace scans contributed nothing, and why that is the result
+
+**4 of 4 scans on record hand off before a single field is examined.** All four
+carry `signals: ["CAPTCHA present — hand off to the user"]`, so `buildPlan`
+short-circuits (`fill-plan.mjs:739`) with zero items and one `__page__` defer.
+Both real Greenhouse boards this machine has ever opened presented a CAPTCHA. That
+is a supply-math fact worth more than the widget breakdown: on this evidence the
+modal outcome of opening a real board is a hand-off, before tier, widget or fact
+base is consulted.
+
+A clearly-labelled **counterfactual** leg (`scans_past_captcha_COUNTERFACTUAL`)
+re-runs the same scans with `signals` deleted, purely to see past the hand-off. It
+runs on modified data and is not a measurement of pipeline behaviour on those
+pages.
+
+### FINDING QA-0.12-1 — **BREAKS.** The shipped CLIs resolve against an EMPTY fact base
+
+Owner: `implementer` (`scripts/apply/`). **Reproduction, not a fix:**
+
+```
+node -e "import('./scripts/apply/answer-bank.mjs').then(ab=>{
+  const f=[{k:'x',t:'text',l:'First Name',req:true}];
+  console.log('omitted:', ab.resolveFieldsFromFiles(f,{profileFile:'tests/fixtures/profile.yaml',answersFile:'tests/fixtures/answers.yaml'}).results[0].status);
+  console.log('null   :', ab.resolveFieldsFromFiles(f,{profileFile:null,answersFile:null}).results[0].status);})"
+# omitted: OK
+# null   : UNKNOWN
+```
+
+`resolveFieldsFromFiles` (`answer-bank.mjs:996`) defaults its paths with
+**destructuring defaults**, which fire only on `undefined`. Three CLIs pass `null`
+when no `--profile` flag is given, because their `flag()` returns `null` for a
+missing flag: `fill-plan.mjs:1747`, `pending-questions.mjs:252`,
+`automatability.mjs:611`. `fs.existsSync(null)` is `false` (it emits `DEP0187` and
+returns), so **the fact base is empty and every field resolves `UNKNOWN`.**
+
+- **Blast radius.** `node scripts/apply/fill-plan.mjs <slug>` — the invocation
+  `apply-job/SKILL.md:147` documents — fills **nothing**. On the Coinbase scan it
+  plans 3 items and 22 defers; the committed artifact from a real run
+  (`jobs/coinbase-software-engineer/fill-plan.json`, 2026-07-29) has **24 items
+  filled with real values**. Same on the Affirm scan: 19 items with the fact base,
+  9 without.
+- **Live since `147eb68` (2026-07-30 20:09)**, which introduced the destructuring
+  default. Both committed `fill-plan.json` artifacts predate it, which is why
+  nobody has noticed: no application has been prepped through the CLI since.
+- **Second-order.** `loadBankById` (`fill-plan.mjs:327`) falls back with `||`
+  rather than a destructuring default, so the bank **is** loaded for the CONFIRM
+  class stamp — but nothing ever reaches `status === "OK"`, so the stamp never
+  fires. Work authorisation still defers, as `unknown` rather than `confirm`: the
+  guardrail holds, its stated reason does not.
+- **Effect on this entry.** M7's headline uses the intended fact base (paths
+  omitted). **With the argument the shipped CLIs actually pass, the number is
+  `0 of 7`** — the harness reports both, as
+  `headline.shapes_reaching_green_AS_SHIPPED_CLI`.
+
+The failing test belongs with the fix, so none was landed here — a defect report
+is not a merge veto. `tests/dev/green-prevalence.test.mjs` pins the correct
+contract (explicit path → `OK`) and names this finding in a comment.
+
+### FINDING QA-0.12-2 — latent. `green` can be granted to a form that can never submit
+
+Owner: `implementer` (`automatability.mjs`). `shapeBlockers` skips optional fields
+(`automatability.mjs:218`, `if (!f.req) continue`), but `buildPlan` defers a
+`CONFIRM` resolution **before** its own optional-skip (`fill-plan.mjs:1093` vs
+`:1111`), so an **optional** assertion-class field defers unconditionally and
+`submitReadiness` fails. Real instance in the corpus: `b2a4f5cd` (Motional)
+records requiredness and has one genuinely optional CONFIRM field — "will you now
+or in the future require visa sponsorship…". Demonstrated end-to-end on the Affirm
+scan with `signals` removed and the real fact base: 19 items, 4 defers, of which
+**2 are `why:"confirm"`** (both immigration-sponsorship combos),
+`submitReadiness → false`.
+
+**Latent, not live**: no form is green _because_ of this today, and green is
+explicitly a pre-filter rather than an authorisation. It matters when the green
+list is used as a work queue — those leads are guaranteed hand-offs.
+
+### Also observed, not mine to fix
+
+`npm test` at `66937e0` plus implementer's in-flight Phase 2: **1704 tests, 1701
+pass, 1 fail, 2 documented skips, 105.0s** (floor 1697; 1697 without this entry's
+7 new tests). The one failure is `tests/apply/fill-plan.test.mjs` → "A6: filling
+stays correct…", expecting `"Yes, US citizen, no sponsorship needed."` and getting
+`"Yes"`. It is in `implementer`'s mid-flight `answer-bank.mjs`/`intents.mjs` work,
+not in anything this entry touched.
+
+### Harness cost
+
+`n=7`, **median 1275 ms, range 1246–1383 ms**, 0 aborted. Method: `spawnSync` of
+`node scripts/dev/bench-green-prevalence.mjs --json`, 7 consecutive runs, same
+shell, warm; **each run's exit status and headline were asserted before its timing
+was counted**, so no aborted run is in the spread. Output was byte-identical
+across 5 earlier runs, so this is a deterministic analysis and the spread is
+process startup, not variance in the answer.
+
+### Provenance — the tree moved mid-measurement
+
+- sha `66937e0`; `MEASURED_FILES` state at run time:
+  **`scripts/apply/answer-bank.mjs` DIRTY** (implementer's Phase 2, plus untracked
+  `scripts/apply/intents.mjs`); `fill-plan.mjs` and `automatability.mjs` clean.
+- Taken **three times**, in three successive tree states as `implementer`'s
+  Phase 2 landed under it: (1) `answer-bank.mjs` clean `4b76673…`; (2)
+  `answer-bank.mjs` dirty `60b0a71…`; (3) `fill-plan.mjs` also dirty
+  `7d7a8fe…`. **Every number above was identical in all three**, including the
+  `0 of 7` as-shipped leg. The census is insensitive to that work.
+- **Every line number in this entry is as of the `file_sha1`s below and will
+  drift** — this repo has already had a plan row wrong twice that way (0.3).
+  Cite the symbol, not the line: `resolveFieldsFromFiles`, `loadBankById`, the
+  `r.status === "CONFIRM"` branch in `buildPlan`, `captchaSignal`, and
+  `shapeBlockers`'s `if (!f.req) continue`.
+
+`file_sha1` at the second (dirty) run:
+
+```
+c95427cdb07df06f83c4b8c55d34eedca9b38730  scripts/dev/bench-green-prevalence.mjs
+c55b1f72c95ed02c68e623c9ad8bde4de1a0451b  scripts/apply/fill-plan.mjs
+73250a8f640893139e91a72bb6287819c9816886  scripts/apply/automatability.mjs
+60b0a719830b58dae7ed763c1fd74eceb04bca6f  scripts/apply/answer-bank.mjs   (DIRTY)
+9c8892312952adfb268cab50604202a2b6aa2081  jobs/.field-cache.json
+```
+
+### Limits — read these before quoting `1 of 7` anywhere
+
+1. **Seven forms cannot support a percentage.** "1 of 7" is the whole claim.
+2. **This is not a random sample of launch boards.** It is every form this one
+   user happened to open: 4 Greenhouse (2 of them variants of one Tebra form), 1
+   Ashby, 1 SuccessFactors, 1 Motional-embedded. Greenhouse is over-weighted, and
+   Lever, Workable, multi-step Ashby and Workday are absent entirely. "Zero
+   radio-group work-auth questions found" is evidence about **these seven forms**,
+   not evidence that the pattern is rare.
+3. **Two of the seven are the same employer's form** (`5b8bb9bf`/`9fc7b9bb`, both
+   Tebra, one pre-probe and one post-probe), so the effective employer count is 6,
+   and the by-shape tally double-counts Tebra's checkbox.
+4. **The best-case tier is an upper bound, not a prediction.** `classify()` was
+   handed `profileApproved`, `hasVerifiedResume` and `stages.ok` all true and
+   `alreadyApplied` false. A real lead must additionally clear all of those.
+5. **What could not be computed at all, and what it would take.** Prevalence over
+   the 141 leads is **not computable from anything on this machine** — there is no
+   stored scan for 137 of them, and green requires a remembered shape for that
+   board. Producing it means opening ~135 real employer forms, which this harness
+   will not do and which 0.12 was scoped to avoid. The honest intermediate is
+   `jobs/.shape-history.jsonl`, the sidecar `fill-plan.mjs:1778` already writes and
+   which **does not exist yet** (no application has been prepped since it landed):
+   once a few dozen applications have run, that file gives a per-shape census
+   without a single extra page load.

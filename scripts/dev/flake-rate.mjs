@@ -83,10 +83,19 @@ const round = (x) => Math.round(x * 1000) / 1000
 function runOnce(target, { timeoutMs = 180000 } = {}) {
   return new Promise((resolve) => {
     const t0 = performance.now()
-    const p = spawn(process.execPath, ["--test", target], {
-      cwd: ROOT,
-      stdio: ["ignore", "pipe", "pipe"],
-    })
+    // TAP is FORCED, not assumed. Node 24 defaults to the `spec` reporter even
+    // when stdout is a pipe, so the `not ok` parser below silently matched
+    // nothing and every failure was attributed to "<file-level>" — a rate with
+    // no test name, which is half a measurement. Measured 2026-08-01: a 41.7%
+    // flake rate that could not be attributed until this line existed.
+    const p = spawn(
+      process.execPath,
+      ["--test", "--test-reporter=tap", target],
+      {
+        cwd: ROOT,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    )
     let out = ""
     let err = ""
     p.stdout.on("data", (d) => (out += d))
@@ -100,9 +109,22 @@ function runOnce(target, { timeoutMs = 180000 } = {}) {
       // The failing subtest names, so a rate is attributable to a test rather
       // than to a file. `not ok N - name` is TAP; the reporter also prints a
       // "✖ name" line.
-      const failing = [...text.matchAll(/^not ok \d+ - (.+)$/gm)].map((m) =>
+      // Leading whitespace is allowed because TAP indents subtests, and an
+      // anchored `^not ok` misses every nested failure.
+      const tap = [...text.matchAll(/^[ \t]*not ok \d+ - (.+)$/gm)].map((m) =>
         m[1].trim(),
       )
+      // Fallback for the `spec` reporter, in case the forced reporter above is
+      // ever dropped or Node changes the flag. Deduped: spec prints a failing
+      // name twice, inline and again in the trailing summary.
+      const spec = [
+        ...new Set(
+          [...text.matchAll(/^[ \t]*✖ (.+?) \(\d[\d.]*ms\)$/gm)].map((m) =>
+            m[1].trim(),
+          ),
+        ),
+      ]
+      const failing = tap.length ? tap : spec
       const cause = /SQLITE_BUSY|database is locked/i.test(text)
         ? "SQLITE_BUSY"
         : /timed out|ETIMEDOUT/i.test(text)

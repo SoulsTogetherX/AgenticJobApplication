@@ -658,11 +658,47 @@ process.exit(0)   // exits WITHOUT releasing, exactly like a crash
   // Age is the ONLY recovery path now, so this waits out the window rather than
   // recovering instantly — that delay is the stated price of deleting the pid
   // probe, and it is asserted here so nobody is surprised by it later.
-  const started = Date.now()
+  //
+  // THE EPOCH THIS USED TO MEASURE FROM WAS THE WRONG ONE, and it made this the
+  // flakiest test in the suite. Staleness runs off the LOCKFILE'S MTIME —
+  // `lockAgeMs` stats the file — while the assertion timed from the PARENT'S
+  // wall clock, started only after the child's process.exit, the OS teardown,
+  // execFileSync returning, an assert.match and an existsSync. Call that gap G:
+  // the lock is already G old when timing starts, acquire breaks it at ~400+G
+  // on the file's clock, and the assertion therefore measured 400-G. It held
+  // only while G stayed under about 80ms.
+  //
+  // Measured here: G is 8-10ms at rest and reached 675ms with the suite running
+  // 6-way. Injecting a 250ms gap made the old assertion fail 8/8 while the
+  // recovery itself was correct every single time — the code was right and the
+  // clock was wrong. Under load the whole file failed 12/48 (25%).
+  //
+  // Two corrections, and the threshold goes UP rather than down. Lowering 350
+  // would have bought quiet by making the assertion measure less; the property
+  // worth keeping sharp is that a stale lock is waited out and NOT grabbed early.
+  //
+  //   1. Re-stamp the lock immediately before timing, so the staleness window
+  //      starts here and none of it has already quietly elapsed. Rewriting the
+  //      same bytes refreshes mtime from the OS clock; utimesSync would go
+  //      through a seconds-valued conversion, and a stamp rounded into the past
+  //      would break the lock instantly and fail this test for a new wrong reason.
+  //   2. Measure the age from that stamp, the same way `lockAgeMs` does, so the
+  //      assertion and the implementation read one clock. This is why the
+  //      threshold can be the full staleMs: `acquire` breaks only when its own
+  //      `Date.now() - mtimeMs` exceeds 400, and this reads the same difference
+  //      strictly later, so it cannot be smaller. Any filesystem-vs-Date.now
+  //      skew (measured up to 11ms here) appears on both sides and cancels.
+  fs.writeFileSync(lock, fs.readFileSync(lock)) // same bytes, fresh mtime
+  const stampedAt = fs.statSync(lock).mtimeMs
   const h = acquire(lock, { staleMs: 400, timeoutMs: 5000, pollMs: 20 })
   try {
     assert.match(h.brokeStale, /old \(stale after/)
-    assert.ok(Date.now() - started >= 350, "it waited out the staleness window")
+    const ageAtBreak = Date.now() - stampedAt
+    assert.ok(
+      ageAtBreak >= 400,
+      `broke a lock only ${Math.round(ageAtBreak)}ms old with staleMs=400 — ` +
+        `it did not wait out the staleness window`,
+    )
   } finally {
     h.release()
   }

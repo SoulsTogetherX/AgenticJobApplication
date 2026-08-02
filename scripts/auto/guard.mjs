@@ -14,12 +14,52 @@
 //   3. readOnlyProfile   — profile/ is read with readFileSync and hashed; the
 //      auto path has no code that can write it.
 //
-// NOTE ON SCOPE. This module is the CHECK. The runner that calls it at each
-// checkpoint is not built yet (hard rule 6: auto-submit ships disabled). Read
-// nothing here as evidence that an unattended run is currently guarded — there
-// is no unattended run. What is true is that the guards exist, are tested, and
-// are structurally impossible for the runner to skip on the submit path, because
-// scripts/auto/audit.mjs performs them before it will record anything.
+// NOTE ON SCOPE, AND A SENTENCE THAT USED TO BE FALSE HERE.
+//
+// This module is the CHECK. The runner that calls it at each checkpoint is not
+// built yet (hard rule 6: auto-submit ships disabled). Read nothing here as
+// evidence that an unattended run is currently guarded — there is no unattended
+// run.
+//
+// This paragraph previously claimed the guards were "structurally impossible
+// for the runner to skip on the submit path, because scripts/auto/audit.mjs
+// performs them before it will record anything". That was written in the
+// indicative about something that had not been built, which is the exact
+// failure autonomy-plan §3.4 records twice: a control stated as fact gets
+// believed in instead of implemented. It was also wrong on its own terms —
+// RECORDING HAPPENS AFTER SUBMITTING. A check on the path to the record runs
+// after the click, and an application cannot be unsent. audit.mjs's
+// intent/record pairing is a DETECTOR: it stops the next application, not this
+// one.
+//
+// What is actually true now:
+//
+//   * These functions are checks. They enforce nothing by existing.
+//   * scripts/auto/authorize.mjs is the only place that reads every
+//     precondition together — auto_apply.enabled, the run mode, this file's
+//     STOP switch, the caps, submitReadiness plus its own zero-defer
+//     assertion, the stored L3 verdict, and the board trust verdict — and it
+//     is the only place that can mint the frozen single-use token that a
+//     clicking function will have to spend. A caller cannot manufacture one.
+//   * CHECKPOINTS.PRE_SUBMIT is read TWICE, by two different callers, and the
+//     second one is the one this comment used to get wrong. authorizeSubmit()
+//     reads it before minting a token, so the common case (brake already on)
+//     never writes an intent row. consumeSubmitToken() reads it again as the
+//     first statement of the click, where "immediately before the click" is
+//     literally true — the gate's read is separated from the click by an
+//     openDb/INSERT/close in beginSubmit(), so it does not qualify.
+//   * That is prevention only for a caller that demands the token. No such
+//     caller exists yet, because nothing in this repository opens a browser
+//     unattended and nothing contains a click.
+//
+// So: the token makes the guards unskippable BY CONSTRUCTION for the code that
+// will click, and the absence of any clicking code is what makes that a design
+// commitment rather than a shipped guarantee. Do not upgrade this sentence
+// until there is a runner and it demands the token.
+//
+// The three sentences that runner must satisfy are written in authorize.mjs's
+// header under "THE RUNNER'S CONTRACT". They are load-bearing for every
+// property in this directory; read them before writing the runner, not after.
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"

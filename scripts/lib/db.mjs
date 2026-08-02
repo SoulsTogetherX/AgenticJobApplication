@@ -217,15 +217,29 @@ CREATE INDEX IF NOT EXISTS idx_auto_runs_started ON auto_runs(started_at);
 -- the point of the dry run is that its counts and its cap arithmetic are the
 -- same ones a live run would have done, so a cap query that silently ignored
 -- them would be testing different code than it protects.
+--
+-- The outcome column exists because the row is written BEFORE the click, not
+-- after it. (No backticks in here, ever: SCHEMA is a template literal and one
+-- backtick in its SQL ends the string — which is exactly how this comment
+-- failed the first time it was written.)
+-- 'attempted' means the runner was about to click and nothing has confirmed
+-- what happened next; 'submitted' means the click returned and was recorded.
+-- The caps count BOTH, because the failure this shape exists for is the
+-- process being killed one second after the click (Task Scheduler's
+-- ExecutionTimeLimit): the application is in the employer's ATS, and a ledger
+-- that only knows about acknowledged submits would let the next run apply
+-- again. An attempt is a submission until proven otherwise.
 CREATE TABLE IF NOT EXISTS auto_submissions (
   run_id           TEXT NOT NULL,
   slug             TEXT NOT NULL,
   company          TEXT,
   title            TEXT,
-  submitted_at     TEXT NOT NULL,
+  submitted_at     TEXT NOT NULL,    -- of the ATTEMPT; refreshed when it is acknowledged
   mode             TEXT,             -- 'dry_run' | 'live'
   plan_sha256      TEXT,
   confirmation_url TEXT,
+  outcome          TEXT,             -- 'attempted' | 'submitted' | 'abandoned'
+  apply_url        TEXT,             -- where the click was aimed, for an orphaned attempt
   doc              TEXT NOT NULL,    -- verify block, consent labels, screenshots
   PRIMARY KEY (run_id, slug)
 );
@@ -260,6 +274,7 @@ export function openDb(file = DB_PATH) {
     // Before SCHEMA, not after: SCHEMA creates an index on screens(source),
     // and that statement is itself what fails against the old shape.
     healScreens(db)
+    healAutoSubmissions(db)
     db.exec(SCHEMA)
   } catch (e) {
     // An open that throws must not leave the handle behind. On Windows a
@@ -292,6 +307,25 @@ function healScreens(db) {
     )
   }
   db.exec("DROP TABLE screens")
+}
+
+// The same blind spot, for auto_submissions: `outcome` and `apply_url` were
+// added when the record moved to BEFORE the click, and CREATE TABLE IF NOT
+// EXISTS will not add them to a database that already has the old shape.
+//
+// ADD COLUMN rather than healScreens's drop-and-rebuild, because these rows
+// are submitted applications: there is no version of this repair that is
+// allowed to lose one. Existing rows get NULL, and readOrphanAttempts treats
+// NULL as "not an attempt" — correct, since every row written before this
+// column existed was written after its click, by recordSubmission.
+function healAutoSubmissions(db) {
+  const cols = db.prepare("PRAGMA table_info(auto_submissions)").all()
+  if (!cols.length) return // fresh database — SCHEMA creates it with both
+  const have = new Set(cols.map((c) => c.name))
+  if (!have.has("outcome"))
+    db.exec("ALTER TABLE auto_submissions ADD COLUMN outcome TEXT")
+  if (!have.has("apply_url"))
+    db.exec("ALTER TABLE auto_submissions ADD COLUMN apply_url TEXT")
 }
 
 // --- row <-> lead object -----------------------------------------------------
@@ -743,18 +777,25 @@ export function latestAutoRun(db) {
   return row ? JSON.parse(row.doc) : null
 }
 
+// Writes an intent row (outcome 'attempted', before the click) or an
+// acknowledgement (outcome 'submitted', after it). The UPDATE branch COALESCEs
+// apply_url and confirmation_url so acknowledging an attempt cannot blank the
+// URL the attempt recorded — an orphaned attempt is only useful to the user if
+// it still says where the click was aimed.
 export function recordAutoSubmission(db, sub) {
   db.prepare(
     `INSERT INTO auto_submissions
-       (run_id, slug, company, title, submitted_at, mode, plan_sha256, confirmation_url, doc)
-     VALUES ($run_id, $slug, $company, $title, $submitted_at, $mode, $plan_sha256, $confirmation_url, $doc)
+       (run_id, slug, company, title, submitted_at, mode, plan_sha256, confirmation_url, outcome, apply_url, doc)
+     VALUES ($run_id, $slug, $company, $title, $submitted_at, $mode, $plan_sha256, $confirmation_url, $outcome, $apply_url, $doc)
      ON CONFLICT(run_id, slug) DO UPDATE SET
        company = excluded.company,
        title = excluded.title,
        submitted_at = excluded.submitted_at,
        mode = excluded.mode,
        plan_sha256 = excluded.plan_sha256,
-       confirmation_url = excluded.confirmation_url,
+       confirmation_url = COALESCE(excluded.confirmation_url, auto_submissions.confirmation_url),
+       outcome = excluded.outcome,
+       apply_url = COALESCE(excluded.apply_url, auto_submissions.apply_url),
        doc = excluded.doc`,
   ).run({
     run_id: sub.run_id,
@@ -765,16 +806,71 @@ export function recordAutoSubmission(db, sub) {
     mode: sub.mode ?? null,
     plan_sha256: sub.plan_sha256 ?? null,
     confirmation_url: sub.confirmation_url ?? null,
+    outcome: sub.outcome ?? "submitted",
+    apply_url: sub.apply_url ?? null,
     doc: JSON.stringify(sub),
   })
   return 1
 }
 
 // How many auto submissions since `sinceIso`. `per_day_max`'s counter.
+//
+// Counts 'attempted' rows as well as 'submitted' ones, and that is the whole
+// point of the outcome column: a run killed between the click and the
+// acknowledgement has still put an application in front of an employer.
+//
+// 'abandoned' is the one outcome that does NOT count. It means the runner
+// asserted the click was never issued, so there is no application to count —
+// and if abandonments consumed cap budget, a run of hundreds of jobs would
+// exhaust the caps on transient click-site failures alone.
+//
+// IS NOT, not !=. `NULL != 'abandoned'` is NULL, which is falsy, so a row
+// written before the outcome column existed would silently stop counting.
+// `NULL IS NOT 'abandoned'` is 1. Those legacy rows are real submitted
+// applications and must keep counting.
 export function countAutoSubmissions(db, sinceIso) {
   return db
-    .prepare("SELECT COUNT(*) c FROM auto_submissions WHERE submitted_at >= ?")
+    .prepare(
+      "SELECT COUNT(*) c FROM auto_submissions WHERE submitted_at >= ? AND outcome IS NOT 'abandoned'",
+    )
     .get(sinceIso).c
+}
+
+// The unresolved attempts belonging to ONE run, for the check audit.mjs makes
+// at finish(). Deliberately not filtered on the run's finished_at: the caller
+// is the run itself, still open, asking what it is about to leave behind.
+export function readAttemptsForRun(db, runId) {
+  return db
+    .prepare(
+      `SELECT run_id, slug, company, submitted_at, mode, apply_url
+         FROM auto_submissions
+        WHERE run_id = ? AND outcome = 'attempted'
+        ORDER BY submitted_at`,
+    )
+    .all(runId)
+}
+
+// Every attempt that was never acknowledged AND whose run never finished.
+//
+// This is the durable half of the crash story. The row is written before the
+// click; if the process dies one second later, nothing updates it and nothing
+// closes the run — so at the next startup this returns it, and the runner
+// refuses to start until a human has looked at the URL.
+//
+// A run that FINISHED with an attempt still open is a different fault (the
+// process survived and did not record), and audit.mjs catches that one at
+// finish() while the run is still in memory.
+export function readOrphanAttempts(db) {
+  return db
+    .prepare(
+      `SELECT s.run_id, s.slug, s.company, s.submitted_at, s.mode, s.apply_url
+         FROM auto_submissions s
+         LEFT JOIN auto_runs r ON r.run_id = s.run_id
+        WHERE s.outcome = 'attempted'
+          AND (r.run_id IS NULL OR r.finished_at IS NULL)
+        ORDER BY s.submitted_at`,
+    )
+    .all()
 }
 
 // per_company_max_per_week's counter, and the one that matters most: carpet
@@ -788,20 +884,51 @@ export function countAutoSubmissions(db, sinceIso) {
 // because the two ledgers get their names from different places (a board
 // payload and the user typing it into log-application.mjs).
 export function countCompanySubmissions(db, company, sinceIso) {
+  return companySubmissionBreakdown(db, company, sinceIso).total
+}
+
+// The same count, itemised by where each application came from.
+//
+// The itemisation is not decoration. The cap counts dry-run rows on purpose
+// (the rehearsal has to exercise the arithmetic the live run will), so five
+// dry runs against one employer followed by a live enable will refuse every
+// application to that employer — and the refusal used to blame the user's
+// manual applications, which for a first-time enable is a message that sends
+// them looking through a ledger that says nothing of the kind. A defer the
+// user cannot act on is the failure hard rule 6 names.
+//
+// `live` and `dry_run` come from auto_submissions and include 'attempted'
+// rows; `manual` comes from applications, because from the employer's side
+// four applications are four applications whoever sent them.
+export function companySubmissionBreakdown(db, company, sinceIso) {
   const norm = (s) =>
     String(s ?? "")
       .replace(/\s+/g, " ")
       .trim()
       .toLowerCase()
   const key = norm(company)
-  if (!key) return 0
+  const out = { total: 0, live: 0, dry_run: 0, manual: 0 }
+  if (!key) return out
   const auto = db
-    .prepare("SELECT company FROM auto_submissions WHERE submitted_at >= ?")
+    .prepare(
+      // Same IS NOT as countAutoSubmissions, for the same two reasons: an
+      // abandoned attempt is not an application, and a legacy NULL outcome is.
+      "SELECT company, mode FROM auto_submissions WHERE submitted_at >= ? AND outcome IS NOT 'abandoned'",
+    )
     .all(sinceIso)
   const manual = db
     .prepare("SELECT company FROM applications WHERE applied_at >= ?")
     .all(sinceIso)
-  return [...auto, ...manual].filter((r) => norm(r.company) === key).length
+  for (const r of auto) {
+    if (norm(r.company) !== key) continue
+    // An unknown mode counts as live. Nothing that reached this ledger without
+    // saying it was a rehearsal gets the benefit of the doubt.
+    if (r.mode === "dry_run") out.dry_run += 1
+    else out.live += 1
+  }
+  for (const r of manual) if (norm(r.company) === key) out.manual += 1
+  out.total = out.live + out.dry_run + out.manual
+  return out
 }
 
 export function recordBoardStats(db, row) {

@@ -22,17 +22,23 @@
 //                                  user to read
 //
 // Anything the fact base cannot answer is DEFERRED, never guessed. Consent,
-// terms, arbitration and e-signature fields are always deferred regardless of
-// what the bank says — the agent does not agree to things on the user's behalf
-// — UNLESS ALL of: our OWN scanner vouches for the exact text (an in-process
-// `vouchedLabels` argument to buildPlan, never a flag read off the scan file —
-// see buildPlan's own consent-branch comment), the exact label is on the
-// user's own --consent-allowlist, and even then arbitration/background-check/
-// e-signature wording is excluded no matter what the allowlist says (see
-// isHardConsent). `vouchedLabels` has no producer on this CLI's own scan-file
-// path today, so every consent box defers here regardless of the allowlist —
-// that does not block `ready` (see readiness()'s own comment): the user ticks
-// it in the browser they are reviewing anyway, which costs nothing.
+// terms, arbitration and e-signature fields are ALWAYS deferred, unconditionally
+// — the agent does not agree to things on the user's behalf, on any path, ever.
+//
+// DELETED (innov-resilience blast-radius review + w3-resolution, 2026-08-01):
+// this file used to carry a conditional grant — vouched + on the caller's
+// --consent-allowlist + not hard-excluded — that could auto-tick a consent
+// box. It was unreachable through this CLI already (`vouchedLabels` has no
+// producer on the scan-file path), but "unreachable because no producer sets
+// it yet" is one config key away from "reachable", and a design that is one
+// key away from auto-ticking consent on an unattended path is not a safe
+// design regardless of how carefully that key is gated. See buildPlan's own
+// consent-branch comment (search "DELETED") for the full removal. `--consent-
+// allowlist` and `loadConsentAllowlist()` still exist and `consentAllowlist`
+// is still an accepted argument to buildPlan — so nothing that passes them
+// breaks — but nothing reads them for a grant anymore. A consent box always
+// defers; that does not block `ready` (see readiness()'s own comment): the
+// user ticks it in the browser they are reviewing anyway, which costs nothing.
 //
 // Usage: node scripts/apply/fill-plan.mjs <slug> [--scan <path> | --page <N>]
 //        [--url <url>] [--resume <pdf>] [--cover <pdf>] [--json]
@@ -258,6 +264,12 @@ export function looksLikeAgreementProse(field, label) {
 // silently ticked just because it shares some words with one the user
 // approved. An unreadable or missing file yields an empty allowlist, which is
 // the same as not passing the flag at all — nothing gets auto-checked.
+//
+// DELETED (see the file header and buildPlan's consent-branch comment, both
+// marked "DELETED"): the Set this returns is still threaded through to
+// buildPlan as `consentAllowlist` so no caller breaks, but nothing in
+// buildPlan reads it for an auto-tick grant anymore. Every consent box
+// defers regardless of what this file contains.
 export function loadConsentAllowlist(file) {
   const out = new Set()
   if (!file || !fs.existsSync(file)) return out
@@ -651,6 +663,10 @@ export function buildPlan({
   adapter,
   files = {},
   url,
+  // DELETED (see the consent branch below, marked "DELETED"): this used to
+  // gate an auto-tick grant together with `vouchedLabels`. Kept as an
+  // accepted parameter, ON PURPOSE, so no existing call site breaks passing
+  // it — nothing in this function reads it for a grant anymore.
   consentAllowlist = new Set(),
   // The scanner's vouch for a label, threaded IN-PROCESS from
   // scan-engine.mjs's scanPage(), which now returns
@@ -658,8 +674,10 @@ export function buildPlan({
   // BAND" comment). An array of complete visible label strings, or a Set —
   // either is accepted and normalized the same way the consent allowlist is,
   // so "the user approved this text" and "our own scanner attests to this
-  // text" compare on equal footing. Absent by default: see the consent
-  // branch below for why that is the honest state today, not a degradation.
+  // text" compare on equal footing. Absent by default. DELETED, same as
+  // `consentAllowlist` above: still accepted (and still built into
+  // `vouchedSet` below, for a future non-consent use), but no longer read to
+  // grant an auto-tick — see the consent branch's own "DELETED" comment.
   vouchedLabels,
 }) {
   // FIX (E7, w3-resolution): scan-page.js already classifies the page —
@@ -837,17 +855,19 @@ export function buildPlan({
     const verb = VERB[f.t]
 
     // Agreements first — this outranks whatever the bank resolved. A consent
-    // box only ever becomes an auto-checked item when ALL of: our OWN
-    // scanner vouches for this exact text, it is not hard-excluded, its
-    // exact normalized label is on the caller's allowlist, it is a genuine
-    // checkbox (not a combo/select-shaped "confirm receipt" widget — there
-    // is no clean single verb for those), and it has exactly one stamped
-    // option (never guess WHICH box to click among several sharing a
-    // label).
+    // box is ALWAYS deferred, unconditionally — see "DELETED" at the top of
+    // this file and immediately below. It never becomes an auto-checked item,
+    // regardless of what the scanner vouches for or what is on the caller's
+    // allowlist.
     //
-    // WHY THE VOUCH IS AN ARGUMENT, NOT A FIELD ON THE SCAN, and why nothing
-    // auto-ticks on the path that actually runs today (the MCP/CLI flow,
-    // reading a scan already written to jobs/<slug>/scan-p<N>.json).
+    // THE REST OF THIS COMMENT IS KEPT AS A RECORD, NOT A DESCRIPTION OF LIVE
+    // BEHAVIOUR: it explains why `labelExact`/`vouchedLabels` are trusted the
+    // way they are (never read off the scan itself, only as an in-process
+    // argument) — that trust-boundary reasoning stayed true even after the
+    // auto-tick grant built on top of it was deleted, because `vouchedLabels`
+    // still exists and still must not be spoofable by a page. WHY THE VOUCH
+    // WAS AN ARGUMENT, NOT A FIELD ON THE SCAN (historical: this used to gate
+    // the MCP/CLI flow's now-deleted auto-tick path).
     //
     // The label the user approved, the label that is matched, and the label
     // shown in the approval message have to be ONE string, and it has to be
@@ -917,36 +937,37 @@ export function buildPlan({
     // the remaining floor is the allowlist itself: the attacker has to
     // reproduce text the user typed into their OWN file.
     //
-    // ENTRY TO THIS BRANCH IS TWO DOORS, NOT ONE (FINDING, w3-resolution +
-    // innov-resilience, hostile-forms.test.mjs:419). isConsent(label) is a
+    // ENTRY TO THIS BRANCH IS STILL TWO DOORS, NOT ONE (FINDING, w3-resolution
+    // + innov-resilience, hostile-forms.test.mjs:419). isConsent(label) is a
     // TOPIC match and cannot be exhaustive — the 26th rewording is free.
     // looksLikeAgreementProse(f, label) is a SHAPE match (a long single
     // tickbox ending like a sentence) and needs no topic word at all, so a
     // wording nobody has pattern-matched yet still lands here instead of
     // falling through to the ordinary checkbox branch below, where nothing
-    // past this point would ever run again. Either door leads to the SAME
-    // gate: vouch + allowlist + !isHardConsent, never a bypass of its own.
+    // past this point would ever run again. That routing still matters even
+    // now that neither door leads anywhere but `defer` — a box that missed
+    // both doors would be resolved as an ORDINARY checkbox instead, which the
+    // bank can auto-check on a plain fuzzy/exact hit with no review at all.
+    //
+    // DELETED (innov-resilience blast-radius review + w3-resolution,
+    // 2026-08-01, tests/apply/fill-plan.test.mjs "an exact-matching, vouched
+    // consent label still defers — the allowlist grant is deleted, not
+    // merely unreachable"): this branch used to compute `allowed` — vouched +
+    // on the caller's allowlist + not hard-excluded + a genuine single
+    // checkbox — and auto-check when all five held, marking the item
+    // `why: "consent:allowlisted"`. That grant was live in-process (this
+    // file's own CLI never threads `vouchedLabels`, so it never fired
+    // through the CLI, but a caller that supplies both `vouchedLabels` and
+    // `consentAllowlist` directly — a test, or a future in-process runner —
+    // could reach it). Deleted outright rather than left dormant: hard rule 6
+    // is "a consent box is the user's to tick, always, on any path", and a
+    // branch that ticks one the instant a config key exists is not "off", it
+    // is "one file edit from on". `f`, `consentAllowlist`, and `vouchedLabels`
+    // (via `vouchedSet`, computed above) are deliberately UNREAD past this
+    // point — kept as accepted parameters so no caller's call site breaks,
+    // never consulted for a grant again.
     if (isConsent(label) || looksLikeAgreementProse(f, label)) {
-      const allowed =
-        vouchedSet.has(normalizeQuestion(label)) &&
-        !isHardConsent(label) &&
-        consentAllowlist.has(normalizeQuestion(label)) &&
-        f.t === "checkbox" &&
-        Array.isArray(f.o) &&
-        f.o.length === 1
-      if (allowed) {
-        items.push({
-          k: f.o[0].k,
-          sel: f.o[0].sel,
-          how: "check",
-          value: "true",
-          label: displayLabel,
-          ...mLabel(),
-          why: "consent:allowlisted",
-        })
-      } else {
-        defer.push({ k: f.k, label: displayLabel, ...mLabel(), why: "consent" })
-      }
+      defer.push({ k: f.k, label: displayLabel, ...mLabel(), why: "consent" })
       continue
     }
 
@@ -1216,6 +1237,27 @@ export function buildPlan({
   }
 }
 
+// FLOW THIS FUNCTION SERVES (FINDING, innov-resilience blast-radius review +
+// w3-resolution, 2026-08-01): `readiness()` answers for the ATTENDED flow
+// only — a human is driving, reviewing the filled form, and about to look at
+// the Submit button themselves. It is the "does a model need to think before
+// the ENGINE can run" gate, nothing more, which is exactly why a consent
+// defer does not block it (see below): the user was already going to look at
+// the page before submitting.
+//
+// THE UNATTENDED/AUTO PATH MUST NEVER CALL readiness(). Its gate is
+// submitReadiness() (below), which blocks on every single defer, consent
+// included — see docs/autonomy-plan.md §3.3's two-key Phase 3 pre-submit
+// gate ("readiness() after the live scan, plus a new submitReadiness()...").
+// That sentence is easy to misread as "the real auto-submit gate is
+// readiness()" if read out of context — it is not; §3.3 is describing
+// readiness() as the FIRST of the two keys checked before a fill even
+// starts, not as what authorises a submit click. submitReadiness() is the
+// one that must hold before anything unattended is allowed near Submit, and
+// even that is necessary, not sufficient — hard rule 6 (the user is on the
+// submit button, always, until the runner and trust gate both exist) is
+// enforced independently of what either function returns.
+//
 // "Is any model judgment still required before this form can be filled?"
 //
 // The planner already knows the answer — it counted the defers and it knows
@@ -1297,6 +1339,10 @@ export function readiness(plan) {
   return { ready: true, reason: null }
 }
 
+// FLOW THIS FUNCTION SERVES: the UNATTENDED/AUTO path — see readiness()'s own
+// "FLOW THIS FUNCTION SERVES" comment above for the contrast. This is the
+// function an auto-submit runner must gate on, never readiness().
+//
 // The stricter twin: "would EVERY field on this form be resolved, with
 // NOTHING at all left for a human — including a consent box?" Any defer
 // blocks this, consent included: a consent box is deferred FOR the user, not

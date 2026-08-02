@@ -6,9 +6,11 @@ import path from "node:path"
 import {
   startRun,
   hashProfile,
-  capCheck,
   PROFILE_FILES,
 } from "../../scripts/auto/audit.mjs"
+import { capCheck } from "../../scripts/auto/caps.mjs"
+import { authorizeSubmit, planSha256 } from "../../scripts/auto/authorize.mjs"
+import { DatabaseSync } from "node:sqlite"
 import { openDb, upsertApplications } from "../../scripts/lib/db.mjs"
 import { StopError, readStop } from "../../scripts/auto/guard.mjs"
 
@@ -53,6 +55,40 @@ const fullSubmission = (slug) => ({
   screenshots: { before: "before.png", after: "after.png" },
   confirmation_url: "https://example.test/confirmation/1",
 })
+
+// beginSubmit now REQUIRES a real token, so the tests mint one the same way the
+// runner will have to: through authorizeSubmit, which is the only thing that
+// can produce one. Caps are set wide here on purpose — these tests are about
+// the intent ledger, and capCheck has its own section below.
+const PLAN = { v: 1, items: [{ k: "n", how: "fill", value: "x" }], defer: [] }
+const PLAN_SHA = planSha256(PLAN)
+
+function tokenFor(s, { slug, company = "Acme", mode = "live" }) {
+  return authorizeSubmit({
+    lead: { slug, company, apply_url: "u" },
+    plan: PLAN,
+    planSha: PLAN_SHA,
+    report: null,
+    config: {
+      enabled: true,
+      dry_run: mode === "dry_run",
+      per_run_max: 999,
+      per_day_max: 999,
+      per_company_max_per_week: 999,
+    },
+    trustVerdict: { ok: true },
+    screening: { ok: true },
+    dbFile: s.dbFile,
+    stopPath: s.stopPath,
+  })
+}
+
+// The runner's contract in one line: authorize, then write the intent.
+function attempt(run, s, { slug, company = "Acme", url = "u" }) {
+  const token = tokenFor(s, { slug, company, mode: run.mode })
+  run.beginSubmit({ slug, company }, PLAN_SHA, url, token)
+  return token
+}
 
 // --- opening a run -----------------------------------------------------------
 
@@ -117,25 +153,81 @@ test("CHECKPOINT 2: a STOP appearing mid-run halts the next job", () => {
   )
 })
 
-test("CHECKPOINT 3: preSubmitCheck reads the switch again, immediately before the click", () => {
-  const s = sandbox()
-  const run = startRun({ mode: "dry_run", ...s.opts })
-  run.beginJob({ slug: "one" })
-  assert.ok(run.preSubmitCheck({ slug: "one" }))
-  // The window this exists for: the switch was clear at the start of the job
-  // and is set by the time we reach the button.
-  fs.writeFileSync(s.stopPath, "raced")
-  assert.throws(
-    () => run.preSubmitCheck({ slug: "one" }),
-    (e) => e instanceof StopError && e.checkpoint === "pre-submit",
-  )
-})
+// CHECKPOINT 3 (immediately before the click) moved to authorize.mjs, where it
+// is read AFTER every other precondition and hands back the token the clicking
+// function has to spend. tests/auto/authorize.test.mjs covers it. What stays
+// here is the durable intent.
 
-test("a submission recorded without a pre-submit check STOPS the runner", () => {
+test("beginSubmit writes the intent to BOTH copies before the click", () => {
   const s = sandbox()
   const run = startRun({ mode: "live", ...s.opts })
   run.beginJob({ slug: "one" })
-  // No preSubmitCheck — the checkpoint that cannot be reconstructed afterwards.
+  const token = tokenFor(s, { slug: "one", mode: "live" })
+  const intent = run.beginSubmit(
+    { slug: "one", company: "Acme", title: "Dev" },
+    PLAN_SHA,
+    "https://boards.test/acme/one",
+    token,
+  )
+  assert.equal(intent.outcome, "attempted")
+  assert.equal(intent.authorized.nonce, token.nonce)
+
+  const ev = lines(run.jsonl).find((e) => e.t === "submit.attempt")
+  assert.equal(ev.apply_url, "https://boards.test/acme/one")
+
+  const db = openDb(s.dbFile)
+  try {
+    const row = db.prepare("SELECT * FROM auto_submissions").get()
+    assert.equal(row.outcome, "attempted")
+    assert.equal(row.confirmation_url, null, "nothing has confirmed anything")
+    assert.equal(row.apply_url, "https://boards.test/acme/one")
+  } finally {
+    db.close()
+  }
+})
+
+test("an attempt counts against the caps before anything acknowledges it", () => {
+  // THE SCENARIO: the process is killed one second after the click. The
+  // application is in the employer's ATS and nothing acknowledged it.
+  const s = sandbox()
+  const caps = { per_run_max: 9, per_day_max: 9, per_company_max_per_week: 1 }
+  const run = startRun({ mode: "live", ...s.opts })
+  attempt(run, s, { slug: "one" })
+  // no recordSubmission — the process died here.
+  const r = capCheck({ company: "Acme", caps, dbFile: s.dbFile })
+  assert.equal(r.ok, false, "an attempt is a submission until proven otherwise")
+  assert.match(r.reason, /per_company_max_per_week reached for Acme \(1\/1\)/)
+})
+
+test("recordSubmission resolves the attempt rather than adding a second row", () => {
+  const s = sandbox()
+  const run = startRun({ mode: "live", ...s.opts })
+  attempt(run, s, { slug: "one" })
+  run.recordSubmission(fullSubmission("one"))
+  const db = openDb(s.dbFile)
+  try {
+    const rows = db.prepare("SELECT * FROM auto_submissions").all()
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].outcome, "submitted")
+    assert.equal(
+      rows[0].confirmation_url,
+      "https://example.test/confirmation/1",
+    )
+    assert.equal(
+      rows[0].apply_url,
+      "u",
+      "the attempt's URL survives the update",
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test("a submission recorded without a preceding intent STOPS the runner", () => {
+  const s = sandbox()
+  const run = startRun({ mode: "live", ...s.opts })
+  run.beginJob({ slug: "one" })
+  // No beginSubmit — so no durable row was written before the click.
   const row = run.recordSubmission(fullSubmission("one"))
   assert.ok(
     row,
@@ -148,11 +240,11 @@ test("a submission recorded without a pre-submit check STOPS the runner", () => 
   assert.ok(lines(run.jsonl).some((e) => e.t === "submit.unchecked"))
 })
 
-test("one pre-submit check authorises exactly one submission", () => {
+test("one intent resolves exactly one submission", () => {
   const s = sandbox()
   const run = startRun({ mode: "live", ...s.opts })
   run.beginJob({ slug: "one" })
-  run.preSubmitCheck({ slug: "one" })
+  attempt(run, s, { slug: "one" })
   run.recordSubmission(fullSubmission("one"))
   assert.equal(
     readStop({ stopPath: s.stopPath }),
@@ -164,16 +256,278 @@ test("one pre-submit check authorises exactly one submission", () => {
   assert.match(
     readStop({ stopPath: s.stopPath }),
     /without a matching pre-submit/,
-    "the ticket is single-use",
+    "the intent is single-use",
   )
 })
 
-test("a pre-submit check for one job does not authorise a different job", () => {
+test("an intent for one job does not cover a different job", () => {
   const s = sandbox()
   const run = startRun({ mode: "live", ...s.opts })
-  run.preSubmitCheck({ slug: "one" })
+  attempt(run, s, { slug: "one" })
   run.recordSubmission(fullSubmission("two"))
   assert.match(readStop({ stopPath: s.stopPath }), /"two"/)
+})
+
+test("beginSubmit REQUIRES a token, and no hand-built object will do", () => {
+  const s = sandbox()
+  const run = startRun({ mode: "live", ...s.opts })
+  const token = tokenFor(s, { slug: "one", mode: "live" })
+
+  assert.throws(() => run.beginSubmit({}, PLAN_SHA, "u", token), TypeError)
+  assert.throws(
+    () => run.beginSubmit({ slug: "one" }, null, "u", token),
+    /requires the plan sha256/,
+  )
+  // Omitted entirely — the whole point of the fix.
+  assert.throws(
+    () => run.beginSubmit({ slug: "one" }, PLAN_SHA, "u"),
+    (e) => e.name === "TokenError",
+  )
+  // Shape-perfect and hand-built: the nonce was never issued.
+  assert.throws(
+    () =>
+      run.beginSubmit({ slug: "one" }, PLAN_SHA, "u", {
+        kind: "aj.submit-authorization",
+        deferred: false,
+        slug: "one",
+        planSha: PLAN_SHA,
+        mode: "live",
+        nonce: "n",
+      }),
+    /has already been spent, was copied, or was not issued/,
+  )
+  assert.throws(
+    () => run.beginSubmit({ slug: "two" }, PLAN_SHA, "u", token),
+    /is for "one", not "two"/,
+  )
+  assert.throws(
+    () => run.beginSubmit({ slug: "one" }, "c".repeat(64), "u", token),
+    /bound to plan/,
+  )
+  const db = openDb(s.dbFile)
+  try {
+    assert.equal(
+      db.prepare("SELECT COUNT(*) c FROM auto_submissions").get().c,
+      0,
+      "and none of those wrote a row on the way out",
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test("a live run cannot write an intent against a dry-run authorisation", () => {
+  // THE ONLY PLACE IN THE TREE where the run's mode is compared against the
+  // mode derived from the user's file. consumeSubmitToken compares against the
+  // mode the caller states, which is the caller vouching for itself; this is
+  // the check that catches a runner opened `live` while the user's file says
+  // dry_run: true. It is why the token stopped being optional here.
+  const s = sandbox()
+  const run = startRun({ mode: "live", ...s.opts })
+  const rehearsalToken = tokenFor(s, { slug: "one", mode: "dry_run" })
+  assert.equal(rehearsalToken.mode, "dry_run")
+  assert.throws(
+    () => run.beginSubmit({ slug: "one" }, PLAN_SHA, "u", rehearsalToken),
+    /is for a dry_run run, but a live submit was attempted/,
+  )
+  const db = openDb(s.dbFile)
+  try {
+    assert.equal(
+      db.prepare("SELECT COUNT(*) c FROM auto_submissions").get().c,
+      0,
+      "and it wrote nothing on the way out",
+    )
+  } finally {
+    db.close()
+  }
+})
+
+// --- the click nobody accounted for ------------------------------------------
+
+test("an attempt from a run that never finished blocks the NEXT run", () => {
+  const s = sandbox()
+  const first = startRun({ mode: "live", ...s.opts })
+  attempt(first, s, { slug: "one", url: "https://boards.test/acme/one" })
+  // The process dies here: no recordSubmission, no finish().
+
+  assert.throws(
+    () => startRun({ mode: "live", ...s.opts }),
+    (e) => e instanceof StopError && e.checkpoint === "run-start",
+  )
+  const stop = readStop({ stopPath: s.stopPath })
+  assert.match(stop, /one/, "STOP names the slug")
+  assert.match(stop, /boards\.test\/acme\/one/, "and the URL")
+})
+
+test("a resolved attempt does not block the next run", () => {
+  const s = sandbox()
+  const first = startRun({ mode: "live", ...s.opts })
+  attempt(first, s, { slug: "one" })
+  first.recordSubmission(fullSubmission("one"))
+  first.finish()
+  assert.equal(readStop({ stopPath: s.stopPath }), null)
+  const second = startRun({ mode: "live", ...s.opts })
+  assert.ok(second.id)
+})
+
+test("a run that finishes with an attempt still open stops itself", () => {
+  // The other half: the process SURVIVED and never acknowledged its own click.
+  // The startup scan cannot see this one, because the run does finish.
+  const s = sandbox()
+  const run = startRun({ mode: "live", ...s.opts })
+  attempt(run, s, { slug: "one", url: "https://boards.test/acme/one" })
+  const final = run.finish({ outcome: "ok" })
+  assert.equal(final.outcome, "stopped")
+  assert.match(readStop({ stopPath: s.stopPath }), /1 unresolved submit/)
+  assert.match(
+    readStop({ stopPath: s.stopPath }),
+    /one at https:\/\/boards\.test/,
+  )
+})
+
+test("an attempt the in-memory slot lost is still caught at finish()", () => {
+  // THE HOLE THIS CLOSES. `pendingAttempt` is one slot. Before this, job 4's
+  // beginSubmit overwrote job 3's unresolved attempt and that application
+  // became invisible to BOTH nets: finish() only ever saw the last slot, and
+  // readOrphanAttempts only sees attempts whose RUN never finished.
+  //
+  // Reached here through the public API: the slot-occupied check clears the
+  // slot on its way out, so after it fires the ledger holds an attempt that the
+  // slot no longer knows about. finish() must still find it, and it can only do
+  // that by querying.
+  const s = sandbox()
+  const run = startRun({ mode: "live", ...s.opts })
+  attempt(run, s, { slug: "three", url: "https://boards.test/three" })
+
+  const token = tokenFor(s, { slug: "four", mode: "live" })
+  assert.throws(
+    () => run.beginSubmit({ slug: "four" }, PLAN_SHA, "u", token),
+    (e) => e instanceof StopError,
+    "overwriting an unresolved attempt stops the runner",
+  )
+  fs.rmSync(s.stopPath) // clear the brake so finish()'s own reason is the one under test
+
+  const final = run.finish({ outcome: "ok" })
+  assert.equal(final.outcome, "stopped")
+  assert.match(
+    readStop({ stopPath: s.stopPath }),
+    /three at https:\/\/boards\.test\/three/,
+    "the slot had forgotten it; the ledger had not",
+  )
+})
+
+test("beginSubmit stops rather than overwriting an unresolved attempt", () => {
+  const s = sandbox()
+  const run = startRun({ mode: "live", ...s.opts })
+  attempt(run, s, { slug: "three", url: "https://boards.test/three" })
+  const token = tokenFor(s, { slug: "four", mode: "live" })
+  assert.throws(
+    () => run.beginSubmit({ slug: "four" }, PLAN_SHA, "u", token),
+    (e) =>
+      e instanceof StopError && /never resolved or abandoned/.test(e.message),
+  )
+  const stop = readStop({ stopPath: s.stopPath })
+  assert.match(stop, /"three"/)
+  assert.match(stop, /"four" is about to overwrite it/)
+  assert.ok(
+    lines(run.jsonl).some((e) => e.t === "submit.unresolved"),
+    "and the JSONL says so too",
+  )
+})
+
+// --- abandoning an attempt that never became a click -------------------------
+
+test("abandonAttempt resolves the intent without claiming an application", () => {
+  // WHY THIS VERB EXISTS: without it every transient click-site failure leaves
+  // an 'attempted' row, fires the "may already be an application" brake, and
+  // halts the run. The user has decided the runner applies to an unlimited
+  // number of jobs, so at that volume those failures are certain — and a brake
+  // that fires on healthy runs is one the user deletes.
+  const s = sandbox()
+  const run = startRun({ mode: "live", ...s.opts })
+  attempt(run, s, { slug: "one" })
+  const row = run.abandonAttempt("one", "submit button never appeared", {
+    beforeClick: true,
+  })
+  assert.equal(row.outcome, "abandoned")
+
+  const final = run.finish({ outcome: "ok" })
+  assert.equal(final.outcome, "ok", "a healthy run stays healthy")
+  assert.equal(readStop({ stopPath: s.stopPath }), null)
+  assert.ok(lines(run.jsonl).some((e) => e.t === "submit.abandoned"))
+
+  // And the next run is not blocked by it either.
+  assert.ok(startRun({ mode: "live", ...s.opts }).id)
+})
+
+test("an abandoned attempt consumes no cap budget", () => {
+  const s = sandbox()
+  const caps = {
+    per_run_max: 999,
+    per_day_max: 999,
+    per_company_max_per_week: 1,
+  }
+  const run = startRun({ mode: "live", ...s.opts })
+  attempt(run, s, { slug: "one" })
+  assert.equal(
+    capCheck({ company: "Acme", caps, dbFile: s.dbFile }).ok,
+    false,
+    "while it is open it counts",
+  )
+  run.abandonAttempt("one", "navigation failed before the click", {
+    beforeClick: true,
+  })
+  assert.equal(
+    capCheck({ company: "Acme", caps, dbFile: s.dbFile }).ok,
+    true,
+    "abandoning it gives the budget back — no application exists to count",
+  )
+  assert.equal(
+    capCheck({
+      company: "Other Co",
+      caps: { ...caps, per_day_max: 1 },
+      dbFile: s.dbFile,
+    }).ok,
+    true,
+    "and per_day_max does not count it either",
+  )
+  // The evidence is kept, not deleted.
+  const db = openDb(s.dbFile)
+  try {
+    const r = db.prepare("SELECT * FROM auto_submissions").get()
+    assert.equal(r.outcome, "abandoned")
+    assert.match(JSON.parse(r.doc).abandon_reason, /navigation failed/)
+  } finally {
+    db.close()
+  }
+})
+
+test("abandonAttempt makes the caller assert the click never happened", () => {
+  const s = sandbox()
+  const run = startRun({ mode: "live", ...s.opts })
+  attempt(run, s, { slug: "one" })
+
+  // A timeout DURING a click is ambiguous and must stay an orphan. Omitting the
+  // assertion cannot be the easy path.
+  assert.throws(
+    () => run.abandonAttempt("one", "timed out"),
+    /requires \{ beforeClick: true \}/,
+  )
+  assert.throws(
+    () => run.abandonAttempt("one", "timed out", { beforeClick: "yes" }),
+    /requires \{ beforeClick: true \}/,
+  )
+  assert.throws(
+    () => run.abandonAttempt("one", "", { beforeClick: true }),
+    /requires a stated reason/,
+  )
+  assert.throws(
+    () => run.abandonAttempt("other", "x", { beforeClick: true }),
+    /no open attempt for "other"/,
+  )
+  // None of those resolved it.
+  run.finish()
+  assert.match(readStop({ stopPath: s.stopPath }), /unresolved submit/)
 })
 
 // --- the record itself -------------------------------------------------------
@@ -181,7 +535,7 @@ test("a pre-submit check for one job does not authorise a different job", () => 
 test("a submission missing audit fields is still recorded, and then stops the runner", () => {
   const s = sandbox()
   const run = startRun({ mode: "live", ...s.opts })
-  run.preSubmitCheck({ slug: "one" })
+  attempt(run, s, { slug: "one" })
   const partial = fullSubmission("one")
   delete partial.confirmation_url
   delete partial.screenshots
@@ -213,7 +567,7 @@ test("a submission missing audit fields is still recorded, and then stops the ru
 test("a complete submission lands in both copies with its plan hash and confirmation url", () => {
   const s = sandbox()
   const run = startRun({ mode: "live", ...s.opts })
-  run.preSubmitCheck({ slug: "one" })
+  attempt(run, s, { slug: "one" })
   run.recordSubmission(fullSubmission("one"))
 
   const done = lines(run.jsonl).find((e) => e.t === "submit.done")
@@ -353,7 +707,7 @@ test("capCheck counts per_day across runs, not just the current one", () => {
   const caps = { per_run_max: 3, per_day_max: 2, per_company_max_per_week: 9 }
   const run = startRun({ mode: "live", ...s.opts })
   for (const slug of ["a", "b"]) {
-    run.preSubmitCheck({ slug })
+    attempt(run, s, { slug })
     run.recordSubmission({ ...fullSubmission(slug), company: `Co-${slug}` })
   }
   const r = capCheck({
@@ -419,12 +773,144 @@ test("a dry-run submission still counts toward the caps", () => {
   const s = sandbox()
   const caps = { per_run_max: 3, per_day_max: 5, per_company_max_per_week: 1 }
   const run = startRun({ mode: "dry_run", ...s.opts })
-  run.preSubmitCheck({ slug: "a" })
+  attempt(run, s, { slug: "a" })
   run.recordSubmission(fullSubmission("a"))
   const r = capCheck({ company: "Acme", caps, dbFile: s.dbFile })
   assert.equal(
     r.ok,
     false,
     "the dry run must exercise the same arithmetic the live run will",
+  )
+})
+
+// --- who the company cap is actually blaming ---------------------------------
+
+test("five dry runs then a live enable: the defer blames the dry runs, not the user", () => {
+  // The misattribution this fixes. The user's shipped cap is 5. They rehearse
+  // against one employer five times, read the report, set enabled: true — and
+  // every application to that employer now defers. The old message said
+  // "counting manual applications too", sending them to look through a ledger
+  // that holds none of these.
+  const s = sandbox()
+  const caps = {
+    per_run_max: 999,
+    per_day_max: 999,
+    per_company_max_per_week: 5,
+  }
+  const run = startRun({ mode: "dry_run", ...s.opts })
+  for (const slug of ["a", "b", "c", "d", "e"]) {
+    attempt(run, s, { slug })
+    run.recordSubmission({ ...fullSubmission(slug), slug })
+  }
+  const r = capCheck({ company: "Acme", caps, dbFile: s.dbFile })
+  assert.equal(r.ok, false)
+  assert.match(r.reason, /5 from dry runs/)
+  assert.doesNotMatch(
+    r.reason,
+    /manual/,
+    "there are no manual applications to blame",
+  )
+  assert.deepEqual(r.counts.byMode, {
+    total: 5,
+    live: 0,
+    dry_run: 5,
+    manual: 0,
+  })
+})
+
+test("the company cap itemises every source it counted", () => {
+  const s = sandbox()
+  const caps = {
+    per_run_max: 999,
+    per_day_max: 999,
+    per_company_max_per_week: 3,
+  }
+  const live = startRun({ mode: "live", ...s.opts })
+  attempt(live, s, { slug: "a" })
+  live.recordSubmission({ ...fullSubmission("a"), slug: "a" })
+  live.finish()
+  const dry = startRun({ mode: "dry_run", ...s.opts })
+  attempt(dry, s, { slug: "b" })
+  dry.recordSubmission({ ...fullSubmission("b"), slug: "b" })
+  dry.finish()
+  const db = openDb(s.dbFile)
+  try {
+    upsertApplications(db, [
+      {
+        slug: "acme-by-hand",
+        company: "Acme",
+        title: "x",
+        applied_at: new Date().toISOString(),
+        status: "applied",
+      },
+    ])
+  } finally {
+    db.close()
+  }
+  const r = capCheck({ company: "Acme", caps, dbFile: s.dbFile })
+  assert.equal(r.ok, false)
+  assert.match(r.reason, /1 auto-submitted/)
+  assert.match(r.reason, /1 from dry runs/)
+  assert.match(r.reason, /1 applied manually/)
+  assert.deepEqual(r.counts.byMode, {
+    total: 3,
+    live: 1,
+    dry_run: 1,
+    manual: 1,
+  })
+})
+
+// --- the ledger's own shape --------------------------------------------------
+
+test("an auto_submissions table from before the outcome column is migrated, not rebuilt", () => {
+  // CREATE TABLE IF NOT EXISTS never widens an existing table, and these rows
+  // are submitted applications: there is no repair here that is allowed to lose
+  // one.
+  const s = sandbox()
+  fs.mkdirSync(s.jobsDir, { recursive: true })
+  const raw = new DatabaseSync(s.dbFile)
+  raw.exec(`CREATE TABLE auto_submissions (
+      run_id TEXT NOT NULL, slug TEXT NOT NULL, company TEXT, title TEXT,
+      submitted_at TEXT NOT NULL, mode TEXT, plan_sha256 TEXT,
+      confirmation_url TEXT, doc TEXT NOT NULL, PRIMARY KEY (run_id, slug))`)
+  raw
+    .prepare(
+      "INSERT INTO auto_submissions (run_id, slug, company, submitted_at, mode, doc) VALUES (?,?,?,?,?,?)",
+    )
+    .run("old-run", "old-slug", "Acme", new Date().toISOString(), "live", "{}")
+  raw.close()
+
+  const db = openDb(s.dbFile)
+  try {
+    const row = db.prepare("SELECT * FROM auto_submissions").get()
+    assert.equal(row.slug, "old-slug", "the pre-existing application survives")
+    assert.equal(row.outcome, null)
+    assert.equal(row.apply_url, null)
+  } finally {
+    db.close()
+  }
+
+  // A NULL outcome is not an attempt: every row written before the column
+  // existed was written after its click.
+  assert.ok(startRun({ mode: "live", ...s.opts }).id)
+
+  // And it still counts against BOTH caps. This is the SQL NULL trap: the
+  // filter that excludes abandoned rows must be `outcome IS NOT 'abandoned'`,
+  // because `NULL != 'abandoned'` is NULL — falsy — and a legacy application
+  // would silently stop counting against the blast radius.
+  const caps = { per_run_max: 9, per_day_max: 9, per_company_max_per_week: 1 }
+  assert.equal(
+    capCheck({ company: "Acme", caps, dbFile: s.dbFile }).ok,
+    false,
+    "per_company still counts a legacy row",
+  )
+  assert.equal(
+    capCheck({
+      company: "Nobody Else",
+      caps: { ...caps, per_day_max: 1 },
+      dbFile: s.dbFile,
+    }).ok,
+    false,
+    "and so does per_day",
   )
 })

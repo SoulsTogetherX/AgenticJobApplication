@@ -7,8 +7,9 @@
 // lead store at jobs/leads.json.
 //
 // Usage:
-//   node scripts/leads/find-jobs.mjs search [--source all|hn|boards|adzuna] [--query "full stack"] [--max-age N]
-//   node scripts/leads/find-jobs.mjs import <file.json>   # leads captured in-session (Playwright/WebFetch)
+//   node scripts/leads/find-jobs.mjs search [--source all|hn|boards|adzuna] [--query "full stack"] [--max-age N] [--leads <path>]
+//   node scripts/leads/find-jobs.mjs import <file.json> [--leads <path>]   # leads captured in-session (Playwright/WebFetch)
+//   --leads overrides the store (and its lock) from jobs/leads.db — for tests only; omit it in normal use.
 //   node scripts/leads/find-jobs.mjs list [--status new|recommended|dismissed|applied|all]
 //   node scripts/leads/find-jobs.mjs mark <id-or-url> --status <status> [--notes "..."]
 import fs from "node:fs"
@@ -26,6 +27,7 @@ import {
 } from "../lib/lib.mjs"
 import { untrustedSnippet } from "../lib/untrusted.mjs"
 import { enrichDescriptions } from "./enrich.mjs"
+import { withLock, LEADS_LOCK, lockPathFor } from "../lib/lock.mjs"
 import {
   readLeadStore,
   writeLeadStore,
@@ -556,13 +558,17 @@ export function loadLimits(file = LIMITS_PATH) {
 }
 
 // Backed by jobs/leads.db when it exists, else the legacy jobs/leads.json.
-// See scripts/lib/db.mjs for why SQLite and what it fixes.
-function loadLeads() {
-  return readLeadStore()
+// See scripts/lib/db.mjs for why SQLite and what it fixes. `explicit` mirrors
+// resolveLeadSource's own parameter — sibling CLIs (screen.mjs) already accept
+// a `--leads <path>` override so tests can point at a scratch store instead of
+// the real one; ingest() threads the same override through so a concurrency
+// test can drive the locked commit path without touching jobs/leads.db.
+function loadLeads(explicit = null) {
+  return readLeadStore(explicit)
 }
 
-function saveLeads(store) {
-  writeLeadStore(store)
+function saveLeads(store, explicit = null) {
+  writeLeadStore(store, explicit)
 }
 
 function loadApplied() {
@@ -1257,8 +1263,14 @@ export function backfillDescriptions(candidates, leads) {
 // Extract each new lead's tech keywords once, at ingest, so later analysis is
 // a GROUP BY instead of re-parsing every stored description. Best-effort: a
 // keyword-index failure must never lose a lead that was already saved.
-function indexKeywords(leads) {
-  const src = resolveLeadSource()
+//
+// `explicit` MUST match whatever store ingest() just committed to — this used
+// to always resolve the default (real) store regardless of a `--leads`
+// override, which meant a scratch-store run (any test using --leads) quietly
+// wrote keyword rows into the real jobs/leads.db for ids that live only in
+// the scratch db.
+function indexKeywords(leads, explicit = null) {
+  const src = resolveLeadSource(explicit)
   if (src.kind !== "db" || !leads.length) return
   try {
     const db = openDb(src.file)
@@ -1331,24 +1343,50 @@ function recordSweep(results, limits, now) {
 // per-posting detail fetch, and only once a description exists can the body gate
 // read it. Running them in the other order would mean one HTTP round trip per
 // posting the sweep was going to discard anyway.
-async function ingest(candidates, limits, { enrich = true } = {}) {
-  const store = loadLeads()
+//
+// THE COMMIT IS LOCKED, THE FETCHES ARE NOT. `store` below is read once,
+// unlocked, purely to plan this call's work: which candidates are new (worth
+// screening/enriching) and which are repost sightings against what THIS
+// process currently believes is stored. That plan does not need to be
+// millisecond-fresh — being a few ms stale just means an occasional repost
+// goes undetected until the next sweep, which is the pre-existing precision
+// of this signal.
+//
+// What must never run on stale data is the WRITE. `writeLeadStore` upserts
+// every lead object it is given, doc column and all — so committing an
+// in-memory copy read before another process's write clobbers whatever that
+// process changed in the interim (a status set by `mark`, a repost counter
+// from another sweep, a screening verdict). That is the defect
+// `scripts/lib/lock.mjs`'s header names by this function. The fix is to
+// re-read fresh, apply this call's changes to THAT copy, and write it back —
+// all inside LEADS_LOCK, and with nothing added to the critical section that
+// doesn't need to be there.
+//
+// Board fetches happen before `ingest` is even called; `enrichDescriptions`
+// runs inside it but stays OUTSIDE the lock deliberately — those requests can
+// run long enough to vastly exceed the lock's staleMs, and holding the lock
+// across them would make a concurrent writer legitimately break this one as
+// abandoned mid-sweep (see lock.mjs's header on why age is the only thing
+// that may ever break a lock).
+async function ingest(
+  candidates,
+  limits,
+  { enrich = true, leadsFile = null } = {},
+) {
+  // Defaults to the real store (LEADS_LOCK/DB_PATH). `leadsFile` exists so a
+  // test can redirect both the store AND its lock to a scratch path without
+  // touching jobs/leads.db — resolveLeadSource(null) resolves to the exact
+  // same file LEADS_LOCK already guards, so production behaviour is unchanged.
+  const lockPath = leadsFile
+    ? lockPathFor(resolveLeadSource(leadsFile).file)
+    : LEADS_LOCK
+  const store = loadLeads(leadsFile)
   const applied = loadApplied()
   const now = new Date()
   const survivors = []
   const rejected = []
-  const backfilled = backfillDescriptions(candidates, store.leads)
   const deduped = dedupeLeads(candidates, store.leads, applied)
-
-  // Record repost sightings on the lead already stored. This is the only place
-  // the evidence exists: the re-posted copy is about to be discarded as a
-  // duplicate, and its existence is the whole signal (see dedupeLeads).
-  for (const { lead, candidate } of deduped.reposts ?? []) {
-    lead.repost_count = (lead.repost_count ?? 0) + 1
-    lead.first_seen_at ??= lead.found_at ?? now.toISOString()
-    lead.last_seen_at = now.toISOString()
-    if (candidate.posted_at) lead.last_reposted_at = candidate.posted_at
-  }
+  const repostSightings = deduped.reposts ?? []
 
   for (const c of deduped) {
     const verdict = passesLimits(c, limits, now)
@@ -1380,12 +1418,58 @@ async function ingest(candidates, limits, { enrich = true } = {}) {
     })
   }
 
-  store.leads.push(...kept)
-  saveLeads(store)
-  indexKeywords(kept)
+  // --- locked commit: fresh read, this call's changes applied on top, write.
+  // No network below this line. `withLock` releases on every exit path
+  // (normal return or throw); the explicit stillHeld() check below is on
+  // purpose IN ADDITION to withLock's own post-check — that one fires only
+  // AFTER `fn` returns, which is too late to stop a write that already ran.
+  // Checking immediately before `saveLeads` is what actually prevents a
+  // dispossessed holder from publishing over the process that replaced it.
+  const { committed, backfilled } = withLock(lockPath, (handle) => {
+    const fresh = loadLeads(leadsFile)
+    const backfilledNow = backfillDescriptions(candidates, fresh.leads)
+
+    // Repost sightings were detected against the planning read above; apply
+    // them to the FRESH copy of the same lead (matched by id) so the counter
+    // increments from whatever is on disk right now, not from a value read
+    // before another writer may have already bumped it.
+    for (const { lead, candidate } of repostSightings) {
+      const freshLead = fresh.leads.find((l) => l.id === lead.id)
+      if (!freshLead) continue // lead vanished between the plan and the commit
+      freshLead.repost_count = (freshLead.repost_count ?? 0) + 1
+      freshLead.first_seen_at ??= freshLead.found_at ?? now.toISOString()
+      freshLead.last_seen_at = now.toISOString()
+      if (candidate.posted_at) freshLead.last_reposted_at = candidate.posted_at
+    }
+
+    // Safety net against a candidate that a concurrent sweep already inserted
+    // between the planning dedupe and this commit: never insert the same
+    // id/url twice. This is cheap (id/url only, not the full dedupe) and
+    // changes nothing in the overwhelmingly common uncontended case.
+    const existingKeys = new Set()
+    for (const l of fresh.leads) {
+      if (l.id) existingKeys.add(l.id)
+      if (l.url) existingKeys.add(normUrl(l.url))
+    }
+    const freshKept = kept.filter(
+      (k) => !existingKeys.has(k.id) && !existingKeys.has(normUrl(k.url)),
+    )
+    fresh.leads.push(...freshKept)
+
+    if (!handle.stillHeld()) {
+      throw new Error(
+        "LEADS_LOCK was broken while ingest held it — another process took over the lead store " +
+          "mid-commit. Nothing was written this call; re-run the sweep.",
+      )
+    }
+    saveLeads(fresh, leadsFile)
+    return { committed: freshKept, backfilled: backfilledNow }
+  })
+
+  indexKeywords(committed, leadsFile)
   const ei = process.argv.indexOf("--explain")
   const eN = Number(process.argv[ei + 1])
-  summarize(kept, rejected, {
+  summarize(committed, rejected, {
     explain: ei !== -1,
     explainTop: Number.isFinite(eN) && eN > 0 ? eN : 30,
   })
@@ -1460,6 +1544,7 @@ async function cmdSearch(args) {
   }
   await ingest(candidates, limits, {
     enrich: !args.includes("--no-enrich"),
+    leadsFile: getFlag(args, "--leads"),
   })
   for (const f of failures) console.error(`warn: source failed: ${f}`)
 }
@@ -1471,6 +1556,7 @@ async function cmdImport(args) {
   const candidates = Array.isArray(raw) ? raw : (raw.leads ?? [])
   await ingest(candidates, loadLimits(), {
     enrich: !args.includes("--no-enrich"),
+    leadsFile: getFlag(args, "--leads"),
   })
 }
 

@@ -286,6 +286,11 @@ test("a fix must keep probing the genuine dropdown", () => {
 test("no consent box auto-ticks on the decoupled or truncated fixture", () => {
   // The user's real allowlist is simulated with EVERY label this form presents,
   // which is the worst case: the user has approved all of this wording before.
+  // It is still threaded through below even though buildPlan no longer reads
+  // it for a grant (DELETED — see the consent branch's own "DELETED" comment
+  // in scripts/apply/fill-plan.mjs): that is deliberate. Passing the worst-case
+  // allowlist and asserting nothing ticks proves the defer is unconditional,
+  // not merely untested with an allowlist absent.
   const raw = scan("consent-decoupled")
   const allowlist = new Set(
     raw.fields
@@ -293,33 +298,46 @@ test("no consent box auto-ticks on the decoupled or truncated fixture", () => {
       .map((f) => normalizeQuestion(f.l)),
   )
   // The HONEST path: the vouch is lifted out of band, exactly as scanPage()
-  // does it, so this exercises the feature as the pipeline actually delivers it.
+  // does it, so this exercises the pipeline as it actually delivers a scan.
   const { scan: s, vouchedLabels } = asScanned(raw)
   const plan = planFrom(s, { consentAllowlist: allowlist, vouchedLabels })
 
-  // SECURITY FIRST, FEATURE SECOND. The hostile boxes deferring is the
-  // property that matters, and it is asserted as one set so that fixing one
-  // shape cannot hide another. An earlier version asserted `ticked === ["f3"]`
-  // above this — a characterisation of the allowlist feature — so w3's
-  // in-flight vouchedLabels rewrite would have aborted the test on that line
-  // and the deferral checks would never have run.
+  // NOTHING TICKS, EVER — asserted first, ahead of the per-box deferral
+  // checks below, for the same reason the comment this replaces gave: an
+  // aborted test must not silently skip the property that matters most. This
+  // used to read `ticked === ["f3"]` — the honest, no-waiver certification was
+  // allowed to auto-tick from the allowlist. That grant was deleted outright
+  // by w3-resolution + innov-resilience's blast-radius review (2026-08-01): it
+  // was reachable the instant a caller supplied both `vouchedLabels` and
+  // `consentAllowlist`, which is exactly what an in-process runner (or this
+  // test) does. Rule 6 is "a consent box is the user's to tick, always, on any
+  // path" — no exception for the box that happens to carry no legal waiver.
   const ticked = plan.items.filter((i) => i.how === "check").map((i) => i.k)
+  assert.deepEqual(
+    ticked,
+    [],
+    "a consent box auto-ticked even though nothing may, ever: " +
+      JSON.stringify(plan.items.filter((i) => i.how === "check")),
+  )
   const deferred = new Set(plan.defer.map((d) => d.k))
   const HOSTILE = {
     g1: "aria-label-decoupled",
     g3: "binding-arbitration past the 120-char cut",
-    // NEWLY LIVE. w3-resolution's fix added "accept|affirm|attest" to
-    // isConsent, so this box is now correctly recognised as consent — and
-    // therefore now eligible to auto-tick from the allowlist. But it
-    // authorises a BACKGROUND INVESTIGATION and adopts a document
-    // ELECTRONICALLY, which are two of the three acts isHardConsent exists to
-    // exclude. Its patterns are "background (check|screening)" and
-    // "e-sign(ature)", so both wordings walk straight past it.
-    //
-    // Before the isConsent fix this box fell out of the consent branch and was
-    // skipped, which was safe by accident. Now it ticks. The fix moved the
-    // defect rather than removing it, which is what "the 26th rewording is
-    // free" means in practice.
+    // HISTORICAL CONTEXT, now moot for ticking but still live for ROUTING.
+    // w3-resolution's fix added "accept|affirm|attest" to isConsent, so this
+    // box is now correctly recognised as consent at all — before that fix it
+    // fell out of the consent branch entirely and was handled as an ordinary
+    // checkbox, safe only by accident. It authorises a BACKGROUND
+    // INVESTIGATION and adopts a document ELECTRONICALLY, which are two of the
+    // three acts isHardConsent exists to exclude; its patterns are
+    // "background (check|screening)" and "e-sign(ature)", so both wordings
+    // walk straight past it. That gap in isHardConsent no longer lets this box
+    // auto-tick — nothing does, since the grant itself is deleted — but it is
+    // still the reason g4 depends on isConsent's routing rather than
+    // isHardConsent's exclusion: had isConsent not been fixed, this box would
+    // skip the consent branch and never defer, leaked instead as an ordinary
+    // checkbox. "The 26th rewording is free" is about that routing gap, not
+    // about ticking.
     g4: "background investigation + electronic adoption, missed by isHardConsent",
     // THE color:transparent CARRIER, ON EVERY LEG. This box was in the served
     // page from the start and MISSING from the scan fixture, so until
@@ -342,14 +360,16 @@ test("no consent box auto-ticks on the decoupled or truncated fixture", () => {
       `allowlisted: ${leaked.join(", ")}; ticked=${JSON.stringify(ticked)}`,
   )
 
-  // Then the feature: the correct answer is not "nothing ticks" — the
-  // allowlist is opt-in and exists to work. Exactly one box on this form
-  // carries no legal waiver, and only it may tick.
-  assert.deepEqual(
-    ticked,
-    ["f3"],
-    "only the vouched, non-waiver certification may auto-tick: " +
-      JSON.stringify(plan.items.filter((i) => i.how === "check")),
+  // Then the box that used to be the exception: it must defer on the SAME
+  // `why` as the hostile ones, not merely fail to tick by some other route
+  // (e.g. falling out of the plan entirely, or resolving as "skip"). f3 is
+  // the DOM checkbox the old grant checked; its group is g2 — the key the
+  // consent branch actually defers on. If this ever ticks again, or defers
+  // for a reason other than "consent", the grant is back in some form.
+  assert.ok(
+    plan.defer.some((d) => d.k === "g2" && d.why === "consent"),
+    "the vouched, non-waiver certification must defer exactly like every " +
+      `hostile box on this form: ${JSON.stringify(plan.defer)}`,
   )
 })
 

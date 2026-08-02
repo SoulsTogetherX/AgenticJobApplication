@@ -269,18 +269,28 @@ test("a consent field is deferred even when the bank resolved it confidently", (
   assert.equal(plan.defer[0].why, "consent")
 })
 
-// --- consent allowlist + vouch: the readiness fast path ---------------------
+// --- consent allowlist + vouch: DELETED grant, still asserted ---------------
 //
 // readiness() was unreachable on any real form: `isConsent` pushes every
 // agreement to `defer` before anything else runs, and nearly every ATS has at
 // least one ("I agree to the Terms and Conditions"). pending-questions.mjs
-// already excluded consent from its own "worth asking about" set — these
-// tests pin the actual fix: an exact, user-approved label THAT OUR OWN
-// SCANNER ALSO VOUCHES FOR moves a checkbox from `defer` into `items` as a
-// `check`. `readiness()`'s own fix (a consent-only defer does not block
-// `ready`) is what makes ready=true reachable EVEN WITHOUT a tick — see the
-// "readiness vs. submitReadiness" block above; the tests below are about the
-// narrower, riskier question of when a box may be auto-CHECKED at all.
+// already excluded consent from its own "worth asking about" set — the fix
+// for THAT is readiness() no longer counting a consent-only defer as
+// blocking (see the "readiness vs. submitReadiness" block above).
+//
+// This file used to also carry a SEPARATE, riskier mechanism: an exact,
+// user-approved label that our own scanner ALSO vouched for could move a
+// checkbox from `defer` into `items` as an auto-`check`. DELETED (innov-
+// resilience blast-radius review + w3-resolution, 2026-08-01): a design that
+// is one config key away from auto-ticking consent on an unattended path is
+// not a safe design, whatever gates the key. See fill-plan.mjs's own
+// "DELETED" comments (file header and the consent branch) for the removal.
+// The tests below now assert the OPPOSITE of what they used to: supplying
+// BOTH an exact-matching vouch AND an allowlist entry for a consent label
+// still defers — nothing auto-ticks, on any path, ever. That is strictly
+// stronger than "the branch happens to be unreachable through the CLI today"
+// (true before this change too, and true again after it, but for a
+// structural reason now instead of an absent config producer).
 //
 // `vouchedLabels` is the scanner's own in-process assertion (an array of
 // complete visible label strings, built by scan-engine.mjs's scanPage() —
@@ -302,7 +312,15 @@ const checkboxConsent = (label, optCount = 1) => ({
   })),
 })
 
-test("an allowlisted, scanner-vouched consent checkbox is auto-checked", () => {
+// REWRITTEN (was "an allowlisted, scanner-vouched consent checkbox is
+// auto-checked" — asserted `plan.items[0].why === "consent:allowlisted"`,
+// which is now dead code; that assertion could never fail again, which is
+// exactly why a test that cannot fail proves nothing). This is the
+// behavioural assertion the deletion needs: an EXACT-matching, vouched
+// consent label supplied via the allowlist still defers. Both inputs that
+// used to be jointly sufficient for a grant are present here, together, and
+// the box still does not tick.
+test("an exact-matching, vouched consent label on the allowlist still defers — the allowlist grant is deleted", () => {
   const label = "I agree to the Terms and Conditions"
   const scan = scanOf([checkboxConsent(label)])
   const plan = buildPlan({
@@ -313,12 +331,19 @@ test("an allowlisted, scanner-vouched consent checkbox is auto-checked", () => {
     consentAllowlist: new Set([label.toLowerCase()]),
     vouchedLabels: [label],
   })
-  assert.equal(plan.defer.length, 0)
-  assert.equal(plan.items.length, 1)
-  assert.equal(plan.items[0].how, "check")
-  assert.equal(plan.items[0].k, "f0", "targets the checkbox's own stamped key")
-  assert.equal(plan.items[0].sel, "#c0")
-  assert.equal(plan.items[0].why, "consent:allowlisted")
+  assert.equal(
+    plan.items.filter((i) => i.how === "check").length,
+    0,
+    "no consent box may auto-tick, however exactly it is vouched and allowlisted",
+  )
+  assert.equal(plan.defer.length, 1)
+  assert.equal(plan.defer[0].k, "g1")
+  assert.equal(plan.defer[0].why, "consent")
+  assert.notEqual(
+    plan.defer[0].why,
+    "consent:allowlisted",
+    "the allowlisted-grant marker must never be produced again",
+  )
 })
 
 test("an allowlisted consent box defers when the scanner does not vouch for it", () => {
@@ -365,7 +390,13 @@ test("a page-set labelExact on the scan is not a vouch — buildPlan never reads
   assert.equal(plan.defer[0].why, "consent")
 })
 
-test("readiness is reachable whether or not the consent box could be ticked", () => {
+// REWRITTEN (was "readiness is reachable whether or not the consent box
+// could be ticked" — its first half asserted `items.some(how==="check") ===
+// true` for the vouched+allowlisted case, pinning the now-deleted grant).
+// What still holds, and is asserted here: readiness() reaches `ready: true`
+// on a consent-only defer REGARDLESS of whether the box happened to be
+// vouched and allowlisted — because neither input has any effect anymore.
+test("readiness is reachable on a consent-only defer, whether or not the box was vouched and allowlisted", () => {
   const label = "I agree to the Terms and Conditions"
   const scan = scanOf([
     { k: "f1", t: "text", l: "First Name", req: true },
@@ -381,8 +412,10 @@ test("readiness is reachable whether or not the consent box could be ticked", ()
   })
   assert.equal(
     vouchedAndAllowed.items.some((i) => i.how === "check"),
-    true,
+    false,
+    "vouched + allowlisted must still never auto-tick",
   )
+  assert.equal(vouchedAndAllowed.defer[0]?.why, "consent")
   assert.equal(readiness(vouchedAndAllowed).ready, true)
 
   const unvouched = buildPlan({
@@ -505,7 +538,18 @@ test("a wording that defeats every topic pattern still defers as consent, never 
   assert.equal(plan.defer[0]?.why, "consent")
 })
 
-test("the same defeating wording DOES auto-tick once vouched and allowlisted — the door works both ways", () => {
+// REWRITTEN (was "the same defeating wording DOES auto-tick once vouched and
+// allowlisted — the door works both ways" — asserted an auto-check via the
+// now-deleted grant). This is the strongest version of the required
+// deletion assertion: the label defeats every CONSENT_PATTERNS topic word on
+// purpose (see the test above), so it can ONLY have reached the protected
+// branch through looksLikeAgreementProse's SHAPE door, not isConsent's topic
+// door — and even entering through that door, with an exact vouch AND an
+// exact allowlist match, it still defers. The door still works for ENTRY
+// (routing to `why: "consent"` instead of falling through to an ordinary,
+// bank-auto-checkable checkbox); it no longer works for a GRANT, on either
+// door.
+test("the same topic-pattern-defeating wording still defers even when vouched and allowlisted — the grant is deleted, the door still routes here", () => {
   const label =
     "By checking this box you grant the reviewing party unlimited rights to use, retain, and share every fact stated above with any third party they select."
   const scan = scanOf([checkboxConsent(label)])
@@ -517,9 +561,17 @@ test("the same defeating wording DOES auto-tick once vouched and allowlisted —
     consentAllowlist: new Set([label.toLowerCase()]),
     vouchedLabels: [label],
   })
-  assert.equal(plan.items.length, 1)
-  assert.equal(plan.items[0].how, "check")
-  assert.equal(plan.items[0].why, "consent:allowlisted")
+  assert.equal(
+    plan.items.filter((i) => i.how === "check").length,
+    0,
+    "no wording, however exactly vouched and allowlisted, may auto-tick",
+  )
+  assert.equal(plan.defer.length, 1)
+  assert.equal(
+    plan.defer[0].why,
+    "consent",
+    "still routed here via the shape door, just deferred like every other consent box",
+  )
 })
 
 // UPDATED for the check-widget rule (2026-07-31): a checkbox or radio group
@@ -604,6 +656,12 @@ test("looksLikeAgreementProse requires BOTH length and sentence shape — a long
   assert.equal(plan.defer[0].pick, "f9")
 })
 
+// STALE RATIONALE, KEPT AS A REGRESSION GUARD: before the deletion, this
+// proved the vouch and the allowlist were two independent checks, neither
+// alone sufficient. Now that the grant is deleted outright, a near-miss
+// label deferring is no longer interesting on its own — every label defers,
+// match or not — but the test still guards against a future reintroduction
+// matching by anything looser than exact text.
 test("the allowlist match is exact text, never a pattern — even when vouched", () => {
   const trueLabel = "I agree to the Updated Terms and Conditions"
   const scan = scanOf([checkboxConsent(trueLabel)])
@@ -614,9 +672,6 @@ test("the allowlist match is exact text, never a pattern — even when vouched",
     files,
     // Approved a DIFFERENT (superficially similar) wording only.
     consentAllowlist: new Set(["i agree to the terms and conditions"]),
-    // The scanner vouches for the TRUE text, which only proves the vouch and
-    // the allowlist are two independent checks, neither of which alone is
-    // enough.
     vouchedLabels: [trueLabel],
   })
   assert.equal(plan.items.length, 0, "a near-miss label must still defer")

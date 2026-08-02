@@ -131,24 +131,46 @@ user starting a new session.
 
 ## Current roster
 
-| Agent              | Role           | Model   | Owns (exclusive)                                                                                                                                    |
-| ------------------ | -------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `build-manager`    | manager        | Opus    | Process only: this file, `agent-protocol.md`, the git history, the decision to ship                                                                 |
-| `innov-architect`  | innovator      | Fable 5 | Nothing. Structure, rewrite backlog, deletion candidates                                                                                            |
-| `innov-perf`       | innovator      | Opus    | `scripts/dev/bench-*.mjs` **except `bench-apply.mjs`**, `docs/measurements.md`                                                                      |
-| `innov-resilience` | innovator      | Opus    | Nothing. Failure modes, concurrency, security architecture                                                                                          |
-| `w1-security`      | worker         | Opus    | `lib/untrusted.mjs`, `lib/lib.mjs`, `documents/verify-claims.mjs`, `profile/save-answer.mjs`                                                        |
-| `w2-engine`        | worker         | Opus    | `apply/fill-engine.mjs`, `apply/scan-engine.mjs`, `apply/browser.mjs`, `tests/apply/fill-page.*`                                                    |
-| `w3-resolution`    | worker         | Sonnet  | `apply/fill-plan.mjs`, `answer-bank.mjs`, `field-cache.mjs`, `pending-questions.mjs`, `apply/ats/`                                                  |
-| `w4-autonomy`      | worker         | Opus    | `scripts/auto/*`, `lib/lock.mjs`, `lib/db.mjs`, `apply/automatability.mjs`, `apply/auth-sync.mjs`, `scripts/status.mjs`, `scripts/maintenance/*`    |
-| `w5-leads`         | worker         | Sonnet  | `scripts/leads/*`, `scripts/recruiters/*`, `docs/candidates/*`                                                                                      |
-| `w6-documents`     | worker         | Fable 5 | `scripts/documents/*` (not verify-claims), `templates/*` — **the user's résumé and cover letter**                                                   |
-| `ci-engineer`      | cicd           | Opus    | `.github/workflows/*`, `package.json`, `scripts/hooks/*`, `.gitignore`, `.prettierignore`, `tests/hooks/*` — **no longer `.claude/settings*.json`** |
-| `doc-scribe`       | scribe         | Fable 5 | `CLAUDE.md`, `README.md`, `docs/reference/*`, most `docs/*.md`, `.claude/skills/*`, `schemas/*`                                                     |
-| `qa-adversary`     | QA             | Fable 5 | `tests/security/`, `tests/fixtures/boards/`, `tests/fixtures/hostile/`                                                                              |
-| `qa-breaker`       | QA             | Opus    | `tests/apply/` (not fill-page), `tests/dev/`, `scripts/dev/bench-apply.mjs`, `scripts/dev/flake-rate.mjs` — **no longer `tests/auto/`**             |
-| `researcher`       | **researcher** | Fable 5 | `docs/research/*`. Keywords, ATS behaviour, market conditions, comparable services. Consultable by everyone                                         |
-| `job-worker`       | worker         | Sonnet  | Pre-existing. Per-job runtime worker for `pipeline-jobs`; not part of this build                                                                    |
+**Collapsed from 16 agents to 5 on 2026-08-02, on the user's decision.** The old
+roster partitioned files finely so six agents could write concurrently without
+colliding. In practice one to three ran at a time, so the partition bought no
+parallelism and charged a routing tax instead: every change spanning two owners
+went worker → manager → other worker → manager → back. One `isEvaluable` export
+took four hops and two dispatches for what one agent holding both files does in
+a single edit.
+
+| Agent           | Role     | Model  | Owns (exclusive)                                                                                                                                |
+| --------------- | -------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build-manager` | manager  | Opus   | Process only: this file, `agent-protocol.md`, the git history, the decision to ship                                                             |
+| `implementer`   | worker   | Opus   | **All of `scripts/**` except `hooks/` and `dev/bench-*`, plus the tests for the code it changes** (`tests/<domain>/<file>.test.mjs`)            |
+| `qa`            | QA       | Opus   | `tests/security/*`, `tests/fixtures/*`, `scripts/dev/bench-*.mjs`, `tests/dev/*`                                                                |
+| `architect`     | reviewer | Opus   | Nothing. Rulings, failure modes, structure, deletion candidates, outward-facing research. **Writes no product code**                            |
+| `doc-scribe`    | scribe   | Opus   | `CLAUDE.md`, `README.md`, `docs/reference/*`, most `docs/*.md`, `.claude/skills/*`, `schemas/*`                                                 |
+| `ci-engineer`   | cicd     | Opus   | `.github/workflows/*`, `package.json`, `scripts/hooks/*`, `.gitignore`, `.prettierignore`, `tests/hooks/*` — **never `.claude/settings*.json`** |
+| `job-worker`    | worker   | Sonnet | Pre-existing. Per-job runtime worker for `pipeline-jobs`; not part of this build                                                                |
+
+**The load-bearing change is not the headcount — it is that `implementer` writes
+its own tests.** The old split made testing someone else's job, so every change
+queued behind a second dispatch. `qa` is now genuinely adversarial: it arrives
+after or in parallel, tries to break the change, and files a defect. It is not a
+gate anyone waits on, and it never patches product code — the repro and the
+failing test are its output, the fix is `implementer`'s.
+
+**Retired — definitions deleted, do not dispatch:** `w1-security`, `w2-engine`,
+`w3-resolution`, `w6-documents` → `implementer`. `qa-adversary`, `qa-breaker` →
+`qa`. `innov-architect`, `innov-resilience`, `innov-perf`, `researcher` →
+`architect`.
+
+**Retiring, definition still present:** `w4-autonomy` and `w5-leads` had live
+tasks when the roster changed. Their definitions stay on disk only until those
+land — deleting a definition out from under a running agent risks orphaning work
+mid-edit, which is the exact failure the concurrency cap exists to prevent.
+**Do not dispatch either for new work**; both fold into `implementer`.
+
+**Concurrency is capped at 3.** Dispatching six at once exhausted a session
+usage limit on 2026-08-02 and killed all six mid-edit; the tree survived only
+because nothing had been left half-written. See **Dispatch discipline** in
+[agent-protocol.md](agent-protocol.md).
 
 ### Contested paths and unowned sets
 

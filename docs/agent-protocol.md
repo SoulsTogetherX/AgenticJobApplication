@@ -43,6 +43,25 @@ otherwise. A confident report over an empty result is the shape to watch for.
 These bind the **manager**, because most of that spend was ordered rather than
 chosen by the agents.
 
+**0. At most THREE agents at once, and prefer one. (User decision 2026-08-02.)**
+A six-agent wave exhausted the session usage limit and killed all six mid-edit.
+Recovery was cheap only by luck — every file happened to be syntactically whole,
+and the one real failure was a test whose implementation had not been written
+yet. That is not a margin to rely on twice.
+
+The cap is not only about the limit. The roster was collapsed 16 → 5 the same
+day because fine-grained file ownership only pays for itself when agents
+genuinely run in parallel; at one-to-three concurrent it charges a routing tax
+and buys nothing. **If you find yourself wanting a fourth agent, the work is
+probably one brief, not four.**
+
+**0b. Do it yourself when it is small and you already have the context.** Of 14
+commits in the 2026-08-02 session, the manager wrote 7 directly — a doc split, a
+config key, two plan corrections, a floor bump, a ~10-line decoder fix — and
+those were the cheapest of the session. Briefing an agent costs the brief, the
+orientation, the exploration and the report. Below roughly fifty lines, in a
+file you have already read, dispatching is the more expensive option.
+
 **1. Do not order a blanket read of the orientation files.** Every brief in that
 wave opened with "read `agent-protocol.md` and `team-roster.md` first" —
 ~5,400 tokens each, twelve times, by manager order, and most agents needed one

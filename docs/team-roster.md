@@ -140,7 +140,7 @@ user starting a new session.
 | `w1-security`      | worker         | Opus    | `lib/untrusted.mjs`, `lib/lib.mjs`, `documents/verify-claims.mjs`, `profile/save-answer.mjs`                                                        |
 | `w2-engine`        | worker         | Opus    | `apply/fill-engine.mjs`, `apply/scan-engine.mjs`, `apply/browser.mjs`, `tests/apply/fill-page.*`                                                    |
 | `w3-resolution`    | worker         | Sonnet  | `apply/fill-plan.mjs`, `answer-bank.mjs`, `field-cache.mjs`, `pending-questions.mjs`, `apply/ats/`                                                  |
-| `w4-autonomy`      | worker         | Opus    | `scripts/auto/*`, `lib/lock.mjs`, `lib/db.mjs`, `apply/automatability.mjs`, `apply/auth-sync.mjs`                                                   |
+| `w4-autonomy`      | worker         | Opus    | `scripts/auto/*`, `lib/lock.mjs`, `lib/db.mjs`, `apply/automatability.mjs`, `apply/auth-sync.mjs`, `scripts/status.mjs`, `scripts/maintenance/*`    |
 | `w5-leads`         | worker         | Sonnet  | `scripts/leads/*`, `scripts/recruiters/*`, `docs/candidates/*`                                                                                      |
 | `w6-documents`     | worker         | Fable 5 | `scripts/documents/*` (not verify-claims), `templates/*` — **the user's résumé and cover letter**                                                   |
 | `ci-engineer`      | cicd           | Opus    | `.github/workflows/*`, `package.json`, `scripts/hooks/*`, `.gitignore`, `.prettierignore`, `tests/hooks/*` — **no longer `.claude/settings*.json`** |
@@ -284,6 +284,30 @@ guessing at an owner hides it.
   the user-facing half**: the real recovery path (how a hand-edit _is_ made to
   take effect) is currently documented nowhere, and rule 2 makes that file the
   user's, so "your edit is ignored" cannot be the whole answer.
+
+### A third unowned set, resolved 2026-08-01
+
+`autonomy-plan-v2.md` §0.3 found that **`scripts/status.mjs` and
+`scripts/maintenance/*` appear in no ownership row at all** — `grep -n
+"status\.mjs\|maintenance" docs/team-roster.md` returned nothing before this
+entry. Phase 1.7 (`migrate.mjs` rebuild path for `auto_queue`), Phase 1.8
+(workspace retention, a `prune-jobs`/`archive` concern) and Phase 4.2 (the auto
+section of the progress digest) all require edits to them, so this had to be
+settled before Phase 1 opens rather than discovered by two agents writing the
+same file.
+
+**Ruled to `w4-autonomy`**, on the same reasoning that sent `scripts/applications/*`
+there: both are readers of `scripts/lib/db.mjs`, which `w4-autonomy` owns, and
+splitting a reader from its schema is precisely what let `check-applied.mjs`
+drift for weeks. `status.mjs` under Phase 4.2 becomes overwhelmingly a reader of
+`auto_queue`; `maintenance/prune-jobs.mjs` and `archive.mjs` decide what happens
+to the workspace directory that grows fastest under this plan.
+
+**The one cost of the ruling, stated rather than hidden:** `w4-autonomy` now
+owns more paths than any other worker, and `status.mjs` is a whole-pipeline
+digest whose other sections belong to nobody in particular. If the digest work
+turns out to be its own job rather than a section, split `status.mjs` out to a
+fresh owner then — do not quietly grow `w4-autonomy` further.
 
 - **`.claude/agents/*`** — **`build-manager`**. Agent definitions are the roster
   made executable; they belong with the file that records who exists and what

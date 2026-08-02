@@ -10,12 +10,12 @@ import {
   shapesForBoard,
   shapeBlockers,
   fitSortKey,
-  UNEVALUABLE_FIT_FLAGS,
   tierCounts,
   TIERS,
   DEFAULT_CACHE_MAX_AGE_DAYS,
 } from "../../scripts/apply/automatability.mjs"
 import { STAGE_IDS } from "../../scripts/leads/stages.mjs"
+import { isEvaluable } from "../../scripts/leads/fit.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SOURCE = fs.readFileSync(
@@ -778,10 +778,15 @@ test("EVERY SHAPE THAT CLASSIFIES GREEN PRODUCES A PLAN submitReadiness ACCEPTS"
 // --- the queue must not order by a number scoreFit says it could not compute --
 //
 // MEASURED by innov-architect on a real data-engineering posting: `fit_score: 1`
-// with `fit_thin` set, because 2 of roughly 10 real requirements were recognised
-// by the lexicon and both happened to match. The queue read `fit_score` and
-// ignored `flags`, so a 1.0 computed from two terms outranked a fully-read 0.8
-// — and the top of the queue is what an unattended run works through first.
+// with the thin flag set, because 2 of roughly 10 real requirements were
+// recognised by the lexicon and both happened to match. The queue read
+// `fit_score` and ignored the flags, so a 1.0 computed from two terms outranked
+// a fully-read 0.8 — and the top of the queue is what a run works through first.
+//
+// THESE TESTS USE fit.mjs's REAL isEvaluable, never a stub. The whole property
+// under test is "the decision belongs to fit.mjs and we obey it", and a mock
+// would assert only that this file obeys a fake — which is how a test survives
+// the change it was written to catch and then passes for no reason.
 
 const fitResult = (over = {}) => ({
   ok: true,
@@ -793,39 +798,64 @@ const fitResult = (over = {}) => ({
   ...over,
 })
 
+// The default threshold is min_required_terms = 4 (FIT_DEFAULTS), so a two-term
+// result is unevaluable and a five-term one is not.
+const key = (fit, limits = null) => fitSortKey(fit, { isEvaluable, limits })
+
 test("A 1.0 COMPUTED FROM TWO TERMS SORTS BELOW A FULLY-READ 0.8", () => {
   const thin = fitResult({
     fit_score: 1,
-    flags: ["fit_thin"],
+    flags: ["posting_thin"],
     required_terms: ["python", "sql"],
     matched_terms: ["python", "sql"],
   })
   const read = fitResult()
 
-  assert.equal(fitSortKey(thin, { minRequiredTerms: 3 }), -1)
-  assert.equal(fitSortKey(read, { minRequiredTerms: 3 }), 0.8)
+  assert.equal(key(thin), -1)
+  assert.equal(key(read), 0.8)
   assert.ok(
-    fitSortKey(read, { minRequiredTerms: 3 }) >
-      fitSortKey(thin, { minRequiredTerms: 3 }),
-    "the unevaluable posting is still ordered above the one that was read",
+    key(read) > key(thin),
+    "the unreadable posting is still ordered above the one that was read",
   )
 })
 
-test("the primary check is STRUCTURAL, so renaming the flag cannot reopen this", () => {
-  // w5-leads is splitting `fit_thin` into `posting_thin` and `lexicon_blind`.
-  // A check that matched one literal string would stop working that day, and
-  // stop working SILENTLY, in the direction of trusting the score.
+test("THE DECISION IS DELEGATED — this file holds no copy of the evaluability rule", () => {
+  // The proof that it is delegated rather than recomputed: move the threshold
+  // in `limits` and the answer must move with it. A hardcoded constant, a
+  // stale default, or a flag-name list would all fail this, because none of
+  // them can see a project-level override.
+  const three = fitResult({
+    fit_score: 1,
+    required_terms: ["python", "sql", "airflow"],
+  })
+  assert.equal(key(three), -1, "3 terms is under the default threshold of 4")
+  assert.equal(
+    key(three, { fit: { min_required_terms: 3 } }),
+    1,
+    "the same result is evaluable once the user lowers the threshold",
+  )
+  assert.equal(
+    key(fitResult({ fit_score: 1 }), { fit: { min_required_terms: 9 } }),
+    -1,
+    "and unevaluable once they raise it above what the posting stated",
+  )
+})
+
+test("a flag RENAME cannot reopen this, because no flag name is read", () => {
+  // P3 split `fit_thin` into `posting_thin` and `lexicon_blind` days after the
+  // first fix. An earlier version of this check matched flag names and would
+  // have stopped working that day — silently, in the direction of trusting the
+  // score. The term count decides, so the name is irrelevant.
   for (const flags of [
-    ["fit_thin"],
-    ["posting_thin"], // announced rename
-    ["lexicon_blind"], // announced rename
+    ["fit_thin"], // the name that no longer exists
+    ["posting_thin"],
+    ["lexicon_blind"],
     ["some_name_nobody_has_thought_of_yet"],
-    [], // no flag at all — the term count alone must still decide
+    [], // no flag at all
   ]) {
     assert.equal(
-      fitSortKey(
+      key(
         fitResult({ fit_score: 1, flags, required_terms: ["python", "sql"] }),
-        { minRequiredTerms: 3 },
       ),
       -1,
       `flags=${JSON.stringify(flags)}`,
@@ -833,27 +863,25 @@ test("the primary check is STRUCTURAL, so renaming the flag cannot reopen this",
   }
 })
 
-test("the flag list is the SECOND net, for an evaluability rule that is not a term count", () => {
-  // Enough terms to pass the structural test, but scoreFit still says it could
-  // not read the posting. Fail closed.
-  for (const flag of [...UNEVALUABLE_FIT_FLAGS]) {
-    assert.equal(
-      fitSortKey(fitResult({ fit_score: 1, flags: [flag] }), {
-        minRequiredTerms: 3,
-      }),
-      -1,
-      flag,
-    )
-  }
+test("lexicon_blind stays a statement about OUR VOCABULARY, not a demotion lever", () => {
+  // If this file demoted on the flag name, then the day `lexicon_blind` is
+  // emitted alongside a usable score it would silently start meaning "we could
+  // not read the posting". It is not read here at all, so an evaluable result
+  // keeps its score whatever it is flagged with.
+  assert.equal(
+    key(fitResult({ fit_score: 0.6, flags: ["lexicon_blind"] })),
+    0.6,
+    "a flag on an EVALUABLE result must not change the sort key",
+  )
+  assert.equal(key(fitResult({ fit_score: 0.6, flags: ["fit_weak"] })), 0.6)
+  assert.equal(key(fitResult({ fit_score: 0.6, flags: ["senior_scope"] })), 0.6)
 })
 
 test("null and a missing result still sort last, as they did before", () => {
-  assert.equal(fitSortKey(null, { minRequiredTerms: 3 }), -1)
-  assert.equal(fitSortKey(undefined, { minRequiredTerms: 3 }), -1)
+  assert.equal(key(null), -1)
+  assert.equal(key(undefined), -1)
   assert.equal(
-    fitSortKey(fitResult({ fit_score: null, flags: ["fit_unknown"] }), {
-      minRequiredTerms: 3,
-    }),
+    key(fitResult({ fit_score: null, flags: ["fit_unknown"] })),
     -1,
     "a posting with no body text at all",
   )
@@ -863,18 +891,19 @@ test("an evaluable score is returned UNCHANGED — this never invents a usable o
   // The instruction was explicit: make an unevaluable score sort last, never
   // manufacture a usable one. A version of this that clamped, defaulted or
   // rounded would be a different and worse bug.
-  for (const score of [0, 0.25, 0.5, 0.8, 1]) {
-    assert.equal(
-      fitSortKey(fitResult({ fit_score: score }), { minRequiredTerms: 3 }),
-      score,
-    )
-  }
-  // And with no threshold supplied it must not invent one: only the flag net
-  // and the null check apply.
-  assert.equal(fitSortKey(fitResult({ fit_score: 1 }), {}), 1)
-  assert.equal(
-    fitSortKey(fitResult({ fit_score: 1, flags: ["fit_thin"] }), {}),
-    -1,
+  for (const score of [0, 0.25, 0.5, 0.8, 1])
+    assert.equal(key(fitResult({ fit_score: score })), score)
+})
+
+test("a missing isEvaluable THROWS rather than defaulting to evaluable", () => {
+  // A wiring slip that silently restored `?? fit_score` is this exact bug
+  // coming back. The CLI's own catch logs it per lead and sorts -1, so it
+  // fails loudly and safely rather than quietly and unsafely.
+  assert.throws(() => fitSortKey(fitResult(), {}), TypeError)
+  assert.throws(() => fitSortKey(fitResult()), TypeError)
+  assert.throws(
+    () => fitSortKey(fitResult(), { isEvaluable: "yes" }),
+    /requires fit.mjs's isEvaluable/,
   )
 })
 

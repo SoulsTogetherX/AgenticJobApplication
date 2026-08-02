@@ -7,7 +7,10 @@
 // reject is a job the user never sees.
 import test from "node:test"
 import assert from "node:assert/strict"
-import { bodyDisqualifiers } from "../../scripts/leads/find-jobs.mjs"
+import {
+  bodyDisqualifiers,
+  excludeBodyPattern,
+} from "../../scripts/leads/find-jobs.mjs"
 
 const LIMITS = {
   location: {
@@ -362,4 +365,103 @@ test("empty limits do not throw — the gate degrades to no-op-ish", () => {
   assert.doesNotThrow(() =>
     bodyDisqualifiers(job({ description: SOFTWARE_BODY }), {}),
   )
+})
+
+// ---------- P1: roles.exclude_body (retarget-readiness audit, 2026-08) -----
+
+test("absent roles.exclude_body reproduces the built-in NON_SOFTWARE_BODY exactly", () => {
+  assert.equal(excludeBodyPattern({}), excludeBodyPattern(undefined))
+  // Same object identity as the module's own constant would require exporting
+  // it too; instead assert on BEHAVIOUR — the one thing that has to be
+  // byte-identical — against the exact casino body the built-in list exists
+  // for.
+  const casino =
+    "Maintain cleanliness of assigned area. Guest services and food and beverage duties as assigned."
+  assert.ok(excludeBodyPattern({}).test(casino))
+  assert.ok(excludeBodyPattern({ roles: {} }).test(casino))
+})
+
+test("an empty exclude_body array is treated as absent, never as an off switch", () => {
+  // The exact loophole the term-list design exists to refuse: `exclude_body:
+  // []` must not silently disable the gate the way `skip_body_gate: true`
+  // would have.
+  const casino = "Maintain cleanliness of assigned area, guest services."
+  assert.ok(excludeBodyPattern({ roles: { exclude_body: [] } }).test(casino))
+  assert.ok(
+    bodyDisqualifiers(
+      job({
+        title: "Junior Engineer - Palace",
+        flags: ["title_loose"],
+        description: casino,
+      }),
+      { ...LIMITS, roles: { ...LIMITS.roles, exclude_body: [] } },
+    ).ok === false,
+  )
+})
+
+test("a non-empty exclude_body REPLACES the built-in list, not merges with it", () => {
+  const limits = {
+    ...LIMITS,
+    roles: { ...LIMITS.roles, exclude_body: ["floor manager duties"] },
+  }
+  // A body that WOULD trip the built-in casino vocabulary no longer does —
+  // the user's list is now the only vocabulary this gate rejects on.
+  const casino =
+    "Maintain cleanliness of assigned area. Guest services and food and beverage duties as assigned."
+  const v = bodyDisqualifiers(
+    job({
+      title: "Junior Engineer - Palace",
+      flags: ["title_loose"],
+      description: casino,
+    }),
+    limits,
+  )
+  assert.equal(v.ok, true, "built-in vocabulary must not fire once replaced")
+
+  // The user's own term still rejects.
+  const v2 = bodyDisqualifiers(
+    job({
+      title: "Junior Engineer - Palace",
+      flags: ["title_loose"],
+      description: "Responsible for floor manager duties across the property.",
+    }),
+    limits,
+  )
+  assert.equal(v2.ok, false)
+  assert.match(v2.reasons.join(" "), /not a software role/)
+})
+
+test("exclude_body rejects stay REJECTS, never downgrade to a flag", () => {
+  const limits = {
+    ...LIMITS,
+    roles: { ...LIMITS.roles, exclude_body: ["dealer school"] },
+  }
+  const v = bodyDisqualifiers(
+    job({
+      title: "Junior Engineer - Palace",
+      flags: ["title_loose"],
+      description: "Graduates of our dealer school are eligible to apply.",
+    }),
+    limits,
+  )
+  assert.equal(v.ok, false)
+  assert.equal(v.flags.includes("body_not_technical"), false)
+})
+
+test("exclude_body terms are literal phrases, not regex — a user's dot is not a wildcard", () => {
+  const limits = {
+    roles: { exclude_body: ["a.b.c literal term"] },
+  }
+  const pattern = excludeBodyPattern(limits)
+  assert.ok(pattern.test("this body contains the a.b.c literal term exactly"))
+  assert.ok(
+    !pattern.test("this body contains the aXbXc literal term instead"),
+    "a literal dot must not act as a regex wildcard",
+  )
+})
+
+test("whitespace-only entries in exclude_body are ignored, not turned into a match-anything pattern", () => {
+  const limits = { roles: { exclude_body: ["  ", "casino floor"] } }
+  assert.doesNotThrow(() => excludeBodyPattern(limits))
+  assert.ok(excludeBodyPattern(limits).test("working the casino floor daily"))
 })

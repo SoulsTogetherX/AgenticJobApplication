@@ -7,6 +7,7 @@ import {
   scoreFit,
   splitRequirements,
   seniorScopeSignals,
+  isEvaluable,
   FIT_DEFAULTS,
 } from "../../scripts/leads/fit.mjs"
 
@@ -114,7 +115,15 @@ test("a thin description can NEVER be rejected, however low the overlap", () => 
   // than min_required_terms means "unevaluated", not "bad match".
   const r = scoreFit(job("Requirements: Cobol."), PROFILE)
   assert.ok(r.ok, "a 1-technology posting must not be rejected")
-  assert.ok(r.flags.includes("fit_thin"))
+  assert.ok(
+    r.flags.includes("posting_thin"),
+    "a SHORT unreadable body is posting_thin",
+  )
+  assert.ok(!r.flags.includes("lexicon_blind"))
+  assert.ok(
+    !r.flags.includes("fit_thin"),
+    "fit_thin was split, not kept as an alias",
+  )
   assert.ok(r.required_terms.length < FIT_DEFAULTS.min_required_terms)
 })
 
@@ -123,6 +132,98 @@ test("an empty description passes and is flagged unknown", () => {
   assert.ok(r.ok)
   assert.ok(r.flags.includes("fit_unknown"))
   assert.equal(r.fit_score, null)
+})
+
+// --- posting_thin vs lexicon_blind (retarget-readiness audit, 2026-08) ------
+
+test("a LONG required section the lexicon cannot read is lexicon_blind, not posting_thin", () => {
+  // A retarget's real signature: plenty of stated requirements, none of them
+  // in this (software) lexicon. Nursing vocabulary, padded well past
+  // long_body_chars (2000) with no boilerplate section headers that would
+  // pull any of it out of "required".
+  const nursingReq =
+    "Requirements: Active RN license in good standing, BLS and ACLS certification, minimum three years acute care experience, demonstrated competency in medication administration and IV therapy, strong charting and patient assessment skills, experience with electronic health records, ability to work rotating twelve hour shifts including nights and weekends, current CPR certification, telemetry monitoring experience preferred. "
+  const long = nursingReq.repeat(Math.ceil(2100 / nursingReq.length))
+  assert.ok(long.length >= 2000, "fixture must clear long_body_chars")
+  const r = scoreFit(job(long), PROFILE)
+  assert.ok(r.ok, "still never rejected on thin evidence")
+  assert.ok(r.required_terms.length < FIT_DEFAULTS.min_required_terms)
+  assert.ok(r.flags.includes("lexicon_blind"))
+  assert.ok(!r.flags.includes("posting_thin"))
+})
+
+test("a known-partial capture is posting_thin even when long, never lexicon_blind", () => {
+  // job.partial_description means we already KNOW the text is a fragment
+  // (screen.mjs sets it for every lead with no full captured posting — every
+  // Adzuna lead, which only ever returns a teaser). Blaming the lexicon for a
+  // body we know is incomplete would be a false claim, whatever its length.
+  const nursingReq =
+    "Requirements: Active RN license, BLS certification, acute care experience, medication administration, patient assessment, electronic health records, rotating shift availability. "
+  const long = nursingReq.repeat(Math.ceil(2100 / nursingReq.length))
+  const r = scoreFit(
+    { title: "RN", description: long, partial_description: true },
+    PROFILE,
+  )
+  assert.ok(r.ok)
+  assert.ok(r.flags.includes("posting_thin"))
+  assert.ok(!r.flags.includes("lexicon_blind"))
+})
+
+test("long_body_chars is configurable via limits.fit", () => {
+  const shortish = "Requirements: knowledge of widgets and gadgets and gizmos."
+  const r = scoreFit(job(shortish), PROFILE, {
+    limits: { fit: { long_body_chars: 10 } },
+  })
+  assert.ok(
+    r.flags.includes("lexicon_blind"),
+    "a lowered threshold reclassifies it",
+  )
+})
+
+// --- isEvaluable — the exported predicate w4-autonomy's fitSortKey ---------
+// (automatability.mjs, 52d432b) had to recompute for itself before this
+// existed. Structural, reads no flag name, so it cannot disagree with
+// scoreFit's OWN evaluable computation.
+
+test("isEvaluable is false for a thin (either flavour) result", () => {
+  assert.equal(
+    isEvaluable(scoreFit(job("Requirements: Cobol."), PROFILE)),
+    false,
+  )
+  const nursingReq =
+    "Requirements: Active RN license, BLS certification, acute care experience, medication administration, patient assessment, electronic health records, rotating shift availability. "
+  const long = nursingReq.repeat(Math.ceil(2100 / nursingReq.length))
+  assert.equal(isEvaluable(scoreFit(job(long), PROFILE)), false)
+})
+
+test("isEvaluable is false for an empty/unknown body", () => {
+  assert.equal(isEvaluable(scoreFit(job(""), PROFILE)), false)
+})
+
+test("isEvaluable is true once required_terms clears the threshold", () => {
+  const r = scoreFit(
+    job("Requirements: React, Node.js, TypeScript, PostgreSQL."),
+    PROFILE,
+  )
+  assert.equal(r.required_terms.length >= FIT_DEFAULTS.min_required_terms, true)
+  assert.equal(isEvaluable(r), true)
+})
+
+test("isEvaluable honours a caller-supplied min_required_terms, never a literal", () => {
+  const r = scoreFit(
+    job("Requirements: React, Node.js, TypeScript, PostgreSQL."),
+    PROFILE,
+  )
+  // 4 terms clears the default (4) but not a stricter caller threshold.
+  assert.equal(
+    isEvaluable(r, { limits: { fit: { min_required_terms: 5 } } }),
+    false,
+  )
+})
+
+test("isEvaluable handles null/undefined without throwing", () => {
+  assert.equal(isEvaluable(null), false)
+  assert.equal(isEvaluable(undefined), false)
 })
 
 test("a genuine stack mismatch with enough evidence is rejected", () => {

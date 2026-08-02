@@ -324,6 +324,47 @@ const SOFTWARE_BODY =
 const NON_SOFTWARE_BODY =
   /\b(preventive maintenance|repairs? and maintenance|part replacements?|hvac|refrigerat\w*|plumb\w*|electrical (system|panel|wiring)|guest rooms?|casino floor equipment|slot machines?|hand tools|painting|landscap\w*|custodial|janitor\w*|housekeep\w*)\b|\b(maintain cleanliness|kitchen|culinary|bartend\w*|banquet|buffet|(?:beverage|food|cocktail) server|valet|table games|front desk|guest services?|security officer|cashier|dealer school|food and beverage)\b|\b(invoices?|purchase orders?|vendor contracts?|accounts payable|accounts receivable|general ledger|reconcil\w+ accounts)\b/i
 
+// docs/application-limits.yaml's roles.exclude_body (P1, retarget-readiness
+// audit 2026-08), optional and REPLACING (never merging with) NON_SOFTWARE_BODY
+// when present — same convention location.remote_synonyms already documents
+// ("Leave this key out entirely to use the built-in list... setting it
+// REPLACES the built-in list"). Absent key -> today's regex groups exactly.
+//
+// A TERM LIST, deliberately, never a boolean: `bodyDisqualifiers` hard-rejects
+// on this pattern with NO caution step (see the call site below), because the
+// gate exists for real casino-boilerplate noise ("Junior Engineer - Palace"
+// was a maintenance job). A `roles.skip_body_gate: true` escape hatch would
+// let a retarget switch that whole control off; a term list only ever lets
+// the user say WHAT it rejects on, never THAT it rejects — the reject stays,
+// only its vocabulary is the user's to curate.
+//
+// An EMPTY array is deliberately treated as absent, not as "reject on
+// nothing": `exclude_body: []` would otherwise be exactly the off-switch this
+// key exists to refuse, just spelled as a list instead of a boolean. Only a
+// non-empty list replaces the built-in.
+//
+// Terms are matched the same way every other roles.* term list in this file
+// is — literal phrase, case-insensitive, whole-word/phrase boundaries (see
+// matchTitleKeyword) — never a regex fragment, so a user editing this list
+// writes plain words, not patterns.
+export function excludeBodyPattern(limits = {}) {
+  const custom = (limits.roles?.exclude_body ?? []).filter(
+    (t) => String(t ?? "").trim() !== "",
+  )
+  if (!custom.length) return NON_SOFTWARE_BODY
+  const alts = custom
+    .map((t) =>
+      String(t)
+        .toLowerCase()
+        .trim()
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    )
+    .sort((a, b) => b.length - a.length) // longer phrases first — avoids a
+  // short alternative ("guest") shadowing a longer one ("guest services")
+  // that starts with it in the same alternation.
+  return new RegExp(`\\b(?:${alts.join("|")})\\b`, "i")
+}
+
 // "must relocate", not "relocation assistance available" — the second is a perk
 // and matching it would reject the roles that are easiest to take.
 const RELOCATION_REQUIRED =
@@ -397,8 +438,9 @@ export function bodyDisqualifiers(job, limits = {}) {
     (job.flags ?? []).includes("title_loose") ||
     !titleKws.some((k) => title.includes(String(k).toLowerCase()))
 
-  if (!explicitTech && (looseArrival || NON_SOFTWARE_BODY.test(text))) {
-    if (!SOFTWARE_BODY.test(text) && NON_SOFTWARE_BODY.test(text)) {
+  const nonSoftwareBody = excludeBodyPattern(limits)
+  if (!explicitTech && (looseArrival || nonSoftwareBody.test(text))) {
+    if (!SOFTWARE_BODY.test(text) && nonSoftwareBody.test(text)) {
       reasons.push("body: not a software role (no software work described)")
     } else if (!SOFTWARE_BODY.test(text)) {
       flags.push("body_not_technical")
@@ -1131,7 +1173,7 @@ async function fetchRemoteOk() {
 }
 
 async function fetchHackerNews(query) {
-  const q = encodeURIComponent(query || "full stack")
+  const q = encodeURIComponent(query || DEFAULT_SEARCH_QUERY)
   const data = await fetchJson(
     `https://hn.algolia.com/api/v1/search_by_date?tags=job&query=${q}&hitsPerPage=50`,
   )
@@ -1173,9 +1215,23 @@ const BOARD_FETCHERS = {
 
 export const BOARD_TYPES = Object.keys(BOARD_FETCHERS)
 
+// THE single hardcoded default query anywhere in this file (P5,
+// retarget-readiness audit 2026-08). Before this there were TWO, independently
+// spelled — cmdSearch's own "full stack" and fetchBoard's own parameter
+// default "software engineer" — and Workday is the one fetcher of thirteen
+// where the query is a server-side filter (searchText), so any caller that
+// omitted the query (this file's own tests, manage-sources.mjs, a diagnostic
+// script) silently got a different result set than production ever runs with.
+// "full stack" is canonical because that is what cmdSearch actually sweeps
+// with every day. Overridable per-user via docs/application-limits.yaml's
+// roles.search_query — resolved by each CLI entry point (cmdSearch,
+// manage-sources.mjs), never read here, since this function has no access to
+// the limits file.
+export const DEFAULT_SEARCH_QUERY = "full stack"
+
 // One entry point per board — used by cmdSearch and by manage-sources.mjs to
 // prescreen a board before it is added to docs/job-sources.yaml.
-export async function fetchBoard(board, query = "software engineer") {
+export async function fetchBoard(board, query = DEFAULT_SEARCH_QUERY) {
   const fetcher = BOARD_FETCHERS[board.type]
   if (!fetcher) throw new Error(`unknown board type "${board.type}"`)
   return fetcher(board, query)
@@ -1504,7 +1560,14 @@ async function ingest(
 async function cmdSearch(args) {
   const limits = loadLimits()
   const source = getFlag(args, "--source", "all")
-  const query = getFlag(args, "--query", "full stack")
+  // Resolution order: an explicit --query wins, then docs/application-
+  // limits.yaml's roles.search_query (P5, retarget-readiness audit 2026-08,
+  // optional — see DEFAULT_SEARCH_QUERY above for why "full stack" is the
+  // fallback), then the canonical default itself.
+  const query =
+    getFlag(args, "--query") ??
+    limits.roles?.search_query ??
+    DEFAULT_SEARCH_QUERY
   const maxAge = getFlag(args, "--max-age")
   if (maxAge) (limits.freshness ??= {}).max_age_days = Number(maxAge)
 

@@ -1,5 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import {
@@ -11,6 +12,8 @@ import {
   parseSalaryMax,
   parseWorkdayPostedOn,
   workdayLocationFromPath,
+  fetchBoard,
+  DEFAULT_SEARCH_QUERY,
 } from "../../scripts/leads/find-jobs.mjs"
 
 const ROOT = path.resolve(
@@ -503,4 +506,38 @@ test("loadSources falls back to defaults when the file is missing", () => {
   const boards = loadSources(path.join(ROOT, "docs", "no-such-sources.yaml"))
   assert.ok(boards.length >= 1)
   assert.equal(boards[0].type, "greenhouse")
+})
+
+// ---------- P5: one canonical default query (retarget-readiness audit) ----
+
+test("DEFAULT_SEARCH_QUERY is 'full stack' — what cmdSearch actually sweeps with", () => {
+  assert.equal(DEFAULT_SEARCH_QUERY, "full stack")
+})
+
+test("fetchBoard's own default is the shared constant, not a locally-spelled string", () => {
+  // Regression: fetchBoard used to default to "software engineer" while
+  // cmdSearch defaulted to "full stack" — two independently hardcoded
+  // targets. Reading fetchBoard's own declared default off its source is the
+  // one check that would catch a revert to a literal without needing a live
+  // network call (Workday's searchText is the one fetcher of thirteen where
+  // this changes what comes back, measured in the dead-board diagnosis).
+  assert.equal(
+    fetchBoard.length,
+    1,
+    "query must remain a parameter with a default, not required",
+  )
+  const src = fetchBoard.toString()
+  assert.match(src, /query\s*=\s*DEFAULT_SEARCH_QUERY/)
+  assert.doesNotMatch(src, /"software engineer"/)
+})
+
+test("no hardcoded default query in this file disagrees with DEFAULT_SEARCH_QUERY", () => {
+  // Broader net: catches a NEW disagreeing default anywhere in the file, not
+  // just the two that actually existed. "software engineer" as a default-
+  // parameter or fallback literal must not reappear anywhere in this module.
+  const src = fs.readFileSync(
+    path.join(ROOT, "scripts", "leads", "find-jobs.mjs"),
+    "utf8",
+  )
+  assert.doesNotMatch(src, /=\s*"software engineer"/)
 })

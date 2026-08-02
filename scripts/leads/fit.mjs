@@ -111,6 +111,10 @@ export const FIT_DEFAULTS = {
   // Senior-scope phrases that, TOGETHER with a weak stack match, mean the
   // posting is above this profile whatever its title claims.
   senior_phrase_reject: 3,
+  // Below min_required_terms, the required text is at least this many
+  // characters long — see the retarget-readiness audit note above
+  // `posting_thin`/`lexicon_blind` for how this number was derived.
+  long_body_chars: 2000,
 }
 
 // Split a posting body into { required, preferred, general }.
@@ -229,7 +233,42 @@ export function scoreFit(job, profileTech, opts = {}) {
 
   // --- the guard that makes a hard reject safe ------------------------------
   const evaluable = denom >= cfg.min_required_terms
-  if (!evaluable) flags.push("fit_thin")
+  // `denom < min_required_terms` used to be one flag, `fit_thin`, for two
+  // completely different situations: the posting genuinely states few
+  // requirements (a property of the JOB), or it states plenty and this
+  // lexicon simply does not have the vocabulary (a property of US — exactly
+  // the shape a retarget takes). Folding them together meant a domain the
+  // lexicon cannot read looked like a run of thin postings, discoverable only
+  // by an audit instead of announcing itself on the first sweep
+  // (retarget-readiness audit, 2026-08). The guard's SAFETY behaviour is
+  // unchanged either way — both flags mean "never reject on this evidence".
+  //
+  // Split on the length of the text `denom` was actually computed from
+  // (requiredText, not the raw job body). cfg.long_body_chars (2000) is not a
+  // guessed round number: derived from the 149-lead stored corpus, 2026-08-02
+  // — among the 48 non-Adzuna leads flagged thin at the time, sorted by
+  // required-text length, the single largest gap in the whole distribution is
+  // 1,817 -> 2,449 characters (every other adjacent gap in that sorted list is
+  // under 400). That is a real elbow in the corpus, not a pick; 2000 sits in
+  // the gap. Honest limit: the corpus is 149 leads, all software-domain — it
+  // cannot validate that 2000 correctly separates a FUTURE retarget's actual
+  // out-of-domain postings, only that it is a real, evidenced break in this
+  // corpus's length distribution rather than a guess. Overridable via
+  // limits.fit.long_body_chars if a retarget's own corpus argues otherwise.
+  //
+  // `job.partial_description` (set by screen.mjs whenever a lead has no full
+  // captured posting — true for every Adzuna lead, which only ever returns a
+  // teaser) exempts a lead from `lexicon_blind` regardless of length: we
+  // already KNOW that body is a fragment, so blaming the lexicon for failing
+  // to find terms in text we know is incomplete would be a false claim. This
+  // mirrors screen.mjs's own thin_description ghost-signal, which is
+  // "skipped when the text is a known-truncated aggregator teaser, which is
+  // short because of the source, not because the posting is empty".
+  if (!evaluable) {
+    const isLong =
+      !job.partial_description && requiredText.length >= cfg.long_body_chars
+    flags.push(isLong ? "lexicon_blind" : "posting_thin")
+  }
 
   if (evaluable && overlap < cfg.reject_below) {
     reasons.push(
@@ -265,4 +304,24 @@ export function scoreFit(job, profileTech, opts = {}) {
     bonus_terms: bonus.sort(),
     senior_signals: senior,
   }
+}
+
+// Whether a scoreFit() result carries a trustworthy fit_score at all —
+// exported as a FUNCTION, not a flag-name list, because a consumer matching
+// on flag names is fragile by construction: `automatability.mjs`'s
+// `fitSortKey` (w4-autonomy) had to recompute this exact rule itself
+// (`required_terms.length >= min_required_terms`) since nothing here exported
+// it, which is a second copy of a rule that silently stops meaning the same
+// thing the moment evaluability's definition changes here — precisely the
+// risk splitting `fit_thin` into `posting_thin`/`lexicon_blind` created. A
+// predicate function survives that; a name list would not.
+//
+// Takes the SAME limits the caller scored the lead with, never a literal
+// default, so this cannot disagree with the min_required_terms `scoreFit`
+// itself used for that result.
+export function isEvaluable(result, opts = {}) {
+  const cfg = { ...FIT_DEFAULTS, ...(opts.limits?.fit ?? {}) }
+  if (!result) return false
+  if (result.fit_score == null) return false
+  return (result.required_terms?.length ?? 0) >= cfg.min_required_terms
 }

@@ -17,11 +17,42 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import yaml from "js-yaml"
-import { fetchBoard, BOARD_TYPES, loadSources } from "./find-jobs.mjs"
+import {
+  fetchBoard,
+  BOARD_TYPES,
+  loadSources,
+  loadLimits,
+  DEFAULT_SEARCH_QUERY,
+} from "./find-jobs.mjs"
 import { isTerse } from "../lib/lib.mjs"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 const SOURCES_PATH = path.join(ROOT, "docs", "job-sources.yaml")
+
+// The same query cmdSearch actually sweeps with — a THIRD independently
+// hardcoded "software engineer" used to sit here (alongside fetchBoard's own
+// default), which meant a board's prescreen count could disagree with what
+// the daily sweep finds for it, on the one fetcher of thirteen (Workday)
+// where the query is a server-side filter (P5, retarget-readiness audit
+// 2026-08).
+// `limitsFile` exists so a test can point this at a fixture instead of the
+// real docs/application-limits.yaml — without it, a test asserting the
+// fallback would silently start failing the day the user actually adds
+// roles.search_query, since it would then read their real, non-default value.
+export function searchQuery(limitsFile = undefined) {
+  try {
+    return (
+      loadLimits(...(limitsFile ? [limitsFile] : [])).roles?.search_query ??
+      DEFAULT_SEARCH_QUERY
+    )
+  } catch {
+    return DEFAULT_SEARCH_QUERY
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Pure logic (exported for tests)
@@ -176,7 +207,7 @@ async function cmdAdd(args) {
   }
 
   // Prescreen: the board must answer with a job list before it earns a slot.
-  const jobs = await fetchBoard(entry, "software engineer")
+  const jobs = await fetchBoard(entry, searchQuery())
   if (!Array.isArray(jobs))
     throw new Error("prescreen failed: no job list returned")
 
@@ -203,10 +234,11 @@ function cmdRemove(args) {
 async function cmdVerify() {
   let ok = 0
   let broken = 0
+  const query = searchQuery()
   for (const b of loadSources()) {
     const label = boardLabel(b)
     try {
-      const jobs = await fetchBoard(b, "software engineer")
+      const jobs = await fetchBoard(b, query)
       // Terse mode reports only what needs action; ok boards are just a count.
       if (!isTerse()) console.log(`ok      ${label} (${jobs.length} postings)`)
       ok++

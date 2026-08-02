@@ -19,6 +19,7 @@ import {
   openDb,
   keywordMap,
 } from "../lib/db.mjs"
+import { matchTitleKeyword, loadLimits } from "./find-jobs.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -26,13 +27,43 @@ const ROOT = path.resolve(
   "..",
 )
 
-// Role fit from the title alone. The user targets full-stack first, back-end
-// second (docs/application-limits.yaml); generic titles score lowest.
-export function titleScore(title) {
-  const t = String(title ?? "").toLowerCase()
-  if (/full[- ]?stack/.test(t)) return 6
-  if (/back[- ]?end|backend/.test(t)) return 4
-  if (/software engineer|web developer|developer/.test(t)) return 2
+// The ladder this hardcoded before docs/application-limits.yaml's
+// roles.title_rank existed — kept as the fallback so an absent key means
+// BYTE-IDENTICAL behaviour, same convention remote_synonyms already uses
+// (application-limits.yaml line 30). Each entry is one rank, highest first;
+// an entry may be a single phrase or an array of synonyms that TIE at that
+// rank — the group below is what let "software engineer", "web developer"
+// and bare "developer" share one score today, and a flat list of strings
+// alone could not express that.
+const DEFAULT_TITLE_RANK = [
+  ["full-stack", "full stack", "fullstack"],
+  ["back-end", "back end", "backend"],
+  ["software engineer", "web developer", "developer"],
+]
+
+// Role fit from the title alone, retargetable via
+// docs/application-limits.yaml's roles.title_rank (propose, never edited by
+// this pipeline — the user owns that file). Position derives the weight:
+// rank i of n groups scores (n - i) * 2, so DEFAULT_TITLE_RANK's 3 groups
+// reproduce exactly 6 / 4 / 2 / 0 — the ladder this used to hardcode — and a
+// differently-sized custom list changes the spread without new numbers.
+// Checked in rank order and the FIRST group to match wins (mutually
+// exclusive, matching the old if/else-if chain): a title naming both
+// "full-stack" and "developer" scores as full-stack, not their sum.
+//
+// THE BUG THIS REPLACES: this comment used to claim the ladder "comes from
+// docs/application-limits.yaml". It did not read that file at all — four
+// identically-scored nursing leads (a retarget) silently fell through to
+// alphabetical-by-company and were shown as a "ranked" list. Fixed by
+// actually reading it, with the software ladder preserved as the fallback.
+export function titleScore(title, opts = {}) {
+  const groups = opts.limits?.roles?.title_rank ?? DEFAULT_TITLE_RANK
+  const t = String(title ?? "")
+  const n = groups.length
+  for (let i = 0; i < n; i++) {
+    const terms = Array.isArray(groups[i]) ? groups[i] : [groups[i]]
+    if (matchTitleKeyword(t, terms)) return (n - i) * 2
+  }
   return 0
 }
 
@@ -68,7 +99,13 @@ const FLAG_PENALTY = {
 // The two sources are unioned rather than one preferred: the index covers leads
 // that have no workspace, and a captured posting is richer than the description
 // snippet the sweep stored.
-export function scoreLead(lead, profileTech, now = new Date(), indexed = null) {
+export function scoreLead(
+  lead,
+  profileTech,
+  now = new Date(),
+  indexed = null,
+  limits = null,
+) {
   const text = [lead.title, lead.job_text].filter(Boolean).join("\n")
   const leadTech = new Set([...extractTech(text), ...(indexed ?? [])])
   const overlap = [...leadTech].filter((t) => profileTech.has(t))
@@ -76,7 +113,7 @@ export function scoreLead(lead, profileTech, now = new Date(), indexed = null) {
 
   let score = 0
   score += overlap.length * 2
-  score += titleScore(lead.title)
+  score += titleScore(lead.title, { limits })
   score += freshnessScore(lead.posted_at, now)
   if (lead.salary_max) score += 2
   for (const f of lead.flags ?? []) score -= FLAG_PENALTY[f] ?? 0
@@ -98,13 +135,25 @@ export function scoreLead(lead, profileTech, now = new Date(), indexed = null) {
 export function rankLeads(
   leads,
   profileBlob,
-  { top = 10, now = new Date(), keywords = null } = {},
+  { top = 10, now = new Date(), keywords = null, limits = null } = {},
 ) {
   const profileTech = extractTech(profileBlob)
   return leads
-    .map((l) => scoreLead(l, profileTech, now, keywords?.get(l.id)))
+    .map((l) => scoreLead(l, profileTech, now, keywords?.get(l.id), limits))
     .sort((a, b) => b.score - a.score || a.company.localeCompare(b.company))
     .slice(0, top)
+}
+
+// Honest-output guard for the ranking-honesty interim (P2): when every lead in
+// the returned list ties, sorting fell through entirely to
+// alphabetical-by-company, and the list is NOT a ranking, however it is
+// labelled. Measured cause: four nursing leads scored 4, 4, 4, 4 — identical —
+// because DEFAULT_TITLE_RANK's software vocabulary matches nothing in a
+// retargeted title, so titleScore contributes 0 to every one of them, same as
+// every OTHER scoring input tying. Pure length/score check, not tied to any
+// one cause, so it still catches a flat list for a reason nobody anticipated.
+export function isFlatRanking(ranked) {
+  return ranked.length > 1 && ranked.every((r) => r.score === ranked[0].score)
 }
 
 function flag(args, name) {
@@ -180,10 +229,27 @@ function main() {
     }
   }
 
+  // Optional — an absent/unreadable file falls back to loadLimits' own
+  // built-in defaults, which is what keeps titleScore's DEFAULT_TITLE_RANK
+  // fallback reachable rather than throwing.
+  let limits = null
+  try {
+    limits = loadLimits()
+  } catch (e) {
+    console.error(`warn: application-limits.yaml unavailable (${e.message})`)
+  }
+
   const ranked = rankLeads(leads, profileText(loadYamlFile(profilePath)), {
     top,
     keywords,
+    limits,
   })
+  // Ties mean the sort fell through to alphabetical-by-company — a flat list
+  // labelled as ranked is worse than a flat list labelled as flat (P2 interim,
+  // retarget-readiness audit 2026-08). This is checked on every output mode
+  // except --json, which is a raw data dump for a caller who has the scores
+  // themselves and can compute this the same way.
+  const flat = isFlatRanking(ranked)
 
   if (args.includes("--json")) {
     console.log(JSON.stringify(ranked, null, 2))
@@ -195,8 +261,19 @@ function main() {
         `${r.score}|${r.id}|${r.company}|${r.title}|match:${r.matched_tech.join(",") || "-"}|gap:${r.missing_tech.join(",") || "-"}|${r.url}`,
       )
     }
-    console.log(`ranked=${ranked.length} of=${leads.length}`)
+    console.log(
+      `ranked=${ranked.length} of=${leads.length}${flat ? " flat=true" : ""}`,
+    )
     return
+  }
+  if (flat) {
+    console.log(
+      `NOTE: every lead below scored identically (${ranked[0].score}) — this is ` +
+        `NOT a ranking, it fell through to alphabetical order by company. ` +
+        `titleScore currently only distinguishes software-engineering titles ` +
+        `(roles.title_rank in docs/application-limits.yaml); if the target role ` +
+        `changed, that list needs updating for these results to mean anything.\n`,
+    )
   }
   for (const r of ranked) {
     console.log(
@@ -204,7 +281,7 @@ function main() {
     )
   }
   console.log(
-    `\nTop ${ranked.length} of ${leads.length} lead(s) with status "${status}".`,
+    `\nTop ${ranked.length} of ${leads.length} lead(s) with status "${status}"${flat ? " — UNRANKED (all tied)" : ""}.`,
   )
 }
 

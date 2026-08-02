@@ -9,8 +9,13 @@ import {
   formatEntry,
   addEntryToText,
   removeEntryFromText,
+  searchQuery,
 } from "../../scripts/leads/manage-sources.mjs"
-import { loadEnv, normalizeAdzunaJob } from "../../scripts/leads/find-jobs.mjs"
+import {
+  loadEnv,
+  normalizeAdzunaJob,
+  DEFAULT_SEARCH_QUERY,
+} from "../../scripts/leads/find-jobs.mjs"
 
 const BOARDS = [
   { type: "greenhouse", slug: "anthropic", company: "Anthropic" },
@@ -200,4 +205,32 @@ test("normalizeAdzunaJob tolerates missing fields", () => {
   assert.equal(lead.company, "unknown")
   assert.equal(lead.salary_max, null)
   assert.equal(lead.posted_at, null)
+})
+
+// ---------- P5: prescreen/verify use the same query cmdSearch sweeps with ---
+
+test("searchQuery falls back to DEFAULT_SEARCH_QUERY on a limits file with no roles.search_query", () => {
+  // Regression: this used to be a THIRD hardcoded "software engineer",
+  // independent of both cmdSearch's and fetchBoard's own defaults. A fixture
+  // file (not the real docs/application-limits.yaml) is what keeps this test
+  // meaningful after the user actually adds the key to their own file.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "search-query-"))
+  try {
+    const noKey = path.join(dir, "no-key.yaml")
+    fs.writeFileSync(noKey, "roles:\n  title_keywords: [full-stack]\n")
+    assert.equal(searchQuery(noKey), DEFAULT_SEARCH_QUERY)
+    assert.equal(DEFAULT_SEARCH_QUERY, "full stack")
+
+    const withKey = path.join(dir, "with-key.yaml")
+    fs.writeFileSync(withKey, "roles:\n  search_query: registered nurse\n")
+    assert.equal(searchQuery(withKey), "registered nurse")
+
+    // A missing file must not throw — same fallback as an absent key.
+    assert.equal(
+      searchQuery(path.join(dir, "missing.yaml")),
+      DEFAULT_SEARCH_QUERY,
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

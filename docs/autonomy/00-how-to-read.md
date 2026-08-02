@@ -148,7 +148,10 @@ citations in the document pointed at bytes that existed on one machine.
   → blob `6e6c0de2`; content `8a030f1c5963`, 573 lines). Two corrections that follow from finally
   being able to read it at a fixed tree: the two citations `:427` and `:443-480` appear **nowhere
   else in this document** — the bullet claiming to list "every citation of it" listed two that do
-  not exist. And `authorize.mjs:305-315`, cited by Phase 0.3 as where the raw third-party label
+  not exist. And `authorize.mjs:305-315` — **superseded 2026-08-01: the line was `:342-352` at
+  `9e0a159`, and Phase 0.3 has since landed, so the behaviour it describes no longer exists. At
+  `74c7970` the reason is built by `safeText()` at `authorize.mjs:417`** — cited by Phase 0.3 as
+  where the raw third-party label
   enters a defer reason, is the **wrong location**: at `9e0a159` those lines are the trust-gate and
   screening pushes. The label reaches the reason string at **`:342-352`**, `d?.label` at `:348`.
   Phase 0.3's finding is unaffected; only its line number is. Correcting that row is `w4-autonomy`'s

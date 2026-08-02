@@ -113,29 +113,164 @@ const HELD_CANDIDATES = [
 // all while a window sits idle.
 export const RECENT_MS = 90_000
 
-// Caches. Excluded because they are the bulk of a profile by far and carry no
-// authentication — the point of the sync is cookies and local storage. A
-// smaller copy is also a shorter window in which the source can go live.
-export const SKIP_DIRS = new Set([
-  "Cache",
-  "Code Cache",
-  "GPUCache",
-  "GraphiteDawnCache",
-  "DawnGraphiteCache",
-  "DawnWebGPUCache",
-  "ShaderCache",
-  "GrShaderCache",
-  "GPUPersistentCache",
-  "component_crx_cache",
-  "extensions_crx_cache",
-  "BrowserMetrics",
-  "Crashpad",
-  "Safe Browsing",
-  "CacheStorage",
-  "Service Worker",
-  "optimization_guide_model_store",
-  "segmentation_platform",
+// ---------------------------------------------------------------------------
+// WHAT IS COPIED — AN ALLOWLIST (Phase 0.4)
+// ---------------------------------------------------------------------------
+//
+// This used to be SKIP_DIRS, a denylist of caches. It was wrong in the way
+// denylists are always wrong: it answered "what is too big to copy?" when the
+// question is "what does a session need?" — and everything it did not name came
+// across. Measured in the user's real .playwright-mcp/profile on 2026-08-01,
+// that included:
+//
+//   Default/Login Data            saved site passwords
+//   Default/Login Data For Account
+//   Default/Web Data              autofill profiles and payment cards
+//   Default/History, Top Sites    every page the user has visited
+//   Default/Affiliation Database, trusted_vault.pb
+//
+// — copied into a profile whose entire purpose is to visit hundreds of
+// third-party application forms unattended. A single misbehaving page, or one
+// Chromium autofill heuristic firing on a form field named "cc-number", and the
+// blast radius is the user's saved credentials rather than one application.
+//
+// An allowlist costs the same to write and removes the CLASS: a Chromium file
+// that lands in a future version — and Chromium adds several per release —
+// lands on the safe side by default instead of the unsafe one. The cost of
+// being wrong in each direction is not symmetric. Missing a file means the auto
+// profile is logged out of a board and the user re-syncs; including one means
+// the user's password store is in a directory an unattended browser opens.
+//
+// WHAT A SESSION ACTUALLY NEEDS:
+//
+//   Local State                  os_crypt.encrypted_key. Chromium encrypts
+//                                cookie values with a DPAPI-wrapped key stored
+//                                HERE, not in the cookie file — copy Cookies
+//                                without it and every cookie decrypts to
+//                                garbage, i.e. a silent login wall.
+//   <profile>/Network/Cookies    the session itself (modern layout).
+//   <profile>/Cookies            the pre-M96 location, kept because an old
+//                                profile directory still has it there.
+//   <profile>/Local Storage/**   the leveldb many ATS SPAs keep their auth
+//                                state in rather than in a cookie.
+//   <profile>/Preferences        REWRITTEN, not copied — see minimalPreferences.
+//
+// Session Storage is deliberately absent: it is per-tab and per-run by
+// definition, so copying it moves state that was never durable.
+const PROFILE_DIR = "(?:Default|Profile \\d+)"
+const rx = (body) => new RegExp(`^${body}$`)
+
+// Directories worth descending into. Anything else is not walked at all, which
+// is also why this is fast: History, the caches and the extension stores are
+// never even read.
+const WALK_DIRS = [
+  rx(PROFILE_DIR),
+  rx(`${PROFILE_DIR}/Network`),
+  rx(`${PROFILE_DIR}/Local Storage`),
+  rx(`${PROFILE_DIR}/Local Storage/leveldb`),
+]
+
+/** Files that may be copied. `transform` names a rewrite instead of a copy. */
+export const COPY_ALLOWLIST = Object.freeze([
+  Object.freeze({
+    id: "local-state",
+    re: rx("Local State"),
+    why: "os_crypt key — without it every copied cookie is undecryptable",
+  }),
+  Object.freeze({
+    id: "cookies",
+    re: rx(`${PROFILE_DIR}/(?:Network/)?Cookies(?:-journal)?`),
+    why: "the session",
+  }),
+  Object.freeze({
+    id: "local-storage",
+    re: rx(`${PROFILE_DIR}/Local Storage/(?:leveldb/)?[^/]+`),
+    why: "SPA auth state that is not a cookie",
+  }),
+  Object.freeze({
+    id: "preferences",
+    re: rx(`${PROFILE_DIR}/Preferences`),
+    transform: "preferences",
+    why: "rewritten to a minimal, autofill-disabled form",
+  }),
 ])
+
+// Named ONLY so the report can say the allowlist did its job. Never consulted
+// to decide anything: a file is excluded because it is not on the allowlist,
+// not because it is on this list, and adding to this list must never be
+// mistaken for tightening the filter.
+export const SENSITIVE_NAMES = Object.freeze([
+  "Login Data",
+  "Login Data-journal",
+  "Login Data For Account",
+  "Login Data For Account-journal",
+  "Web Data",
+  "Web Data-journal",
+  "Account Web Data",
+  "History",
+  "History-journal",
+  "Bookmarks",
+  "Top Sites",
+  "Affiliation Database",
+  "trusted_vault.pb",
+  "Secure Preferences",
+])
+
+const toPosix = (p) => p.replace(/\\/g, "/")
+
+/** May this relative directory be walked at all? */
+export function walkDir(rel) {
+  const p = toPosix(rel)
+  if (!p) return true
+  return WALK_DIRS.some((re) => re.test(p))
+}
+
+/**
+ * Copy decision for one file, by its path relative to the profile root.
+ *
+ * @returns { allow, id, transform } — deny by default, always.
+ */
+export function copyDecision(rel) {
+  const p = toPosix(rel)
+  for (const rule of COPY_ALLOWLIST)
+    if (rule.re.test(p))
+      return { allow: true, id: rule.id, transform: rule.transform ?? null }
+  return { allow: false, id: null, transform: null }
+}
+
+/**
+ * The Preferences file, rebuilt rather than copied.
+ *
+ * A real Preferences is thousands of lines of per-site content settings, media
+ * device salts, sign-in state and last-used-download-directory. None of it is
+ * needed for a session, and it is the sort of file where a value nobody has
+ * read carries something the user would not choose to duplicate.
+ *
+ * So the destination gets a synthesised one. THE FORCED VALUES ARE THE POINT:
+ * the auto profile has the password manager and autofill turned OFF, so it
+ * cannot re-accumulate the very files this allowlist just excluded. It is our
+ * own disposable profile, not the user's — nothing here is written back to the
+ * MCP profile or to profile/.
+ *
+ * `intl.accept_languages` is the one value carried over, and only if it is a
+ * short string: a session cookie replayed from a browser advertising a
+ * different Accept-Language is exactly the shape a fraud system flags.
+ */
+export function minimalPreferences(source) {
+  const out = {
+    // Suppresses the "Chrome didn't shut down correctly" restore bubble, which
+    // on an unattended run is an overlay in front of the form.
+    profile: { exit_type: "Normal", exited_cleanly: true },
+    credentials_enable_service: false,
+    credentials_enable_autosignin: false,
+    autofill: { profile_enabled: false, credit_card_enabled: false },
+    payments: { can_make_payment_enabled: false },
+  }
+  const lang = source?.intl?.accept_languages
+  if (typeof lang === "string" && lang && lang.length <= 200)
+    out.intl = { accept_languages: lang }
+  return out
+}
 
 /**
  * Three signals, OR-ed. Any one of them means "do not touch this directory".
@@ -272,26 +407,61 @@ export function isIgnored(gitignoreText, relDir) {
   return ignored
 }
 
-async function copyTree(src, dst, { onFile = null } = {}) {
+async function writeMinimalPreferences(from, to) {
+  let source = null
+  try {
+    source = JSON.parse(await fsp.readFile(from, "utf8"))
+  } catch {
+    // Unreadable or not JSON: the synthesised defaults still apply. A missing
+    // source pref is never a reason to fall back to copying the real file.
+    source = null
+  }
+  const text = JSON.stringify(minimalPreferences(source))
+  await fsp.writeFile(to, text, "utf8")
+  return Buffer.byteLength(text)
+}
+
+/**
+ * Walk the source and copy only what the allowlist names.
+ *
+ * `rel` is the path relative to the profile ROOT, so the rules are written in
+ * the same terms as Chromium's own layout ("Default/Network/Cookies") rather
+ * than in terms of whatever depth the recursion happens to be at.
+ */
+async function copyTree(src, dst, { onFile = null, rel = "", excluded } = {}) {
   let files = 0
   let bytes = 0
   await fsp.mkdir(dst, { recursive: true })
   const entries = await fsp.readdir(src, { withFileTypes: true })
   for (const e of entries) {
     if (e.isSymbolicLink()) continue // never follow a link out of the profile
+    const childRel = rel ? `${rel}/${e.name}` : e.name
     const from = path.join(src, e.name)
     const to = path.join(dst, e.name)
     if (e.isDirectory()) {
-      if (SKIP_DIRS.has(e.name)) continue
-      const sub = await copyTree(from, to, { onFile })
+      if (!walkDir(childRel)) {
+        if (excluded && SENSITIVE_NAMES.includes(e.name))
+          excluded.push(childRel)
+        continue
+      }
+      const sub = await copyTree(from, to, { onFile, rel: childRel, excluded })
       files += sub.files
       bytes += sub.bytes
       continue
     }
     if (!e.isFile()) continue
+    const decision = copyDecision(childRel)
+    if (!decision.allow) {
+      // Recorded so the report can SHOW that the password store was left
+      // behind, rather than the user having to take it on faith.
+      if (excluded && SENSITIVE_NAMES.includes(e.name)) excluded.push(childRel)
+      continue
+    }
     try {
-      await fsp.copyFile(from, to)
-      bytes += (await fsp.stat(to)).size
+      bytes +=
+        decision.transform === "preferences"
+          ? await writeMinimalPreferences(from, to)
+          : (await fsp.copyFile(from, to), (await fsp.stat(to)).size)
       files += 1
     } catch (err) {
       // A file that vanished or is locked mid-copy is reported, not fatal: the
@@ -376,7 +546,9 @@ export async function syncProfile({
   try {
     await fsp.rm(staging, { recursive: true, force: true })
     let sinceTouch = Date.now()
+    const excluded = []
     const stats = await copyTree(resolved.src, staging, {
+      excluded,
       onFile: async () => {
         // Keep the lock fresh across a copy that may run for minutes. The
         // callback is the natural heartbeat: withLock's synchronous body could
@@ -414,6 +586,9 @@ export async function syncProfile({
       dst: resolved.dst,
       replaced: had,
       ...stats,
+      // Evidence, not decoration: the names on this list are the ones that were
+      // being copied before Phase 0.4 and are not any more.
+      excluded_sensitive: excluded.sort(),
       limits: AUTH_SYNC_LIMITS,
     }
   } finally {
@@ -439,6 +614,9 @@ const isMain = (() => {
 const USAGE =
   "usage: auth-sync.mjs [--check] [--src <dir>] [--dst <dir>] [--json]\n" +
   "  Copies .playwright-mcp/profile -> .playwright-auto/profile, one direction only.\n" +
+  "  ALLOWLIST: cookies, Local Storage, Local State (the os_crypt key) and a rewritten\n" +
+  "  minimal Preferences. Saved passwords, autofill/payment data, history and bookmarks\n" +
+  "  are never copied — the auto profile visits hundreds of third-party pages.\n" +
   "  --check probes liveness and copies nothing.\n" +
   "  Refuses while either browser looks live, and refuses if the destination is not gitignored.\n" +
   `  ${AUTH_SYNC_LIMITS}`
@@ -494,7 +672,12 @@ if (isMain) {
     else
       console.log(
         `Synced ${res.files} files (${(res.bytes / 1e6).toFixed(1)} MB) -> ${path.relative(ROOT, res.dst)}` +
-          `${res.replaced ? " (previous profile replaced)" : ""}\n\n${AUTH_SYNC_LIMITS}`,
+          `${res.replaced ? " (previous profile replaced)" : ""}\n` +
+          `Copied by allowlist only: cookies, local storage, the os_crypt key, a minimal Preferences.\n` +
+          (res.excluded_sensitive?.length
+            ? `Left behind: ${res.excluded_sensitive.join(", ")}\n`
+            : "") +
+          `\n${AUTH_SYNC_LIMITS}`,
       )
     process.exit(0)
   } catch (err) {

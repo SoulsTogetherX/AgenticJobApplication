@@ -53,6 +53,35 @@ test("collects only the defers that are questions a person can answer", () => {
   assert.deepEqual(qs[0].options, ["BS"])
 })
 
+// 0.6 — an identity-verification wall (Real Talent / CLEAR selfie or liveness
+// check) is a page-level defer, not a question with an answer worth storing:
+// there is nothing for the user to answer once and have stay answered, it is
+// a live challenge the board re-issues every time. fill-plan.mjs's page-shape
+// guard always keys it to k: "__page__"; this pins that it never leaks into
+// the batched question list the same way a CAPTCHA or login wall does not.
+test("an identity-verification wall never surfaces as an askable question", () => {
+  const qs = questionsFromPlans([
+    plan("a", [
+      {
+        k: "__page__",
+        label: "(page)",
+        why: "identity-verification: selfie/liveness check present — hand off to the user; the board working as designed, not a malfunction",
+      },
+      {
+        k: "f1",
+        label: "Highest degree",
+        why: "needs-choice",
+        options: ["BS"],
+      },
+    ]),
+  ])
+  assert.deepEqual(
+    qs.map((q) => q.label),
+    ["Highest degree"],
+    "the identity-verification page defer is not a question a person answers once",
+  )
+})
+
 test("the same question from four forms is one entry naming all four", () => {
   const merged = mergeQuestions(
     questionsFromPlans([

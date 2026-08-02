@@ -802,6 +802,127 @@ test("E7 HANDLED [w3-resolution]: the control — an ordinary form with the same
   assert.equal(submitReadiness(plan).ready, true)
 })
 
+// ---------------------------------------------------------------------------
+// 0.6 — identity-verification wall: a named defer kind, distinct from CAPTCHA
+// and from a failed fill, and explicitly NOT a malfunction.
+// ---------------------------------------------------------------------------
+// A Real Talent / CLEAR selfie or liveness check (or an equivalent
+// identity-verification challenge) is the board working as designed — proof
+// of a human, the same job a CAPTCHA does — not the pipeline breaking. A
+// future circuit breaker that cannot tell "the board demanded a selfie" from
+// "the run is unhealthy" halts on runs that were fine; that conflation is the
+// stated incident behind this item. Detected here from `scan.iframes` and
+// `scan.signals`, both already returned unconditionally by scan-page.js — see
+// its `iframes: iframes.length ? iframes : undefined` line, unchanged by this
+// fix. Nothing in scan-page.js (w2-engine's file) was touched.
+test("0.6 HANDLED [w3-resolution]: an identity-verification iframe (Persona/Onfido/CLEAR-style) refuses the page as its own named defer kind", () => {
+  const scan = {
+    url: "https://job-boards.greenhouse.io/x/jobs/1",
+    kind: "form",
+    heading: "Apply",
+    signals: [],
+    iframes: [
+      {
+        src: "https://withpersona.com/verify?tid=abc",
+        title: "Identity verification",
+      },
+    ],
+    fields: [
+      { k: "f1", sel: "#e", n: "email", t: "text", l: "Email", req: true },
+    ],
+  }
+  const resolved = resolveFields(scan.fields, {
+    profile: path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+    answers: path.join(ROOT, "tests", "fixtures", "answers.yaml"),
+  })
+  assert.equal(
+    resolved[0].status,
+    "OK",
+    "precondition: this field DOES resolve, so nothing but the page-shape guard can stop it",
+  )
+  const plan = buildPlan({
+    scan,
+    resolved,
+    adapter: LOGIN_ADAPTER,
+    url: scan.url,
+  })
+  assert.deepEqual(plan.items, [], "nothing may be handed to the fill engine")
+  assert.equal(plan.defer.length, 1, "exactly one defer, naming the page")
+  assert.match(plan.defer[0].why, /identity-verification/i)
+  // Distinct from every OTHER page-shape and field-shape defer kind — a
+  // circuit breaker (or pending-questions.mjs) that cannot tell this apart
+  // from those is exactly the failure mode this item exists to prevent.
+  assert.notEqual(plan.defer[0].why, "consent")
+  assert.notEqual(plan.defer[0].why, "confirm-widget")
+  assert.notEqual(plan.defer[0].why, "confirm")
+  assert.doesNotMatch(plan.defer[0].why, /captcha/i)
+  assert.doesNotMatch(plan.defer[0].why, /login wall/i)
+  assert.doesNotMatch(plan.defer[0].why, /confirmation/i)
+  // The load-bearing phrase: this is the board working as designed, not proof
+  // the machine malfunctioned.
+  assert.match(plan.defer[0].why, /not a malfunction/i)
+  assert.equal(readiness(plan).ready, false)
+  assert.equal(submitReadiness(plan).ready, false)
+})
+
+test("0.6 HANDLED [w3-resolution]: the same wall detected from scan.signals text, not only from an iframe", () => {
+  const scan = {
+    url: "https://job-boards.greenhouse.io/x/jobs/1",
+    kind: "form",
+    heading: "Apply",
+    signals: ["liveness check required before you can continue"],
+    fields: [
+      { k: "f1", sel: "#e", n: "email", t: "text", l: "Email", req: true },
+    ],
+  }
+  const resolved = resolveFields(scan.fields, {
+    profile: path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+    answers: path.join(ROOT, "tests", "fixtures", "answers.yaml"),
+  })
+  const plan = buildPlan({
+    scan,
+    resolved,
+    adapter: LOGIN_ADAPTER,
+    url: scan.url,
+  })
+  assert.deepEqual(plan.items, [])
+  assert.equal(plan.defer.length, 1)
+  assert.match(plan.defer[0].why, /identity-verification/i)
+})
+
+test("0.6 HANDLED [w3-resolution]: an unrelated iframe (an embedded ATS, not an identity check) does not trip the identity-verification defer", () => {
+  // The control. Without it, a test that merely checks "the presence of ANY
+  // iframe blocks the page" would pass for the wrong reason — the embedded-ATS
+  // iframe case is already handled separately (scan-page.js's `embedded`
+  // signal) and must not collide with this one.
+  const scan = {
+    url: "https://job-boards.greenhouse.io/x/jobs/1",
+    kind: "form",
+    heading: "Apply",
+    signals: [],
+    iframes: [{ src: "https://boards.greenhouse.io/embed/job_app", title: "" }],
+    fields: [
+      { k: "f1", sel: "#e", n: "email", t: "text", l: "Email", req: true },
+    ],
+  }
+  const resolved = resolveFields(scan.fields, {
+    profile: path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+    answers: path.join(ROOT, "tests", "fixtures", "answers.yaml"),
+  })
+  const plan = buildPlan({
+    scan,
+    resolved,
+    adapter: LOGIN_ADAPTER,
+    url: scan.url,
+  })
+  assert.deepEqual(
+    plan.items.map((i) => i.k),
+    ["f1"],
+    "an embedded-ATS iframe alone is not an identity-verification wall",
+  )
+  assert.deepEqual(plan.defer, [])
+})
+
 test("E7 HANDLED: a malformed scan does not crash the planner", () => {
   // Deliberately broken shapes: a field with no type, no label, no key.
   const junk = [

@@ -16,6 +16,7 @@ import {
   recordCache,
   invalidate,
   recordVia,
+  recordShapeHistory,
   CACHE_VERSION,
 } from "../../scripts/apply/field-cache.mjs"
 
@@ -324,6 +325,75 @@ test("a composite widget's options do not leak onto its text input", () => {
   )
 })
 
+// 0.12 support: an append-only sidecar, never read by applyCache/recordCache,
+// carrying only a date, the ATS, the fingerprint and one boolean per scan —
+// specifically NOT a second copy of entry.fields (no labels, no options, no
+// selectors).
+test("recordShapeHistory appends one line per call, carrying only date/ats/fp/boolean", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shape-history-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, ".shape-history.jsonl")
+
+  const withCheckbox = scanOf([
+    { k: "f1", t: "text", l: "First Name", req: true },
+    { k: "f2", t: "checkbox", l: "Current role" },
+  ])
+  const clean = scanOf([{ k: "f1", t: "text", l: "First Name", req: true }])
+
+  const r1 = recordShapeHistory(file, {
+    fp: "abc123",
+    ats: "greenhouse",
+    scan: withCheckbox,
+    now: new Date("2026-08-01T00:00:00Z"),
+  })
+  assert.equal(r1.hasCheckboxOrRadio, true)
+
+  const r2 = recordShapeHistory(file, {
+    fp: "def456",
+    ats: "generic",
+    scan: clean,
+    now: new Date("2026-08-01T00:00:00Z"),
+  })
+  assert.equal(r2.hasCheckboxOrRadio, false)
+
+  const lines = fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+  assert.equal(lines.length, 2, "one appended line per call")
+  assert.deepEqual(lines[0], {
+    date: "2026-08-01",
+    ats: "greenhouse",
+    fp: "abc123",
+    hasCheckboxOrRadio: true,
+  })
+  assert.deepEqual(lines[1], {
+    date: "2026-08-01",
+    ats: "generic",
+    fp: "def456",
+    hasCheckboxOrRadio: false,
+  })
+  // Carries none of the live cache's field-level content.
+  for (const l of lines) {
+    assert.equal(Object.keys(l).length, 4)
+    assert.equal("fields" in l, false)
+  }
+})
+
+test("recordShapeHistory detects a radio group the same as a checkbox", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shape-history-radio-"))
+  const file = path.join(dir, ".shape-history.jsonl")
+  const r = recordShapeHistory(file, {
+    fp: "xyz",
+    ats: "workday",
+    scan: scanOf([{ k: "f1", t: "radio", l: "Work authorization" }]),
+    now: new Date("2026-08-01T00:00:00Z"),
+  })
+  assert.equal(r.hasCheckboxOrRadio, true)
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
 test("invalidate drops the entry", () => {
   const cache = {
     v: CACHE_VERSION,
@@ -354,6 +424,82 @@ test("a corrupt or outdated cache file starts clean instead of throwing", (t) =>
   )
 
   assert.deepEqual(loadCache(path.join(dir, "missing.json")).forms, {})
+})
+
+// FIX (w3-resolution, 2026-08-01): the discard above used to be silent — this
+// is the live incident it hid. jobs/.field-cache.json sat at v2 with 7 real
+// fingerprints on disk while CACHE_VERSION moved to 3; loadCache() threw all
+// 7 away on every load with nothing printed anywhere, so green tier went
+// unreachable for every lead and nobody could see why. A missing cache file
+// (never had data) must stay silent; a cache that DID have data and got
+// discarded must not.
+test("a version-mismatch discard is audible: logged, and carried on the return value", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "field-cache-audible-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const f = path.join(dir, "c.json")
+
+  // Mirrors the live shape: 7 remembered forms at v2, code now expects v3.
+  const forms = {}
+  for (let i = 0; i < 7; i++)
+    forms[`fp${i}`] = { ats: "greenhouse", fields: {} }
+  fs.writeFileSync(f, JSON.stringify({ v: 2, forms }))
+
+  const calls = []
+  const restore = console.error
+  console.error = (...args) => calls.push(args.join(" "))
+  let result
+  try {
+    result = loadCache(f)
+  } finally {
+    console.error = restore
+  }
+
+  assert.deepEqual(result.forms, {}, "the discard itself is unchanged")
+  assert.deepEqual(result.discarded, {
+    fromVersion: 2,
+    toVersion: CACHE_VERSION,
+    forms: 7,
+  })
+  assert.equal(calls.length, 1, "exactly one warning line, not silence")
+  assert.match(calls[0], /discarding 7 remembered form/)
+  assert.match(calls[0], /v2/)
+  assert.match(calls[0], new RegExp(`v${CACHE_VERSION}`))
+})
+
+test("a missing cache file is not a discard — no warning, nothing to lose", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "field-cache-missing-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const calls = []
+  const restore = console.error
+  console.error = (...args) => calls.push(args.join(" "))
+  let result
+  try {
+    result = loadCache(path.join(dir, "missing.json"))
+  } finally {
+    console.error = restore
+  }
+  assert.deepEqual(result, { v: CACHE_VERSION, forms: {} })
+  assert.equal(result.discarded, undefined)
+  assert.equal(calls.length, 0)
+})
+
+test("an unparseable cache file is also an audible discard", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "field-cache-corrupt-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const f = path.join(dir, "c.json")
+  fs.writeFileSync(f, "{ not json")
+  const calls = []
+  const restore = console.error
+  console.error = (...args) => calls.push(args.join(" "))
+  let result
+  try {
+    result = loadCache(f)
+  } finally {
+    console.error = restore
+  }
+  assert.deepEqual(result.forms, {})
+  assert.equal(calls.length, 1)
+  assert.match(calls[0], /could not read/)
 })
 
 test("end to end: a second run reuses the shape the first one learned", (t) => {
@@ -416,4 +562,25 @@ test("end to end: a second run reuses the shape the first one learned", (t) => {
     "the dropdown did not need re-probing",
   )
   assert.ok(fs.existsSync(path.join(dir, ".field-cache.json")))
+
+  // The 0.12 sidecar is written on every scan-backed run, one line each —
+  // both runs share a fingerprint (same required shape), so this also proves
+  // the sidecar is APPEND-only rather than keyed/overwritten like the live
+  // cache is.
+  const historyFile = path.join(dir, ".shape-history.jsonl")
+  assert.ok(fs.existsSync(historyFile))
+  const lines = fs
+    .readFileSync(historyFile, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+  assert.equal(lines.length, 2, "one line per run, not deduped or overwritten")
+  for (const l of lines) {
+    assert.equal(
+      l.hasCheckboxOrRadio,
+      false,
+      "neither scan has a checkbox/radio field",
+    )
+    assert.equal(l.ats, "greenhouse")
+  }
 })

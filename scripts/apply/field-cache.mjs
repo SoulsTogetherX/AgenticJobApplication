@@ -65,12 +65,43 @@ export function loadCache(file) {
   if (!fs.existsSync(file)) return { v: CACHE_VERSION, forms: {} }
   try {
     const c = JSON.parse(fs.readFileSync(file, "utf8"))
-    // A version bump means the shape changed; start clean rather than guess.
-    if (c.v !== CACHE_VERSION) return { v: CACHE_VERSION, forms: {} }
+    // A version bump means the shape changed; start clean rather than guess —
+    // that part stays correct, unchanged.
+    //
+    // FIX (w3-resolution, 2026-08-01): the discard used to be SILENT. Found
+    // live: jobs/.field-cache.json sat at v2 while CACHE_VERSION moved to 3
+    // (the bump at :20-30, for an unrelated reason), so every one of its 7
+    // real fingerprints was thrown away on every load with nothing printed
+    // anywhere — green tier went unreachable for every lead (every board
+    // reads "no remembered form shape", the same amber reason a board this
+    // pipeline has genuinely never seen would report) and nobody could tell
+    // the two apart from the CLI output. The discard is still correct; only
+    // its silence was the bug. `discarded` also travels on the return value,
+    // not just to stderr, so a caller can act on the count without scraping
+    // console output.
+    if (c.v !== CACHE_VERSION) {
+      const forms = Object.keys(c.forms ?? {}).length
+      console.error(
+        `field-cache: discarding ${forms} remembered form(s) — cache is ` +
+          `v${c.v ?? "?"}, this build expects v${CACHE_VERSION} (${file})`,
+      )
+      return {
+        v: CACHE_VERSION,
+        forms: {},
+        discarded: {
+          fromVersion: c.v ?? null,
+          toVersion: CACHE_VERSION,
+          forms,
+        },
+      }
+    }
     c.forms ??= {}
     return c
   } catch {
-    return { v: CACHE_VERSION, forms: {} }
+    // Same silence, same fix: a file that exists but does not parse is also
+    // a discard, just one where the prior form count cannot be known.
+    console.error(`field-cache: could not read ${file} — starting clean`)
+    return { v: CACHE_VERSION, forms: {}, discarded: { reason: "unreadable" } }
   }
 }
 
@@ -181,6 +212,43 @@ export function recordCache(cache, { fp, scan, atsId, url, now = new Date() }) {
   }
   cache.forms[fp] = entry
   return entry
+}
+
+// --- shape-history sidecar (0.12 support, w3-resolution 2026-08-01) --------
+// 0.12 asked one question — what fraction of real forms carry a checkbox or
+// radio group, which permanently blocks green under automatability.mjs's
+// shapeBlockers()? The honest answer today is "the sample is too small to
+// gate anything" (n=6 real forms). What makes it answerable LATER, at zero
+// browsing cost, is capturing this one bit on every scan that already
+// happens as a side effect of an attended apply — which is exactly what
+// `recordCache` below already does for the live cache, minus the history:
+// `recordCache` OVERWRITES a fingerprint's entry when a board redesigns its
+// form, so the fact that an earlier shape had (or lacked) a checkbox is lost.
+//
+// This is deliberately NOT a second copy of the cache. One append-only line
+// per scan: a date, the ATS, the fingerprint, and one boolean — never a
+// label, an option, a selector, or anything else `entry.fields` holds. Never
+// read by `applyCache`/`recordCache`/`automatability.mjs`: it changes nothing
+// about what gets filled or what counts as green. It exists to be counted,
+// the same way this file's own header describes the live cache existing to
+// skip a browser probe — a different job, a different file shape, on purpose.
+//
+// JSON Lines rather than a JSON array: an append is a single `fs.appendFileSync`
+// with no read-modify-write of a growing structure, so two attended sessions
+// finishing at nearly the same moment cannot clobber each other's line the
+// way two writers racing on `saveCache`'s read-JSON/write-JSON could.
+export function recordShapeHistory(file, { fp, ats, scan, now = new Date() }) {
+  const hasCheckboxOrRadio = (scan.fields ?? []).some(
+    (f) => f.t === "checkbox" || f.t === "radio",
+  )
+  const line = JSON.stringify({
+    date: now.toISOString().slice(0, 10),
+    ats,
+    fp,
+    hasCheckboxOrRadio,
+  })
+  fs.appendFileSync(file, line + "\n")
+  return { hasCheckboxOrRadio }
 }
 
 // Called when the browser reported a mismatch on a field we thought we knew —

@@ -35,13 +35,19 @@ import {
   benchPlan,
   benchServe,
   benchVerbCosts,
+  assertFillComplete,
+  benchBrowserFill,
   clockedPage,
+  collectIncomplete,
+  fillCompleteness,
+  fillFailureText,
   fixtureScanPath,
   gateBreakdown,
   instrumentedPage,
   ledgerEntry,
   loadScanDriver,
   protocolCost,
+  runOnce,
   provenance,
   stats,
   summarize,
@@ -861,4 +867,376 @@ test("the instrumented page can express both probe shapes and both verify outcom
     verifyLanded: ["f1"],
   }).page.evaluate(verify)
   assert.deepEqual(landed.landed, ["f1"])
+})
+
+// --- 6. M6: a run whose fill did not complete is NOT a measurement ---------
+//
+// THE DEFECT. `node scripts/dev/bench-apply.mjs --board greenhouse` printed
+//
+//   fill: ok=2 failed=1 deferred=3
+//
+// and exited 0. The single failure was the page guard aborting the whole fill
+// before any non-upload item ran, so the harness reported the wall clock of an
+// abort as the baseline. It was not a slightly wrong number, it was wrong in
+// the flattering direction: the complete fill measures sleep_ms=450 and
+// wall_ms~440, the aborted one measured sleep_ms=0 and wall_ms~200. A baseline
+// that halves itself when the product breaks is worse than no baseline.
+//
+// Two things are guarded here and they are different: that the abort cannot
+// happen any more (the double now registers the guard's anchors, which are on
+// the real page whether or not the plan fills them), and that if it EVER
+// happens again the harness refuses rather than reports.
+
+test("M6: deferrals are not failures — a fully deferred fill is still measurable", () => {
+  // The direction that would have been the lazy fix: treating `deferred` as a
+  // failure would make the gate fire on every correctly-gated form, and the
+  // first response to that would be to turn the gate off.
+  const cs = fillCompleteness(
+    { ok: 4, failed: 0, deferred: 9, failures: [] },
+    "unit",
+  )
+  assert.equal(cs.complete, true)
+  assert.equal(cs.deferred, 9)
+  assert.equal(cs.aborted, false)
+  assert.deepEqual(
+    collectIncomplete({ results: [{ fill_completeness: [cs] }] }),
+    [],
+  )
+})
+
+test("M6: a failed field makes the run unmeasurable AND is named", () => {
+  const report = {
+    ok: 2,
+    failed: 2,
+    deferred: 3,
+    failures: [
+      { k: "f4", how: "combo", why: "no option matched 'Nevada'" },
+      { k: "f9", how: "fill", why: "Element is not attached", stale: true },
+    ],
+  }
+  const cs = fillCompleteness(report, "unit")
+  assert.equal(cs.complete, false)
+  assert.equal(cs.aborted, false, "k='-' is an abort; a real key is not")
+  const text = fillFailureText(cs)
+  // Naming the fields is the whole point: "failed=2" is not actionable.
+  assert.match(text, /MEASUREMENT REFUSED/)
+  assert.match(text, /f4/)
+  assert.match(text, /no option matched 'Nevada'/)
+  assert.match(text, /f9/)
+  assert.match(text, /stale/)
+  assert.throws(() => assertFillComplete(report, "unit"), /f4[\s\S]*f9/)
+  assert.equal(
+    collectIncomplete({ results: [{ fill_completeness: [cs] }] }).length,
+    1,
+  )
+})
+
+test("M6: an ABORT is reported as an abort, not as one ordinary failure", () => {
+  // The exact shape the greenhouse run produced. `k: "-"` means the engine
+  // stopped; every item after it contributed nothing, so the wall clock is of
+  // a partial run and saying "1 failure" understates that.
+  const cs = fillCompleteness(
+    {
+      ok: 2,
+      failed: 1,
+      deferred: 3,
+      failures: [
+        {
+          k: "-",
+          how: "guard",
+          why: "this plan expects #gh_long_q on the page and found 0",
+        },
+      ],
+    },
+    "unit",
+  )
+  assert.equal(cs.aborted, true)
+  assert.match(fillFailureText(cs), /ABORTED; later items never ran/)
+})
+
+test("M6: the page guard still FIRES when its anchors are genuinely absent", async () => {
+  // The risk in the fix is defanging the guard to make the number appear.
+  // Driven through the engine directly with a double that does NOT have the
+  // anchor, which is the real "wrong page" case the guard exists for.
+  const plan = {
+    urlGuard: "http://127.0.0.1/apply",
+    pageGuard: ["#only_on_step_1"],
+    items: [{ k: "f1", how: "fill", sel: "#f1", value: "x" }],
+    defer: [],
+  }
+  const rig = instrumentedPage({
+    url: "http://127.0.0.1/apply",
+    elements: { "#f1": { kind: "input", value: "" } },
+  })
+  const report = await fillPage(rig.page, plan)
+  const cs = fillCompleteness(report, "guard")
+  assert.equal(cs.complete, false, "the guard must still abort a wrong page")
+  assert.equal(cs.aborted, true)
+  assert.match(cs.failures[0].why, /not the one the plan was built for/)
+})
+
+test("M6: the greenhouse accounted fill now completes, and the numbers moved", async () => {
+  // The regression guard for the actual defect. Both halves matter: `failed=0`
+  // is the fix, and `sleep_ms > 0` is the proof that the abort had been hiding
+  // real cost rather than merely mislabelling it.
+  const board = await start()
+  const dir = tmp("m6")
+  try {
+    const r = await runOnce({
+      boardName: "greenhouse",
+      profileName: "typical",
+      board,
+      jobsDir: dir,
+    })
+    assert.equal(
+      r.fill.report.failed,
+      0,
+      "the accounted greenhouse fill must complete: " +
+        JSON.stringify(r.fill.report.failures),
+    )
+    assert.equal(r.fill_completeness.complete, true)
+    assert.ok(
+      r.fill.report.deferred > 0,
+      "greenhouse still defers — the gate is not what was fixed",
+    )
+    assert.ok(
+      r.sleep.by_leg.fill.unconditional_ms > 0,
+      "an aborted fill sleeps 0ms; a completed one pays the upload settle. " +
+        "0 here means the abort is back and the baseline is understated.",
+    )
+  } finally {
+    await board.stop()
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// --- 7. B1 provenance ------------------------------------------------------
+
+test("MEASURED_FILES hashes every file baseline B1 has to pin", () => {
+  // fill-plan.mjs SHELLS OUT; the wall time it reports is spent inside
+  // answer-bank.mjs and field-cache.mjs, which were not hashed. A plan_ms that
+  // moved because one of those changed was unattributable.
+  for (const rel of [
+    "scripts/apply/fill-plan.mjs",
+    "scripts/apply/answer-bank.mjs",
+    "scripts/apply/field-cache.mjs",
+  ]) {
+    assert.ok(MEASURED_FILES.includes(rel), `B1 must pin ${rel}`)
+  }
+  for (const rel of MEASURED_FILES) {
+    assert.ok(
+      fs.existsSync(path.join(ROOT, rel)),
+      `MEASURED_FILES names a file that does not exist: ${rel}`,
+    )
+  }
+})
+
+test("provenance reports a real sha1 per measured file, never a silent blank", async () => {
+  const prov = await provenance()
+  for (const rel of MEASURED_FILES) {
+    assert.match(
+      prov.file_sha1[rel],
+      /^[0-9a-f]{12}$/,
+      `${rel} has no usable content hash: ${prov.file_sha1[rel]}`,
+    )
+  }
+})
+
+// --- 8. clockedPage attributes a wait to its selector ----------------------
+
+test("clockedPage attributes each conditional wait to the selector it waited on", async () => {
+  // Without this, post_upload_remount_ms could only be derived by subtracting
+  // one total from another, and a subtraction cannot tell you WHICH wait it
+  // priced. by_target is uncapped on purpose: `waits` keeps 60 entries for a
+  // human, and a combo-heavy fill blows past that long before the uploads.
+  const fake = {
+    locator() {
+      return {
+        async waitFor(o) {
+          await new Promise((r) =>
+            setTimeout(r, o.state === "detached" ? 30 : 5),
+          )
+        },
+        first() {
+          return this
+        },
+      }
+    },
+    async waitForTimeout(ms) {
+      await new Promise((r) => setTimeout(r, ms))
+    },
+    url: () => "http://127.0.0.1/x",
+  }
+  const { page, cost } = clockedPage(fake)
+  await page
+    .locator('[data-ajup="u1"]')
+    .waitFor({ state: "detached", timeout: 1000 })
+  await page
+    .locator('[data-ajup="u2"]')
+    .waitFor({ state: "detached", timeout: 1000 })
+  await page
+    .locator(".select__option")
+    .waitFor({ state: "visible", timeout: 800 })
+  await page.waitForTimeout(20)
+
+  const remount = Object.entries(cost.by_target).filter(
+    ([k]) => /data-ajup/.test(k) && /::locator\.waitFor:detached$/.test(k),
+  )
+  assert.equal(remount.length, 2, "one bucket per stamped upload input")
+  const total = remount.reduce((a, [, b]) => a + b.ms, 0)
+  assert.ok(total >= 55, `remount not attributed: ${total}`)
+  assert.equal(
+    remount.reduce((a, [, b]) => a + b.ceiling_ms, 0),
+    2000,
+    "the ceiling must stay separate from the actual, or the two columns " +
+      "are measuring the same thing",
+  )
+  // The option wait must NOT land in the remount bucket.
+  assert.ok(
+    Object.keys(cost.by_target).some((k) => k.startsWith(".select__option::")),
+  )
+  assert.ok(cost.slept_ms >= 15, "the flat sleep bucket stays separate")
+  // The sample list carries the selector too, so a human can read it.
+  assert.equal(cost.waits[0].sel, '[data-ajup="u1"]')
+})
+
+// --- 9. the browser-fill leg (--browser-fill), baseline B1 -----------------
+
+test("benchBrowserFill reports three separate columns and one REAL upload", async (t) => {
+  const board = await start()
+  const dir = tmp("bfill")
+  try {
+    const run = await benchBrowserFill({
+      board,
+      boardName: "greenhouse",
+      jobsDir: dir,
+    })
+    if (!run.ran) return t.skip("no usable Chromium: " + run.error)
+    assert.equal(
+      run.error,
+      undefined,
+      "the leg must run end to end: " + run.error,
+    )
+    assert.match(run.url, /^http:\/\/127\.0\.0\.1:\d+\//, "loopback only")
+
+    const f = run.legs.fill
+    assert.equal(f.method, "measured")
+    // THREE COLUMNS, NOT ONE. Collapsing them is the mistake the whole harness
+    // exists to refuse, so each is asserted to be independently populated.
+    assert.ok(f.fill_wall_ms > 0, "fill wall not clocked")
+    assert.ok(
+      f.unconditional_sleep_ms > 0,
+      "the fill pays a flat waitForTimeout; 0 means the recorder missed it",
+    )
+    assert.ok(
+      f.post_upload_remount_ms > 0,
+      "the post-upload settle is the fill's largest single wait; 0 means it " +
+        "was not attributed",
+    )
+    assert.notEqual(
+      f.post_upload_remount_ms,
+      f.unconditional_sleep_ms,
+      "a conditional wait and a flat sleep are different populations",
+    )
+    assert.ok(
+      f.fill_wall_ms > f.unconditional_sleep_ms + f.post_upload_remount_ms - 1,
+      "the columns must be parts of the wall, not a bigger number than it",
+    )
+    assert.equal(
+      f.non_wait_ms.method,
+      "derived",
+      "every column carries a method",
+    )
+
+    // ONE REAL FILE UPLOAD, verified out of the live DOM rather than assumed.
+    assert.ok(f.uploads_planned >= 1, "the plan must contain an upload item")
+    assert.ok(
+      f.files_attached >= 1,
+      "no file attached to any input[type=file] — the remount column would " +
+        "then be a measurement of nothing",
+    )
+    assert.ok(
+      f.file_inputs.some((i) => i.files > 0 && i.names.length),
+      "a file with a name must be readable back off the input",
+    )
+
+    // The leg must report upload ROUTING truthfully whichever way it goes.
+    // It is NOT asserted to be ok: fill-engine.mjs's stampInput currently
+    // misroutes the second upload (UPLOAD-MISDIRECTION, owner w2-engine).
+    // What is asserted is that the detector tells the truth about what it saw,
+    // so the day the engine is fixed this test still passes and the number
+    // moves.
+    const ui = run.upload_integrity
+    assert.equal(ui.method, "measured")
+    assert.equal(
+      ui.ok,
+      ui.inputs_with_files === ui.planned && ui.files_attached === ui.planned,
+      "upload_integrity.ok must be computed from what was observed",
+    )
+    assert.equal(
+      ui.inputs_with_files,
+      f.file_inputs.filter((i) => i.files > 0).length,
+    )
+
+    // The fill itself must have completed, or the numbers are M6 again.
+    assert.equal(
+      run.completeness.complete,
+      true,
+      "browser fill did not complete: " +
+        JSON.stringify(run.completeness.failures),
+    )
+  } finally {
+    await board.stop()
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("the ledger entry carries the browser-fill columns and the B1 hashes", async () => {
+  const board = await start()
+  const dir = tmp("led")
+  try {
+    const samples = []
+    for (let i = 0; i < 2; i++)
+      samples.push(
+        await runOnce({
+          boardName: "greenhouse",
+          profileName: "typical",
+          board,
+          jobsDir: dir,
+        }),
+      )
+    const sum = summarize(samples)
+    const prov = await provenance()
+    const fillRun = {
+      ran: true,
+      legs: {
+        fill: {
+          fill_wall_ms: 3124.43,
+          unconditional_sleep_ms: 452.76,
+          post_upload_remount_ms: 2021.45,
+          post_upload_remount_ceiling_ms: 2000,
+          non_wait_ms: { value: 650.22, method: "derived" },
+          uploads_planned: 2,
+          files_attached: 1,
+          ok: 6,
+          failed: 0,
+          deferred: 3,
+        },
+      },
+      upload_integrity: { ok: false, planned: 2, inputs_with_files: 1 },
+    }
+    const entry = ledgerEntry(sum, prov, null, fillRun)
+    assert.match(entry, /browserfill/)
+    assert.match(entry, /fill_wall=3124\.43ms \(measured\)/)
+    assert.match(entry, /unconditional_sleep=452\.76ms \(measured\)/)
+    assert.match(entry, /post_upload_remount=2021\.45ms/)
+    assert.match(entry, /non_wait=650\.22ms \(derived\)/)
+    assert.match(entry, /UPLOAD-MISDIRECTION/)
+    // B1's provenance requirement, asserted on the emitted text.
+    for (const f of ["fill-plan.mjs", "answer-bank.mjs", "field-cache.mjs"])
+      assert.match(entry, new RegExp(f.replace(".", "\\.")))
+  } finally {
+    await board.stop()
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

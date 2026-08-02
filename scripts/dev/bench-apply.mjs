@@ -1142,8 +1142,83 @@ export function gateBreakdown(plan) {
 // loaded here the same way the MCP vm loads it, so this leg also proves the
 // bootstrap parses and runs — which importing fill-engine.mjs would not.
 // ---------------------------------------------------------------------------
+// M6. A measurement of a run that did not complete its fill is not a baseline,
+// it is a smaller number — the fill stopped early, so every leg after the stop
+// contributed nothing and `wall_ms` looks good for the worst possible reason.
+//
+// The specific miss: `node scripts/dev/bench-apply.mjs --board greenhouse`
+// printed `fill: ok=2 failed=1 deferred=3` and exited 0, for eleven days. The
+// one failure was the page guard aborting the whole fill, and the harness
+// reported the truncated wall time as the baseline anyway.
+//
+// DEFERRALS ARE NOT FAILURES and this must never conflate them: a deferred
+// field is the gate working (CLAUDE.md rule 6), and a run with three deferrals
+// and no failures is a complete, measurable fill. Only `failed` disqualifies.
+export function fillCompleteness(report, label = "fill") {
+  const failures = (report?.failures || []).map((f) => ({
+    k: f.k,
+    how: f.how,
+    why: f.why,
+    stale: f.stale || false,
+  }))
+  return {
+    label,
+    complete: (report?.failed ?? 0) === 0,
+    ok: report?.ok ?? 0,
+    failed: report?.failed ?? 0,
+    deferred: report?.deferred ?? 0,
+    // Aborts, not per-field failures: the engine reports these with k="-".
+    aborted: failures.some((f) => f.k === "-"),
+    failures,
+  }
+}
+
+/** Human-readable, and it NAMES THE FIELDS — a count alone is not actionable. */
+export function fillFailureText(cs) {
+  const lines = [
+    `MEASUREMENT REFUSED — the ${cs.label} did not complete.`,
+    `  ok=${cs.ok} failed=${cs.failed} deferred=${cs.deferred}` +
+      (cs.aborted ? "   (the fill ABORTED; later items never ran)" : ""),
+    `  a run whose fill failed is not a baseline, it is a smaller number.`,
+  ]
+  for (const f of cs.failures)
+    lines.push(
+      `  FAILED  ${String(f.k).padEnd(6)} how=${String(f.how).padEnd(8)}` +
+        `${f.stale ? " stale" : ""}  ${f.why}`,
+    )
+  if (!cs.failures.length)
+    lines.push(
+      `  (the report counted ${cs.failed} failure(s) but listed none — ` +
+        `that is itself a defect in the report)`,
+    )
+  return lines.join("\n")
+}
+
+export function assertFillComplete(report, label = "fill") {
+  const cs = fillCompleteness(report, label)
+  if (!cs.complete) {
+    const e = new Error(fillFailureText(cs))
+    e.completeness = cs
+    throw e
+  }
+  return cs
+}
+
 export async function benchFill({ planFile, plan, url, behaviour, realSleep }) {
   const elements = {}
+  // THE PAGE GUARD'S ANCHORS EXIST ON THE PAGE WHETHER OR NOT THE PLAN FILLS
+  // THEM. `plan.pageGuard` is built from the scan's REQUIRED fields
+  // (fill-plan.mjs buildPageGuard), and a required field that DEFERRED is
+  // still on the form — greenhouse-step1's `#gh_long_q` is exactly that. The
+  // double registered only `plan.items`, so the guard found 0 of them, the
+  // engine correctly aborted with "the form is not the one the plan was built
+  // for", and the harness measured the abort. Registering them is making the
+  // double faithful to the page, not relaxing the guard: the guard still runs,
+  // and tests/apply/bench-apply.test.mjs asserts it still fires when the
+  // anchors are genuinely absent.
+  for (const sel of plan.pageGuard || []) {
+    elements[sel] = { kind: "input", value: "" }
+  }
   for (const item of plan.items || []) {
     if (item.how === "skip") continue
     const sel = item.sel || '[data-aj="' + item.k + '"]'
@@ -1317,6 +1392,14 @@ export async function runOnce(opts) {
     scan: scanLeg,
     plan: planLeg,
     fill: fillLeg,
+    // M6. Carried on every sample rather than thrown here: the gate matrix and
+    // the tests drive runOnce directly and a throw would make an incomplete
+    // fill indistinguishable from a crashed harness. main() refuses to print
+    // a baseline or a ledger entry when this is false — see assertMeasurable.
+    fill_completeness: fillCompleteness(
+      fillLeg.report,
+      `accounted fill (${shape ? "shape=" + shape : "board=" + boardName})`,
+    ),
     protocol: proto,
     sleep,
     wall_ms: wall,
@@ -1574,7 +1657,12 @@ export function summarize(samples) {
       ok: first.fill.report.ok,
       failed: first.fill.report.failed,
       deferred: first.fill.report.deferred,
+      complete: first.fill_completeness.complete,
+      failures: first.fill_completeness.failures,
     },
+    // Every sample, not just the first — an intermittent failure on run 4 of 5
+    // is the exact thing a median hides.
+    fill_completeness: samples.map((s) => s.fill_completeness),
     unmeasured: unmeasuredList(),
   }
 }
@@ -1658,8 +1746,21 @@ export function clockedPage(page) {
     conditional_ceiling_ms: 0,
     cdp_calls: 0,
     waits: [],
+    // UNCAPPED, unlike `waits`. `waits` is a 60-entry sample for a human to
+    // read; a fill on a combo-heavy form blows past that, and the one column
+    // that has to be attributable — post-upload remount — is paid by waits
+    // that can land anywhere in the sequence. Keyed `selector::state`, so a
+    // caller can sum a subset (the `data-ajup` detach waits ARE the remount
+    // cost) without the recorder needing to know what an upload is.
+    by_target: {},
   }
-  const clock = async (label, ceiling, fn) => {
+  const bucket = (key, ms, ceiling) => {
+    const b = (cost.by_target[key] ||= { n: 0, ms: 0, ceiling_ms: 0 })
+    b.n++
+    b.ms = round(b.ms + ms)
+    b.ceiling_ms += ceiling || 0
+  }
+  const clock = async (label, ceiling, fn, sel = null) => {
     const t = performance.now()
     try {
       return await fn()
@@ -1668,22 +1769,31 @@ export function clockedPage(page) {
       cost.conditional_ms += ms
       cost.conditional_calls++
       cost.conditional_ceiling_ms += ceiling || 0
+      bucket((sel ?? "-") + "::" + label, ms, ceiling)
       if (cost.waits.length < 60)
-        cost.waits.push({ label, ms: round(ms), ceiling_ms: ceiling || null })
+        cost.waits.push({
+          label,
+          sel,
+          ms: round(ms),
+          ceiling_ms: ceiling || null,
+        })
     }
   }
-  const wrapLocator = (loc) =>
+  const wrapLocator = (loc, sel = null) =>
     new Proxy(loc, {
       get(t, p, r) {
         const v = Reflect.get(t, p, r)
         if (p === "waitFor" && typeof v === "function") {
           return (o = {}) =>
-            clock("locator.waitFor:" + (o.state || "visible"), o.timeout, () =>
-              v.call(t, o),
+            clock(
+              "locator.waitFor:" + (o.state || "visible"),
+              o.timeout,
+              () => v.call(t, o),
+              sel,
             )
         }
         if (p === "first" || p === "last" || p === "nth") {
-          return (...a) => wrapLocator(v.apply(t, a))
+          return (...a) => wrapLocator(v.apply(t, a), sel)
         }
         if (typeof v === "function") {
           return (...a) => {
@@ -1712,12 +1822,17 @@ export function clockedPage(page) {
       }
       if (p === "waitForSelector" && typeof v === "function") {
         return (...a) =>
-          clock("waitForSelector", a[1]?.timeout, () => v.apply(t, a))
+          clock(
+            "waitForSelector",
+            a[1]?.timeout,
+            () => v.apply(t, a),
+            String(a[0]),
+          )
       }
       if (p === "locator" && typeof v === "function") {
         return (...a) => {
           cost.cdp_calls++
-          return wrapLocator(v.apply(t, a))
+          return wrapLocator(v.apply(t, a), String(a[0]))
         }
       }
       if (typeof v === "function") {
@@ -1935,6 +2050,284 @@ export async function benchBrowser({ board, boardName, pings = 20 } = {}) {
   return out
 }
 
+// ---------------------------------------------------------------------------
+// The browser FILL leg (--browser-fill). Phase 0.9 / baseline B1.
+//
+// `--browser` clocks the SCAN in a real browser. Nothing has ever clocked the
+// FILL in one, and the fill is where the plan says the time is: the accounted
+// harness can only report the ARGUMENT of a wait and the CEILING of a
+// conditional one, and both of the fill's largest suspected terms — the
+// post-upload remount settle and the combo strategy ladder — are conditional.
+// A ceiling is not a cost. This leg is the only place the difference is
+// visible.
+//
+// THREE COLUMNS, REPORTED SEPARATELY, for the same reason the top-level three
+// are (see the file header):
+//
+//   fill_wall_ms            measured. Wall clock over fillPage() only — the
+//                           scan and the plan are timed as their own legs, so
+//                           this is not a sum with anything.
+//   unconditional_sleep_ms  measured. Flat page.waitForTimeout, paid in full
+//                           every time regardless of what the DOM does. This
+//                           is the term that is removable by editing code.
+//   post_upload_remount_ms  measured. The `detached` wait on the upload's own
+//                           `data-ajup` stamp — i.e. how long React actually
+//                           takes to swap the file input for the attached-file
+//                           view. Its 1000ms ceiling is in the source and has
+//                           been quoted as a cost; this is the first number
+//                           that says what it really costs. Attributed by
+//                           selector out of clockedPage's `by_target`, never
+//                           by subtracting one total from another.
+//
+// ONE REAL FILE UPLOAD, and it is verified rather than assumed: after the fill
+// the leg reads `input[type=file].files.length` back out of the real DOM. A
+// remount cost measured on an upload that never attached anything would be a
+// measurement of nothing, and setInputFiles fails silently often enough that
+// this had to be checked rather than trusted. The bytes are a placeholder PDF
+// in a temp dir — never a document out of profile/.
+//
+// It runs fill-engine.mjs directly (the brief's ask), NOT the generated
+// bootstrap; benchFill above covers the bootstrap path, and running both means
+// a divergence between them would show as a number rather than hide.
+//
+// LOOPBACK ONLY: the URL comes from the fixture server's own pageUrl() and
+// session.goto re-checks it against assertAllowedTarget. Nothing here clicks:
+// fill-engine.mjs has no verb that presses a button (its own header says so),
+// so this cannot submit even by accident.
+export async function benchBrowserFill({
+  board,
+  boardName = "greenhouse",
+  jobsDir,
+  page: pageNo = 1,
+} = {}) {
+  const { launchBrowser } = await import("../apply/browser.mjs")
+  const fillPage = (await import("../apply/fill-engine.mjs")).default
+  const out = { ran: false, board: boardName, page: pageNo, legs: {} }
+  let session
+  try {
+    session = await launchBrowser({ headless: true })
+  } catch (e) {
+    return { ...out, error: String(e.message).split("\n")[0].slice(0, 160) }
+  }
+  out.ran = true
+  const url = board.pageUrl(boardName)
+  out.url = url
+  try {
+    const t0 = performance.now()
+    const resp = await session.goto(url)
+    out.legs.nav = {
+      ms: round(performance.now() - t0),
+      status: resp ? resp.status() : null,
+      method: "measured",
+    }
+
+    // --- scan the REAL dom, so the plan is built for the page we will fill --
+    // Deliberately not the committed scan fixture: a plan built off a stale
+    // fixture would fail the page guard and produce exactly the truncated
+    // measurement M6 is about.
+    const tScan = performance.now()
+    const scanRes = await scanPage(session.page)
+    const scanMs = performance.now() - tScan
+    const { scan } = unwrapScan(scanRes)
+    if (!scan || !(scan.fields || []).length)
+      throw new Error("the live scan found no fields; nothing to fill")
+    scan.url = url
+    out.legs.scan = {
+      ms: round(scanMs),
+      method: "measured",
+      fields: scan.fields.length,
+    }
+
+    // --- real bytes on disk, so the upload verb has something to attach ----
+    const filesDir = path.join(jobsDir, "_bfiles")
+    fs.mkdirSync(filesDir, { recursive: true })
+    const resume = path.join(filesDir, "resume.pdf")
+    const cover = path.join(filesDir, "cover-letter.pdf")
+    fs.writeFileSync(resume, "%PDF-1.4 bench placeholder resume\n%%EOF\n")
+    fs.writeFileSync(cover, "%PDF-1.4 bench placeholder cover\n%%EOF\n")
+    const answersFile = writeBenchAnswers(jobsDir)
+
+    const planLeg = benchPlan({
+      scan,
+      url,
+      jobsDir,
+      slug: "bench-browser",
+      files: { resume, cover },
+      answersFile,
+    })
+    const uploads = (planLeg.plan.items || []).filter(
+      (i) => i.how === "upload",
+    ).length
+    out.legs.plan = {
+      ms: round(planLeg.ms),
+      method: "measured",
+      items: planLeg.items,
+      defers: planLeg.defers,
+      uploads,
+      page_guard: (planLeg.plan.pageGuard || []).length,
+    }
+    if (uploads < 1)
+      throw new Error(
+        "the plan carries no upload item, so this leg cannot measure a real " +
+          "file upload — refusing to report a remount cost of zero",
+      )
+
+    // --- the fill, through the clock --------------------------------------
+    const { page: clocked, cost } = clockedPage(session.page)
+    const tFill = performance.now()
+    const report = await fillPage(clocked, planLeg.plan)
+    const fillMs = performance.now() - tFill
+
+    // Attribution by selector, not by subtraction. Every `detached` wait on an
+    // upload stamp; there is one per upload item.
+    let remount = { n: 0, ms: 0, ceiling_ms: 0 }
+    for (const [key, b] of Object.entries(cost.by_target)) {
+      if (!/data-ajup/.test(key)) continue
+      if (!/::locator\.waitFor:detached$/.test(key)) continue
+      remount = {
+        n: remount.n + b.n,
+        ms: round(remount.ms + b.ms),
+        ceiling_ms: remount.ceiling_ms + b.ceiling_ms,
+      }
+    }
+
+    // --- did a file ACTUALLY attach, and to the RIGHT input? --------------
+    //
+    // Both halves, because the first one alone passes on the bug it found.
+    // `data-ajup` is read back too: the engine stamps each upload with its own
+    // tag, so a stamp landing twice on one input is visible here and nowhere
+    // else — the fill report cannot see it (it counts setInputFiles calls that
+    // did not throw) and neither can the accounted harness (its double has no
+    // ancestor text to walk). See UPLOAD-MISDIRECTION in the report.
+    const attached = await session.page.evaluate(() =>
+      [...document.querySelectorAll("input[type=file]")].map((el) => ({
+        id: el.id || el.name || null,
+        ajup: el.getAttribute("data-ajup"),
+        files: el.files ? el.files.length : 0,
+        names: el.files ? [...el.files].map((f) => f.name) : [],
+      })),
+    )
+    const filesAttached = attached.reduce((a, b) => a + b.files, 0)
+    const inputsWithFiles = attached.filter((a) => a.files > 0).length
+    out.upload_integrity = {
+      method: "measured",
+      planned: uploads,
+      files_attached: filesAttached,
+      inputs_with_files: inputsWithFiles,
+      // One upload item per input, one file per item. Anything else means an
+      // item's file went somewhere its plan did not say.
+      ok: inputsWithFiles === uploads && filesAttached === uploads,
+      per_input: attached,
+    }
+
+    out.legs.fill = {
+      method: "measured",
+      fill_wall_ms: round(fillMs),
+      unconditional_sleep_ms: round(cost.slept_ms),
+      post_upload_remount_ms: remount.ms,
+      post_upload_remount_ceiling_ms: remount.ceiling_ms,
+      post_upload_remount_waits: remount.n,
+      conditional_total_ms: round(cost.conditional_ms),
+      conditional_ceiling_ms: cost.conditional_ceiling_ms,
+      cdp_calls: cost.cdp_calls,
+      // DERIVED, and labelled so: wall minus the two clocked wait buckets. It
+      // is what is left after the waiting, i.e. CDP time plus engine logic.
+      non_wait_ms: {
+        value: round(fillMs - cost.slept_ms - cost.conditional_ms),
+        method: "derived",
+        from: "fill_wall_ms - unconditional_sleep_ms - conditional_total_ms",
+      },
+      uploads_planned: uploads,
+      files_attached: filesAttached,
+      file_inputs: attached,
+      ok: report.ok,
+      failed: report.failed,
+      deferred: report.deferred,
+      waits: cost.waits,
+    }
+    out.completeness = fillCompleteness(
+      report,
+      `browser fill (board=${boardName})`,
+    )
+    if (filesAttached < 1) {
+      // Not an exception: the fill numbers are still real, but the remount
+      // column is not, and saying so beats dropping the whole leg.
+      out.legs.fill.post_upload_remount_ms = null
+      out.legs.fill.post_upload_remount_method = "unmeasured"
+      out.legs.fill.post_upload_remount_why =
+        "no file ever attached to any input[type=file]; a remount cost " +
+        "measured on an upload that did not happen is a measurement of nothing"
+    }
+  } catch (e) {
+    out.error = String(e.message).split("\n")[0].slice(0, 200)
+  } finally {
+    await session.close()
+  }
+  return out
+}
+
+function printBrowserFill(b) {
+  const L = (s) => process.stdout.write(s + "\n")
+  L("")
+  if (!b.ran) {
+    L(`browser-fill leg: DID NOT RUN — ${b.error}`)
+    return
+  }
+  L(`browser-fill leg — real Chromium, real upload, against ${b.url}`)
+  const g = b.legs
+  if (g.nav) L(`  nav                 ${g.nav.ms} ms   (HTTP ${g.nav.status})`)
+  if (g.scan)
+    L(`  scan (live DOM)     ${g.scan.ms} ms   fields=${g.scan.fields}`)
+  if (g.plan)
+    L(
+      `  plan                ${g.plan.ms} ms   items=${g.plan.items} defer=${g.plan.defers} ` +
+        `uploads=${g.plan.uploads} pageGuard=${g.plan.page_guard}`,
+    )
+  if (!g.fill) {
+    L(`  fill                DID NOT RUN — ${b.error}`)
+    return
+  }
+  const f = g.fill
+  L("")
+  L("  column                    value    method      note")
+  L("  " + "-".repeat(76))
+  L(
+    `  fill_wall_ms              ${String(f.fill_wall_ms).padEnd(8)} measured    fillPage() only, real Chromium`,
+  )
+  L(
+    `  unconditional_sleep_ms    ${String(f.unconditional_sleep_ms).padEnd(8)} measured    flat waitForTimeout, paid in full`,
+  )
+  L(
+    `  post_upload_remount_ms    ${String(f.post_upload_remount_ms ?? "null").padEnd(8)} ` +
+      `${(f.post_upload_remount_method || "measured").padEnd(11)} ` +
+      (f.post_upload_remount_why
+        ? f.post_upload_remount_why.slice(0, 60)
+        : `${f.post_upload_remount_waits} detach wait(s) of a ${f.post_upload_remount_ceiling_ms} ms ceiling`),
+  )
+  L(
+    `  conditional_total_ms      ${String(f.conditional_total_ms).padEnd(8)} measured    of a ${f.conditional_ceiling_ms} ms ceiling`,
+  )
+  L(
+    `  non_wait_ms               ${String(f.non_wait_ms.value).padEnd(8)} derived     ${f.non_wait_ms.from}`,
+  )
+  L("")
+  const ui = b.upload_integrity
+  L(
+    `  upload: planned=${f.uploads_planned} files_attached=${f.files_attached} ` +
+      `[${f.file_inputs.map((i) => `${i.id} ajup=${i.ajup ?? "-"} files=${i.files}${i.names.length ? " " + i.names.join(",") : ""}`).join("  |  ")}]`,
+  )
+  if (ui && !ui.ok)
+    L(
+      `  *** UPLOAD MISDIRECTION: ${ui.planned} upload item(s) planned but only ` +
+        `${ui.inputs_with_files} input(s) received a file. The remount and wall ` +
+        `columns above are still real; the upload ROUTING is not. ***`,
+    )
+  L(
+    `  fill: ok=${f.ok} failed=${f.failed} deferred=${f.deferred}  cdp_calls=${f.cdp_calls}`,
+  )
+  L("")
+}
+
 function printBrowser(b) {
   const L = (s) => process.stdout.write(s + "\n")
   L("")
@@ -2002,6 +2395,14 @@ export const MEASURED_FILES = [
   "scripts/apply/scan-engine.mjs",
   "scripts/apply/fill-engine.mjs",
   "scripts/apply/fill-plan.mjs",
+  // Added for baseline B1. fill-plan.mjs is the whole plan leg's wall time on
+  // paper, but it SHELLS OUT and the two modules it spends that time in were
+  // not hashed: answer-bank.mjs resolves every field and field-cache.mjs
+  // decides whether a dropdown has to be re-probed. A plan_ms that moved
+  // because one of those changed would have been unattributable, which is the
+  // exact failure the file_sha1 mechanism exists to prevent.
+  "scripts/apply/answer-bank.mjs",
+  "scripts/apply/field-cache.mjs",
 ]
 
 export async function provenance() {
@@ -2058,6 +2459,7 @@ function parseArgs(argv) {
     ledger: false,
     realSleep: false,
     browser: false,
+    browserFill: false,
     allProfiles: false,
     page: 1,
   }
@@ -2072,6 +2474,7 @@ function parseArgs(argv) {
     else if (a === "--ledger") o.ledger = true
     else if (a === "--real-sleep") o.realSleep = true
     else if (a === "--browser") o.browser = true
+    else if (a === "--browser-fill") o.browserFill = true
     else if (a === "--all-profiles") o.allProfiles = true
     else if (a === "--verbs") o.verbs = true
     else if (a === "--gate") o.gate = true
@@ -2103,6 +2506,10 @@ const USAGE = `bench-apply.mjs — scan -> plan -> fill against the local fake A
                                     label drift, __ajScan(true)'s page-side probe, and
                                     the Ashby nonce-CSP block. Closes 5 of the 6
                                     unmeasured entries; react_select_behaviour stays open
+  --browser-fill                    run fill-engine.mjs itself in real Chromium against
+                                    the loopback fixture, INCLUDING one real file upload,
+                                    and report fill wall / unconditional sleep /
+                                    post-upload remount as SEPARATE columns
   --json                            full record
   --ledger                          a paste-ready docs/measurements.md entry
 
@@ -2113,7 +2520,7 @@ Nothing here touches a live employer's board. See tests/fixtures/boards/README.m
 // which would have gone into docs/measurements.md as a false claim the moment
 // --browser started working. A provenance line that lies about its method is
 // worse than a missing number.
-export function ledgerEntry(sum, prov, browserRun = null) {
+export function ledgerEntry(sum, prov, browserRun = null, fillRun = null) {
   const c = sum.columns
   const shape = sum.shape ? `shape=${sum.shape}` : `board=${sum.board}`
   const dirty =
@@ -2158,6 +2565,24 @@ export function ledgerEntry(sum, prov, browserRun = null) {
           : `DID NOT RUN — ${browserRun.error}`),
     )
   }
+  if (fillRun) {
+    const f = fillRun.legs?.fill
+    lines.push(
+      `- browserfill: ` +
+        (fillRun.ran && f
+          ? `fill_wall=${f.fill_wall_ms}ms (measured) ` +
+            `unconditional_sleep=${f.unconditional_sleep_ms}ms (measured) ` +
+            `post_upload_remount=${f.post_upload_remount_ms ?? "null"}ms ` +
+            `(${f.post_upload_remount_method || "measured"}, ceiling ${f.post_upload_remount_ceiling_ms}ms) ` +
+            `non_wait=${f.non_wait_ms.value}ms (derived); ` +
+            `uploads=${f.uploads_planned} files_attached=${f.files_attached}` +
+            (fillRun.upload_integrity && !fillRun.upload_integrity.ok
+              ? ` UPLOAD-MISDIRECTION(only ${fillRun.upload_integrity.inputs_with_files} of ${fillRun.upload_integrity.planned} inputs got a file)`
+              : "") +
+            `; ok=${f.ok} failed=${f.failed} deferred=${f.deferred}`
+          : `DID NOT RUN — ${fillRun.error}`),
+    )
+  }
   lines.push(
     `- bytes:    ` +
       Object.entries(prov.file_sha1)
@@ -2165,6 +2590,28 @@ export function ledgerEntry(sum, prov, browserRun = null) {
         .join("  "),
   )
   return lines.join("\n")
+}
+
+// ---------------------------------------------------------------------------
+// M6, the enforcement half. Collects every completeness verdict in a run and
+// refuses the whole measurement if any of them failed.
+//
+// It returns rather than exits so the tests can drive it; main() is the only
+// caller that turns a refusal into a non-zero status. Exit 3 and not 1: 1 is
+// what an unhandled throw already gives, and "the harness crashed" and "the
+// harness worked and the fill did not" are different facts.
+// ---------------------------------------------------------------------------
+export function collectIncomplete({ results = [], browserFill = null } = {}) {
+  const bad = []
+  for (const sum of results)
+    for (const cs of sum.fill_completeness || []) if (!cs.complete) bad.push(cs)
+  if (
+    browserFill?.ran &&
+    browserFill.completeness &&
+    !browserFill.completeness.complete
+  )
+    bad.push(browserFill.completeness)
+  return bad
 }
 
 function printHuman(sum) {
@@ -2223,8 +2670,13 @@ function printHuman(sum) {
     )
   }
   L(
-    `fill: ok=${sum.fill_report.ok} failed=${sum.fill_report.failed} deferred=${sum.fill_report.deferred}`,
+    `fill: ok=${sum.fill_report.ok} failed=${sum.fill_report.failed} deferred=${sum.fill_report.deferred}` +
+      (sum.fill_report.complete
+        ? ""
+        : "   *** INCOMPLETE — NOT A BASELINE ***"),
   )
+  for (const f of sum.fill_report.failures || [])
+    L(`  FAILED ${f.k} how=${f.how}: ${f.why}`)
   L("")
   L("legs (ms, median):")
   for (const [k, v] of Object.entries(sum.legs)) {
@@ -2369,19 +2821,49 @@ async function main() {
         }
       }
     }
+    const fillRun = opts.browserFill
+      ? await benchBrowserFill({ board, boardName: opts.board, jobsDir })
+      : null
     const prov = await provenance()
+
+    // M6. Before anything is printed as a baseline. `--json` still emits (a
+    // machine consumer wants the failure record too) but the exit status is
+    // non-zero either way, so no caller can treat an aborted fill as a run.
+    const incomplete = collectIncomplete({ results, browserFill: fillRun })
 
     if (opts.json) {
       process.stdout.write(
         JSON.stringify(
-          { provenance: prov, browser, browser_run: browserRun, results },
+          {
+            provenance: prov,
+            browser,
+            browser_run: browserRun,
+            browser_fill: fillRun,
+            measurable: incomplete.length === 0,
+            incomplete,
+            results,
+          },
           null,
           2,
         ) + "\n",
       )
     } else if (opts.ledger) {
+      if (incomplete.length) {
+        // A ledger entry IS the artifact that outlives the run. Emitting one
+        // for an aborted fill is how a wrong number becomes permanent.
+        for (const cs of incomplete)
+          process.stderr.write(fillFailureText(cs) + "\n\n")
+        process.stderr.write(
+          "REFUSING to emit a ledger entry for a run whose fill did not " +
+            "complete.\n",
+        )
+        process.exitCode = 3
+        return
+      }
       for (const sum of results) {
-        process.stdout.write(ledgerEntry(sum, prov, browserRun) + "\n\n")
+        process.stdout.write(
+          ledgerEntry(sum, prov, browserRun, fillRun) + "\n\n",
+        )
       }
     } else {
       for (const sum of results) printHuman(sum)
@@ -2392,6 +2874,7 @@ async function main() {
             ? "browser leg: playwright-core present — pass --browser to run it\n"
             : `browser leg: UNAVAILABLE — ${browser.why}\n`,
         )
+      if (fillRun) printBrowserFill(fillRun)
       process.stdout.write(`sha=${prov.sha}`)
       if (prov.dirty_measured_files && prov.dirty_measured_files.length) {
         process.stdout.write(
@@ -2405,6 +2888,15 @@ async function main() {
       for (const [f, h] of Object.entries(prov.file_sha1)) {
         process.stdout.write(`  ${h}  ${f}\n`)
       }
+    }
+    if (incomplete.length) {
+      for (const cs of incomplete)
+        process.stderr.write("\n" + fillFailureText(cs) + "\n")
+      process.stderr.write(
+        "\nThis run is NOT a baseline. Fix the fill, or measure a form the " +
+          "fill completes.\n",
+      )
+      process.exitCode = 3
     }
   } finally {
     await board.stop()

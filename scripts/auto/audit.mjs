@@ -35,6 +35,10 @@
 //     path; the hashes exist so "it was never written" is a checkable claim
 //     rather than an assurance.
 //   * Every write goes through assertInsideJobs().
+//   * Every string written to either copy is scrubbed of instruction-shaped
+//     text first (untrusted-text.mjs), because the record is the one artefact
+//     of an unattended run that a human later hands to a model. Hard rule 0
+//     does not stop applying because the page text has been through a database.
 //
 // WHAT IT DOES NOT DO. It does not submit anything, open a browser, or decide
 // whether a submit is allowed. There is no runner yet (hard rule 6 ships
@@ -68,6 +72,7 @@ import {
 // authorize.mjs no longer imports this file and there is no cycle to dodge.
 // That is what lets beginSubmit demand the token UNCONDITIONALLY.
 import { assertTokenMatches } from "./authorize.mjs"
+import { safeText, scrubRecord } from "./untrusted-text.mjs"
 
 // The two files the fact base lives in. Hashed, never written.
 export const PROFILE_FILES = ["profile.yaml", "answers.yaml"]
@@ -229,17 +234,51 @@ export function assertNoOrphanAttempts({
 // Written as escapes rather than literals so THIS file's own source stays ASCII.
 const JS_LINE_SEPARATORS = new RegExp("[\\u2028\\u2029]", "g")
 
+// PHASE 0.3 — the scrub happens HERE, on the way into the record, because this
+// is the funnel every event passes through and a per-call-site scrub is a list
+// of places to forget. The escaping above deals with a record that is PASTED;
+// this deals with a record that is READ BY A MODEL, which is the likelier of
+// the two the moment anyone writes "summarise last night's run".
+//
+// Deny by default: every string is scrubbed unless its key is machine-shaped
+// (untrusted-text.mjs's VERBATIM_KEYS — ids, hashes, timestamps, and the
+// confirmation URL the user clicks to withdraw). A field added to an event next
+// month is scrubbed without anybody remembering this line exists.
+//
+// A record that CONTAINED something carries `untrusted_findings` — kinds and
+// counts, never the payload. Redacting silently would leave the report saying
+// "3 fields deferred" when the truth is "3 fields deferred and one of them was
+// talking to your agent", and that second sentence is the one worth reading.
 function appendEvent(ctx, event) {
+  const scrubbed = scrubRecord({ at: new Date().toISOString(), ...event })
   const line =
-    JSON.stringify({ at: new Date().toISOString(), ...event }).replace(
-      JS_LINE_SEPARATORS,
-      (c) => (c.charCodeAt(0) === 0x2028 ? "\\u2028" : "\\u2029"),
+    JSON.stringify({
+      ...scrubbed.value,
+      ...(scrubbed.findings.length
+        ? { untrusted_findings: scrubbed.findings }
+        : {}),
+    }).replace(JS_LINE_SEPARATORS, (c) =>
+      c.charCodeAt(0) === 0x2028 ? "\\u2028" : "\\u2029",
     ) + "\n"
   fs.appendFileSync(
     assertInsideJobs(ctx.jsonl, { jobsDir: ctx.jobsDir }),
     line,
     "utf8",
   )
+}
+
+/**
+ * The row form of the same boundary: scrub a record and carry the finding kinds
+ * on it, so the DB copy and the JSONL copy say the same thing.
+ *
+ * `untrusted_findings` is OMITTED when clean, so hundreds of honest rows do not
+ * each grow an empty array — the same shape untrustedSnippet uses on leads.
+ */
+function scrubbed(row) {
+  const r = scrubRecord(row)
+  return r.findings.length
+    ? { ...r.value, untrusted_findings: r.findings }
+    : r.value
 }
 
 function persist(ctx, state) {
@@ -373,7 +412,11 @@ function makeRun(ctx, state) {
         throw new StopError(CHECKPOINTS.PRE_SUBMIT, reason)
       }
 
-      pendingAttempt = {
+      // Scrubbed ONCE, here, and the same object goes to both copies. The JSONL
+      // gets its own pass in appendEvent, but the auto_submissions row does
+      // not — db.mjs stores `doc: JSON.stringify(sub)` — and two copies that
+      // disagree about what a page said are worse than either copy alone.
+      pendingAttempt = scrubbed({
         run_id: state.run_id,
         slug,
         company: job?.company ?? null,
@@ -388,7 +431,7 @@ function makeRun(ctx, state) {
         // authorize.mjs — liveNonces is a spend-once ledger, not a capability
         // key, and this line is one of the reasons why).
         authorized: { nonce: token.nonce, issued_at: token.issued_at },
-      }
+      })
       event("submit.attempt", pendingAttempt)
 
       const db = openDb(ctx.dbFile)
@@ -442,12 +485,14 @@ function makeRun(ctx, state) {
               : ""),
         )
 
-      const row = {
+      const row = scrubbed({
         ...pendingAttempt,
         outcome: "abandoned",
         abandoned_at: new Date().toISOString(),
+        // Page-derived: an abandon reason is usually a locator or a browser
+        // error message with the form's own text quoted inside it.
         abandon_reason: reason,
-      }
+      })
       pendingAttempt = null
       event("submit.abandoned", { slug, reason })
 
@@ -498,7 +543,10 @@ function makeRun(ctx, state) {
       ]
       const missing = required.filter((k) => sub?.[k] == null)
 
-      const row = {
+      // THE CONSENT LABELS AND THE VERIFY BLOCK ARE PAGE TEXT, and this row is
+      // the single richest source of it in the whole record — which makes it
+      // the one a "summarise last night's run" feature reads first.
+      const row = scrubbed({
         run_id: state.run_id,
         mode: state.mode,
         submitted_at: new Date().toISOString(),
@@ -510,7 +558,7 @@ function makeRun(ctx, state) {
         ...sub,
         outcome: "submitted",
         ...(missing.length ? { audit_incomplete: missing } : {}),
-      }
+      })
       state.submitted += 1
       event("submit.done", row)
 
@@ -541,13 +589,17 @@ function makeRun(ctx, state) {
      * so the reason is in the durable copy even if the STOP write fails.
      */
     stop(reason, meta = null) {
-      state.stop_reason = reason
-      event("run.stop", { reason, meta })
+      // The STOP file's own text is scrubbed too. It is the shortest path from
+      // a hostile page to a human's screen — the user opens it to find out why
+      // the runner disabled itself — and the reason usually quotes the page.
+      const safe = safeText(reason, 400)
+      state.stop_reason = safe
+      event("run.stop", { reason: safe, meta })
       persist(ctx, state)
-      return raiseStop(reason, {
+      return raiseStop(safe, {
         stopPath: ctx.stop,
         jobsDir: ctx.jobsDir,
-        meta,
+        meta: scrubRecord(meta).value,
       })
     },
 

@@ -87,6 +87,7 @@ import {
   recordCache,
   invalidate,
   recordVia,
+  recordShapeHistory,
 } from "./field-cache.mjs"
 import {
   embedLiteral,
@@ -707,13 +708,35 @@ export function buildPlan({
   const captchaSignal = (scan.signals ?? []).some((s) =>
     /captcha/i.test(String(s ?? "")),
   )
+  // FIX (0.6, w3-resolution): a Real Talent / CLEAR selfie or liveness check
+  // (or an equivalent identity-verification / "quality tier" challenge) is a
+  // NAMED DEFER KIND of its own — `why: "identity-verification"` — kept
+  // deliberately distinct from `captchaSignal` above and from a failed-fill
+  // report elsewhere in the pipeline. The distinction is not cosmetic: this
+  // is the board WORKING AS DESIGNED (it demanded proof of a human, same as
+  // a CAPTCHA does), not the machine breaking. A future circuit breaker that
+  // halts on "proof of malfunction" must not be able to read this defer and
+  // conclude the run is unhealthy — that conflation is what fired the
+  // previous breaker on runs that were fine. Detected from `scan.iframes`
+  // and `scan.signals`, both already returned unconditionally by
+  // scan-page.js (see its `iframes.length ? iframes : undefined` line) —
+  // nothing there needed to change, and nothing here is a redesign of it.
+  const IDENTITY_WALL_RE =
+    /withpersona|persona\.com|onfido|jumio|veriff\.(com|me)|\bid\.me\b|incode\.com|au10tix|socure\.com|clearme\.com|clear\.app|real[\s-]?talent|liveness[\s-]?check|selfie[\s-]?(verification|check)|identity[\s-]?verification/i
+  const identityWallSignal =
+    (scan.signals ?? []).some((s) => IDENTITY_WALL_RE.test(String(s ?? ""))) ||
+    (scan.iframes ?? []).some(
+      (f) =>
+        IDENTITY_WALL_RE.test(String(f?.src ?? "")) ||
+        IDENTITY_WALL_RE.test(String(f?.title ?? "")),
+    )
   const blockedKind =
     scan.kind === "login"
       ? "password field on the page — this is a login wall, not an application form"
       : scan.kind === "confirm"
         ? "page reads as an already-submitted confirmation, not an application form"
         : null
-  if (captchaSignal || blockedKind) {
+  if (captchaSignal || identityWallSignal || blockedKind) {
     return {
       v: 1,
       slug: scan.slug ?? null,
@@ -729,7 +752,9 @@ export function buildPlan({
           label: scan.heading || "(page)",
           why: captchaSignal
             ? "CAPTCHA present — hand off to the user"
-            : blockedKind,
+            : identityWallSignal
+              ? "identity-verification: selfie/liveness check present — hand off to the user; the board working as designed, not a malfunction"
+              : blockedKind,
         },
       ],
     }
@@ -1708,6 +1733,13 @@ function main() {
   if (!noCache) {
     recordCache(cache, { fp, scan, atsId: adapter.id, url })
     saveCache(cachePath, cache)
+    // Sidecar for counting only (0.12) — see recordShapeHistory()'s own
+    // header. Never read back by this file or by automatability.mjs.
+    recordShapeHistory(path.join(jobsDir, ".shape-history.jsonl"), {
+      fp,
+      ats: adapter.id,
+      scan,
+    })
   }
 
   // Carried on the written plan (not the pure buildPlan() return value) so a

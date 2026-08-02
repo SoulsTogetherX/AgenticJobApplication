@@ -19,7 +19,11 @@ import {
   assertSyncDirection,
   syncProfile,
   AuthSyncError,
-  SKIP_DIRS,
+  COPY_ALLOWLIST,
+  SENSITIVE_NAMES,
+  copyDecision,
+  walkDir,
+  minimalPreferences,
   RECENT_MS,
   MCP_PROFILE,
   AUTO_PROFILE,
@@ -34,11 +38,47 @@ function sandbox() {
   const src = path.join(root, "mcp", "profile")
   const dst = path.join(root, "auto", "profile")
   fs.mkdirSync(path.join(src, "Default", "Network"), { recursive: true })
+  fs.mkdirSync(path.join(src, "Default", "Local Storage", "leveldb"), {
+    recursive: true,
+  })
   fs.writeFileSync(path.join(src, "Local State"), "{}")
   fs.writeFileSync(path.join(src, "Default", "LOCK"), "")
   fs.writeFileSync(
     path.join(src, "Default", "Network", "Cookies"),
     "cookie-bytes",
+  )
+  fs.writeFileSync(
+    path.join(src, "Default", "Local Storage", "leveldb", "000003.log"),
+    "leveldb-bytes",
+  )
+  fs.writeFileSync(
+    path.join(src, "Default", "Preferences"),
+    JSON.stringify({
+      intl: { accept_languages: "en-US,en" },
+      // The kind of thing a real Preferences carries that has no business in a
+      // profile that visits hundreds of third-party pages.
+      account_info: [{ email: "user@example.com", gaia: "1234567890" }],
+      credentials_enable_service: true,
+      profile: { name: "Person", content_settings: { exceptions: {} } },
+    }),
+  )
+  // The files Phase 0.4 exists to stop copying. Every one of these is present
+  // in the user's real .playwright-mcp/profile (checked 2026-08-01).
+  for (const name of [
+    "Login Data",
+    "Login Data For Account",
+    "Web Data",
+    "History",
+    "Top Sites",
+    "Bookmarks",
+    "Secure Preferences",
+    "trusted_vault.pb",
+  ])
+    fs.writeFileSync(path.join(src, "Default", name), `secret:${name}`)
+  fs.mkdirSync(path.join(src, "Default", "Sessions"), { recursive: true })
+  fs.writeFileSync(
+    path.join(src, "Default", "Sessions", "Session_1"),
+    "browsing history",
   )
   fs.mkdirSync(path.join(src, "Cache"), { recursive: true })
   fs.writeFileSync(path.join(src, "Cache", "big.bin"), "x".repeat(4096))
@@ -278,16 +318,189 @@ test("a clean sync copies the session files and skips the caches", async () => {
     "cookie-bytes",
   )
   assert.equal(
+    fs.readFileSync(path.join(s.dst, "Local State"), "utf8"),
+    "{}",
+    "without the os_crypt key every copied cookie is undecryptable",
+  )
+  assert.equal(
+    fs.readFileSync(
+      path.join(s.dst, "Default", "Local Storage", "leveldb", "000003.log"),
+      "utf8",
+    ),
+    "leveldb-bytes",
+  )
+  assert.equal(
     fs.existsSync(path.join(s.dst, "Cache")),
     false,
     "copied a cache directory",
   )
-  assert.ok(SKIP_DIRS.has("Cache"))
-  assert.equal(r.files, 3)
+  // Local State + Cookies + leveldb log + rewritten Preferences. NOT
+  // Default/LOCK, and none of the eight sensitive files.
+  assert.equal(r.files, 4)
   assert.ok(
     r.bytes > 0 && r.bytes < 4096,
     `bytes=${r.bytes} — the cache leaked in`,
   )
+})
+
+// --- Phase 0.4: the allowlist -------------------------------------------------
+
+test("THE SYNCED PROFILE CONTAINS NO Login Data AND NO Web Data", async () => {
+  // The falsifiable check from autonomy-plan-v2 Phase 0. Asserted by walking
+  // the whole destination tree rather than by probing two paths, because the
+  // point of an allowlist is the file nobody thought to probe for.
+  const s = sandbox()
+  s.ignoreAll()
+  await sync(s)
+
+  const seen = []
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) walk(p)
+      else seen.push(path.relative(s.dst, p).replace(/\\/g, "/"))
+    }
+  }
+  walk(s.dst)
+
+  const names = seen.map((p) => p.split("/").pop())
+  assert.equal(
+    names.includes("Login Data"),
+    false,
+    `saved passwords were copied: ${seen.join(", ")}`,
+  )
+  assert.equal(
+    names.includes("Web Data"),
+    false,
+    `autofill and payment cards were copied: ${seen.join(", ")}`,
+  )
+  for (const forbidden of SENSITIVE_NAMES)
+    assert.equal(
+      names.includes(forbidden),
+      false,
+      `${forbidden} was copied into a profile that visits third-party pages`,
+    )
+  assert.equal(
+    names.includes("Session_1"),
+    false,
+    "browsing session history was copied",
+  )
+  assert.deepEqual(seen.sort(), [
+    "Default/Local Storage/leveldb/000003.log",
+    "Default/Network/Cookies",
+    "Default/Preferences",
+    "Local State",
+  ])
+})
+
+test("the sync reports which sensitive files it left behind", async () => {
+  const s = sandbox()
+  s.ignoreAll()
+  const r = await sync(s)
+  // Evidence rather than assurance: the user can see the password store named
+  // as excluded instead of taking it on faith.
+  assert.ok(r.excluded_sensitive.includes("Default/Login Data"))
+  assert.ok(r.excluded_sensitive.includes("Default/Web Data"))
+  assert.ok(r.excluded_sensitive.includes("Default/History"))
+})
+
+test("copyDecision denies by default — an unknown Chromium file is not copied", () => {
+  // The whole reason for the inversion: a file that does not exist yet.
+  for (const rel of [
+    "Default/Some New Chromium Store",
+    "Default/Login Data",
+    "Default/Web Data",
+    "Default/History",
+    "Default/Bookmarks",
+    "Default/Secure Preferences",
+    "Default/LOCK",
+    "Default/Session Storage/000001.log",
+    "Cache/big.bin",
+    "Local State.backup",
+    "Profile 1/History",
+  ])
+    assert.equal(copyDecision(rel).allow, false, `${rel} must not be copied`)
+
+  for (const rel of [
+    "Local State",
+    "Default/Cookies",
+    "Default/Cookies-journal",
+    "Default/Network/Cookies",
+    "Default/Network/Cookies-journal",
+    "Default/Local Storage/leveldb/000003.log",
+    "Default/Preferences",
+    "Profile 1/Network/Cookies",
+  ])
+    assert.equal(copyDecision(rel).allow, true, `${rel} must be copied`)
+})
+
+test("copyDecision reads backslash paths the same as forward-slash ones", () => {
+  // Windows is the user's platform; a rule that only matches POSIX separators
+  // would deny-by-default EVERYTHING and produce an empty, silent sync.
+  assert.equal(copyDecision("Default\\Network\\Cookies").allow, true)
+  assert.equal(copyDecision("Default\\Login Data").allow, false)
+})
+
+test("walkDir refuses to descend anywhere the allowlist cannot reach", () => {
+  for (const d of ["Default", "Default/Network", "Default/Local Storage"])
+    assert.equal(walkDir(d), true, d)
+  for (const d of ["Cache", "Default/Cache", "Default/Sessions", "Crashpad"])
+    assert.equal(walkDir(d), false, d)
+})
+
+test("every allowlist rule is anchored — a suffix match is not a match", () => {
+  // `Login Data` next to `Cookies` in one filename is the shape that beats an
+  // unanchored rule.
+  for (const rule of COPY_ALLOWLIST) {
+    assert.equal(rule.re.source.startsWith("^"), true, rule.id)
+    assert.equal(rule.re.source.endsWith("$"), true, rule.id)
+  }
+  assert.equal(copyDecision("Default/Network/Cookies.bak").allow, false)
+  assert.equal(copyDecision("evil/Local State").allow, false)
+})
+
+test("Preferences is rewritten, not copied: no account info, autofill off", async () => {
+  const s = sandbox()
+  s.ignoreAll()
+  await sync(s)
+  const written = JSON.parse(
+    fs.readFileSync(path.join(s.dst, "Default", "Preferences"), "utf8"),
+  )
+  assert.equal(written.account_info, undefined)
+  assert.equal(written.profile.name, undefined)
+  assert.equal(written.credentials_enable_service, false)
+  assert.equal(written.autofill.credit_card_enabled, false)
+  assert.equal(
+    written.intl.accept_languages,
+    "en-US,en",
+    "the language the session was established with is carried over",
+  )
+  assert.equal(written.profile.exit_type, "Normal")
+})
+
+test("minimalPreferences survives an unreadable source", () => {
+  for (const src of [null, undefined, {}, { intl: {} }, { intl: 7 }]) {
+    const out = minimalPreferences(src)
+    assert.equal(out.credentials_enable_service, false)
+    assert.equal(out.intl, undefined)
+  }
+  assert.equal(
+    minimalPreferences({ intl: { accept_languages: "x".repeat(500) } }).intl,
+    undefined,
+    "a 500-character language header is not a language header",
+  )
+})
+
+test("a Preferences file that is not JSON still yields a safe minimal one", async () => {
+  const s = sandbox()
+  s.ignoreAll()
+  fs.writeFileSync(path.join(s.src, "Default", "Preferences"), "not json{{{")
+  const r = await sync(s)
+  assert.equal(r.ok, true)
+  const written = JSON.parse(
+    fs.readFileSync(path.join(s.dst, "Default", "Preferences"), "utf8"),
+  )
+  assert.equal(written.credentials_enable_service, false)
 })
 
 test("a second sync replaces the previous auto profile and leaves no staging directory", async () => {
@@ -350,13 +563,27 @@ test("a symlink inside the profile is never followed out of it", async () => {
   s.ignoreAll()
   const outside = path.join(s.root, "outside.txt")
   fs.writeFileSync(outside, "should not travel")
+  // Placed at an ALLOWLISTED path on purpose. A symlink at some arbitrary name
+  // is now refused by the allowlist anyway, so the test would pass without the
+  // symlink check ever running — green for the wrong reason.
+  const link = path.join(s.src, "Default", "Local Storage", "leveldb", "LOCK")
   try {
-    fs.symlinkSync(outside, path.join(s.src, "escape.txt"))
+    fs.symlinkSync(outside, link)
   } catch {
     return // Windows without developer mode cannot create symlinks; nothing to assert.
   }
+  assert.equal(
+    copyDecision("Default/Local Storage/leveldb/LOCK").allow,
+    true,
+    "the link is at a path the allowlist would otherwise copy",
+  )
   await sync(s)
-  assert.equal(fs.existsSync(path.join(s.dst, "escape.txt")), false)
+  assert.equal(
+    fs.existsSync(
+      path.join(s.dst, "Default", "Local Storage", "leveldb", "LOCK"),
+    ),
+    false,
+  )
 })
 
 // --- CLI ---------------------------------------------------------------------

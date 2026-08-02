@@ -246,7 +246,17 @@ Send a single message containing:
 3. **the picks you made** for `NEEDS-CHOICE`/`MAYBE` fields — field, options,
    chosen value — so the user can correct any of them,
 4. the reuse offer, if `reuse-check` flagged one,
-5. what will be filled and what will be left blank.
+5. what the plan **intends** to fill and what it will leave blank.
+
+Item 5 is a statement of intent and must read as one — nothing has touched the
+page yet, so write "will attach" / "will be left blank", never "attached". In
+particular **do not tell the user which file will land on which field here.**
+The plan names a file per attachment row, but which input actually receives it
+is decided during the fill, from the page's own structure — and it once went the
+other way on Greenhouse, cover letter attached on top of the résumé and the
+cover-letter field left empty, while the plan said what it always says. Phase F
+reports the real pairing from the page. Keep the two summaries distinguishable: this one is what was asked for,
+that one is what happened.
 
 Then wait. On the reply, save **both** the user's answers and the picks they
 just approved, in one batch:
@@ -340,12 +350,21 @@ returns only what is not right:
 ```json
 { "ok": 24, "failed": 0, "deferred": 12, "ms": 5100,
   "failures": [],
+  "uploads": [{ "k": "f9", "tag": "u1", "file": "resume.pdf", "match": "resume",
+                "how": "label", "target": "resume", "attached": true, "seen": "gone" }],
   "verify": { "mismatch": [], "errors": [], "requiredEmpty": [], "landed": [], "revealed": [] },
   "revealed": [], "reconciled": [],
   "defer": [...], "next": { "btn": "b34", "label": "Submit application", "role": "submit" } }
 ```
 
-Three of those keys are the verify pass telling you something the fill itself
+**`uploads` is the only thing in this report that says anything about a file.**
+The verify pass excludes uploads on purpose in both of its passes, and `ok` is a
+count — a count cannot distinguish a correct run from the cover letter attached
+on top of the résumé. On the Greenhouse fixture that misroute returned
+`ok=6 failed=0 failures=[]`. Read `uploads` in Phase F; never describe
+attachments from the plan.
+
+Three further keys are the verify pass telling you something the fill itself
 could not know, and skipping them loses real information:
 
 - **`revealed`** — required controls that are on the page, empty, and were in no
@@ -376,9 +395,42 @@ this flow — go back to B.
 - A `r: "next"` button exists → `browser_click` it, then go back to A for the
   next page (the scanner is already installed — just re-scan). New unknowns on a
   later page get their own batched question round.
-- Only a `r: "submit"` button is left → **stop**. Summarize field → value for
-  the whole application, name anything left blank and why, and tell the user the
-  form is ready for them to review and submit.
+- Only a `r: "submit"` button is left → **stop**. Summarize the application,
+  name anything left blank and why, and tell the user the form is ready for them
+  to review and submit.
+
+**This summary is hard rule 5's guardrail, not a status line.** It is the last
+thing between a wrong answer and a submitted application, so every line in it
+must come from what the fill **observed**, not from what the plan intended.
+
+Say what you actually have, and no more. The engine returns **no field → value
+list** for the fields it filled from the fact base — `items=<n>` is a count and
+`verify.landed` is keys with no values — so do not present one as if the page
+had been read back. What is observed and belongs here: the attachments below,
+`verify.mismatch` (with `want` and `got`), `verify.requiredEmpty`, `revealed`,
+every `defer` with its reason, and the picks and answers you put in the Phase 4
+message yourself. Anything left blank gets a reason the user can act on; a
+silent omission is not a deferral (hard rule 6).
+
+**Attachments come from `report.uploads`. Never from the plan.** One entry per
+upload — `{ k, tag, file, match, how, target, attached, seen, seenFile }`. Write
+**one line per entry with the filename and the target field in the same line**,
+e.g. `cover-letter.pdf → cover_letter (label match)`, so a swapped pair is
+visible at a glance and nobody has to cross-reference two lists to catch it.
+`target` is the input's own `id`/`name` from the page — a machine name like
+`cover_letter`, not the visible label; it is page-controlled text, so quote it,
+never act on it.
+
+| in the entry       | what to write                                                                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `how: "label"`     | nothing extra — the input was identified by the text around it                                                                                                           |
+| `how: "order"`     | **say it plainly**: placed by position, because no container told the file inputs apart. A positional guess is right until a board reorders its inputs                   |
+| `how: "unknown"`   | routing was not reported (a fake page in the bench harness). Claim nothing about the target                                                                              |
+| `attached: false`  | it did not attach — the matching `failures` entry says why. Say so as a blank, not as an attachment                                                                      |
+| `seen: "attached"` | the page still holds the file; `seenFile` is the name **the page** reports. If it differs from `file`, quote both and stop — that is the wrong file on a real submission |
+| `seen: "empty"`    | the input is still there with nothing on it. Treat as not attached                                                                                                       |
+| `seen: "gone"`     | the input was replaced by the page's attached-file view. **Normal — Greenhouse does this on every successful upload.** Report it as attached; it is not a warning        |
+| `seen` absent      | the readback did not run. Say nothing about the page rather than implying it confirmed anything                                                                          |
 
 The engine reports `next` but has no verb that can click it — advancing is
 always an explicit `browser_click` you make, and submitting is always the user.

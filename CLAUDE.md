@@ -219,6 +219,8 @@ reasoning, and the reasoning is what stops you re-introducing the bug — so
 - **A checkbox or radio group never auto-acts unattended**, whatever the class —
   and `confirm-widget` is a different marker from `confirm` on purpose.
 - A consent box defers on its **shape** as well as its topic; nothing auto-ticks.
+- `ok` never says a file reached the right field — attachments are reported from
+  `report.uploads`, never from the plan.
 - `answers.yaml` question text is **not** evidence — use `evidenceText()`.
 - A fuzzy yes/no match can return the right concept with the **wrong truth
   value** ("authorized to work _without_ sponsorship"). Defer, never auto-invert.

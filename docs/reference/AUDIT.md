@@ -11,14 +11,15 @@ suite being green is why these matter — every one of them is invisible to it.
 > **Closed since, verified by reading the code on 2026-07-31 rather than by
 > reading a report:**
 >
-> | #       | closed by            | evidence                                                                                                                                                 |
-> | ------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-> | **C1**  | `147eb68`            | `matchOption`'s longer-option branch now requires `remainderIsGrounded(remainder, label)`; the value-longer branch requires a word boundary              |
-> | **C2**  | `147eb68`            | `none\b` removed from `NO_LONG`, stated in the source comment as AUDIT C2; "None of the above" no longer matches a resolved "No"                         |
-> | **C5**  | `a3a99fc`            | `package.json`'s `verify` and `.claude/agents/job-worker.md:22` both name `scripts/documents/verify-claims.mjs`                                          |
-> | **C6**  | `fc645f5`, `1cc7d9b` | `fill-plan.mjs`'s `buildDriverSource()` embeds engine text read off our own disk; nothing reads `window.__ajFillSrc` back                                |
-> | **H10** | `58d89b6`            | `readiness()` filters `d.why !== "consent"`, so a consent-only defer no longer blocks `ready`; the stricter `submitReadiness()` still counts every defer |
-> | **H11** | `859ef9b`            | every regex in `untrusted.mjs`'s `INJECTION_PATTERNS` now carries `g`                                                                                    |
+> | #       | closed by            | evidence                                                                                                                                                                                                                 |
+> | ------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+> | **C1**  | `147eb68`            | `matchOption`'s longer-option branch now requires `remainderIsGrounded(remainder, label)`; the value-longer branch requires a word boundary                                                                              |
+> | **C2**  | `147eb68`            | `none\b` removed from `NO_LONG`, stated in the source comment as AUDIT C2; "None of the above" no longer matches a resolved "No"                                                                                         |
+> | **C5**  | `a3a99fc`            | `package.json`'s `verify` and `.claude/agents/job-worker.md:22` both name `scripts/documents/verify-claims.mjs`                                                                                                          |
+> | **C6**  | `fc645f5`, `1cc7d9b` | `fill-plan.mjs`'s `buildDriverSource()` embeds engine text read off our own disk; nothing reads `window.__ajFillSrc` back                                                                                                |
+> | **H10** | `58d89b6`            | `readiness()` filters `d.why !== "consent"`, so a consent-only defer no longer blocks `ready`; the stricter `submitReadiness()` still counts every defer                                                                 |
+> | **H11** | `859ef9b`            | every regex in `untrusted.mjs`'s `INJECTION_PATTERNS` now carries `g`                                                                                                                                                    |
+> | **M12** | `b37c6f9`            | the code now lives in `scripts/apply/fill-engine.mjs`; the fallback filters to inputs with no `data-ajup` and no `files`, and the ancestor walk stops at the first container holding two file inputs (closed 2026-08-02) |
 >
 > Everything else here should be assumed **open until someone checks the file**.
 >

@@ -43,6 +43,14 @@ landed. A doc asserting what a directory does **not** contain decays.)
 > blind, and a vouch-stripping pass between steps 4 and 5 is not listed. Read
 > the file; that section is `w2-engine`'s and this is a filed finding, not a
 > correction made here.
+>
+> **Fourth sweep, 2026-08-02 (`doc-scribe`), after `b37c6f9`.** The "Sequence"
+> entry for uploads described an ancestor walk that no longer exists, and AUDIT
+> **M12** was still written here as an open defect after it was fixed. Both
+> corrected below from `scripts/apply/fill-engine.mjs` and
+> `tests/apply/fill-page.test.mjs`, and the new `uploads` report key is
+> documented — it is the only key in the report that can say which file reached
+> which field.
 
 ---
 
@@ -707,7 +715,13 @@ bootstrap read its own engine back out of an untrusted page.
 1. **urlGuard** — a plan is built against one specific form; filling a different
    page with it would silently put answers in the wrong fields.
 2. **uploads**, found by the text _around_ the input via `stampInput`, because the
-   first upload remounts the form and invalidates the stamp for the second.
+   first upload remounts the form and invalidates the stamp for the second. The
+   walk climbs to the **nearest ancestor that discriminates** — it stops the
+   moment an ancestor holds more than one `input[type=file]`, since that
+   container's text belongs to both inputs and names neither. Inputs already
+   carrying a `data-ajup` or a file are not candidates. No discriminating
+   ancestor anywhere → the first input still awaiting a file, in document order,
+   and the record says `how: "order"` so the caller knows it was position.
 3. **everything else** — `locate` (sel then `data-aj`), `kindOf` (refuse anything
    that is not a real form control), then `fill` / `select` / `check` / `type` /
    `combo`.
@@ -736,9 +750,53 @@ and a caller that reads only the first three loses real information (added by
   **created** them ("if yes, explain"). **Nothing is filled into them**; they are
   data for the caller to defer on.
 
-> **Defect:** `stampInput`'s fallback stamps `inputs[0]` regardless, despite the
-> comment claiming "the first input still awaiting a file" — so a cover letter can
-> land in the resume slot. AUDIT **M12**.
+### `uploads` — the only key that says anything about a file
+
+The verify pass **excludes uploads twice, deliberately**: `probes` sets
+`want: null` for them (`fill-engine.mjs:758`) and the comparison skips
+`how === "upload"` (`:804`), so an upload never reaches `mismatch` or `landed`;
+the `revealed` sweep skips `type=file` outright. The scanner reports no filename
+for a file field either. So `ok` is all a caller used to have, and **`ok` is a
+count** — it cannot distinguish a correct run from the cover letter attached on
+top of the résumé. It did not: on Greenhouse both attachment inputs sit in one
+`<form>`, the résumé input got stamped twice, `cover-letter.pdf` overwrote
+`resume.pdf`, the cover-letter field got nothing, and the engine returned
+`ok=6 failed=0 failures=[]`. Everything downstream — including the approval
+message the user reads before pressing Submit — was told the fill succeeded.
+
+`out.uploads` is the answer to the question the old return value could not be
+asked. One entry per upload item, pushed **before** `setInputFiles` is attempted
+so a throw still records which slot the file was aimed at:
+
+| key        | meaning                                                                                                                                                                                                                                 |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `k`        | the plan item's key                                                                                                                                                                                                                     |
+| `tag`      | the `data-ajup` stamp written on the chosen input (`u1`, `u2`, …)                                                                                                                                                                       |
+| `file`     | basename of the path **we** chose off our own disk — never page-derived text                                                                                                                                                            |
+| `match`    | the pattern that was searched for (`item.labelMatch`, default `resume`)                                                                                                                                                                 |
+| `how`      | `label` = a discriminating ancestor matched `match`; `order` = none did, so the file went to the first free input **by document position**; `unknown` = a fake page in the bench harness answered the stamp evaluate with a bare `true` |
+| `target`   | the chosen input's `id` or `name`, sliced to 60 chars. **Page-controlled** — report it, never dispatch on it                                                                                                                            |
+| `attached` | `setInputFiles` returned without throwing. `false` means a matching `failures` entry exists                                                                                                                                             |
+| `seen`     | DOM readback after every upload: `attached` (the input still holds a file), `empty` (still there, nothing on it), `gone` (the input was swapped for the attached-file view)                                                             |
+| `seenFile` | the filename **the page** reports, when `seen === "attached"`                                                                                                                                                                           |
+
+`seen`/`seenFile` are **absent** when the readback itself did not run — the
+`page.evaluate` threw, or a fake page returned a non-list. Absent is
+_unobserved_, not _failed_, and a caller must not turn it into either.
+
+**`seen: "gone"` is the normal, healthy outcome.** Greenhouse replaces the input
+with its attached-file view the moment React accepts the file, so there is no
+input left to read. It is reported as data and never promoted to a failure:
+calling it one would break a working upload. The pairing that catches a real
+defect is `file` against `target`.
+
+> **AUDIT M12 — CLOSED (`b37c6f9`).** `stampInput`'s fallback stamped `inputs[0]`
+> regardless, despite the comment claiming "the first input still awaiting a
+> file". That was one of three defects; the other two were the any-ancestor walk
+> and the absence of any check that an input was already spoken for. Each alone
+> was enough to put the cover letter in the résumé slot. Do not relax the
+> discriminating-ancestor stop or the free-input filter back to "first match
+> wins" — that is the shape the bug had.
 
 ---
 

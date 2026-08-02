@@ -258,6 +258,42 @@ landed. `fill-engine.mjs`'s loop (`actOn` / `isStaleError`) re-resolves and
 replays that one item once before recording a failure; safe because
 fill/select/check are idempotent.
 
+### `ok` is not evidence that the right file went to the right field
+
+`fillPage` returned only counts, and a count cannot be wrong about which file is
+on which input. On the Greenhouse fixture — both attachment inputs inside one
+`<form>` — `stampInput`'s ancestor walk matched `/cover letter/` against the
+`<form>` that wraps **both** inputs (its `innerText` reads "… Resume Attach
+Cover Letter Attach …"), re-stamped the résumé input, and `setInputFiles` wrote
+`cover-letter.pdf` on top of `resume.pdf`. The cover-letter field got nothing.
+The report said `ok=6 failed=0 failures=[]`.
+
+Nothing downstream could contradict it. The verify pass excludes uploads in both
+of its passes on purpose (`fill-engine.mjs:758`, `:804`), the `revealed` sweep
+skips `type=file`, the scanner reports no filename for a file field, and
+`apply-job` built its approval message **from the plan** — so the user was shown
+`resume.pdf → Résumé, cover-letter.pdf → Cover Letter` while the DOM held the
+opposite. A control that reports intent as observation is not a control.
+
+Three rules now hold the routing, and each one alone was enough to have
+prevented it — do not relax any of them back:
+
+1. The walk stops at the **nearest discriminating** ancestor. A container of two
+   file inputs describes both and identifies neither, and nothing above it can
+   be narrower. Nearest depth wins, so the result does not depend on DOM order.
+2. A stamp is a **claim**: an input already carrying `data-ajup`, or already
+   holding a file, is not a candidate for anything.
+3. The fallback does what its comment always said — the first input **still
+   awaiting a file**, not `inputs[0]` unconditionally.
+
+And `report.uploads` now records where each file actually went (`file`, `target`,
+`how`, `seen`) — see [05-apply.md](05-apply.md). Anything that tells the user
+what was attached must read that, never the plan. `how: "order"` means routing
+fell back to document position, which is worth saying out loud to the user; it
+is right until a board reorders its inputs. `seen: "gone"` means the input was
+swapped for the attached-file view, which is what a **successful** Greenhouse
+upload looks like — it is not an error and must not be reported as one.
+
 ### The scan is not read back out of the page either
 
 `window.__ajLastScan` was written into the page and read back out to produce

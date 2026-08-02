@@ -328,10 +328,100 @@ test("a CONFIRM resolution is amber — an asserted answer is not a settled one"
     k: "fp1:email|text",
     status: "CONFIRM",
     value: "x",
+    classDescription: "assertion/inferred (work_authorization)",
   })
   const r = classify(lead(), { ...OK_CTX, resolvedByKey: resolved })
   assert.equal(r.tier, "amber")
-  assert.match(r.reason, /is confirm/)
+  // WORDING UPDATED with the QA-0.12-2 fix. CONFIRM used to reach the generic
+  // NOT_SETTLED branch and read `required field "Email" is confirm`; it now
+  // has its own branch ABOVE the `req` gate, because buildPlan defers CONFIRM
+  // above ITS `req` gate too. The reason names the assertion and carries the
+  // class description, which the old message did not.
+  assert.match(r.reason, /resolves to an assertion the user confirms/)
+  assert.match(r.reason, /work_authorization/)
+})
+
+// --- QA-0.12-2: the two branches buildPlan defers BEFORE its optional-skip ---
+//
+// THE BUG. `shapeBlockers` ran `if (!f.req) continue` before looking at the
+// resolution at all, but `buildPlan`'s CONFIRM branch (and, since item 2.2,
+// its long-free-text branch) both run BEFORE buildPlan's own optional-skip.
+// So an OPTIONAL field with an assertion-class banked answer became a defer in
+// the plan — which `submitReadiness()` blocks on — while this classifier,
+// having skipped the field as optional, called the whole form green. A green
+// tier that can never pass the submit gate. Demonstrated by qa on the Affirm
+// scan (two `why:"confirm"` defers on a form classified green).
+//
+// Both tests below fail on the previous code: the field is `req: false`, so
+// the old ordering skipped it and returned green.
+const OPTIONAL_EXTRA = {
+  ...TEXT_FORM,
+  "anything else|textarea": {
+    t: "textarea",
+    l: "Anything else we should know?",
+  },
+}
+
+test("QA-0.12-2: an OPTIONAL field resolving CONFIRM is amber, not green", () => {
+  const resolved = new Map(ALL_TEXT_SETTLED)
+  resolved.set("fp1:anything else|textarea", {
+    k: "fp1:anything else|textarea",
+    status: "CONFIRM",
+    value: "Yes",
+    classDescription: "assertion/user (work_authorization)",
+  })
+  const r = classify(lead(), {
+    ...OK_CTX,
+    cache: cacheWith(OPTIONAL_EXTRA),
+    resolvedByKey: resolved,
+  })
+  assert.equal(
+    r.tier,
+    "amber",
+    "buildPlan defers this field, so the form cannot pass submitReadiness",
+  )
+  assert.match(r.reason, /Anything else we should know/)
+})
+
+test("QA-0.12-2 boundary: an OPTIONAL field resolving OK is still green", () => {
+  // The complement, so the fix is a NEW blocker for a real condition and not
+  // "stop skipping optional fields", which would turn every optional field on
+  // every form into an amber.
+  const resolved = new Map(ALL_TEXT_SETTLED)
+  resolved.set("fp1:anything else|textarea", {
+    k: "fp1:anything else|textarea",
+    status: "OK",
+    value: "Two weeks.",
+    source: "a-011@exact",
+  })
+  const r = classify(lead(), {
+    ...OK_CTX,
+    cache: cacheWith(OPTIONAL_EXTRA),
+    resolvedByKey: resolved,
+  })
+  assert.equal(r.tier, "green", r.reason ?? "")
+})
+
+test("item 2.2: an OPTIONAL textarea holding long banked free text is amber", () => {
+  // 240 characters of bank-sourced prose, over the 200-char limit. The plan
+  // defers it (`why: "long-free-text"`), so the classifier must not call the
+  // form green either — this is the branch added alongside the CONFIRM one so
+  // 2.2 could not arrive as the next instance of the same ordering bug.
+  const resolved = new Map(ALL_TEXT_SETTLED)
+  resolved.set("fp1:anything else|textarea", {
+    k: "fp1:anything else|textarea",
+    status: "OK",
+    value: "I am drawn to this team because ".repeat(8),
+    source: "a-019@0.81",
+  })
+  const r = classify(lead(), {
+    ...OK_CTX,
+    cache: cacheWith(OPTIONAL_EXTRA),
+    resolvedByKey: resolved,
+  })
+  assert.equal(r.tier, "amber")
+  assert.match(r.reason, /long banked free text/)
+  assert.match(r.reason, /a-019/)
 })
 
 test("NEEDS-CHOICE and MAYBE are amber too", () => {

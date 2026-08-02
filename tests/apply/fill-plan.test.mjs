@@ -2148,13 +2148,24 @@ test("A6: filling stays correct — data fills, an ASSERTION defers with its val
   // visible here rather than silently correct-by-accident.
   assert.equal(byKey.f2, undefined, "an assertion must not be an auto-fill")
   assert.equal(byKey.f3, undefined, "an assertion must not be an auto-fill")
+  // UPDATED for typed intents (item 2.1). The value is "Yes", not the banked
+  // sentence "Yes, US citizen, no sponsorship needed." verbatim, and that
+  // change IS the item: a work-authorization label now resolves through
+  // intents.mjs, where the banked answer is parsed to a BOOLEAN before
+  // anything is rendered. A boolean has no tail clause to carry along, which
+  // is the same property that makes the AUDIT C1 prefix bug (a banked "Yes"
+  // growing into "Yes, 5+ years professionally") unrepresentable on this path.
+  // The truth value is identical and still the bank's; only the rendering
+  // narrowed. Everything else about the record — that it defers as `confirm`,
+  // carries its value into the approval message, and names work authorisation
+  // in classInfo — is unchanged and still asserted.
   assert.equal(deferByKey.f2.why, "confirm")
-  assert.equal(deferByKey.f2.value, "Yes, US citizen, no sponsorship needed.")
+  assert.equal(deferByKey.f2.value, "Yes")
   assert.match(deferByKey.f2.classInfo, /^assertion\b/)
   assert.match(deferByKey.f2.classInfo, /work_authorization/)
   assert.equal(deferByKey.f2.labelFlag, undefined)
   assert.equal(deferByKey.f3.why, "confirm")
-  assert.equal(deferByKey.f3.value, "Yes, US citizen, no sponsorship needed.")
+  assert.equal(deferByKey.f3.value, "Yes")
   assert.match(deferByKey.f3.classInfo, /^assertion\b/)
   assert.equal(deferByKey.f3.labelFlag, undefined)
 

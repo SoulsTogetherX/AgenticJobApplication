@@ -61,6 +61,7 @@ import {
   isConsent,
   looksLikeAgreementProse,
 } from "./fill-plan.mjs"
+import { longFreeTextReason, DEFAULT_LIMITS } from "./disclosure.mjs"
 import { isTerse } from "../lib/lib.mjs"
 
 const ROOT = path.resolve(
@@ -215,9 +216,47 @@ export function shapeBlockers(fp, entry, resolvedByKey, { now, maxAgeDays }) {
       )
       continue
     }
+    // QA-0.12-2 (qa's 0.12 measurement; demonstrated on the Affirm scan, two
+    // `why:"confirm"` defers on a form this function called green).
+    //
+    // THE RULE THIS RESTORES: everything `buildPlan` defers BEFORE its own
+    // optional-and-unresolved skip must be checked here BEFORE the `req` gate,
+    // or the two disagree about the same form. That is the same reasoning the
+    // widget checks above are placed on, and these two branches were simply
+    // missing from the total set:
+    //
+    //   * CONFIRM — an assertion-class bank answer. buildPlan's CONFIRM branch
+    //     runs ahead of its `if (!f.req)` skip, so an OPTIONAL field with an
+    //     assertion-class answer becomes a defer, and `submitReadiness()`
+    //     blocks on any defer. This function skipped it as "optional", so a
+    //     form that can never pass the submit gate was classified green. Not
+    //     reachable today (nothing submits unattended), but it is a wrong
+    //     grant, and Phase 5 is the thing that would act on it.
+    //   * long-free-text (item 2.2) — same shape, same position in buildPlan,
+    //     added in the same change as this fix so it cannot arrive as the next
+    //     instance of exactly this bug.
+    //
+    // Checked against DEFAULT_LIMITS rather than the user's configured ones:
+    // this function has no limits plumb, and the only direction the difference
+    // can go is stricter-here (an extra blocker, amber instead of green),
+    // which is the safe way to be wrong.
+    const r = resolvedByKey.get(`${fp}:${key}`)
+    if (r?.status === "CONFIRM") {
+      blockers.push(
+        `"${label}" resolves to an assertion the user confirms` +
+          (r.classDescription ? ` (${r.classDescription})` : "") +
+          " — the planner defers it whether or not the form marks it required",
+      )
+      continue
+    }
+    const longText = longFreeTextReason({ t: f.t }, r, DEFAULT_LIMITS)
+    if (longText) {
+      blockers.push(`"${label}" is long banked free text — ${longText}`)
+      continue
+    }
+
     if (!f.req) continue // optional and not a widget: the planner skips it
 
-    const r = resolvedByKey.get(`${fp}:${key}`)
     const status = r?.status ?? "UNRESOLVED"
     if (NOT_SETTLED.has(status)) {
       blockers.push(`required field "${label}" is ${status.toLowerCase()}`)

@@ -45,6 +45,10 @@
 //        [--profile <path>] [--answers <path>] [--jobs-dir <path>]
 //        [--consent-allowlist <path>] [--no-cache] [--invalidate]
 //        [--record-via <path-to-fill-report.json>]
+//        [--max-freetext <chars>] [--disclosure-budget <n>]
+//
+// --max-freetext / --disclosure-budget override the item 2.2 / 2.3 limits for
+// one run (defaults and the user's own `auto_apply` keys: disclosure.mjs).
 //
 // --page <N> is sugar for --scan <jobDir>/scan-p<N>.json — the apply-job skill
 // writes scan-p<N>.json per page of a multi-step form. Neither flag is needed
@@ -101,6 +105,17 @@ import {
   answerClass,
   describeClass,
 } from "../lib/untrusted.mjs"
+// Items 2.2/2.3 — how much of the fact base ONE form pulls. See
+// disclosure.mjs's header for both thresholds and the measurements behind
+// them; the two consumers are the `long-free-text` defer in the per-field loop
+// and the `disclosure` declaration on the returned plan.
+import {
+  DEFAULT_LIMITS,
+  loadDisclosureLimits,
+  longFreeTextReason,
+  buildDisclosure,
+  emptyDisclosure,
+} from "./disclosure.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -680,6 +695,12 @@ export function buildPlan({
   // `vouchedSet` below, for a future non-consent use), but no longer read to
   // grant an auto-tick — see the consent branch's own "DELETED" comment.
   vouchedLabels,
+  // Items 2.2/2.3. Both default to "no user configuration and an unknown bank
+  // size", which is the STRICTER end of both rules (the disclosure budget
+  // falls back to its floor), so an existing caller that passes neither gets
+  // today's behaviour on 2.2 and the floor on 2.3 rather than an open gate.
+  limits = DEFAULT_LIMITS,
+  bankSize = 0,
 }) {
   // FIX (E7, w3-resolution): scan-page.js already classifies the page —
   // `kind: "login"` when it saw a password field, and a CAPTCHA iframe pushes
@@ -746,6 +767,10 @@ export function buildPlan({
       comboStrategies: adapter.comboStrategies,
       valueAliases: adapter.valueAliases ?? [],
       items: [],
+      // Uniform shape: a refused page discloses nothing, and a consumer
+      // reading `plan.disclosure.count` must not have to special-case which
+      // branch of buildPlan produced the plan.
+      disclosure: emptyDisclosure(limits, bankSize),
       defer: [
         {
           k: "__page__",
@@ -1149,6 +1174,39 @@ export function buildPlan({
       continue
     }
 
+    // ITEM 2.2 — a long, bank-sourced free-text answer defers.
+    //
+    // THIS DEFERS A FIELD, NOT AN APPLICATION, and the distinction is the
+    // whole design. Everything else on the form still fills, the plan is still
+    // built, and the application still goes forward with one entry in `defer`
+    // carrying the text so the user can paste or edit it in one action.
+    // Deferring the application here would be a volume bug: unlimited
+    // application volume is deliberate, and a control that turns one long
+    // textarea into a skipped job is a throttle wearing a safety hat.
+    //
+    // WHY IT IS A DEFER AND NOT A FLAGGED ITEM. `buildPlan` has no
+    // attended/unattended parameter and should not grow one — the plan is the
+    // artifact an unattended runner consumes, so a field that must not be
+    // filled unattended must not BE an item in it. The attended path is held
+    // harmless at the other end instead: `readiness()` exempts an OPTIONAL
+    // long-free-text defer (see its own comment), exactly as it exempts a
+    // consent box, so no model round trip is forced that was not already
+    // happening. `submitReadiness()` blocks on any defer, which is the
+    // unattended gate the item names.
+    const longText = longFreeTextReason(f, r, limits)
+    if (longText) {
+      defer.push({
+        k: f.k,
+        label: displayLabel,
+        ...mLabel(),
+        why: "long-free-text",
+        value: r.value,
+        req: !!f.req,
+        note: longText,
+      })
+      continue
+    }
+
     // Radio/checkbox groups have no element of their own; target the option.
     if (verb === "check") {
       if (!r.pick) {
@@ -1245,6 +1303,29 @@ export function buildPlan({
     }
   }
 
+  // ITEM 2.3 — the per-form disclosure declaration.
+  //
+  // Computed LAST, from the finished `items`, because "what this plan will
+  // disclose" is a property of what survived every gate above, not of what
+  // the answer bank happened to resolve. A field that deferred discloses
+  // nothing: its value goes into the approval message, not into the page.
+  //
+  // An unusual set defers the APPLICATION (one `__disclosure__` entry, not a
+  // field), and unlike 2.2 it is deliberately NOT exempted from `readiness()`.
+  // "This form would pull more of your fact base than any real form measured"
+  // is precisely the thing a human should read before the engine runs, not
+  // only before a submit. See buildDisclosure() for what counts and why
+  // profile facts do not.
+  const disclosure = buildDisclosure(items, resolved, { bankSize, limits })
+  if (disclosure.unusual) {
+    defer.push({
+      k: "__disclosure__",
+      label: scan.heading || "(form)",
+      why: "disclosure-budget",
+      note: disclosure.reason,
+    })
+  }
+
   return {
     v: 1,
     slug: scan.slug ?? null,
@@ -1259,6 +1340,7 @@ export function buildPlan({
     valueAliases: adapter.valueAliases ?? [],
     items,
     defer,
+    disclosure,
   }
 }
 
@@ -1350,6 +1432,19 @@ export function readiness(plan) {
   const blocking = (plan.defer ?? []).filter((d) => {
     if (d.why === "consent") return false
     if (d.why === "confirm-widget" && !d.req) return false
+    // ITEM 2.2, the attended half. A long banked free-text answer is deferred
+    // for the UNATTENDED path — `submitReadiness()` blocks on it like any
+    // other defer. On the attended path a human is already reading the
+    // approval message with the text in front of them and is about to look at
+    // the form anyway, so forcing a model turn first buys nothing.
+    //
+    // The `!d.req` condition is not decoration and mirrors confirm-widget's
+    // exactly: an OPTIONAL textarea left blank costs nothing, but a REQUIRED
+    // one left blank means the form cannot be submitted at all, and telling
+    // the caller "ready" about a form that will bounce is the same failure as
+    // any other unhandled required field. Required long free text still
+    // blocks.
+    if (d.why === "long-free-text" && !d.req) return false
     return true
   })
   if (blocking.length) {
@@ -1652,6 +1747,12 @@ function main() {
   const answersFlag = flag("--answers")
   const consentAllowlistFlag = flag("--consent-allowlist")
   const recordViaFlag = flag("--record-via")
+  // Items 2.2/2.3. Both also read `auto_apply` in docs/application-limits.yaml
+  // (the user's file — read, never written); these flags are the third and
+  // strongest layer, for producing a dry-run report at a different setting
+  // without touching that file. See loadDisclosureLimits().
+  const maxFreeTextFlag = flag("--max-freetext")
+  const disclosureBudgetFlag = flag("--disclosure-budget")
 
   const slug = args.find((a) => !a.startsWith("--"))
   if (!slug) {
@@ -1748,6 +1849,20 @@ function main() {
     answers: answersFlag,
   })
   const consentAllowlist = loadConsentAllowlist(consentAllowlistFlag)
+  // `flag()` returns the boolean `true` for a value-less flag, and
+  // Number(true) is 1 — which would silently set the free-text limit to one
+  // character. Only a real string is an override.
+  const numFlag = (v) => (typeof v === "string" ? v : null)
+  const limits = loadDisclosureLimits({
+    overrides: {
+      freeTextMaxChars: numFlag(maxFreeTextFlag),
+      disclosureFloor: numFlag(disclosureBudgetFlag),
+    },
+  })
+  // The DENOMINATOR of the disclosure budget, and nothing else — this is a
+  // count of entries, never their content. 0 when the file is missing, which
+  // leaves the budget at its floor (the stricter end).
+  const bankSize = loadBankById(answersFlag).size
   const plan = buildPlan({
     scan,
     resolved,
@@ -1755,6 +1870,8 @@ function main() {
     files,
     url,
     consentAllowlist,
+    limits,
+    bankSize,
   })
   // A board-level hint: even a combo the fact base could not resolve (so it
   // never became a plan item and has no per-field `via`) is worth trying
@@ -1847,8 +1964,16 @@ function main() {
         // this ratio entirely, so a brand-new form and an all-text form both
         // printed cache=0/0 — indistinguishable. miss=N makes them different.
         ` cache=${cacheStats.hits}/${cacheStats.hits + cacheStats.probed + cacheStats.miss}` +
-        ` miss=${cacheStats.miss} fp=${fp}`,
+        ` miss=${cacheStats.miss} fp=${fp}` +
+        // ITEM 2.3. The count is on the summary line and the ids are on their
+        // own record below, because "how many facts did this form pull" is
+        // the number a reader scans for and the id list is what they read
+        // when it looks wrong.
+        ` disclose=${plan.disclosure.count}/${plan.disclosure.budget}`,
     )
+    if (plan.disclosure.count) {
+      console.log(`disclose\t${plan.disclosure.ids.join(",")}`)
+    }
     for (const d of plan.defer) {
       // Trailing column, not inserted mid-record: a consumer already reading
       // the first four fields by position is unaffected. See mLabel()'s own

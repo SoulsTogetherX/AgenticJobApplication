@@ -26,6 +26,24 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { loadYamlFile, isTerse, parseDateRange } from "../lib/lib.mjs"
+// TYPED INTENTS (autonomy plan v2 item 2.1). The three ladder tiers that used
+// to live in THIS file — the CONCEPTS bucket, the concept-constrained fuzzy
+// pass, and the polarityMismatch guard bolted on after it — are gone, replaced
+// by a closed set of typed propositions. See intents.mjs's header for the
+// shape change and why it makes the polarity bug unrepresentable rather than
+// merely guarded against. What remains here is the plain token-similarity tier
+// for labels the closed set does NOT claim, and it is now fenced in both
+// directions: a typed label never reaches it (resolveField returns from the
+// intent pass, whatever the intent decided), and a typed BANK ENTRY is never
+// offered to it (bestAnswer filters them out). Those two fences together are
+// what "typed facts answer only typed questions" means mechanically.
+import {
+  resolveIntent,
+  isTypedQuestion,
+  describeIntent,
+  typeQuestion,
+  intentFor,
+} from "./intents.mjs"
 
 // ---------------------------------------------------------------------------
 // pure helpers — none of these depend on profile.yaml, answers.yaml, or the
@@ -169,29 +187,13 @@ function similarity(a, b) {
   return Math.max(jaccard, containment * 0.9)
 }
 
-// Some questions are near-identical in wording but OPPOSITE in meaning.
-// "Do you require sponsorship?" and "Are you legally authorized to work?" share
-// almost every token, so token similarity ranked the authorization answer
-// ("Yes") against the sponsorship question — which would have claimed the user
-// needs a visa. Concepts are matched before, and constrain, the fuzzy pass.
-//
-// Order matters: a label naming both ("...sponsorship... to maintain
-// authorization to work...") is about sponsorship.
-//
-// Concept alone is not enough: a label can name the sponsorship concept while
-// actually negating it ("...authorized to work WITHOUT sponsorship..."). That
-// is a polarity problem, not a concept problem — see the polarity guard
-// further down, which runs after this match and can still defer a same-concept
-// hit rather than copy its answer verbatim.
-const CONCEPTS = [
-  ["sponsorship", /\bsponsor(ship|ed|s)?\b|\bvisa\b/i],
-  [
-    "work_authorization",
-    /\b(legally\s+)?authoriz(ed|ation)\s+to\s+work\b|\bwork\s+authoriz(ation|ed)\b|\bright to work\b|\beligible to work\b/i,
-  ],
-]
-const conceptOf = (text) =>
-  CONCEPTS.find(([, re]) => re.test(String(text ?? "")))?.[0] ?? null
+// RETIRED (item 2.1): `CONCEPTS` + `conceptOf` used to bucket a label into
+// "sponsorship" or "work_authorization" and constrain the fuzzy pass to that
+// bucket. It was the first guard stacked on the ladder and it could not
+// express the actual bug — a bucket says WHICH concept, never which TRUTH
+// VALUE, so "authorized to work WITHOUT sponsorship" landed in a bucket and
+// copied the opposite answer out of it. intents.mjs replaces the bucket with a
+// typed proposition carrying a polarity; there is nothing left here to keep.
 
 // Field types where "no options recorded" means "unprobed", not "no options
 // exist". A text input genuinely has no option list to check against; a
@@ -310,47 +312,20 @@ export function matchOption(
   return { value: first, needsChoice: true }
 }
 
-// ---------------------------------------------------------------------------
-// polarity guard
-// ---------------------------------------------------------------------------
-// A fuzzy match can land on the right CONCEPT and still hand back the wrong
-// TRUTH VALUE. "Are you authorized to work in the U.S. WITHOUT company
-// sponsorship?" shares almost every token with a banked "Will you require
-// sponsorship for employment visa status?" and both fall in the sponsorship
-// concept bucket above — but "without sponsorship" inverts what the form is
-// actually asking. The question's real subject is work authorization, using
-// the sponsorship clause as a negated qualifier, not as its subject. Copying
-// that bank entry's literal "No" verbatim would assert the OPPOSITE of the
-// truth on the single highest-stakes field on the form.
-//
-// Below exact-label confidence there is no reliable way to tell a genuine
-// restatement from an inverted one apart, so a polarity mismatch on a yes/no
-// answer defers instead of guessing (2026-07-30). Auto-inverting was
-// considered and rejected: "are you unable to work without sponsorship" is a
-// double negative, and getting that flip subtly wrong is no safer than the
-// bug this guards against — one extra question beats a silently flipped
-// answer. The exact-question lookup above is untouched: identical text cannot
-// be mismatched in polarity with itself.
-const NEGATION_RE =
-  /\bwithout\b|\bunable\b|\bcannot\b|\bcan'?t\b|\bnever\b|\bdon'?t\b|\bdoesn'?t\b|\bwon'?t\b|\bnot\b|\bno\b/i
-const isNegated = (text) => NEGATION_RE.test(String(text ?? ""))
-
-// The guard only applies to answers that are themselves a yes/no fact — a
-// negation mismatch on a free-text answer (an employer name, a discipline)
-// is not a truth value that inverting could flip, so there is nothing to
-// protect against.
-const isYesNoAnswer = (text) => {
-  const t = String(text ?? "").trim()
-  return YES_LONG.test(t) || NO_LONG.test(t)
-}
-
-// True when copying `match.answer` onto a field asking `label` risks stating
-// the opposite of the truth: the stored answer is yes/no shaped, and exactly
-// one side of the label/bank-question pair reads as negated.
-const polarityMismatch = (label, match) =>
-  !!match &&
-  isYesNoAnswer(match.answer) &&
-  isNegated(label) !== isNegated(match.question)
+// RETIRED (item 2.1): the polarity guard — `NEGATION_RE`, `isNegated`,
+// `isYesNoAnswer`, `polarityMismatch`. It compared "is the label negated?"
+// against "is the bank question negated?" and deferred when the two booleans
+// disagreed. That was a DETECTOR bolted onto a design that could not represent
+// polarity: it could only ever say "these two might be opposite", never which
+// one is true, so it had to defer even the cases that are plainly answerable
+// ("are you able to work without requiring sponsorship?" is a clean single
+// negation of a fact the bank holds). intents.mjs makes polarity a first-class
+// part of the resolution instead — established from the phrasing that set it,
+// checked for stray negations left standing, and then applied as
+// `P === (fieldPolarity === +1)`. Deferring on an unestablished polarity is
+// kept exactly as it was; what changed is that "unestablished" is now a
+// property of a typed resolution with a stated reason, not the absence of a
+// pattern match.
 
 // ---------------------------------------------------------------------------
 // exact-question lookup
@@ -554,19 +529,39 @@ export function createResolver(profile = {}, answersDoc = {}) {
   // answered here: the profile can prove someone is ABSENT from a complete
   // employment history, but not in what capacity they were employed if they
   // are present.
+  //
+  // FIXED (item 2.1, found by the polarity corpus in
+  // tests/apply/intents-polarity.test.mjs). This rule used to extract the
+  // company with a regex that ignored negation entirely and return a flat
+  // "No", so "Have you NOT previously been employed at Globex?" resolved OK
+  // with value "No" — a confident inversion, in shipped code, on the exact
+  // failure shape item 2.1 exists to make impossible. The bug was not in the
+  // extraction; it was that the rule mapped question -> answer STRING with no
+  // place to put a polarity, which is the ladder's defect in miniature.
+  //
+  // It now reads the polarity and the company off `typeQuestion()` — the same
+  // typing intents.mjs applies everywhere else, so the parameter extraction,
+  // the negated phrasings and the stray-negation check are one implementation
+  // and not a second copy that can drift. The PROPOSITION is still resolved
+  // from profile.yaml (the employment list), which is what this rule is for
+  // and what the answer bank cannot supply; only the rendering of that
+  // proposition onto the question's polarity is new.
+  //
+  // Every "" return falls through to the intent pass below, which defers with
+  // a stated reason. Three of them are real: an unestablished polarity, a
+  // company the label never named, and a company the user DID work at (the
+  // profile proves presence, not capacity — unchanged).
   const priorEmployment = (label) => {
-    const m = String(label).match(
-      /previously\s+(?:been\s+)?(?:employed|worked)\s+(?:at|by|for)\s+([A-Za-z0-9&.'\- ]{2,40})/i,
-    )
-    if (!m) return ""
-    const co = m[1]
-      .replace(/\s+(for|in|at|during)\b.*$/i, "")
-      .replace(/[?*.,].*$/, "")
-      .trim()
-      .toLowerCase()
+    const t = typeQuestion(label)
+    if (!t || t.concept !== "prior_employment" || t.polarity === null) return ""
+    const co = t.param
     if (!co) return ""
     const worked = employers.some((e) => e.includes(co) || co.includes(e))
-    return worked ? "" : "No"
+    if (worked) return ""
+    // P("has previously been employed at <co>") is false. The question asks P
+    // directly (+1) or its negation (-1) — the same boolean equality
+    // intents.mjs uses, so the two can never disagree.
+    return t.polarity === 1 ? "No" : "Yes"
   }
 
   // User decision 2026-07-28: prefer the banked answer, fall back to "Other"
@@ -589,7 +584,15 @@ export function createResolver(profile = {}, answersDoc = {}) {
 
   const QUESTION_RULES = [
     [
-      /previously\s+(been\s+)?(employed|worked)\s+(at|by|for)\b/i,
+      // The intent's OWN concept pattern, imported rather than re-spelled.
+      // The literal that used to sit here required the word "previously", so
+      // "Have you NEVER been employed at Globex?" and "Are you a former
+      // employee of Globex?" never reached the rule at all — the profile
+      // could answer both and did not. Sharing the pattern means the rule
+      // fires on exactly the phrasings intents.mjs can type, and
+      // priorEmployment() returns "" for anything it cannot settle, which
+      // still lands on a defer.
+      intentFor("prior_employment").match,
       "experience",
       priorEmployment,
     ],
@@ -607,25 +610,26 @@ export function createResolver(profile = {}, answersDoc = {}) {
     if (key && !exactBank.has(key)) exactBank.set(key, a)
   }
 
-  function bestAnswer(label) {
-    const want = conceptOf(label)
-    if (want) {
-      const onConcept = bank.filter((a) => conceptOf(a.question) === want)
-      if (onConcept.length) {
-        let best = null
-        for (const a of onConcept) {
-          const score = Math.max(similarity(label, a.question), 0.75)
-          if (!best || score > best.score) best = { ...a, score }
-        }
-        return best
-      }
-    }
+  // Entries the closed intent set claims. Computed ONCE per resolver, not per
+  // field: typeQuestion() runs a handful of regexes per entry and the bank is
+  // re-scanned for every field otherwise.
+  const untypedBank = bank.filter((a) => !isTypedQuestion(a.question))
 
+  // The plain token-similarity tier, for labels the closed set does not claim.
+  //
+  // THE FENCE (item 2.1): it sees `untypedBank`, never the whole bank. A fact
+  // the intent set has typed — a work-authorization answer, a sponsorship
+  // answer, an age attestation — can only ever be reached through
+  // resolveIntent(), where it arrives with a polarity attached. Token overlap
+  // gets no vote on a typed fact in either direction: a typed LABEL never
+  // reaches this function (see the intent pass in resolveField), and a typed
+  // ENTRY is not in the list this function ranks. Without the second fence the
+  // bug walks back in through the side door — an untyped label like "Visa
+  // status" fuzzy-matching a banked sponsorship answer is the same
+  // string-copy with the same failure mode.
+  function bestAnswer(label) {
     let best = null
-    for (const a of bank) {
-      // Never let a question about one concept be answered from another.
-      if (want && conceptOf(a.question) && conceptOf(a.question) !== want)
-        continue
+    for (const a of untypedBank) {
       const score = similarity(label, a.question)
       if (!best || score > best.score) best = { ...a, score }
     }
@@ -820,28 +824,73 @@ export function createResolver(profile = {}, answersDoc = {}) {
       )
     }
 
+    // ---- TYPED INTENTS (item 2.1) ----------------------------------------
+    // The load-bearing property is that this branch RETURNS on every path.
+    // A label the closed set claims never falls through to token similarity,
+    // whatever the intent decided — answer, defer for unestablished polarity,
+    // defer for an empty fact base, defer because it is an agreement. That is
+    // what makes the wrong-truth-value outcome unreachable rather than
+    // merely unlikely: there is no second opinion to fall back on, so no
+    // scoring threshold can be tuned until a string copy wins again.
+    //
+    // The value is a BOOLEAN by the time it gets here. It is rendered as
+    // "Yes"/"No" and put through the same matchOption() grounding the rest of
+    // this file uses, so a form offering "No, I will not require sponsorship"
+    // still resolves and a form offering "Yes, 5+ years professionally" still
+    // does not (AUDIT C1) — but the prefix bug cannot originate on this path
+    // at all, because a boolean has no prefix to extend.
+    const intent = resolveIntent(label, bank)
+    if (intent) {
+      const optNote =
+        opts && opts.length ? `; options: ${opts.join(" | ")}` : ""
+      if (intent.decision === "answer") {
+        const m = matchOption(intent.value ? "Yes" : "No", opts, {
+          requireOptions,
+          label,
+        })
+        // The `a-NNN@` prefix is what fill-plan.mjs's BANK_ID_RE keys on, so
+        // an assertion-class entry still routes through the datum/assertion
+        // gate and still becomes a CONFIRM defer. A typed intent must not be
+        // a way around that gate — it stamps the SAME shape of source a fuzzy
+        // or exact bank hit stamps.
+        const src = intent.provenance.id
+          ? `${intent.provenance.id}@intent`
+          : `intent:${intent.concept}`
+        return push(
+          m.needsChoice ? "NEEDS-CHOICE" : "OK",
+          src,
+          m.value,
+          noteFor(m) ?? describeIntent(intent),
+        )
+      }
+      // A defer with a related banked fact is NEEDS-CHOICE (the user already
+      // told the fact base something adjacent — surface it, refuse to copy
+      // it); a defer with nothing behind it is UNKNOWN, which is what routes
+      // the question into pending-questions.mjs to be asked once and saved.
+      if (intent.provenance.source === "bank") {
+        return push(
+          "NEEDS-CHOICE",
+          `${intent.provenance.id}@intent`,
+          "",
+          `${intent.reason} — confirm by hand: "${intent.provenance.question}" -> ${intent.provenance.answer}${optNote}`,
+        )
+      }
+      return push(
+        "UNKNOWN",
+        `intent:${intent.concept}`,
+        "",
+        `${intent.reason}${optNote}`,
+      )
+    }
+
     const best = bestAnswer(label)
-    const mismatch = polarityMismatch(label, best)
-    if (best && best.score >= 0.7 && !mismatch) {
+    if (best && best.score >= 0.7) {
       const m = matchOption(best.answer, opts, { requireOptions, label })
       return push(
         m.needsChoice ? "NEEDS-CHOICE" : "OK",
         `${best.id}@${best.score.toFixed(2)}`,
         m.value,
         noteFor(m),
-      )
-    }
-    if (mismatch && best.score >= 0.45) {
-      // Prefer deferring over auto-inverting (see the polarity guard above):
-      // one extra question to the user beats a silently flipped
-      // work-authorization answer. Leave value blank rather than surface the
-      // untrustworthy literal.
-      return push(
-        "NEEDS-CHOICE",
-        `${best.id}@${best.score.toFixed(2)}`,
-        "",
-        `bank question may be opposite polarity — confirm by hand: "${best.question}" -> ${best.answer}` +
-          (opts && opts.length ? `; options: ${opts.join(" | ")}` : ""),
       )
     }
     if (best && best.score >= 0.45) {
@@ -975,19 +1024,45 @@ export function createResolver(profile = {}, answersDoc = {}) {
 // resolving one batch of fields against it. `fill-plan.mjs`'s own
 // `resolveFields` wraps this for its callers (which include
 // `pending-questions.mjs` and, transitively, `automatability.mjs`).
+// DEFAULT FACT-BASE PATHS. `factBasePath` and not a destructuring default,
+// and that is the whole fix for QA-0.12-1 — a live defect since 147eb68
+// (2026-07-30), found by qa's 0.12 measurement and confirmed here against
+// jobs/coinbase-software-engineer/scan-p1.json: 15 OK / 3 CONFIRM / 8 UNKNOWN
+// with the paths omitted, versus 2 OK / 31 UNKNOWN with them passed as `null`.
+//
+// A DESTRUCTURING DEFAULT FIRES ONLY ON `undefined`. All three callers
+// (fill-plan.mjs's resolveFields, pending-questions.mjs, and
+// automatability.mjs's batched classify) build their options object from a
+// CLI flag helper that returns `null` when the flag is absent, so every
+// documented no-flag invocation — `node scripts/apply/fill-plan.mjs <slug>` —
+// passed `profileFile: null`. `fs.existsSync(null)` does not throw on Node 24;
+// it returns false and emits DEP0187. So both files "did not exist", both
+// loaded as `{}`, and the resolver ran against an EMPTY FACT BASE, resolving
+// essentially everything UNKNOWN. The tier classifier has been reading the
+// same empty base, which is a very plausible part of why green was never
+// reachable.
+//
+// WHY COERCE RATHER THAN THROW. The failure mode worth designing out is that
+// it fails OPEN into "I know nothing about the user" — silently, with every
+// existing test still green, because a resolver that answers nothing answers
+// nothing wrongly either. Throwing would also be loud, but "no path given"
+// genuinely does mean "use the standard location" at all three call sites and
+// on the CLI; making that the ONE meaning removes the ambiguity rather than
+// moving it. What must never again mean "there is no fact base" is the
+// ABSENCE of an argument. A path that is given and does not exist still
+// yields `{}` — that case is a real answer to a real question ("this fixture
+// has no bank"), and tests depend on it.
+const factBasePath = (given, dflt) =>
+  typeof given === "string" && given.trim() ? given : dflt
+
 export function resolveFieldsFromFiles(
   fields,
-  {
-    profileFile = "profile/profile.yaml",
-    answersFile = "profile/answers.yaml",
-  } = {},
+  { profileFile, answersFile } = {},
 ) {
-  const profile = fs.existsSync(profileFile)
-    ? (loadYamlFile(profileFile) ?? {})
-    : {}
-  const answersDoc = fs.existsSync(answersFile)
-    ? (loadYamlFile(answersFile) ?? {})
-    : {}
+  const pFile = factBasePath(profileFile, "profile/profile.yaml")
+  const aFile = factBasePath(answersFile, "profile/answers.yaml")
+  const profile = fs.existsSync(pFile) ? (loadYamlFile(pFile) ?? {}) : {}
+  const answersDoc = fs.existsSync(aFile) ? (loadYamlFile(aFile) ?? {}) : {}
   return createResolver(profile, answersDoc).resolveAll(fields)
 }
 

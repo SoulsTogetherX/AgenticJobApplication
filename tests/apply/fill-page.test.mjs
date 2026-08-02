@@ -799,6 +799,11 @@ test("the report says which file went to which input, not just how many", async 
   // read back off the page rather than restated from the plan.
   const page = domPage(GREENHOUSE_HTML)
   const out = await fillPage(page, uploadPlan())
+  // `settled` is part of the record deliberately: it says whether the wait
+  // after setInputFiles returned on the observable remount or fell through to
+  // its 1s ceiling. `timeout` means the board never swapped the input, so the
+  // upload is less certain than `attached: true` alone would suggest — which
+  // is exactly the kind of thing this record exists to be able to say.
   assert.deepEqual(plain(out.uploads), [
     {
       k: "f1",
@@ -807,6 +812,7 @@ test("the report says which file went to which input, not just how many", async 
       match: "resume|\\bcv\\b",
       how: "label",
       target: "resume",
+      settled: "detached",
       attached: true,
       seen: "attached",
       seenFile: "resume.pdf",
@@ -818,6 +824,7 @@ test("the report says which file went to which input, not just how many", async 
       match: "cover letter",
       how: "label",
       target: "cover_letter",
+      settled: "detached",
       attached: true,
       seen: "attached",
       seenFile: "cover-letter.pdf",
@@ -2863,25 +2870,54 @@ test("MEASURED: the post-upload wait tracks the remount, not a flat second", asy
       return { out, ms: Date.now() - t0 }
     })
 
+  // THE MECHANISM IS THE ASSERTION, and the wall clock is only corroboration.
+  // This test used to compare two wall-clock samples (`ashby.ms > fast.ms`,
+  // `fast.ms < 1000`) and went intermittently red because of it: 2 of 6
+  // full-gate runs on identical committed code on 2026-08-02, while passing
+  // 3/3 in isolation. Contention inflates a sample, so either bound can fail
+  // for reasons that have nothing to do with the code under test — and an
+  // intermittently red gate teaches people to re-run until green, which is
+  // worse than the flake.
+  //
+  // Loosening the bounds was the wrong repair. The claim worth protecting is a
+  // LATENCY claim (a 120ms board costs 120ms, not a flat second) and a bound
+  // slack enough never to fail would no longer express it. So the claim is
+  // asserted where it is actually decided instead: `settled` says whether the
+  // wait returned on the observable detach or fell through to the 1s ceiling.
+  // If both remount speeds resolve on the detach, the cost tracked the remount
+  // by construction — no timing needed, and nothing for load to perturb.
   const fast = await run(120)
   const ashby = await run(700)
   assert.equal(fast.out.ok, 1, JSON.stringify(fast.out.failures))
   assert.equal(ashby.out.ok, 1, JSON.stringify(ashby.out.failures))
-  say("upload, board remounts in 120ms", fast.ms, "old cost: 1000 ms flat")
+  assert.equal(
+    fast.out.uploads[0].settled,
+    "detached",
+    "a 120ms remount must resolve the wait on the DETACH, not the 1s ceiling — " +
+      "a flat sleep cannot report this",
+  )
+  assert.equal(
+    ashby.out.uploads[0].settled,
+    "detached",
+    "a 700ms Ashby-speed remount must still resolve on the detach, inside the ceiling",
+  )
+
+  // The latency payoff, kept but made robust. Contention can only ever inflate
+  // a measurement, never deflate it below the true cost, so the MINIMUM of
+  // several samples is the honest estimate and is what the bound is applied
+  // to. A flat 1000ms sleep would fail this at every sample, so best-of-N
+  // costs nothing in sensitivity to the regression it guards.
+  const samples = [fast.ms, (await run(120)).ms, (await run(120)).ms]
+  const best = Math.min(...samples)
+  say("upload, board remounts in 120ms", best, "old cost: 1000 ms flat")
   say(
     "upload, board remounts in 700ms (Ashby)",
     ashby.ms,
     "old cost: 1000 ms flat",
   )
-  // The condition is real: a slower remount costs strictly more, which a flat
-  // sleep could not express. Both stay under the ceiling.
   assert.ok(
-    ashby.ms > fast.ms,
-    `the wait must track the remount; fast=${fast.ms} ashby=${ashby.ms}`,
-  )
-  assert.ok(
-    fast.ms < 1000,
-    `a 120ms remount must not cost a second: ${fast.ms}`,
+    best < 1000,
+    `a 120ms remount must not cost a second: best=${best} of ${JSON.stringify(samples)}`,
   )
 })
 

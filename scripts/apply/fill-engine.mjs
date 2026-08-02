@@ -657,10 +657,22 @@ export default async function fillPage(page, plan) {
       // 1s ceiling, but a board that remounts in 150ms now costs 150ms.
       // (Ashby's LATER, asynchronous re-parse remount is a separate event and
       // is handled where it actually lands — the stale-locator retry below.)
-      await page
+      //
+      // `settled` records WHICH of the two ways this returned, and it exists
+      // because the alternative was a test that raced the clock. The claim
+      // being protected is "this is a condition with a ceiling, not a flat
+      // cost", and the only honest evidence for it is whether the wait
+      // resolved on the detach or fell through to the timeout — a wall-clock
+      // sample cannot tell those apart under load, which is how the test that
+      // used to guard this went intermittently red (2 of 6 full-gate runs,
+      // 2026-08-02, green 3/3 in isolation). It is also worth reporting on its
+      // own: `timeout` means the board never swapped the input, so the upload
+      // is less certain than an `ok` count alone would suggest.
+      record.settled = await page
         .locator('[data-ajup="' + tag + '"]')
         .waitFor({ state: "detached", timeout: 1000 })
-        .catch(() => {})
+        .then(() => "detached")
+        .catch(() => "timeout")
       record.attached = true
       out.ok++
     } catch (e) {

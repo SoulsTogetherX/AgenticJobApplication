@@ -21,13 +21,39 @@
 // that asymmetry is why applications keep a durable export and leads do not.
 // Use `--export <file>` to take a point-in-time snapshot when you want one.
 //
-// The `documents` table is the exception to all of this and is never touched
-// here. An archived workspace has no on-disk source once its directory is gone,
-// so there is nothing to rebuild it FROM — re-running this must not be able to
-// clear it. Back it up by copying jobs/leads.db itself.
+// TWO TABLES ARE EXCEPTIONS TO ALL OF THIS, for opposite reasons.
+//
+// `documents` HAS NO ON-DISK SOURCE AND IS NEVER TOUCHED HERE. Every other
+// table is re-imported from a file that still exists: leads from a snapshot,
+// applications from the YAML export. An archived workspace is different —
+// archive.mjs folds jobs/<slug>/ into this table and then REMOVES the
+// directory, so once that has happened the row is the only copy of the file's
+// bytes. There is nothing to rebuild it from, and a "rebuild" that ran over it
+// could only ever empty it. Backing it up means copying jobs/leads.db itself;
+// the schema is flat, with no version table and no migration chain.
+//
+// `auto_queue` HAS NO ON-DISK SOURCE EITHER, AND THAT MEANS SOMETHING ELSE. It
+// is RUN STATE, not user data: which slugs an unattended run had claimed,
+// planned, or finished. Nothing outside the database ever held it, so
+// "rebuilding" it cannot mean re-importing — inventing a source for it would be
+// inventing the state. What it honestly means here is two things:
+//
+//   * ensure the table EXISTS with the current shape, so a database built
+//     before it was added gains it (openDb's schema pass does this, and this
+//     script reports the state breakdown so the result is visible); and
+//   * with `--reset-queue`, clear the state a dead process left behind, so the
+//     next run starts from a queue nobody is holding.
+//
+// --reset-queue deletes only rows in states where NO CLICK WAS EVER ISSUED
+// (queued/claimed/planned/authorized) plus finished ones, and it REFUSES while
+// any row is 'attempted'. An attempted row means a click may already have
+// reached an employer; erasing it would silently disarm the orphan-attempt
+// brake, which is the one thing standing between a crash and a second
+// application to the same company. auto_submissions is never touched by this
+// script at all — that is the ledger of record.
 //
 // Usage: node scripts/maintenance/migrate.mjs [--dry-run] [--db <path>]
-//        [--leads-json <path>] [--applications <path>]
+//        [--leads-json <path>] [--applications <path>] [--reset-queue]
 //        node scripts/maintenance/migrate.mjs --export <file>   # snapshot leads
 import fs from "node:fs"
 import path from "node:path"
@@ -40,6 +66,8 @@ import {
   setLeadKeywords,
   rowToLead,
   readLeadStore,
+  autoQueueCounts,
+  readStrandedAutoJobs,
   DB_PATH,
   APPLICATIONS_PATH,
 } from "../lib/db.mjs"
@@ -67,6 +95,7 @@ const dbFile = flag(args, "--db", DB_PATH)
 const leadsJson = flag(args, "--leads-json", null)
 const appsYaml = flag(args, "--applications", APPLICATIONS_PATH)
 const dryRun = args.includes("--dry-run")
+const resetQueue = args.includes("--reset-queue")
 
 // Point-in-time snapshot of the leads table, on demand. Not written on every
 // change: at ~3 KB per lead that would reintroduce exactly the whole-file
@@ -144,6 +173,29 @@ try {
     throw e
   }
 
+  // auto_queue: run state. openDb has already created the table if this
+  // database predates it, which is the whole of the "rebuild" that is honest
+  // for a table with no on-disk source. The rest is reporting, and — only when
+  // asked — clearing what a dead process left holding the queue.
+  const queueBefore = autoQueueCounts(db)
+  const queueTotal = Object.values(queueBefore).reduce((a, b) => a + b, 0)
+  let queueCleared = 0
+  if (resetQueue) {
+    const stranded = readStrandedAutoJobs(db)
+    if (stranded.length)
+      throw new Error(
+        `--reset-queue refused: ${stranded.length} job(s) are 'attempted' ` +
+          `(${stranded
+            .slice(0, 5)
+            .map((r) => r.slug)
+            .join(", ")}) — a click may already have reached the employer. ` +
+          `Check each page, resolve it in auto_submissions, then re-run.`,
+      )
+    queueCleared = db
+      .prepare("DELETE FROM auto_queue WHERE state != 'attempted'")
+      .run().changes
+  }
+
   const appRows = db.prepare("SELECT doc FROM applications").all()
   const sortKeys = (o) =>
     Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)))
@@ -194,7 +246,20 @@ try {
       `${appRows.length} applications${bootstrapped ? " (bootstrapped from yaml)" : ""}, ${kwTotal} keyword links`,
   )
   console.log(
+    `auto_queue:   ${queueTotal} row(s) of run state ` +
+      `(${
+        Object.entries(queueBefore)
+          .filter(([, n]) => n > 0)
+          .map(([s, n]) => `${s}=${n}`)
+          .join(", ") || "empty"
+      })` +
+      (resetQueue ? `, ${queueCleared} cleared by --reset-queue` : ""),
+  )
+  console.log(
     "verified: applications match the YAML and new records round-trip",
+  )
+  console.log(
+    "documents and auto_submissions untouched — neither has an on-disk source",
   )
   console.log("sources left untouched; delete the .db to roll back")
 } catch (e) {

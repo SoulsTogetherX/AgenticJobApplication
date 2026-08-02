@@ -416,3 +416,89 @@ test("board_stats accumulates history", (t) => {
   )
   db.close()
 })
+
+// --- updateApplication under concurrency (autonomy phase 1, item 1.5) ---------
+//
+// The read-modify-write here is the one place in the store where two callers
+// can lose a whole patch: a manual outcome update made while a multi-hour
+// unattended run is writing. BEGIN IMMEDIATE takes the write lock at BEGIN
+// rather than at the first write, so the second caller waits and then merges
+// onto the FIRST caller's result instead of onto a stale base.
+
+test("updateApplication leaves no transaction open, on every path", (t) => {
+  const db = openDb(tmpDb(t))
+  upsertApplications(db, APPS)
+
+  assert.equal(updateApplication(db, "b-co", { status: "interview" }), 1)
+  assert.equal(db.isTransaction, false, "after a successful merge")
+
+  assert.equal(updateApplication(db, "nobody", { status: "x" }), 0)
+  assert.equal(db.isTransaction, false, "after a miss")
+
+  // A patch that cannot be serialised fails INSIDE the transaction.
+  const cyclic = {}
+  cyclic.self = cyclic
+  assert.throws(() => updateApplication(db, "b-co", { cyclic }))
+  assert.equal(
+    db.isTransaction,
+    false,
+    "a throw must roll back, or every later write in the process fails",
+  )
+  assert.equal(
+    JSON.parse(
+      db.prepare("SELECT doc FROM applications WHERE slug='b-co'").get().doc,
+    ).status,
+    "interview",
+    "and it must not have half-written the row",
+  )
+  db.close()
+})
+
+test("two concurrent writers both keep their patch", async (t) => {
+  // Real OS-level concurrency, not a simulation: two threads, two connections,
+  // one row, interleaved read-modify-writes. Under an unguarded (or DEFERRED)
+  // transaction the two read the same base and the later write silently drops
+  // the earlier patch, which is exactly the manual-outcome-update-during-a-run
+  // failure. Under BEGIN IMMEDIATE every patch composes.
+  const { Worker } = await import("node:worker_threads")
+  const file = tmpDb(t)
+  const db = openDb(file)
+  upsertApplications(db, [
+    { slug: "race-co", company: "Race Co", status: "applied" },
+  ])
+  db.close()
+
+  const dbUrl = pathToFileURL(path.join(ROOT, "scripts", "lib", "db.mjs")).href
+  const body = `
+    import { workerData, parentPort } from "node:worker_threads"
+    const { openDb, updateApplication } = await import(${JSON.stringify(dbUrl)})
+    const db = openDb(workerData.file)
+    try {
+      for (let i = 0; i < workerData.rounds; i++)
+        updateApplication(db, "race-co", { [workerData.key]: i })
+    } finally {
+      db.close()
+    }
+    parentPort.postMessage("done")
+  `
+  const run = (key) =>
+    new Promise((resolve, reject) => {
+      const w = new Worker(body, {
+        eval: true,
+        workerData: { file, key, rounds: 25 },
+      })
+      w.on("message", resolve)
+      w.on("error", reject)
+    })
+  await Promise.all([run("from_a"), run("from_b")])
+
+  const check = openDb(file)
+  const got = JSON.parse(
+    check.prepare("SELECT doc FROM applications WHERE slug='race-co'").get()
+      .doc,
+  )
+  check.close()
+  assert.equal(got.from_a, 24, "worker A's last patch survived")
+  assert.equal(got.from_b, 24, "worker B's last patch survived")
+  assert.equal(got.company, "Race Co", "and neither dropped the base record")
+})

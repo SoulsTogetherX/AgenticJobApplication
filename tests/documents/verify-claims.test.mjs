@@ -244,3 +244,164 @@ test("usage errors exit 2", () => {
   )
   assert.equal(res.status, 2)
 })
+
+// --- the durable verdict (autonomy phase 1, item 1.3) -------------------------
+//
+// Before this, verification left no trace and "verified" degraded to "a
+// resume.md exists". These tests are about the ROW, and about the two ways it
+// stops being evidence.
+
+function workspace(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aj-vc-"))
+  t.after(() => {
+    try {
+      fs.rmSync(root, { recursive: true, force: true })
+    } catch {
+      /* a leaked Windows lock must not fail a passing test */
+    }
+  })
+  const jobsDir = path.join(root, "jobs")
+  const slug = "acme-dev"
+  fs.mkdirSync(path.join(jobsDir, slug), { recursive: true })
+  const resume = path.join(jobsDir, slug, "resume.md")
+  fs.copyFileSync(path.join(FIX, "good-resume.md"), resume)
+  return { root, jobsDir, slug, resume, db: path.join(root, "leads.db") }
+}
+
+function verifyIn(w, file, extra = []) {
+  const res = spawnSync(
+    process.execPath,
+    [
+      path.join(ROOT, "scripts", "documents", "verify-claims.mjs"),
+      "resume",
+      file,
+      "--profile",
+      path.join(FIX, "profile.yaml"),
+      "--answers",
+      path.join(FIX, "answers.yaml"),
+      "--jobs-dir",
+      w.jobsDir,
+      "--db",
+      w.db,
+      ...extra,
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  )
+  return {
+    status: res.status,
+    report: JSON.parse(res.stdout),
+    stderr: res.stderr,
+  }
+}
+
+test("verifying a document in a job workspace writes a durable passing row", async (t) => {
+  const w = workspace(t)
+  const { status, report } = verifyIn(w, w.resume)
+  assert.equal(status, 0)
+  assert.equal(report.recorded.slug, "acme-dev")
+
+  const { openDb, readVerifications, hasPassingVerification } =
+    await import("../../scripts/lib/db.mjs")
+  const { factBaseSha256, sha256File } =
+    await import("../../scripts/lib/verification.mjs")
+  const db = openDb(w.db)
+  try {
+    const rows = readVerifications(db, "acme-dev")
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].verdict, "pass")
+    assert.equal(rows[0].mode, "resume")
+    assert.equal(rows[0].doc_sha256, sha256File(w.resume))
+    assert.ok(rows[0].verified_at)
+    assert.equal(
+      hasPassingVerification(db, {
+        slug: "acme-dev",
+        doc_sha256: sha256File(w.resume),
+        profile_sha256: factBaseSha256({
+          profilePath: path.join(FIX, "profile.yaml"),
+          answersPath: path.join(FIX, "answers.yaml"),
+        }),
+      }),
+      true,
+      "the writer and the reader must compute profile_sha256 identically",
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test("a FAILING verification is recorded as a failure, never as evidence", async (t) => {
+  const w = workspace(t)
+  fs.copyFileSync(path.join(FIX, "bad-unknown-tech.md"), w.resume)
+  const { status, report } = verifyIn(w, w.resume)
+  assert.equal(status, 1)
+  assert.equal(report.recorded.slug, "acme-dev")
+
+  const { openDb, readVerifications, hasPassingVerification } =
+    await import("../../scripts/lib/db.mjs")
+  const { sha256File, factBaseSha256 } =
+    await import("../../scripts/lib/verification.mjs")
+  const db = openDb(w.db)
+  try {
+    assert.equal(readVerifications(db, "acme-dev")[0].verdict, "fail")
+    assert.equal(
+      hasPassingVerification(db, {
+        slug: "acme-dev",
+        doc_sha256: sha256File(w.resume),
+        profile_sha256: factBaseSha256({
+          profilePath: path.join(FIX, "profile.yaml"),
+          answersPath: path.join(FIX, "answers.yaml"),
+        }),
+      }),
+      false,
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test("verifying a file outside any job workspace writes nothing", async (t) => {
+  const w = workspace(t)
+  const scratch = path.join(w.root, "scratch-resume.md")
+  fs.copyFileSync(path.join(FIX, "good-resume.md"), scratch)
+  const { status, report } = verifyIn(w, scratch)
+  assert.equal(status, 0)
+  assert.equal(report.recorded, undefined, "no slug, no row")
+  assert.equal(
+    fs.existsSync(w.db),
+    false,
+    "and no store is created just to say nothing",
+  )
+})
+
+test("--no-record verifies without touching the store", (t) => {
+  const w = workspace(t)
+  const { status, report } = verifyIn(w, w.resume, ["--no-record"])
+  assert.equal(status, 0)
+  assert.equal(report.ok, true)
+  assert.equal(report.recorded, undefined)
+  assert.equal(fs.existsSync(w.db), false)
+})
+
+test("re-verifying the same bytes updates the row rather than piling up rows", async (t) => {
+  const w = workspace(t)
+  verifyIn(w, w.resume)
+  verifyIn(w, w.resume)
+  const { openDb, readVerifications } = await import("../../scripts/lib/db.mjs")
+  const db = openDb(w.db)
+  try {
+    assert.equal(readVerifications(db, "acme-dev").length, 1)
+  } finally {
+    db.close()
+  }
+})
+
+test("a recording failure does not change the verdict verify-claims reports", (t) => {
+  const w = workspace(t)
+  // A directory where the database file should be: openDb cannot write there.
+  fs.mkdirSync(w.db, { recursive: true })
+  const { status, report, stderr } = verifyIn(w, w.resume)
+  assert.equal(status, 0, "hard rule 4's gate is the verdict, not the ledger")
+  assert.equal(report.ok, true)
+  assert.ok(report.recorded.error, "and the problem is stated, not swallowed")
+  assert.match(stderr, /verification not recorded/)
+})

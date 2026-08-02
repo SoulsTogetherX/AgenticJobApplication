@@ -295,8 +295,12 @@ export function shapeBlockers(fp, entry, resolvedByKey, { now, maxAgeDays }) {
  *   cache             jobs/.field-cache.json, already loaded
  *   resolvedByKey     Map from the ONE batched resolveFields() call
  *   profileApproved   profile.yaml meta.approved_by_user
- *   hasVerifiedResume boolean for this lead (a verified tailored resume exists,
- *                     or reuse-check cleared a sibling's)
+ *   hasVerifiedResume boolean for this lead. It means a PASSING verify-claims
+ *                     ROW exists whose doc_sha256 matches the resume on disk
+ *                     and whose profile_sha256 matches the current fact base
+ *                     (lib/verification.mjs). It has never meant "a resume.md
+ *                     is present", and a caller that computes it that way has
+ *                     reintroduced the hole this parameter exists to close.
  *   alreadyApplied    boolean
  *   stages            the result of evaluateStages(job, ctx, ["l0","l1","l3"])
  *   now, maxAgeDays
@@ -346,7 +350,7 @@ export function classify(lead, ctx = {}) {
   if (!hasVerifiedResume) {
     return tier(
       "blocked",
-      "no verify-claims-passed resume for this posting, and no cleared reuse",
+      "no passing verify-claims row matching the resume on disk and the current fact base",
       evidence,
     )
   }
@@ -543,13 +547,15 @@ async function main() {
   // stays importable (and testable) without pulling in the whole leads
   // pipeline, its YAML limits file, or its network-capable modules.
   const [
-    { readLeadStore, openDb, readApplications },
+    { readLeadStore, openDb, readApplications, hasPassingVerification },
     { evaluateStages },
     { scoreFit, isEvaluable },
+    { verifiedResumeUrls },
   ] = await Promise.all([
     import("../lib/db.mjs"),
     import("../leads/stages.mjs"),
     import("../leads/fit.mjs"),
+    import("../lib/verification.mjs"),
   ])
   const { loadYamlFile } = await import("../lib/lib.mjs")
   const { extractTech } = await import("../lib/keywords.mjs")
@@ -573,24 +579,30 @@ async function main() {
   const cache = loadCache(cacheFile)
   const now = new Date()
 
-  // A verified resume is evidenced by the job workspace: verify-claims writes
-  // nothing durable, so the check is "does a tailored resume exist for a slug
-  // whose job.json points at this lead". Deliberately conservative — an
-  // unmatched lead is `blocked`, which is visible, never hidden.
-  const verified = new Map()
-  if (fs.existsSync(jobsDir)) {
-    for (const e of fs.readdirSync(jobsDir, { withFileTypes: true })) {
-      if (!e.isDirectory()) continue
-      const jobFile = path.join(jobsDir, e.name, "job.json")
-      const resume = path.join(jobsDir, e.name, "resume.md")
-      if (!fs.existsSync(jobFile) || !fs.existsSync(resume)) continue
-      try {
-        const job = JSON.parse(fs.readFileSync(jobFile, "utf8"))
-        const u = job.apply_url || job.url || job.source_url
-        if (u) verified.set(u, e.name)
-      } catch {
-        /* an unreadable workspace simply does not vouch for anything */
-      }
+  // A verified resume is evidenced by a VERIFICATION ROW, and by nothing else.
+  //
+  // What used to be here walked jobs/*/ and treated any workspace holding a
+  // resume.md as verified, because verify-claims wrote nothing durable. That
+  // made every tailored draft "verified" whether it had ever been checked or
+  // not — a hard rule 1 hole reachable by accident, on the path that decides
+  // whether an application may be sent unattended. It is deleted, not softened:
+  // there is no branch below that falls back to file existence.
+  //
+  // verifiedResumeUrls walks the ROWS instead, and a row only counts while the
+  // resume.md on disk still hashes to the bytes that were checked AND the fact
+  // base still hashes to the one they were checked against. A workspace with no
+  // row is never reached — which is exactly the case that used to pass. An
+  // unmatched lead is `blocked`, which is visible to the user, never hidden.
+  let verified = new Map()
+  {
+    const db = openDb()
+    try {
+      verified = verifiedResumeUrls(db, {
+        jobsDir,
+        hasPassing: hasPassingVerification,
+      })
+    } finally {
+      db.close()
     }
   }
 

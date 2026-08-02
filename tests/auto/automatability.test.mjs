@@ -141,7 +141,7 @@ test("already applied blocks, and says so", () => {
 test("no verified resume blocks — the runner cannot tailor", () => {
   const r = classify(lead(), { ...OK_CTX, hasVerifiedResume: false })
   assert.equal(r.tier, "blocked")
-  assert.match(r.reason, /verify-claims-passed resume/)
+  assert.match(r.reason, /no passing verify-claims row/)
 })
 
 test("an L3 risk rejection blocks and names the stage that decided", () => {
@@ -922,4 +922,56 @@ test("fit ordering never changes a TIER — an unreadable posting is still shown
     rows.map((r) => r.id),
     ["green-read", "green-unreadable", "amber-good"],
   )
+})
+
+// --- 1.4: the file-existence heuristic is gone, not softened ------------------
+
+test("the CLI no longer treats a resume.md on disk as evidence of verification", () => {
+  // What was here walked jobs/*/ and made any workspace holding a resume.md
+  // count as verified, because verify-claims wrote nothing durable. This is a
+  // SOURCE assertion, and it is honest about its limits: it proves the deleted
+  // code is not sitting there again, not that the replacement is correct. That
+  // half is tests/lib/verification.test.mjs's, which drives the real query.
+  // Comments stripped: the header still DESCRIBES the deleted heuristic on
+  // purpose, and a reader who deletes that explanation loses the reason.
+  const code = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(
+    /^[ 	]*\/\/.*$/gm,
+    "",
+  )
+  assert.doesNotMatch(
+    code,
+    /resume\.md/,
+    "no path in this module reads a tailored resume off disk any more",
+  )
+  assert.doesNotMatch(
+    code,
+    /readdirSync|existsSync/,
+    "and it does not enumerate job workspaces, or test one for a file",
+  )
+  assert.match(
+    SOURCE,
+    /verifiedResumeUrls/,
+    "the replacement is the verification-row query",
+  )
+})
+
+test("nothing in the tier path reads the model-written resume_status", () => {
+  // context.json's resume_status is written by a MODEL summarising its own
+  // work. It is fine as a progress note for prep-queue; it is not evidence, and
+  // a tier that read it would let the thing being checked declare itself
+  // checked.
+  assert.doesNotMatch(SOURCE, /resume_status/)
+  assert.doesNotMatch(SOURCE, /context\.json/)
+})
+
+test("classify ignores any resume_status handed to it, whatever it says", () => {
+  const ctx = { ...OK_CTX, hasVerifiedResume: false }
+  for (const claim of ["verified", "approved", "rendered", true]) {
+    const r = classify(
+      { ...lead(), resume_status: claim },
+      { ...ctx, resume_status: claim, context: { resume_status: claim } },
+    )
+    assert.equal(r.tier, "blocked", String(claim))
+    assert.match(r.reason, /no passing verify-claims row/)
+  }
 })

@@ -866,10 +866,12 @@ test("the company cap itemises every source it counted", () => {
 
 // --- the ledger's own shape --------------------------------------------------
 
-test("an auto_submissions table from before the outcome column is migrated, not rebuilt", () => {
-  // CREATE TABLE IF NOT EXISTS never widens an existing table, and these rows
-  // are submitted applications: there is no repair here that is allowed to lose
-  // one.
+test("an auto_submissions table from an older shape is repaired, losing nothing", () => {
+  // CREATE TABLE IF NOT EXISTS never widens an existing table and never re-keys
+  // one, and these rows are submitted applications: there is no repair here
+  // that is allowed to lose one. The added columns arrive by ADD COLUMN; the
+  // primary key move (run_id, slug) -> (slug, mode) needs a rebuild, and
+  // tests/auto/submissions.test.mjs covers the collision cases that creates.
   const s = sandbox()
   fs.mkdirSync(s.jobsDir, { recursive: true })
   const raw = new DatabaseSync(s.dbFile)
@@ -1006,4 +1008,96 @@ test("a hostile string in a STOP reason does not reach the STOP file", () => {
   const stopText = fs.readFileSync(s.stopPath, "utf8")
   assert.equal(INSTRUCTION_SHAPED_JSONL.test(stopText), false, stopText)
   assert.match(stopText, /post-submit page was not a confirmation/)
+})
+
+// --- the ledger refuses a slug it has already claimed -------------------------
+
+test("beginSubmit refuses a slug the ledger already holds, and stops the runner", () => {
+  const s = sandbox()
+  const first = startRun({ mode: "live", ...s.opts })
+  attempt(first, s, { slug: "one", url: "https://board.test/apply/one" })
+  first.recordSubmission(fullSubmission("one"))
+  fs.rmSync(s.stopPath, { force: true })
+
+  // A LATER RUN, which under the old (run_id, slug) key would simply have
+  // written a second row and clicked again.
+  const second = startRun({ mode: "live", ...s.opts })
+  const token = tokenFor(s, { slug: "one", mode: "live" })
+  assert.throws(
+    () =>
+      second.beginSubmit(
+        { slug: "one", company: "Acme" },
+        PLAN_SHA,
+        "https://board.test/apply/one",
+        token,
+      ),
+    StopError,
+  )
+  const stop = readStop({ stopPath: s.stopPath })
+  assert.match(stop, /already holds a live row for "one"/)
+  assert.match(stop, /that application may already exist/)
+
+  const db = openDb(s.dbFile)
+  try {
+    const rows = db.prepare("SELECT * FROM auto_submissions").all()
+    assert.equal(rows.length, 1, "and no second row was written")
+    assert.equal(rows[0].run_id, first.id, "the row still belongs to run one")
+    assert.equal(rows[0].outcome, "submitted")
+  } finally {
+    db.close()
+  }
+  const ev = lines(second.jsonl).find((e) => e.t === "submit.refused")
+  assert.equal(ev.slug, "one")
+})
+
+test("a rehearsal does not consume the live claim for the same slug", () => {
+  // The dry run's whole point is that it exercises the arithmetic the live run
+  // will. It must not also spend the live run's one claim on that posting.
+  const s = sandbox()
+  const rehearsal = startRun({ mode: "dry_run", ...s.opts })
+  attempt(rehearsal, s, { slug: "one" })
+  rehearsal.recordSubmission({
+    ...fullSubmission("one"),
+    confirmation_url: null,
+  })
+  fs.rmSync(s.stopPath, { force: true })
+  rehearsal.finish()
+  fs.rmSync(s.stopPath, { force: true })
+
+  const live = startRun({ mode: "live", ...s.opts })
+  assert.doesNotThrow(() => attempt(live, s, { slug: "one" }))
+
+  const db = openDb(s.dbFile)
+  try {
+    assert.deepEqual(
+      db
+        .prepare("SELECT mode, outcome FROM auto_submissions ORDER BY mode")
+        .all()
+        .map((r) => `${r.mode}:${r.outcome}`),
+      ["dry_run:submitted", "live:attempted"],
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test("an abandoned attempt is an acknowledgement, not a second claim", () => {
+  const s = sandbox()
+  const run = startRun({ mode: "live", ...s.opts })
+  attempt(run, s, { slug: "one" })
+  run.abandonAttempt("one", "navigation failed before the click", {
+    beforeClick: true,
+  })
+  const db = openDb(s.dbFile)
+  try {
+    const rows = db.prepare("SELECT * FROM auto_submissions").all()
+    assert.equal(rows.length, 1, "the claim was resolved, not duplicated")
+    assert.equal(
+      rows[0].outcome,
+      "abandoned",
+      "and the acknowledgement was not dropped by the claim's DO NOTHING",
+    )
+  } finally {
+    db.close()
+  }
 })

@@ -229,22 +229,118 @@ CREATE INDEX IF NOT EXISTS idx_auto_runs_started ON auto_runs(started_at);
 -- ExecutionTimeLimit): the application is in the employer's ATS, and a ledger
 -- that only knows about acknowledged submits would let the next run apply
 -- again. An attempt is a submission until proven otherwise.
+-- THE KEY IS (slug, mode), NOT (run_id, slug), and not (slug) either.
+--
+-- (run_id, slug) was backwards for a row whose job is to be a CLAIM: the same
+-- slug could be submitted once per RUN with no conflict at all, so the ledger
+-- could not refuse a second application to the same posting tomorrow. (slug)
+-- alone is wrong in the other direction: dry-run rows live in this same table
+-- on purpose, so a rehearsal would pre-consume the live claim forever and the
+-- first real run after an enable would find every slug already taken.
+--
+-- mode is NOT NULL DEFAULT 'live' because SQLite permits NULLs in the columns
+-- of a non-INTEGER primary key, and a NULL mode would therefore not conflict
+-- with anything -- an unlimited number of un-refusable duplicate rows. An
+-- unknown mode counts as live everywhere else in this file too; nothing that
+-- reached this ledger without saying it was a rehearsal gets the benefit of
+-- the doubt.
 CREATE TABLE IF NOT EXISTS auto_submissions (
   run_id           TEXT NOT NULL,
   slug             TEXT NOT NULL,
   company          TEXT,
   title            TEXT,
   submitted_at     TEXT NOT NULL,    -- of the ATTEMPT; refreshed when it is acknowledged
-  mode             TEXT,             -- 'dry_run' | 'live'
+  mode             TEXT NOT NULL DEFAULT 'live',   -- 'dry_run' | 'live'
   plan_sha256      TEXT,
   confirmation_url TEXT,
   outcome          TEXT,             -- 'attempted' | 'submitted' | 'abandoned'
   apply_url        TEXT,             -- where the click was aimed, for an orphaned attempt
   doc              TEXT NOT NULL,    -- verify block, consent labels, screenshots
-  PRIMARY KEY (run_id, slug)
+  PRIMARY KEY (slug, mode)
 );
 CREATE INDEX IF NOT EXISTS idx_auto_subs_company ON auto_submissions(company, submitted_at);
 CREATE INDEX IF NOT EXISTS idx_auto_subs_at ON auto_submissions(submitted_at);
+CREATE INDEX IF NOT EXISTS idx_auto_subs_run ON auto_submissions(run_id);
+
+-- The per-application ledger of an unattended run: one row per slug, carrying
+-- the state machine, so a process killed at application 437 of 999 loses
+-- nothing and the next invocation resumes by READING THIS TABLE rather than by
+-- re-deriving what it thinks it already did.
+--
+-- Before this table there was no per-application state anywhere. auto_runs
+-- holds counters (planned/submitted/deferred/failed) and auto_submissions gets
+-- a row only at click time, so "which 436 were done" had no queryable answer.
+--
+-- slug is the primary key, and that is the coordination primitive: the claim is
+-- an INSERT whose conflict clause only fires for a row still in 'queued', so
+-- ZERO CHANGES MEANS ANOTHER WORKER OWNS THIS SLUG AND THIS ONE MUST NOT CLICK.
+-- It is one statement, so two workers racing it cannot both win.
+--
+-- states, in order:
+--   queued -> claimed -> planned -> authorized -> attempted
+--             -> submitted | challenged | deferred | failed
+--
+-- 'attempted' is the one state that is NEVER reclaimed automatically. The click
+-- may already have reached the employer, and re-running it is the carpet-bomb
+-- this whole machinery exists to prevent; releaseStaleAutoClaims deliberately
+-- refuses to touch it and leaves it for a human and the orphan-attempt brake.
+--
+-- origin is carried and not read. It is the exclusion key a later phase needs
+-- (which sweep/board/source put this slug in the queue), and a column added
+-- later cannot be back-filled for the rows that mattered.
+--
+-- reason_kind / reason_detail exist because hard rule 6 forbids a silent skip:
+-- an application the runner declined to send must say WHY, in terms the user
+-- can act on, and a terminal 'deferred' row with no reason is exactly the
+-- silent skip the rule names.
+CREATE TABLE IF NOT EXISTS auto_queue (
+  slug          TEXT PRIMARY KEY,
+  run_id        TEXT,
+  board_key     TEXT,
+  origin        TEXT,
+  state         TEXT NOT NULL,
+  attempt_no    INTEGER NOT NULL DEFAULT 0,
+  plan_sha256   TEXT,
+  reason_kind   TEXT,
+  reason_detail TEXT,
+  claimed_at    TEXT,
+  updated_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auto_queue_state ON auto_queue(state);
+CREATE INDEX IF NOT EXISTS idx_auto_queue_run ON auto_queue(run_id);
+
+-- What verify-claims actually decided, made durable.
+--
+-- Before this table verification wrote nothing: the only evidence that a
+-- document had passed was that a resume.md existed on disk, so every tailored
+-- file was "verified" whether it had ever been checked or not. That is a hard
+-- rule 1 hole reachable by accident, on the path that submits unattended.
+--
+-- THE ROW IS ONLY EVIDENCE WHILE BOTH HASHES STILL HOLD. doc_sha256 pins the
+-- exact bytes that were checked, so editing the resume invalidates its own
+-- verification; profile_sha256 pins the fact base they were checked AGAINST, so
+-- the user editing profile.yaml invalidates every outstanding verification at
+-- once. A resume verified against yesterday's facts is not verified today --
+-- the corpus R3/R4/R5/R6 compared it to no longer exists.
+--
+-- profile_sha256 is computed by ONE function (lib/verification.mjs's
+-- factBaseSha256) used by both the writer and the reader, because a writer and
+-- a reader that hash the fact base differently agree on nothing and fail open.
+--
+-- Keyed by (slug, mode, doc_sha256): re-verifying the same bytes updates in
+-- place, and a second draft of the same document keeps its own row rather than
+-- silently replacing the record of the first.
+CREATE TABLE IF NOT EXISTS verifications (
+  slug           TEXT NOT NULL,
+  doc_sha256     TEXT NOT NULL,
+  mode           TEXT NOT NULL,   -- 'resume' | 'cover-letter'
+  verdict        TEXT NOT NULL,   -- 'pass' | 'fail'
+  profile_sha256 TEXT NOT NULL,
+  verified_at    TEXT NOT NULL,
+  doc            TEXT,            -- the verify-claims report, verbatim
+  PRIMARY KEY (slug, mode, doc_sha256)
+);
+CREATE INDEX IF NOT EXISTS idx_verifications_slug ON verifications(slug, mode);
 `
 
 export function openDb(file = DB_PATH) {
@@ -318,6 +414,22 @@ function healScreens(db) {
 // allowed to lose one. Existing rows get NULL, and readOrphanAttempts treats
 // NULL as "not an attempt" — correct, since every row written before this
 // column existed was written after its click, by recordSubmission.
+//
+// THE SECOND PART IS A REBUILD, and it has to be. The primary key moved from
+// (run_id, slug) to (slug, mode), and a primary key cannot be changed with ADD
+// COLUMN. The same no-losses rule governs it, which forces two decisions:
+//
+//   * A legacy row with a NULL mode becomes 'live'. Unknown mode already counts
+//     as live everywhere else in this file, and SQLite permits NULLs in the
+//     columns of a non-INTEGER primary key — so a NULL mode would conflict with
+//     nothing and the new key would go unenforced for exactly those rows.
+//   * Two rows CAN collide on the new key: the same slug submitted under two
+//     run_ids, which the old key permitted by construction. The survivor is the
+//     one that most represents a real submission (submitted or legacy beats an
+//     attempt, an attempt beats an abandonment, later beats earlier), and the
+//     losers are NOT dropped — each is carried verbatim into the survivor's
+//     `doc` under `superseded`, because the thing a user needs when withdrawing
+//     an application is the record of it, not a tidy table.
 function healAutoSubmissions(db) {
   const cols = db.prepare("PRAGMA table_info(auto_submissions)").all()
   if (!cols.length) return // fresh database — SCHEMA creates it with both
@@ -326,6 +438,106 @@ function healAutoSubmissions(db) {
     db.exec("ALTER TABLE auto_submissions ADD COLUMN outcome TEXT")
   if (!have.has("apply_url"))
     db.exec("ALTER TABLE auto_submissions ADD COLUMN apply_url TEXT")
+
+  const keyCols = cols
+    .filter((c) => c.pk > 0)
+    .sort((a, b) => a.pk - b.pk)
+    .map((c) => c.name)
+  if (keyCols.length === 2 && keyCols[0] === "slug" && keyCols[1] === "mode")
+    return // already re-keyed
+  rebuildAutoSubmissions(db)
+}
+
+// How much a row looks like a real application, for the collision above.
+// A legacy NULL outcome ranks just under 'submitted' rather than at the bottom,
+// on purpose: every row written before the outcome column existed was written
+// AFTER its click.
+function submissionRank(outcome) {
+  if (outcome === "submitted") return 4
+  if (outcome == null) return 3
+  if (outcome === "abandoned") return 1
+  return 2 // 'attempted', and anything a later version starts writing
+}
+
+function rebuildAutoSubmissions(db) {
+  const rows = db.prepare("SELECT * FROM auto_submissions").all()
+  const groups = new Map()
+  for (const r of rows) {
+    const key = JSON.stringify([r.slug, r.mode ?? "live"])
+    const list = groups.get(key)
+    if (list) list.push(r)
+    else groups.set(key, [r])
+  }
+
+  db.exec("BEGIN IMMEDIATE")
+  try {
+    db.exec(
+      "CREATE TABLE auto_submissions__rekeyed (" +
+        "run_id TEXT NOT NULL, slug TEXT NOT NULL, company TEXT, title TEXT," +
+        "submitted_at TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'live'," +
+        "plan_sha256 TEXT, confirmation_url TEXT, outcome TEXT, apply_url TEXT," +
+        "doc TEXT NOT NULL, PRIMARY KEY (slug, mode))",
+    )
+    const ins = db.prepare(
+      `INSERT INTO auto_submissions__rekeyed
+         (run_id, slug, company, title, submitted_at, mode, plan_sha256,
+          confirmation_url, outcome, apply_url, doc)
+       VALUES ($run_id, $slug, $company, $title, $submitted_at, $mode, $plan_sha256,
+               $confirmation_url, $outcome, $apply_url, $doc)`,
+    )
+    for (const list of groups.values()) {
+      const [winner, ...losers] = [...list].sort(
+        (a, b) =>
+          submissionRank(b.outcome) - submissionRank(a.outcome) ||
+          String(b.submitted_at ?? "").localeCompare(
+            String(a.submitted_at ?? ""),
+          ) ||
+          String(b.run_id ?? "").localeCompare(String(a.run_id ?? "")),
+      )
+      let doc = winner.doc
+      if (losers.length) {
+        let parsed = null
+        try {
+          parsed = JSON.parse(winner.doc)
+        } catch {
+          /* a doc that is not JSON is still kept, wrapped */
+        }
+        doc = JSON.stringify(
+          parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? { ...parsed, superseded: losers }
+            : { doc: winner.doc, superseded: losers },
+        )
+      }
+      ins.run({
+        run_id: winner.run_id,
+        slug: winner.slug,
+        company: winner.company ?? null,
+        title: winner.title ?? null,
+        submitted_at: winner.submitted_at,
+        mode: winner.mode ?? "live",
+        plan_sha256: winner.plan_sha256 ?? null,
+        confirmation_url: winner.confirmation_url ?? null,
+        outcome: winner.outcome ?? null,
+        apply_url: winner.apply_url ?? null,
+        doc,
+      })
+    }
+    // Counted before the old table is destroyed. This is what turns "no version
+    // of this repair loses a row" from a comment into a refusal.
+    const kept = db
+      .prepare("SELECT COUNT(*) c FROM auto_submissions__rekeyed")
+      .get().c
+    if (kept !== groups.size)
+      throw new Error(
+        `auto_submissions rebuild kept ${kept} of ${groups.size} distinct (slug, mode) row(s)`,
+      )
+    db.exec("DROP TABLE auto_submissions")
+    db.exec("ALTER TABLE auto_submissions__rekeyed RENAME TO auto_submissions")
+    db.exec("COMMIT")
+  } catch (e) {
+    db.exec("ROLLBACK")
+    throw e
+  }
 }
 
 // --- row <-> lead object -----------------------------------------------------
@@ -555,8 +767,7 @@ export function writeApplication(application, dumpYaml, dbFile = DB_PATH) {
   }
 }
 
-export function upsertApplications(db, applications) {
-  const stmt = db.prepare(`
+const APPLICATION_UPSERT = `
     INSERT INTO applications (slug, company, title, applied_at, status, doc)
     VALUES ($slug, $company, $title, $applied_at, $status, $doc)
     ON CONFLICT(slug) DO UPDATE SET
@@ -564,19 +775,22 @@ export function upsertApplications(db, applications) {
       title = excluded.title,
       applied_at = excluded.applied_at,
       status = excluded.status,
-      doc = excluded.doc`)
+      doc = excluded.doc`
+
+const applicationRow = (a) => ({
+  slug: a.slug,
+  company: a.company ?? null,
+  title: a.title ?? null,
+  applied_at: a.applied_at ?? null,
+  status: a.status ?? null,
+  doc: JSON.stringify(a),
+})
+
+export function upsertApplications(db, applications) {
+  const stmt = db.prepare(APPLICATION_UPSERT)
   db.exec("BEGIN")
   try {
-    for (const a of applications) {
-      stmt.run({
-        slug: a.slug,
-        company: a.company ?? null,
-        title: a.title ?? null,
-        applied_at: a.applied_at ?? null,
-        status: a.status ?? null,
-        doc: JSON.stringify(a),
-      })
-    }
+    for (const a of applications) stmt.run(applicationRow(a))
     db.exec("COMMIT")
   } catch (e) {
     db.exec("ROLLBACK")
@@ -586,14 +800,40 @@ export function upsertApplications(db, applications) {
 }
 
 // Merge a partial update into one application without rewriting the rest.
+//
+// BEGIN IMMEDIATE, and the word IMMEDIATE is the whole point. This is a
+// read-modify-write: SELECT the doc, merge the patch into it, write it back. A
+// DEFERRED transaction (SQLite's default, and what plain `BEGIN` gives) takes
+// no write lock until its first write, so two of these can both READ, both
+// merge onto the same base, and the second write silently discards the first
+// patch. During a multi-hour unattended run that lost patch is the user
+// recording an interview by hand — a fact nothing else in the system can
+// reconstruct.
+//
+// IMMEDIATE takes the write lock at BEGIN, so the second caller waits (the
+// connection's busy_timeout is 5s, set in openDb) and then reads the FIRST
+// caller's merged doc as its base. The two patches compose instead of racing.
+//
+// The upsert is issued inline rather than through upsertApplications, because
+// that function opens its own transaction and SQLite does not nest them.
 export function updateApplication(db, slug, patch) {
-  const row = db
-    .prepare("SELECT doc FROM applications WHERE slug = ?")
-    .get(slug)
-  if (!row) return 0
-  const merged = { ...JSON.parse(row.doc), ...patch }
-  upsertApplications(db, [merged])
-  return 1
+  db.exec("BEGIN IMMEDIATE")
+  try {
+    const row = db
+      .prepare("SELECT doc FROM applications WHERE slug = ?")
+      .get(slug)
+    if (!row) {
+      db.exec("COMMIT")
+      return 0
+    }
+    const merged = { ...JSON.parse(row.doc), ...patch }
+    db.prepare(APPLICATION_UPSERT).run(applicationRow(merged))
+    db.exec("COMMIT")
+    return 1
+  } catch (e) {
+    db.exec("ROLLBACK")
+    throw e
+  }
 }
 
 // --- archived workspaces --------------------------------------------------
@@ -777,40 +1017,145 @@ export function latestAutoRun(db) {
   return row ? JSON.parse(row.doc) : null
 }
 
-// Writes an intent row (outcome 'attempted', before the click) or an
-// acknowledgement (outcome 'submitted', after it). The UPDATE branch COALESCEs
-// apply_url and confirmation_url so acknowledging an attempt cannot blank the
-// URL the attempt recorded — an orphaned attempt is only useful to the user if
-// it still says where the click was aimed.
-export function recordAutoSubmission(db, sub) {
-  db.prepare(
+// A bounded retry on SQLITE_BUSY, for the ONE write that cannot be allowed to
+// fail: the durable 'attempted' row, written immediately before a click.
+//
+// Nothing else in this file gets this, deliberately. Every other write can be
+// retried by re-running the command; this one is the record that a click is
+// about to happen, and losing it means a crash one second later leaves an
+// application in an employer's ATS that no ledger knows about. The connection's
+// busy_timeout (5s, openDb) already covers ordinary contention — this is the
+// layer under it, for the case where the timeout itself expires.
+//
+// BOUNDED, and short. An unbounded retry in front of a click is a process that
+// hangs holding an authorisation token; four tries over ~175ms either gets the
+// lock or reports honestly that it did not.
+const BUSY_RE = /SQLITE_BUSY|database is locked|database table is locked/i
+const isBusy = (e) =>
+  e?.code === "SQLITE_BUSY" ||
+  e?.errcode === 5 ||
+  BUSY_RE.test(String(e?.message ?? ""))
+
+// Synchronous by necessity: node:sqlite's DatabaseSync is synchronous and this
+// sits between a caller and a browser click, so there is no await to hang off.
+const sleepSync = (ms) => {
+  if (ms > 0)
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(ms))
+}
+
+export function withBusyRetry(
+  fn,
+  { attempts = 4, backoffMs = 25, sleep = sleepSync } = {},
+) {
+  let lastError
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return fn(i)
+    } catch (e) {
+      if (!isBusy(e)) throw e
+      lastError = e
+      if (i < attempts - 1) sleep(backoffMs * 2 ** i)
+    }
+  }
+  throw lastError
+}
+
+// THE CLAIM. Writes the intent row (outcome 'attempted', before the click) and
+// REFUSES to overwrite an existing one.
+//
+// Returns the number of rows written: 1 means this caller owns the submit, and
+// 0 MEANS THE SLUG ALREADY HAS A ROW IN THIS MODE AND THIS CALLER MUST NOT
+// CLICK. ON CONFLICT DO NOTHING rather than DO UPDATE, because a row whose job
+// is to be a claim must refuse rather than overwrite — DO UPDATE let a second
+// caller quietly take a slug the first one had already attempted.
+//
+// The key is (slug, mode), so a dry-run rehearsal does not consume the live
+// claim: `dry_run` and `live` are two different rows for one slug, and the
+// caps count both on purpose.
+export function recordAutoSubmission(db, sub, retry = {}) {
+  const stmt = db.prepare(
     `INSERT INTO auto_submissions
        (run_id, slug, company, title, submitted_at, mode, plan_sha256, confirmation_url, outcome, apply_url, doc)
      VALUES ($run_id, $slug, $company, $title, $submitted_at, $mode, $plan_sha256, $confirmation_url, $outcome, $apply_url, $doc)
-     ON CONFLICT(run_id, slug) DO UPDATE SET
-       company = excluded.company,
-       title = excluded.title,
-       submitted_at = excluded.submitted_at,
-       mode = excluded.mode,
-       plan_sha256 = excluded.plan_sha256,
-       confirmation_url = COALESCE(excluded.confirmation_url, auto_submissions.confirmation_url),
-       outcome = excluded.outcome,
-       apply_url = COALESCE(excluded.apply_url, auto_submissions.apply_url),
-       doc = excluded.doc`,
-  ).run({
+     ON CONFLICT(slug, mode) DO NOTHING`,
+  )
+  const row = {
     run_id: sub.run_id,
     slug: sub.slug,
     company: sub.company ?? null,
     title: sub.title ?? null,
     submitted_at: sub.submitted_at ?? new Date().toISOString(),
-    mode: sub.mode ?? null,
+    // Never NULL: see the SCHEMA comment. A NULL here would not conflict with
+    // anything and the claim would not be a claim.
+    mode: sub.mode ?? "live",
     plan_sha256: sub.plan_sha256 ?? null,
     confirmation_url: sub.confirmation_url ?? null,
-    outcome: sub.outcome ?? "submitted",
+    outcome: sub.outcome ?? "attempted",
     apply_url: sub.apply_url ?? null,
     doc: JSON.stringify(sub),
-  })
-  return 1
+  }
+  return withBusyRetry(() => stmt.run(row).changes, retry)
+}
+
+// THE ACKNOWLEDGEMENT. Resolves a claim this caller already holds: 'submitted'
+// after the click returned, or 'abandoned' when the click was provably never
+// issued.
+//
+// Separate from the claim because the two acts are opposites. The claim must
+// refuse a slug someone else holds; the acknowledgement must NEVER be dropped —
+// an application cannot be unsent, so failing to record its outcome is strictly
+// worse than recording it late. Under the claim's DO NOTHING the second of the
+// two writes per application would have vanished silently, which is exactly the
+// crash-invisible state the ledger exists to prevent.
+//
+// COALESCE on apply_url and confirmation_url: acknowledging an attempt must
+// never blank the URL the attempt recorded, because an orphaned attempt is only
+// useful to the user if it still says where the click was aimed.
+//
+// run_id is deliberately NOT updated. The row belongs to the run that claimed
+// it; an acknowledgement from elsewhere resolves that run's attempt rather than
+// re-attributing it.
+export function acknowledgeAutoSubmission(db, sub) {
+  return db
+    .prepare(
+      `INSERT INTO auto_submissions
+       (run_id, slug, company, title, submitted_at, mode, plan_sha256, confirmation_url, outcome, apply_url, doc)
+     VALUES ($run_id, $slug, $company, $title, $submitted_at, $mode, $plan_sha256, $confirmation_url, $outcome, $apply_url, $doc)
+     ON CONFLICT(slug, mode) DO UPDATE SET
+       company = excluded.company,
+       title = excluded.title,
+       submitted_at = excluded.submitted_at,
+       plan_sha256 = excluded.plan_sha256,
+       confirmation_url = COALESCE(excluded.confirmation_url, auto_submissions.confirmation_url),
+       outcome = excluded.outcome,
+       apply_url = COALESCE(excluded.apply_url, auto_submissions.apply_url),
+       doc = excluded.doc`,
+    )
+    .run({
+      run_id: sub.run_id,
+      slug: sub.slug,
+      company: sub.company ?? null,
+      title: sub.title ?? null,
+      submitted_at: sub.submitted_at ?? new Date().toISOString(),
+      mode: sub.mode ?? "live",
+      plan_sha256: sub.plan_sha256 ?? null,
+      confirmation_url: sub.confirmation_url ?? null,
+      outcome: sub.outcome ?? "submitted",
+      apply_url: sub.apply_url ?? null,
+      doc: JSON.stringify(sub),
+    }).changes
+}
+
+// The row a refused claim collided with, so the caller can say WHY it is not
+// clicking in terms the user can act on rather than just reporting a zero.
+export function readAutoSubmission(db, slug, mode = "live") {
+  return (
+    db
+      .prepare(
+        "SELECT run_id, slug, company, title, submitted_at, mode, outcome, apply_url, confirmation_url FROM auto_submissions WHERE slug = ? AND mode = ?",
+      )
+      .get(slug, mode) ?? null
+  )
 }
 
 // How many auto submissions since `sinceIso`. `per_day_max`'s counter.
@@ -871,6 +1216,344 @@ export function readOrphanAttempts(db) {
         ORDER BY s.submitted_at`,
     )
     .all()
+}
+
+// --- the per-application queue -----------------------------------------------
+
+// The states, in the order a job moves through them. Exported so a caller
+// validates against ONE list rather than re-typing the strings.
+export const AUTO_QUEUE_STATES = [
+  "queued",
+  "claimed",
+  "planned",
+  "authorized",
+  "attempted",
+  "submitted",
+  "challenged",
+  "deferred",
+  "failed",
+]
+
+// Nothing further happens to a job in one of these.
+export const AUTO_QUEUE_TERMINAL = new Set([
+  "submitted",
+  "challenged",
+  "deferred",
+  "failed",
+])
+
+// Not finished, and NO CLICK HAS BEEN ISSUED. This is the resume set: after a
+// process dies these are the jobs the next invocation may pick up, and
+// 'attempted' is excluded on purpose — that click may already be an
+// application, so it belongs to the orphan-attempt brake and to a human, never
+// to an automatic retry.
+export const AUTO_QUEUE_RESUMABLE = new Set([
+  "queued",
+  "claimed",
+  "planned",
+  "authorized",
+])
+
+const nowIso = (now) => (now instanceof Date ? now : new Date()).toISOString()
+
+function assertQueueState(state) {
+  if (!AUTO_QUEUE_STATES.includes(state))
+    throw new TypeError(
+      `unknown auto_queue state: ${JSON.stringify(state)} (expected one of ${AUTO_QUEUE_STATES.join(", ")})`,
+    )
+}
+
+// Put slugs in the queue as 'queued'. Existing rows are left ALONE — re-running
+// the planner over a queue that is already being worked must not reset a job
+// another worker holds, and must not resurrect one that already finished.
+// Returns the number of rows actually added.
+export function enqueueAutoJobs(db, jobs, { now = new Date() } = {}) {
+  const at = nowIso(now)
+  const stmt = db.prepare(
+    `INSERT INTO auto_queue
+       (slug, run_id, board_key, origin, state, attempt_no, plan_sha256, updated_at)
+     VALUES ($slug, $run_id, $board_key, $origin, 'queued', 0, $plan_sha256, $updated_at)
+     ON CONFLICT(slug) DO NOTHING`,
+  )
+  let added = 0
+  db.exec("BEGIN IMMEDIATE")
+  try {
+    for (const j of jobs) {
+      if (!j?.slug) throw new TypeError("enqueueAutoJobs requires a slug")
+      added += stmt.run({
+        slug: j.slug,
+        run_id: j.run_id ?? null,
+        board_key: j.board_key ?? null,
+        origin: j.origin ?? null,
+        plan_sha256: j.plan_sha256 ?? null,
+        updated_at: at,
+      }).changes
+    }
+    db.exec("COMMIT")
+  } catch (e) {
+    db.exec("ROLLBACK")
+    throw e
+  }
+  return added
+}
+
+/**
+ * THE CLAIM. One statement, so two workers racing one slug cannot both win.
+ *
+ * Returns 1 when this caller now owns the slug and 0 when it does not. ZERO
+ * MEANS ANOTHER WORKER OWNS IT AND THIS ONE MUST NOT CLICK — not an error and
+ * not an anomaly; in a fan-out it is the ordinary outcome for every worker but
+ * one, and the loser simply returns.
+ *
+ * The conflict clause fires only for a row still in 'queued'. For every other
+ * state — claimed by someone, already attempted, already terminal — it degrades
+ * to the plain `ON CONFLICT DO NOTHING` the plan specifies, which is what makes
+ * "0 changes" mean one unambiguous thing. Writing it as a guarded DO UPDATE
+ * rather than a bare DO NOTHING is what lets a PRE-PLANNED queue exist at all:
+ * with a bare DO NOTHING a slug enqueued as 'queued' could never be claimed by
+ * anybody, because the row would already be there.
+ *
+ * plan_sha256 is recorded on the claim so a retry with a DIFFERENT plan is a
+ * visibly different act rather than a repeat of the same one.
+ */
+export function claimAutoJob(db, slug, opts = {}) {
+  if (!slug) throw new TypeError("claimAutoJob requires a slug")
+  const {
+    run_id = null,
+    board_key = null,
+    origin = null,
+    plan_sha256 = null,
+    now = new Date(),
+  } = opts
+  const at = nowIso(now)
+  return db
+    .prepare(
+      `INSERT INTO auto_queue
+         (slug, run_id, board_key, origin, state, attempt_no, plan_sha256, claimed_at, updated_at)
+       VALUES ($slug, $run_id, $board_key, $origin, 'claimed', 1, $plan_sha256, $at, $at)
+       ON CONFLICT(slug) DO UPDATE SET
+         run_id = excluded.run_id,
+         board_key = COALESCE(excluded.board_key, auto_queue.board_key),
+         origin = COALESCE(excluded.origin, auto_queue.origin),
+         state = 'claimed',
+         attempt_no = auto_queue.attempt_no + 1,
+         plan_sha256 = excluded.plan_sha256,
+         reason_kind = NULL,
+         reason_detail = NULL,
+         claimed_at = excluded.claimed_at,
+         updated_at = excluded.updated_at
+       WHERE auto_queue.state = 'queued'`,
+    )
+    .run({ slug, run_id, board_key, origin, plan_sha256, at }).changes
+}
+
+/**
+ * Advance a claimed job. Returns 1 on success, 0 when the row is absent or is
+ * held by a different run.
+ *
+ * `run_id` is checked when given: a worker may only move a job it owns, so a
+ * stale worker waking up after its claim was released cannot drive somebody
+ * else's job to 'submitted'. Passing no run_id is the maintenance path.
+ *
+ * A 'deferred' state MUST carry a reason — hard rule 6 forbids a silent skip,
+ * and a deferred row with no reason is one.
+ */
+export function setAutoJobState(db, slug, state, opts = {}) {
+  assertQueueState(state)
+  const {
+    run_id = null,
+    plan_sha256 = null,
+    reason_kind = null,
+    reason_detail = null,
+    now = new Date(),
+  } = opts
+  if (state === "deferred" && !reason_kind)
+    throw new TypeError(
+      "a deferred job requires a reason_kind — a silent skip is not a deferral (hard rule 6)",
+    )
+  return db
+    .prepare(
+      `UPDATE auto_queue
+          SET state = $state,
+              plan_sha256 = COALESCE($plan_sha256, plan_sha256),
+              reason_kind = $reason_kind,
+              reason_detail = $reason_detail,
+              updated_at = $at
+        WHERE slug = $slug
+          AND ($run_id IS NULL OR run_id = $run_id)`,
+    )
+    .run({
+      slug,
+      state,
+      plan_sha256,
+      reason_kind,
+      reason_detail,
+      at: nowIso(now),
+      run_id,
+    }).changes
+}
+
+export function readAutoQueue(db, { state = null, run_id = null } = {}) {
+  const where = []
+  const params = {}
+  if (state) {
+    where.push("state = $state")
+    params.state = state
+  }
+  if (run_id) {
+    where.push("run_id = $run_id")
+    params.run_id = run_id
+  }
+  const sql =
+    "SELECT * FROM auto_queue" +
+    (where.length ? ` WHERE ${where.join(" AND ")}` : "") +
+    " ORDER BY slug"
+  const stmt = db.prepare(sql)
+  return where.length ? stmt.all(params) : stmt.all()
+}
+
+/**
+ * THE RESUME SELECTION — the answer to "which of the 999 still need doing?"
+ * after a kill at number 437.
+ *
+ * Read from the database, never re-derived: a job is outstanding because its
+ * row says so. Terminal rows are excluded because they are finished, and
+ * 'attempted' rows because their click may already have landed.
+ */
+export function readResumableAutoJobs(db) {
+  const states = [...AUTO_QUEUE_RESUMABLE]
+  return db
+    .prepare(
+      `SELECT * FROM auto_queue
+        WHERE state IN (${states.map(() => "?").join(", ")})
+        ORDER BY slug`,
+    )
+    .all(...states)
+}
+
+// The rows a human has to look at before anything runs again: a click was
+// issued and nothing ever said what happened next.
+export function readStrandedAutoJobs(db) {
+  return db
+    .prepare(
+      "SELECT * FROM auto_queue WHERE state = 'attempted' ORDER BY updated_at, slug",
+    )
+    .all()
+}
+
+export function autoQueueCounts(db) {
+  const out = Object.fromEntries(AUTO_QUEUE_STATES.map((s) => [s, 0]))
+  for (const r of db
+    .prepare("SELECT state, COUNT(*) c FROM auto_queue GROUP BY state")
+    .all())
+    out[r.state] = r.c
+  return out
+}
+
+/**
+ * Return jobs whose worker died holding the claim to the 'queued' pool.
+ *
+ * Without this a crash makes a slug permanently unclaimable: claimAutoJob only
+ * upgrades a 'queued' row, so a row left at 'claimed' by a dead process is
+ * owned by nobody and released by nothing, and "the next invocation resumes at
+ * 437" quietly stops being true one job at a time.
+ *
+ * 'attempted' IS NEVER RELEASED. A released attempt would be re-claimed and
+ * re-clicked, and the application may already be sitting in the employer's ATS.
+ * That case is the orphan-attempt brake's, and its resolution is a human
+ * opening the page.
+ *
+ * @param leaseMs how long a claim may sit untouched before it is presumed dead.
+ */
+export function releaseStaleAutoClaims(
+  db,
+  { leaseMs = 30 * 60 * 1000, now = new Date(), run_id = null } = {},
+) {
+  const cutoff = new Date(
+    (now instanceof Date ? now : new Date()).getTime() - leaseMs,
+  ).toISOString()
+  return db
+    .prepare(
+      `UPDATE auto_queue
+          SET state = 'queued', run_id = NULL, claimed_at = NULL, updated_at = $at
+        WHERE state IN ('claimed', 'planned', 'authorized')
+          AND COALESCE(claimed_at, updated_at, '') < $cutoff
+          AND ($run_id IS NULL OR run_id = $run_id)`,
+    )
+    .run({ at: nowIso(now), cutoff, run_id }).changes
+}
+
+// --- verifications -----------------------------------------------------------
+
+export const VERIFY_MODES = new Set(["resume", "cover-letter"])
+
+// Record what verify-claims decided. Upsert: re-verifying the same bytes of the
+// same document replaces the earlier verdict for those bytes, which is what
+// makes a re-run after a fact-base edit actually restore verification.
+export function recordVerification(db, v) {
+  if (!v?.slug) throw new TypeError("recordVerification requires a slug")
+  if (!VERIFY_MODES.has(v.mode))
+    throw new TypeError(
+      `recordVerification requires mode 'resume' or 'cover-letter', got ${JSON.stringify(v.mode)}`,
+    )
+  if (!v.doc_sha256 || !v.profile_sha256)
+    throw new TypeError(
+      "recordVerification requires both doc_sha256 and profile_sha256 — a row " +
+        "missing either is not evidence of anything",
+    )
+  return db
+    .prepare(
+      `INSERT INTO verifications
+         (slug, doc_sha256, mode, verdict, profile_sha256, verified_at, doc)
+       VALUES ($slug, $doc_sha256, $mode, $verdict, $profile_sha256, $verified_at, $doc)
+       ON CONFLICT(slug, mode, doc_sha256) DO UPDATE SET
+         verdict = excluded.verdict,
+         profile_sha256 = excluded.profile_sha256,
+         verified_at = excluded.verified_at,
+         doc = excluded.doc`,
+    )
+    .run({
+      slug: v.slug,
+      doc_sha256: v.doc_sha256,
+      mode: v.mode,
+      verdict: v.verdict === "pass" ? "pass" : "fail",
+      profile_sha256: v.profile_sha256,
+      verified_at: v.verified_at ?? new Date().toISOString(),
+      doc: v.doc == null ? null : JSON.stringify(v.doc),
+    }).changes
+}
+
+/**
+ * Is there a PASSING verification for exactly these bytes, checked against
+ * exactly this fact base?
+ *
+ * Both hashes are required and both are compared. A row matching only
+ * doc_sha256 means the document is unchanged but the facts behind it are not
+ * the ones it was checked against — a stale verdict about a corpus that no
+ * longer exists, which is not verification.
+ */
+export function hasPassingVerification(
+  db,
+  { slug, mode = "resume", doc_sha256, profile_sha256 } = {},
+) {
+  if (!slug || !doc_sha256 || !profile_sha256) return false
+  return !!db
+    .prepare(
+      `SELECT 1 FROM verifications
+        WHERE slug = ? AND mode = ? AND doc_sha256 = ? AND profile_sha256 = ?
+          AND verdict = 'pass'`,
+    )
+    .get(slug, mode, doc_sha256, profile_sha256)
+}
+
+export function readVerifications(db, slug = null) {
+  return slug
+    ? db
+        .prepare(
+          "SELECT * FROM verifications WHERE slug = ? ORDER BY mode, verified_at",
+        )
+        .all(slug)
+    : db.prepare("SELECT * FROM verifications ORDER BY slug, mode").all()
 }
 
 // per_company_max_per_week's counter, and the one that matters most: carpet

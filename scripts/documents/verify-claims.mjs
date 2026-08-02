@@ -20,6 +20,20 @@
 // that appear only in the posting still fail R6.
 //
 // Output: JSON report on stdout; exit 0 = pass, 1 = violations, 2 = usage error.
+//
+// IT ALSO WRITES A DURABLE ROW, and that is not bookkeeping. Before this,
+// verification left no trace: the only later evidence that a document had been
+// checked was that the file existed, so a draft nobody had verified, or one
+// edited afterwards, read as verified on the path that decides whether an
+// application may be sent unattended. The row records the exact bytes checked
+// (doc_sha256) and the exact fact base they were checked against
+// (profile_sha256, from lib/verification.mjs), so both editing the document and
+// the user editing profile.yaml invalidate it — see that module's header.
+//
+// A row is written ONLY for a document inside a job workspace
+// (jobs/<slug>/<file>). Verifying a scratch file or a fixture writes nothing,
+// because there is no slug for it to vouch for. `--db <path>` and
+// `--jobs-dir <path>` exist so that path is testable; `--no-record` skips it.
 import fs from "node:fs"
 import {
   loadYamlFile,
@@ -29,6 +43,7 @@ import {
   techTermsIn,
   evidenceText,
 } from "../lib/lib.mjs"
+import { verificationIdentity, JOBS_DIR } from "../lib/verification.mjs"
 
 function fail(msg) {
   console.error(msg)
@@ -50,6 +65,12 @@ function flag(name, dflt) {
 const profilePath = flag("--profile", "profile/profile.yaml")
 const answersPath = flag("--answers", "profile/answers.yaml")
 const jobPath = flag("--job", null)
+const jobsDir = flag("--jobs-dir", JOBS_DIR)
+// db.mjs is NOT imported at module scope: it loads node:sqlite, and this script
+// must stay cheap for the common case of verifying a file that is not in a
+// workspace at all. A null --db means db.mjs's own default store.
+const noRecord = args.includes("--no-record")
+const dbFlag = flag("--db", null)
 
 if (!fs.existsSync(file)) fail(`No such file: ${file}`)
 if (!fs.existsSync(profilePath)) fail(`No such profile: ${profilePath}`)
@@ -259,5 +280,40 @@ const report = {
   violations,
   ...(coverage ? { coverage } : {}),
 }
+
+// The durable verdict. Both outcomes are recorded, not just passes: a stored
+// 'fail' is what lets a later reader distinguish "checked and rejected" from
+// "never checked", and the reader (hasPassingVerification) requires
+// verdict='pass' anyway, so a failure can never be mistaken for evidence.
+//
+// Never fatal. verify-claims is hard rule 4's gate and its EXIT CODE is what
+// every caller reads; a database that is locked, missing or unwritable must not
+// turn a truthful document into a verification failure. A recording problem is
+// reported on the report and on stderr, where it is visible without changing
+// the verdict.
+const identity = noRecord
+  ? null
+  : verificationIdentity(file, { jobsDir, profilePath, answersPath })
+if (identity) {
+  try {
+    const { openDb, recordVerification } = await import("../lib/db.mjs")
+    const db = openDb(dbFlag ?? undefined)
+    try {
+      recordVerification(db, {
+        ...identity,
+        mode,
+        verdict: report.ok ? "pass" : "fail",
+        doc: report,
+      })
+    } finally {
+      db.close()
+    }
+    report.recorded = identity
+  } catch (e) {
+    report.recorded = { error: String(e?.message ?? e) }
+    console.error(`verification not recorded: ${e?.message ?? e}`)
+  }
+}
+
 console.log(JSON.stringify(report, null, 2))
 process.exit(report.ok ? 0 : 1)

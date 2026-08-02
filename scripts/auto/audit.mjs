@@ -64,6 +64,8 @@ import {
   openDb,
   upsertAutoRun,
   recordAutoSubmission,
+  acknowledgeAutoSubmission,
+  readAutoSubmission,
   readOrphanAttempts,
   readAttemptsForRun,
   DB_PATH,
@@ -434,11 +436,44 @@ function makeRun(ctx, state) {
       })
       event("submit.attempt", pendingAttempt)
 
+      // THE LEDGER CLAIM. recordAutoSubmission is an INSERT ... ON CONFLICT DO
+      // NOTHING on (slug, mode), so it returns 0 when this slug already has a
+      // row in this mode — an earlier run of this slug that was attempted or
+      // submitted and never withdrawn.
+      //
+      // After a successful auto_queue claim that must not be possible, so it is
+      // an anomaly, not a race: the queue claim is what stops two workers from
+      // reaching here for one slug, and a collision HERE means the application
+      // may already be in the employer's ATS. It stops the runner rather than
+      // clicking again, because carpet-bombing one employer is the damage that
+      // actually costs the user something.
+      //
+      // (A `dry_run` row never collides with a `live` one. The rehearsal is a
+      // different row, deliberately, so it cannot pre-consume the live claim.)
+      let claimed = 0
+      let existing = null
       const db = openDb(ctx.dbFile)
       try {
-        recordAutoSubmission(db, pendingAttempt)
+        claimed = recordAutoSubmission(db, pendingAttempt)
+        if (claimed === 0)
+          existing = readAutoSubmission(db, slug, pendingAttempt.mode)
       } finally {
         db.close()
+      }
+      if (claimed === 0) {
+        pendingAttempt = null
+        const reason =
+          `the ledger already holds a ${existing?.mode ?? state.mode} row for "${slug}" ` +
+          `(${existing?.outcome ?? "outcome unknown"}, run ${existing?.run_id ?? "unknown"}, ` +
+          `${existing?.submitted_at ?? "time unknown"} at ${existing?.apply_url ?? "url not recorded"}) — ` +
+          `this submit was refused because that application may already exist`
+        event("submit.refused", { slug, existing })
+        raiseStop(reason, {
+          stopPath: ctx.stop,
+          jobsDir: ctx.jobsDir,
+          meta: { run_id: state.run_id, slug, existing },
+        })
+        throw new StopError(CHECKPOINTS.PRE_SUBMIT, reason)
       }
       return pendingAttempt
     },
@@ -496,9 +531,12 @@ function makeRun(ctx, state) {
       pendingAttempt = null
       event("submit.abandoned", { slug, reason })
 
+      // acknowledge, not record: this RESOLVES the claim beginSubmit already
+      // holds. Going through the claim would report 0 changes and silently drop
+      // the abandonment, leaving an 'attempted' row that halts the next run.
       const db = openDb(ctx.dbFile)
       try {
-        recordAutoSubmission(db, row)
+        acknowledgeAutoSubmission(db, row)
       } finally {
         db.close()
       }
@@ -562,9 +600,13 @@ function makeRun(ctx, state) {
       state.submitted += 1
       event("submit.done", row)
 
+      // acknowledge, not record. The claim refuses an existing row by design;
+      // this is the second of the two writes per application, and it must never
+      // be the one that gets dropped — an application cannot be unsent, so
+      // losing its outcome is strictly worse than recording it late.
       const db = openDb(ctx.dbFile)
       try {
-        recordAutoSubmission(db, row)
+        acknowledgeAutoSubmission(db, row)
         upsertAutoRun(db, state)
       } finally {
         db.close()

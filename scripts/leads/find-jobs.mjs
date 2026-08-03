@@ -27,6 +27,7 @@ import {
 } from "../lib/lib.mjs"
 import { untrustedSnippet } from "../lib/untrusted.mjs"
 import { enrichDescriptions } from "./enrich.mjs"
+import { canonicalizeLeads } from "./canonical.mjs"
 import { withLock, LEADS_LOCK, lockPathFor } from "../lib/lock.mjs"
 import {
   readLeadStore,
@@ -1468,6 +1469,17 @@ async function ingest(
   if (enrich && survivors.length) {
     enriched = await enrichDescriptions(survivors)
   }
+
+  // Phase 0.13 — stamp the ATS-hosted apply_url while the lead is being
+  // enriched, so the trust gate has one without a later backfill pass.
+  //
+  // OFFLINE ONLY on the sweep path, deliberately. The free tiers resolve every
+  // embedded careers page from what the board API already told us and cost
+  // nothing; the network tier resolves aggregator links and was measured at
+  // 0/21 on the two aggregators this store actually uses (M10), so paying a
+  // per-lead HTTP request on every sweep would buy a measured nothing. It stays
+  // available behind `canonical.mjs --network` for a board set where it pays.
+  if (survivors.length) await canonicalizeLeads(survivors, { network: false })
 
   const kept = []
   for (const s of survivors) {

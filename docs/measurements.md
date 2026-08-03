@@ -1156,3 +1156,81 @@ on a completely healthy run, every run.
    trust decision. When Phase 5 lands, that pool is what it replaces, and this
    baseline must be re-taken against the real runner rather than assumed to
    carry over.
+
+---
+
+## M10 — 0.13: canonicalizing `apply_url`. The free half works; the aggregator half cannot be made to
+
+- agent: `implementer`
+- harness: `node scripts/leads/canonical.mjs [--network] [--limit N] [--json]`
+- tree: `5d5da52` — `canonical.mjs` `dca14d6fdcfc`, `find-jobs.mjs` `2dc68f57353b`
+- store: `jobs/leads.db`, 158 leads, on this machine (win32 / node 24.13.1), 2026-08-03
+- verdict: **improved, and one half of the item is refuted**
+
+### The headline, with its `n` in the same sentence
+
+**Leads carrying a trust-gate-usable `apply_url`: 77 → 91 of 158** (48.7% → 57.6%),
+at a cost of **zero third-party HTTP requests**.
+
+| via             |  n | what it is                                                     |
+| --------------- | -: | -------------------------------------------------------------- |
+| `already-ats`   | 77 | the swept URL was an ATS posting; query and fragment dropped   |
+| `lead-identity` | 14 | embedded careers page, resolved from the board's own API data  |
+| unresolved      | 67 | 51 adzuna, 9 jobicy, 7 successfactors (`jobs.igt.com`)         |
+
+The 14 are the coinbase (10) and samsara (4) leads. Their canonical form is a
+string operation on `source: greenhouse:<tenant>` plus `?gh_jid=<id>` — data the
+**board** gave us, so no page is trusted and nothing is fetched. Greenhouse's
+two host spellings also collapse: `boards.` + `job-boards.` → 51 on one host, so
+the same posting found twice is now one string.
+
+### The refutation, and it is the load-bearing result
+
+**§7 R-8 says 0.13 "recovers the 40% of leads currently lost to aggregator and
+embedded URLs". It recovers the embedded ones and NONE of the aggregator ones.**
+
+Measured against a 21-lead sample (12 adzuna, all 9 jobicy), fetched once each:
+
+| HTTP | n   | meaning                                                       |
+| ---- | --: | -------------------------------------------------------------- |
+| 403  | 11  | the aggregator declined a scripted request                     |
+| 200  | 8   | served, and carrying **no ATS link of any family**             |
+| 404  | 2   | the posting is gone                                            |
+
+**Resolved: 0 of 21.** The 200s were scanned for 14 ATS families — Greenhouse,
+Ashby, Lever, SmartRecruiters, Workday, Oracle, Ceipal, iCIMS, Taleo, BambooHR,
+JazzHR, Workable, Breezy, Recruitee — and matched none. Adzuna keeps the
+employer link behind its own redirector; the underlying ATS URL is not present
+in anything it serves.
+
+**This is not a gap to close later.** 52% of the sample is a 403, and the way
+past a 403 is to defeat a third party's access control on their own site. That
+is out of bounds, so the network tier is shipped, tested and **left at its
+measured yield of zero** rather than "improved". The recovery of those 60 leads
+(38% of the store) belongs at the supply end — preferring direct ATS boards in
+`docs/job-sources.yaml`, which is Phase 6.1's and the user's file.
+
+### One defect this measurement found in the harness itself
+
+The resolver reported a 404 aggregator page as "no ATS posting found on the
+page", because adzuna serves a **full 49 KB page with HTTP 404** for a dead job.
+That reads as a parser gap and is not one — it is `posting-gone`, which Phase
+4.1 already has a kind for. Fixed, and both statuses are asserted; a 403 is
+asserted **not** to be reported as a dead posting, because those are different
+facts about the world and one of them is the aggregator's decision, not the
+job's.
+
+### Limits — read these before quoting any number above
+
+1. **The 21-lead sample is 35% of the 60 aggregator leads**, fetched once, from
+   one IP, on one day. A 403 rate is exactly the kind of number that varies by
+   all three. The claim it supports is "the network tier does not work here
+   today", not "adzuna links are unresolvable in principle".
+2. **`successfactors` (7 leads) is unresolved for a different reason** — it has
+   no anchored host pattern, because `jobs.igt.com` is a customer-hosted domain
+   with nothing ATS-shaped about the hostname. Adding it means allowlisting a
+   specific employer's domain, which is a different decision from recognising an
+   ATS, and it is the user's.
+3. **91 leads have an `apply_url`; nothing has yet been submitted through one.**
+   The trust gate that consumes this field is Phase 5's and does not exist. This
+   entry measures that the field is populated and well-formed, not that it works.

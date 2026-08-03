@@ -39,8 +39,20 @@ per-board yield implies an achievable ceiling closer to ~100 applications/day th
 board expansion (C12). _Mitigation:_ **Phase 0.11 measures it before six phases are built on an
 assumption about it**, Phase 0.12 measures what fraction of real forms can reach green at all, Phase
 0.13 recovers the 40% of leads currently lost to aggregator and embedded URLs, and Phase 6.1 gets a
-numeric completion criterion. **Owner: `implementer`.** _Accepted:_ the runner will be idle-capable
-before supply catches up, and that is the correct order.
+numeric completion criterion.
+
+> **0.13 MEASURED, 2026-08-03 (`implementer`, at `5d5da52`, M10). The sentence above is half
+> right, and the wrong half is the bigger half.** 0.13 recovers the **embedded** URLs — 14 leads,
+> coinbase and samsara, resolved from the board's own API data at zero network cost, taking the
+> store from 77 to **91 of 158** leads carrying a gate-usable `apply_url`. It recovers **none of
+> the aggregator URLs**: 0 of a 21-lead adzuna/jobicy sample, where 11 answered 403, 8 served a
+> page containing no ATS link of any of 14 families, and 2 were gone. The 60 aggregator leads
+> (38% of the store) are not recoverable by canonicalization at all, and the only route past a
+> 403 is defeating a third party's access control, which is out of bounds. **Their recovery is a
+> supply-side change — preferring direct ATS boards in `docs/job-sources.yaml` — and therefore
+> Phase 6.1's and the user's, not this item's.** R-8's mitigation list should be read with 0.13
+> contributing +14, not +40%. **Owner: `implementer`.** _Accepted:_ the runner will be idle-capable
+> before supply catches up, and that is the correct order.
 
 > **0.11 MEASURED, 2026-08-02 (`build-manager`, at `0b6db30`). The estimate above was optimistic by
 > roughly an order of magnitude, and the shape of the problem is worse than its size.**

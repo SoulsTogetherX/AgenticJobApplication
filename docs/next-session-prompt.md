@@ -4,67 +4,136 @@ Paste everything below the line into a fresh session.
 
 ---
 
-Continue implementing `docs/autonomy-plan.md`. It is **already approved — implement it, do not re-plan it.**
+Read `CLAUDE.md` first. Then do the task below. **Do not read the autonomy plan
+(`docs/autonomy-plan-v2.md` or `docs/autonomy/`) — it is not this task, and
+reading it has repeatedly pulled sessions into building runner infrastructure
+the user did not ask for.**
 
-You are `build-manager`. Read `docs/agent-protocol.md` and `docs/team-roster.md` first; they are earned from real incidents. **Only the manager commits, to `dev` only.**
+## Task: teach `scan-page.js` to see a Yes/No button pair
 
-## Decide this first (edit before pasting if you disagree)
+**The bug is a SILENT MISS, not slowness.** On an Ashby form (Runpod,
+2026-08-03) the question _"Will you now or in the future require sponsorship for
+employment visa status?"_ is rendered as two `<button>` elements. The scanner
+filed them under `btns` with role `other`, which `fill-plan.mjs` ignores
+completely — so the plan reported four defers and **never mentioned that
+question at all**. It was found only by hand-reading the DOM.
 
-**Do NOT build the runner yet.** Have `innov-resilience` review the blast-radius design first — `w4-autonomy` requested that review two waves ago and it never happened, because `SendMessage` cannot reach a finished agent and the manager did not re-hire. Every piece the runner depends on now exists, so this is the last cheap moment to find a design flaw. Once the runner exists, flipping one flag sends real applications, and an application cannot be unsent.
+Left alone, an application goes out with a work-authorisation question
+unanswered and nothing anywhere says so. `scan-page.js`'s own header calls this
+the worse failure mode: _"A silence is not a refusal."_
 
-## State — verified, not assumed
+**Why it slips through:** the button loop hands a control to the widget sweep
+only if it carries `aria-checked` / `aria-pressed` / `aria-selected`. Ashby's
+buttons carry none — the selected state is a build-hashed CSS class
+(`_active_1svni_57`), unusable as a signal. The file already names this as its
+known residual hole ("AND ONE NAME LIST, THREE ENTRIES, WHICH IS THE RESIDUAL
+HOLE AND IS STATED AS ONE"). This is that hole, hit in production.
 
-Branch `dev`, HEAD `1aec38a`, **working tree clean**, pushed. Gate green on a quiet tree: **1428 tests, 1426 pass, 0 fail, 2 skips both carrying reasons**, floor 1428, ~87s.
+### Tier 1 — visibility. Do this first; it is the safety half.
 
-**Phases 1 and 2 are effectively closed.** Phase 3 has every piece of substrate — `lock.mjs`, `scripts/auto/{guard,audit,preflight}.mjs`, `automatability.mjs`, `auth-sync.mjs`, `tests/auto/` — and **no runner**.
+Detect **structurally**, with no name list: two or more sibling `<button>`s, all
+resolving to role `other` via `roleOf`, all short-labelled, under a container
+whose text contains a question. Emit as a verb-less `widget` field.
 
-**The invariant to check, and state it by capability rather than by file list:** nothing in this repository opens a browser unattended, and nothing contains a click. Re-verified at `1aec38a` by grepping `scripts/auto/` and `auth-sync.mjs` for `chromium.launch|launchPersistent|\.click\(|playwright` — the only hits are path strings. Guards existing is not the capability existing.
+It then lands in `fill-plan.mjs`'s `unsupported field type` defer — reported,
+blocking, never acted on. Reporting is not a verb, so this grants no new
+capability. Get tier 1 green before starting tier 2.
 
-## Rules that cost real money to relearn
+### Tier 2 — speed.
 
-- **Do not over-staff** (user instruction). Twelve agents burned ~1.4M tokens in one wave; four well-scoped agents did more. Never spawn a fresh agent for a follow-up smaller than the context it would rebuild — do those yourself.
-- **Verify at phase boundaries, not after every agent** (user instruction). Per-agent re-verification on top of the cross-check protocol was triple-reading the same artifacts.
-- **`npm test` is not reproducible in a live shared tree.** Three identical runs gave 4 → 6 → 0 failures; duration inflated 56% purely from contention. A gate number taken mid-wave is not evidence. Run single files while iterating.
-- **Never pass a bare directory to `node --test`** — Node 24 does not recurse and reports `Cannot find module`, which looks like a test failure. Use a quoted glob.
-- **A parse is not a run.** `node --check` passes on a scope error. A deleted `const` shipped inside a file that parsed fine and killed every invocation of the fact-base writer.
-- **Never run a whole-tree git command** while agents are live — no `stash`, `checkout .`, `reset --hard`, `add -A`, `clean`. Path-scoped only, `git status` first.
-- **`git commit -m` is denied** when the message names a guarded path and contains a mutator word. Use `git commit -F <file>`. This has bitten repeatedly.
-- **`git worktree` is blocked entirely** by the branch guard, including `remove` and `prune`. Delete the directory and `.git/worktrees/<name>` by hand instead.
-- Commit messages carry the reasoning, not just the change. This project's history is its documentation.
+For a recognised closed answer set (Yes/No first) emit the real group shape
+instead — the one the radio/checkbox branch near `scan-page.js:647` already
+builds:
 
-## Settled — do not relitigate
+```
+{ k: "g1", t: "radio", l: "<the question>", req, o: [{k, sel, l: "Yes"}, {k, sel, l: "No"}] }
+```
 
-- **A checkbox or radio group never auto-acts unattended, whatever the answer's class.** A tick carries assent, not a value. Measured 34 auto-ticks → 0 against the real 49-entry bank. Defers use `why: "confirm-widget"`, deliberately a different string from the class gate's `why: "confirm"`; `readiness()` exempts only non-required ones. Do **not** narrow it to "groups with fewer than 3 options carry a value" — decoy options defeat that.
-- **The pid-liveness staleness probe is deleted, not disabled.** It fired 112/112 and destroyed a _different live holder's_ lock every time. The inference is invalid for short-lived processes. Do not reintroduce it in any form.
-- **`save-answer.mjs` keeps its own acquire loop on purpose.** Full adoption of `lock.mjs` regresses a committed `AJ_LOCK_TIMEOUT_MS=200` contract. The open question, for anyone who wants to finish it: the ordering invariant `timeoutMs > staleMs` is **stricter than the fact** — a waiter can recover an orphan _already stale on arrival_ whatever its timeout, so the ordering only matters for one going stale _while_ you wait.
-- **`docs/application-limits.yaml` is the user's file. No agent edits it.** They set the `auto_apply` block themselves: `enabled: false`, `dry_run: true`, `per_run_max: 999`, `per_day_max: 999`, `per_company_max_per_week: 5`.
-- **`.claude/hooks/*` and `.claude/settings*.json` are the user's alone**, sealed on both the Edit/Write and shell paths.
-- **Chromium stays installed** until the whole project is finished (user instruction). Uninstalling sends three browser legs back to skipping.
+That routes it through `verb === "check"` → the `confirm-widget` gate → the
+exact-text bank exemption added in `ddf85d5`. A banked answer (`a-006` answers
+this exact question) then fills it with no model turn, and `submitReadiness()`
+still refuses the unattended path.
 
-## Open, with owners
+**The scanner change grants nothing the `confirm-widget` gate does not already
+govern. That is what makes tier 2 safe — do not weaken that gate to make this
+work.**
 
-| item                                                                                                                                                                          | owner                        |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| Blast-radius review of the Phase 3 substrate — **do this first**                                                                                                              | `innov-resilience`           |
-| `E6 RESIDUAL` — a required file input revealed by a fill reaches neither `revealed` nor `verify.requiredEmpty`                                                                | `w2-engine`                  |
-| `MAX_WIDGET=25` pushes a signal `fill-plan.mjs` ignores; it blocks only on the CAPTCHA signal                                                                                 | `w3-resolution`              |
-| Shape F residual: a stateless `role="link"`/`menuitem`, or a `<summary>`-based consent, is still unreported                                                                   | `w2-engine` + `qa-adversary` |
-| `lever` and `ashby` have no scan fixtures, so **ashby cannot be benchmarked at all** — nonce CSP and a 700ms remount make it the most interesting latency fixture in the repo | `qa-adversary`               |
-| 14 stale `PROTOCOL` citation renumbers in `bench-apply.mjs`; 3 `when` predicates still key on `!c.ready` after `SKILL.md` stopped doing so                                    | `qa-breaker`                 |
-| `--browser` measures scan, not fill — post-upload remount cost still unmeasured                                                                                               | `qa-breaker`                 |
-| `gate-audit.mjs` wiring — needs a committed fixture lead store                                                                                                                | `w5-leads`                   |
-| Phase 4 entirely: recruiter contacts, document format, sweep-everything                                                                                                       | `w5-leads` / `w6-documents`  |
+The name list in tier 2 is a **restriction on top of** the structural detector,
+never the detector itself. An unrecognised wording must fall back to tier 1 and
+defer loudly.
 
-## Measured, so nobody re-derives it
+### Tests this needs
 
-- **The ~6.8s scan probe was never an unconditional cost** — it is a ceiling. Real Chromium prices the actual wait at **87.89ms**. One of the four numbers this project quoted for weeks was a worst case being read as a cost.
-- **Six of Phase 2's nine fix-table rows had already shipped** and nobody knew. What was missing was evidence, not code.
-- **`ready: true` is not "green".** Green means removing the model entirely via a runner that does not exist; 12 → 6 model turns is exactly what Phase 2 promised. The manager conflated these once and `innov-perf` corrected it.
-- **A required `confirm-widget` defer costs +1 model turn, not +4.** The other three were a `SKILL.md` predicate gating scan-derived decisions on a defer-derived flag. Fixed.
-- **At 6 concurrent writers the lock defect is invisible** — 0 violations even with the broken probe in. Only 20 writers separates the builds. "It passed at 6" was never evidence.
-- **`w2-engine`'s browser numbers use a reconstructed "before" arm, not a git checkout.** `qa-breaker` deliberately kept them out of `docs/measurements.md` for exactly that reason. Preserve the separation.
-- `CLAUDE.md` is **254 lines** (was 517). R6 is done; the command catalogue moved to `docs/reference/10-commands.md`. Keep it small — every agent reads it at startup, and that was the single largest avoidable cost measured.
+- A Yes/No pair with no aria state becomes a field (tier 1 defers it; tier 2
+  fills it from an exact bank hit).
+- **A hostile pair must NOT become a fillable field.** Add a fixture under
+  `tests/fixtures/hostile/forms/` with something like "Delete my account" /
+  "Keep". The fill engine clicks what the plan targets, and this is the file
+  where that mistake gets made.
+- Real submit / next / back / upload / auth buttons still land in `btns`
+  untouched — assert `btns` is unchanged for the existing fixtures.
+- The board fixtures under `tests/fixtures/boards/` produce the same scan as
+  today apart from the intended addition.
 
-## The failure shape to keep watching
+### Constraints
 
-Every expensive defect this project has found was **green when it was wrong**: a silent loss of saved answers with every process exiting 0; a benchmark whose `CONFIRM` was structurally unreachable, so the gate read as free because it had never once run; a test asserting on an argument the fix never touches; a doc asserting a directory's absence that decayed within the hour. Prefer behavioural assertions over source greps — three source-grep tests broke on wording this session while the behaviour was fine. Canary anything you rewrite: break it on purpose, confirm red, restore.
+- `.claude/skills/apply-job/scan-page.js` is **the highest-risk file in the
+  repo** — every application goes through it — and it is in `.prettierignore` as
+  a contract. Read the whole file before editing. Do not reformat it.
+- The button loop runs **before** the widget sweep, and the sweep skips anything
+  already stamped. That ordering is load-bearing; do not reorder it.
+- `npm test` is the gate (floor 2113). Run the single relevant file while
+  iterating; run the full gate once before committing.
+
+## Then, if there is room
+
+`.claude/skills/apply-job/SKILL.md` still says "NEVER click a button the scan
+classifies `r: submit`", which contradicts hard rule 6 as it now stands. The
+harness classifier blocked that edit twice on 2026-08-03. Try once; if it blocks
+again, tell the user and move on rather than routing around it.
+
+## Standing decisions — settled, do not relitigate
+
+1. **The agent clicks submit.** Hard rule 6, revised 2026-08-03: when the user
+   gives a posting URL, the application is sent. Do not reinstate a hand-off; it
+   has been removed twice. `UNKNOWN` fields still block — that is rule 1, and
+   rule 1 did not move.
+2. **Never put the user's name or other personal details in a markdown file.**
+   Write "the user". The only legitimate homes are `profile/` and the generated
+   documents under `jobs/<slug>/`.
+3. **Speed is the top priority, second only to security.** The user has said so
+   explicitly and measures against Jobright.
+4. **Do not build Phase 5 W4 or Phase 6.** The autonomy layer has consumed weeks
+   and sent zero applications; the attended path has sent 13. If autonomy work
+   seems necessary, say so and ask first.
+
+## How to be fast, concretely
+
+The apply flow budgets **5 browser calls for page 1** (navigate, scan,
+scan-to-disk, fill, advance). The 2026-08-03 session used ~16. The waste was:
+
+- navigating in the wrong browser first — use `mcp__playwright__*`, not the
+  in-app browser, for anything the skill drives;
+- polling by hand to see whether the form had hydrated instead of just
+  re-scanning;
+- **re-verifying after the fill engine had already verified.** The skill says it
+  outright: _"Do not follow this with a verification scan — the verify already
+  ran inside that call."_ Trust `report.uploads`, `verify.mismatch`,
+  `verify.requiredEmpty` and `revealed`. In particular, a file input reading
+  empty after an upload is **normal** — Ashby and Greenhouse both replace it
+  with their own attached-file view. `seen: "attached"` with a matching
+  `seenFile` is the answer; re-reading the DOM afterwards only manufactures
+  doubt.
+
+Batch independent tool calls into one message. Prefer a script over reasoning —
+`assemble-resume.mjs` builds a tailored resume at `model_turns=0`.
+
+## State as of 2026-08-03
+
+- `dev` @ `ddf85d5`, clean, gate 2113 tests / 0 fail.
+- 13 applications sent; 33 new leads unworked; the unattended runner has never
+  run and ships `enabled: false`.
+- One known open defect besides this task: the post-submit corpus is empty, so
+  `classify.mjs` returns `unclassified` for every real board. It fills from
+  attended applies via `scripts/apply/capture-post-submit.mjs`; the capture on
+  the Runpod apply was lost to a classifier block.

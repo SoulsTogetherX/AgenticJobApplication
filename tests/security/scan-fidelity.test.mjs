@@ -65,6 +65,11 @@ const PAIRS = [
   // served at the same URL for the same reason greenhouse-step2 is.
   ["ashby-step1", "ashby", "GET"],
   ["ashby-step2", "ashby", "POST"],
+  // Ashby's OTHER yes/no rendering — two <button>s, no aria state. Pinned
+  // because both of its questions were absent from `fields` entirely until the
+  // pair detector landed, and a fixture is how "the scanner sees this now"
+  // stays falsifiable.
+  ["ashby-buttons", "ashby-buttons", "GET"],
   ["lever-step1", "lever", "GET"],
   ["label-injection", "hostile-labels", "GET"],
   ["consent-decoupled", "hostile-consent", "GET"],
@@ -78,6 +83,11 @@ const PAIRS = [
   // If w2-engine teaches the scanner to see ARIA widgets, THIS goes red first
   // and the consumer test in hostile-forms.test.mjs goes red with it.
   ["escalated-aria-checkbox", "hostile-escalated-ariabox", "GET"],
+  // Shape G. Pinned so the two tiers stay visible as DATA: g1 refused by its
+  // answer set, g2 by the destructive-question backstop, and neither carrying
+  // a type any verb can operate. If either ever reads t:"radio", the fill
+  // engine has been handed a target on a destructive control.
+  ["button-pair-destructive", "hostile-button-pair", "GET"],
 ]
 
 let board

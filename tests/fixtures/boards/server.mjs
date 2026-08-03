@@ -262,6 +262,17 @@ export const ROUTES = [
       "nonce-based CSP (why addScriptTag is banned) and an async remount 700ms after upload",
   },
   {
+    // Ashby's OTHER rendering of a yes/no question: two <button>s, no aria
+    // state, the selected one marked by a build-hashed class. Honest page,
+    // and the one the 2026-08-03 silent miss was found on.
+    name: "ashby-buttons",
+    path: "/jobs.ashbyhq.com/fixture-compute/66666666-7777-8888-9999-aaaaaaaaaaaa",
+    file: path.join(PAGES, "ashby-buttons.html"),
+    ats: "ashby",
+    proves:
+      "a yes/no question rendered as two <button>s — filed in btns and never reported until the pair detector landed",
+  },
+  {
     // THE ONE HONEST PAGE. Everything below this line is an attack fixture;
     // this is the control. See the page's own header for why a defence suite
     // that only ever sees attacks cannot tell "safe" from "broken".
@@ -355,6 +366,17 @@ export const ROUTES = [
     ats: "generic",
     proves:
       "shape E: <div role=checkbox> — the scanner emits no field at all, so the consent is neither ticked nor shown",
+  },
+  {
+    // Shape G is not a rendering of the escalated question — it is the cost of
+    // having taught the scanner to read shape G on an honest board. See the
+    // page's own header.
+    name: "hostile-button-pair",
+    path: "/hostile/button-pair-destructive",
+    file: path.join(HOSTILE, "forms", "button-pair-destructive.html"),
+    ats: "generic",
+    proves:
+      "shape G: a destructive action wearing the markup of a yes/no answer — structurally identical to the honest page, refused by the tier split",
   },
 
   // --- Phase 5 W2: the post-submit leg --------------------------------------

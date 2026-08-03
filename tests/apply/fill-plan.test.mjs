@@ -2394,7 +2394,7 @@ function honestScanFixtures() {
     }))
 }
 
-test("the assertion gate did not collapse: over the honest board fixtures exactly ONE resolved field defers, and it is work authorisation", () => {
+test("the assertion gate did not collapse: over the honest board fixtures the ONLY resolved fields that defer are the work-authorisation ones", () => {
   const fixtures = honestScanFixtures()
   // The denominator floor, asserted FIRST so a shrunken fixture set cannot
   // make the rate below look good by accident.
@@ -2426,15 +2426,25 @@ test("the assertion gate did not collapse: over the honest board fixtures exactl
 
   // The exact set, not just the count — a NEW field starting to defer and an
   // old one stopping would cancel out in a count and both matter.
+  // ashby-buttons:g1 JOINED THIS LEDGER 2026-08-03, exactly as the header
+  // above says a new honest replica should. It is the sponsorship question
+  // rendered as a pair of <button>s — the same work-authorisation family as
+  // greenhouse's radio group, and it was not resolvable at all before
+  // scan-page.js learned to see a button pair, because it was not in the scan.
+  // A new entry here is only correct while it belongs to that family; anything
+  // else appearing is the collapse this test exists to catch.
   assert.deepEqual(
     confirmed.map((r) => `${r.fixture}:${r.k}`),
-    ["greenhouse-step1:g1"],
+    ["ashby-buttons:g1", "greenhouse-step1:g1"],
     `only the work-authorisation question may defer as an assertion; got ${JSON.stringify(confirmed.map((r) => ({ f: r.fixture, k: r.k, l: r.label })))}`,
   )
-  assert.match(confirmed[0].label, /authorized to work/i)
-  assert.match(confirmed[0].classDescription, /^assertion\b/)
+  for (const r of confirmed) {
+    assert.match(r.label, /authorized to work|require sponsorship/i)
+    assert.match(r.classDescription, /^assertion\b/)
+  }
 
-  // The rate, with headroom. 12.5% measured; anything at or above a quarter of
+  // The rate, with headroom. 12.5% measured on the two greenhouse steps alone,
+  // 18.2% (2/11) once ashby-buttons joined; anything at or above a quarter of
   // everything the fact base can answer means the classifier has started
   // treating ordinary data as assertions, and the fast path is dying.
   const rate = confirmed.length / resolvedRows.length
@@ -2780,9 +2790,7 @@ test("ready=true is still reachable: pure `datum` TEXT fields need no human, and
     resolved: resolveFields(reqScan.fields, {
       profile: HOSTILE_PROFILE,
       answers: HOSTILE_ANSWERS,
-    }).map((r) =>
-      r.k === "g1" ? { ...r, source: "a-004@fuzzy" } : r,
-    ),
+    }).map((r) => (r.k === "g1" ? { ...r, source: "a-004@fuzzy" } : r)),
     adapter,
     url: reqScan.url,
   })
@@ -3015,7 +3023,12 @@ test("A CONSENT BOX IS NEVER ACTUATED, however exactly it is banked", () => {
   ]) {
     const plan = buildPlan({
       scan: scanOf([
-        { k: "g1", t: "checkbox", l: label, o: [{ k: "o1", l: label, sel: "#c" }] },
+        {
+          k: "g1",
+          t: "checkbox",
+          l: label,
+          o: [{ k: "o1", l: label, sel: "#c" }],
+        },
       ]),
       resolved: [
         {
@@ -3039,7 +3052,9 @@ test("A CONSENT BOX IS NEVER ACTUATED, however exactly it is banked", () => {
 test("actuated is an empty array on a form with no widgets at all", () => {
   const plan = buildPlan({
     scan: scanOf([{ k: "f1", t: "text", l: "Name" }]),
-    resolved: [{ k: "f1", status: "OK", value: "X", source: "profile:contact" }],
+    resolved: [
+      { k: "f1", status: "OK", value: "X", source: "profile:contact" },
+    ],
     adapter: greenhouse,
     files,
   })

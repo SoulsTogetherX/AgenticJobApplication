@@ -1462,3 +1462,386 @@ test("section: a form with no headings at all leaves every field unstamped", asy
     )
   }
 })
+
+// ---------------------------------------------------------------------------
+// A QUESTION ANSWERED BY A PAIR OF <button>s
+//
+// THE INCIDENT (Ashby, 2026-08-03). "Will you now or in the future require
+// sponsorship for employment visa status?" was rendered as two <button>s with
+// no aria state. The button loop filed both in `btns` with r:"other" — a list
+// fill-plan.mjs never reads — so the plan reported four deferred fields and
+// NEVER MENTIONED THE QUESTION. It was found by hand-reading the DOM.
+//
+// WHAT THESE TESTS ARE FOR, in the order the risk runs:
+//   1. the pair is SEEN at all (the safety half — a silence is not a refusal)
+//   2. a pair whose answer set is not recognised carries NO verb
+//   3. real actions — submit, next, back, upload, auth — still reach `btns`
+//      untouched, because the detector runs before that loop and a mistake
+//      here eats navigation
+// Nothing below asserts that anything gets CLICKED: `widget: "buttons"` is on
+// both tiers precisely because no verb in this pipeline operates a <button>.
+// ---------------------------------------------------------------------------
+
+const SPONSOR =
+  "Will you now or in the future require sponsorship for employment visa status?"
+const LICENCE = "Do you hold a valid driving licence?"
+
+// The Ashby rendering, reduced to the two traits that made it invisible: no
+// aria state anywhere, and the "selected" button marked only by a build-hashed
+// class that is a different string after the board's next deploy.
+const buttonPair = (question, a, b) =>
+  h("body", {}, [
+    h("form", {}, [
+      h("div", { class: "field-entry" }, [
+        h("label", {}, [question]),
+        h("div", { class: "_container_1svni_1" }, [
+          h("button", { type: "button", class: "_option_x _active_1svni_57" }, [
+            a,
+          ]),
+          h("button", { type: "button", class: "_option_x" }, [b]),
+        ]),
+      ]),
+      h("button", { type: "submit", id: "go" }, ["Submit Application"]),
+    ]),
+  ])
+
+test("a Yes/No pair with no aria state becomes a field, not two nameless buttons", async () => {
+  const out = await scan(buttonPair(SPONSOR, "Yes", "No"))
+  const g = out.fields.find((f) => f.l === SPONSOR)
+  assert.ok(g, "the question must reach `fields`; in `btns` nothing reads it")
+  assert.equal(g.t, "radio", "a recognised Yes/No set travels as what it is")
+  assert.deepEqual(
+    g.o.map((o) => o.l),
+    ["Yes", "No"],
+  )
+  // The buttons are stamped by this pass, so the loop below skips them. Left
+  // in `btns` they would be reported twice, and the second report is the one
+  // no consumer reads.
+  assert.deepEqual(
+    out.btns.map((b) => b.l),
+    ["Submit Application"],
+  )
+})
+
+test("the group claims NOTHING about which button is selected", async () => {
+  // The real board marks it with a hashed class — a different string after the
+  // next deploy. There is no honest way to read that, so `on` stays unset
+  // rather than guessed, and a consumer asking "is one already chosen" gets no
+  // answer instead of a wrong one.
+  const out = await scan(buttonPair(SPONSOR, "Yes", "No"))
+  const g = out.fields.find((f) => f.l === SPONSOR)
+  for (const o of g.o) {
+    assert.equal(
+      o.on,
+      undefined,
+      `the hashed active class is not a signal: ${JSON.stringify(o)}`,
+    )
+  }
+})
+
+test("`widget: buttons` is set on the RECOGNISED tier too", async () => {
+  // Not decoration. fill-engine.mjs's kindOf() answers "forbidden:button", so
+  // no verb here can operate this control whatever `t` says — and fill-plan.mjs
+  // reads this key to keep such a field out of `items`. Dropping it from the
+  // recognised tier does not make the click work; it makes the plan claim a
+  // tick that never happened.
+  const out = await scan(buttonPair(SPONSOR, "Yes", "No"))
+  assert.equal(out.fields.find((f) => f.l === SPONSOR).widget, "buttons")
+})
+
+test("a HOSTILE pair does not become a fillable field", async () => {
+  // The fill engine clicks what the plan targets, and this is the file where
+  // that mistake gets made. Structurally this page is identical to the honest
+  // one above — that is the point, because the detector is structural. What
+  // refuses it is the answer set: "Delete my account" / "Keep" is not one this
+  // file recognises, so the group carries a type fill-plan.mjs's VERB map has
+  // no entry for and lands in its `unsupported field type` defer.
+  const q = "Delete my account and all stored applications?"
+  const out = await scan(buttonPair(q, "Delete my account", "Keep"))
+  const g = out.fields.find((f) => f.l === q)
+  assert.ok(g, "it must still be SEEN — a silence is not a refusal")
+  assert.equal(g.t, "widget")
+  assert.equal(g.widget, "buttons")
+  assert.match(g.labelWhy, /answer set/)
+})
+
+test("a Yes/No pair under a DESTRUCTIVE question falls back to tier 1", async () => {
+  // A backstop, and it is not the control: what actually stops a hostile pair
+  // is that filling one needs an exact hit on a question the user themselves
+  // recorded. This closes the one case that cannot be undone.
+  const out = await scan(buttonPair("Withdraw my application?", "Yes", "No"))
+  const g = out.fields.find((f) => f.l === "Withdraw my application?")
+  assert.equal(g.t, "widget", "a recognised answer set does not license this")
+})
+
+test("real submit / next / back / upload / auth buttons still land in btns untouched", async () => {
+  // The detector runs BEFORE the button loop and stamps what it takes, so a
+  // mistake here silently eats navigation. Every one of these is short and
+  // sits next to a question; only roleOf() keeps them out.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("div", {}, [
+          h("label", {}, [LICENCE]),
+          h("div", {}, [
+            h("button", { type: "button" }, ["Back"]),
+            h("button", { type: "button" }, ["Next"]),
+            h("button", { type: "button" }, ["Upload"]),
+            h("button", { type: "button" }, ["Sign in"]),
+            h("button", { type: "submit" }, ["Submit Application"]),
+          ]),
+        ]),
+      ]),
+    ]),
+  )
+  assert.deepEqual(
+    out.btns.map((b) => [b.l, b.r]),
+    [
+      ["Back", "back"],
+      ["Next", "next"],
+      ["Upload", "upload"],
+      ["Sign in", "auth"],
+      ["Submit Application", "submit"],
+    ],
+  )
+  assert.deepEqual(out.fields, [], "not one of these is an answer")
+})
+
+test("an action sharing the row with the pair stays an action, and the pair is still seen", async () => {
+  // The compact rendering: question, Yes, No and Submit in one container.
+  // Giving up here would be the silent miss again, so the action's words come
+  // out of the question text and the button itself is left for `btns`.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("div", {}, [
+          h("span", {}, [LICENCE]),
+          h("button", { type: "button" }, ["Yes"]),
+          h("button", { type: "button" }, ["No"]),
+          h("button", { type: "submit" }, ["Submit Application"]),
+        ]),
+      ]),
+    ]),
+  )
+  assert.deepEqual(
+    out.fields.map((f) => [f.l, f.t]),
+    [[LICENCE, "radio"]],
+  )
+  assert.deepEqual(
+    out.btns.map((b) => b.l),
+    ["Submit Application"],
+  )
+})
+
+test("a toolbar of short unnamed buttons is NOT a field — the container asks nothing", async () => {
+  // The discriminator is the question, not the buttons. Without it "Bold /
+  // Italic" in a rich-text editor becomes an unfillable defer on every board
+  // that has one, which is how a checker starts crying wolf and gets ignored.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("div", {}, [
+          h("label", { for: "c" }, ["Cover letter"]),
+          h("div", { class: "toolbar" }, [
+            h("button", { type: "button" }, ["Bold"]),
+            h("button", { type: "button" }, ["Italic"]),
+          ]),
+          h("textarea", { id: "c" }),
+        ]),
+      ]),
+    ]),
+  )
+  assert.deepEqual(
+    out.fields.map((f) => f.t),
+    ["textarea"],
+  )
+  assert.deepEqual(
+    out.btns.map((b) => b.l),
+    ["Bold", "Italic"],
+  )
+})
+
+test("buttons wrapped one per div are still one group — ancestors, not siblings", async () => {
+  // Whether the two buttons share a parent is a fact about one board's CSS.
+  // A detector that turned on it would miss the next board for a reason that
+  // has nothing to do with the question.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("div", { class: "q" }, [
+          h("span", { class: "label" }, [SPONSOR]),
+          h("div", { class: "opts" }, [
+            h("div", {}, [h("button", { type: "button" }, ["Yes"])]),
+            h("div", {}, [h("button", { type: "button" }, ["No"])]),
+          ]),
+        ]),
+      ]),
+    ]),
+  )
+  assert.deepEqual(
+    out.fields.map((f) => [f.l, f.t, f.o.length]),
+    [[SPONSOR, "radio", 2]],
+  )
+})
+
+test("a STATEFUL button pair is seen too, and its declared state is reported", async () => {
+  // MEASURED, not assumed. The button loop skips a control carrying
+  // aria-checked / -pressed / -selected so the widget sweep can report it —
+  // but the sweep skips NATIVE tags and BUTTON is one, so for a <button> that
+  // hand-off goes NOWHERE: a lone <button aria-pressed> produces no field and
+  // no button at all. That pre-existing hole is not closed here. What is
+  // closed is the paired case, and because the page DID declare its state,
+  // `on` is reported instead of guessed.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("div", {}, [
+          h("label", {}, ["Have you worked here before?"]),
+          h("div", {}, [
+            h("button", { type: "button", "aria-pressed": "true" }, ["Yes"]),
+            h("button", { type: "button", "aria-pressed": "false" }, ["No"]),
+          ]),
+        ]),
+      ]),
+    ]),
+  )
+  assert.deepEqual(
+    out.fields.map((f) => [f.l, f.t, f.o.map((o) => [o.l, o.on ?? null])]),
+    [
+      [
+        "Have you worked here before?",
+        "radio",
+        [
+          ["Yes", true],
+          ["No", null],
+        ],
+      ],
+    ],
+  )
+  assert.deepEqual(out.btns, [], "neither is an action")
+})
+
+test("STATED LIMIT: a pair sharing a container with another control is still missed", async () => {
+  // The walk up stops at a container holding another control, because the
+  // alternative is stamping "What is your name?" onto the Yes/No pair — the
+  // E8 trap, and a wrong label is worse than an empty one because the user
+  // acts on it. Asserted rather than left as a claim in a comment: if the
+  // limit ever closes, this test says so and the comment is stale.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("div", { class: "row" }, [
+          h("label", { for: "x" }, ["What is your name?"]),
+          h("input", { type: "text", id: "x" }),
+          h("div", {}, [
+            h("button", { type: "button" }, ["Yes"]),
+            h("button", { type: "button" }, ["No"]),
+          ]),
+        ]),
+      ]),
+    ]),
+  )
+  assert.deepEqual(
+    out.fields.map((f) => f.t),
+    ["text"],
+  )
+  assert.deepEqual(
+    out.btns.map((b) => b.l),
+    ["Yes", "No"],
+  )
+})
+
+test("more than four unnamed buttons under one question is not one question", async () => {
+  // Two questions whose own wrappers carry no text collapse onto the
+  // container above them. Stopping there keeps the wrong question off the
+  // group; the buttons fall through to `btns`, which is exactly where they
+  // were before this block existed.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("div", { class: "fs" }, [
+          h("div", {}, [
+            h("button", { type: "button" }, ["Yes"]),
+            h("button", { type: "button" }, ["No"]),
+          ]),
+          h("div", {}, [
+            h("button", { type: "button" }, ["Yes"]),
+            h("button", { type: "button" }, ["No"]),
+          ]),
+          h("div", {}, [
+            h("button", { type: "button" }, ["Yes"]),
+            h("button", { type: "button" }, ["No"]),
+          ]),
+          h("span", {}, ["Which of these applies?"]),
+        ]),
+      ]),
+    ]),
+  )
+  assert.deepEqual(out.fields, [])
+  assert.equal(out.btns.length, 6)
+})
+
+test("an INVISIBLE backing control in the same container does not block detection", async () => {
+  // THE ONE THAT MADE THE FIRST FIX A NO-OP. The walk up stops at a container
+  // holding another control, so the pair never adopts a neighbouring field's
+  // label. Ashby puts the value it actually submits in a display:none
+  // <input type="checkbox"> INSIDE each pair's own container — measured on a
+  // live form, 2026-08-03 — and a guard that exempted only `type="hidden"`
+  // treated it as a second question and refused the group. Every fixture in
+  // the repo passed; the real board reported both questions in `btns`.
+  //
+  // The rule is "a control this scanner would itself collect", which is to say
+  // a VISIBLE one. This test is the difference between the two rules.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("div", { class: "field-entry" }, [
+          h("label", {}, [SPONSOR]),
+          h("div", { class: "_container_1svni_28" }, [
+            h("input", {
+              type: "checkbox",
+              name: "question_7097054005",
+              tabindex: "-1",
+              style: { display: "none" },
+            }),
+            h("button", { type: "button" }, ["Yes"]),
+            h("button", { type: "button" }, ["No"]),
+          ]),
+        ]),
+      ]),
+    ]),
+  )
+  assert.deepEqual(
+    out.fields.map((f) => [f.l, f.t]),
+    [[SPONSOR, "radio"]],
+    "the board's own hidden backing checkbox is not a second question",
+  )
+})
+
+test("a VISIBLE control in the same container still blocks it", async () => {
+  // The other half of the rule above, so the fix to the Ashby case cannot be
+  // read as "ignore other controls". A visible input beside the pair means the
+  // container belongs to two questions, and adopting its label is the E8 trap.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("div", { class: "field-entry" }, [
+          h("label", { for: "x" }, ["What is your name?"]),
+          h("div", {}, [
+            h("input", { type: "text", id: "x" }),
+            h("button", { type: "button" }, ["Yes"]),
+            h("button", { type: "button" }, ["No"]),
+          ]),
+        ]),
+      ]),
+    ]),
+  )
+  assert.deepEqual(
+    out.fields.map((f) => f.t),
+    ["text"],
+  )
+  assert.deepEqual(
+    out.btns.map((b) => b.l),
+    ["Yes", "No"],
+  )
+})

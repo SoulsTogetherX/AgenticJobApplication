@@ -29,6 +29,7 @@ import {
   isHardConsent,
   looksLikeAgreementProse,
   readiness,
+  submitReadiness,
 } from "../../scripts/apply/fill-plan.mjs"
 import { normalizeQuestion } from "../../scripts/apply/answer-bank.mjs"
 import { answerClass, classifyAnswer } from "../../scripts/lib/untrusted.mjs"
@@ -1847,5 +1848,159 @@ test("FIX (shape E) AT THE ENGINE: the visible ARIA consent control is deferred,
     "the ARIA consent control must reach the user as a defer and must never be " +
       "acted on. A tick, a silent skip, or the scanner going blind to it again " +
       "are all regressions.",
+  )
+})
+
+// ---------------------------------------------------------------------------
+// SHAPE G: a question answered by a pair of <button>s
+//
+// Two pages, and they are STRUCTURALLY IDENTICAL — question in a <label>, two
+// short <button>s in a sibling container, no aria state, a hashed class on the
+// "selected" one. That is not sloppiness in the fixtures, it is the finding:
+// scan-page.js's detector is structural on purpose, because a name list is the
+// same defect one rewording later. So the honest page and the hostile one look
+// the same to the scanner, and what tells them apart lives downstream.
+//
+// Asserted at the CONSUMER, never at the scanner: "buildPlan emitted no check
+// item" is one step short of what matters, and what matters is that nothing
+// reached `items` pointing at a destructive control.
+// ---------------------------------------------------------------------------
+
+const SPONSOR_Q =
+  "Will you now or in the future require sponsorship for employment visa status?"
+
+test("shape G (honest): the question the scanner used to swallow now reaches the user WITH its banked answer", () => {
+  // THE INCIDENT, at the consumer. Before the pair detector this question was
+  // not in `fields` at all: both controls were <button>s with no aria state, so
+  // they were filed in `btns` with r:"other" — a list this file never reads —
+  // and the plan reported four defers without mentioning the question. A
+  // required work-authorisation answer went missing and nothing said so.
+  const s = scan("ashby-buttons")
+  const plan = planFrom(s)
+  const d = plan.defer.find((x) => x.label === SPONSOR_Q)
+
+  assert.ok(d, "if this is undefined the silent miss is BACK, not a fixture drift")
+  // It defers as `confirm`, carrying the answer: work authorisation is an
+  // assertion the user makes, so the class gate holds it whatever the widget
+  // is. What the pair detector bought is the `value`/`pick` riding along —
+  // the agent actuates it and names it (rule 6) instead of asking.
+  assert.deepEqual(
+    { why: d.why, value: d.value, pick: d.pick },
+    { why: "confirm", value: "No", pick: "f4" },
+  )
+  // And the three-option question next to it stays verb-less: not every button
+  // group is a yes/no, and one that is not must still be SEEN.
+  assert.deepEqual(
+    plan.defer
+      .filter((x) => x.label === "What are your pronouns?")
+      .map((x) => x.why),
+    ["unsupported field type widget"],
+  )
+  // Nothing about either reached `items`, and the honest fields still did —
+  // so none of the above is the vacuous pass a defer-everything plan gives.
+  assert.deepEqual(
+    plan.items.map((i) => `${i.sel} = ${i.value}`),
+    ["#_systemfield_name = Jane Test", "#_systemfield_email = jane@test.example"],
+  )
+  assert.equal(readiness(plan).ready, false)
+})
+
+test("shape G (hostile): a destructive pair never becomes a plan item", () => {
+  // The fill engine clicks what the plan targets, so this is the assertion the
+  // whole detector has to earn. Both questions here pass every structural test
+  // the detector applies; what refuses them is the tier split.
+  const s = scan("button-pair-destructive")
+  const plan = planFrom(s)
+
+  assert.deepEqual(
+    plan.defer.map((d) => [d.label, d.why]),
+    [
+      // Refused by its answer set: "Delete my account" / "Keep" is not one the
+      // scanner recognises, so the group carries no verb at all.
+      [
+        "Delete my account and all stored applications?",
+        "unsupported field type widget",
+      ],
+      // This one IS labelled Yes/No, so it clears the answer-set restriction
+      // and is stopped by the destructive-question backstop instead. That word
+      // list is not the control — the control is that filling one of these
+      // needs an exact hit on a question the user themselves recorded.
+      ["Withdraw my application?", "unsupported field type widget"],
+    ],
+  )
+  assert.deepEqual(
+    plan.items.map((i) => [i.k, i.how]),
+    [["f1", "fill"]],
+    "the only act on this page is typing a name into a field labelled for it",
+  )
+  assert.deepEqual(plan.actuated, [])
+  assert.equal(readiness(plan).ready, false)
+  assert.equal(submitReadiness(plan).ready, false)
+})
+
+test("shape G: a button pair is kept out of `items` even when the bank answers it exactly", () => {
+  // THE REGRESSION THIS CATCHES, and it is not hypothetical — it was live for
+  // the length of one edit. The exact-text bank exemption (2026-08-03) takes a
+  // widget out of the confirm-widget defer and into `items` as how:"check".
+  // For a <button> that instruction cannot be carried out: fill-engine.mjs's
+  // kindOf() answers "forbidden:button" and actOn() refuses it. So the plan
+  // would have recorded an `actuated` tick that the engine was never going to
+  // perform — the silent miss inverted, and worse, because a report claiming
+  // assent that was never given is not recoverable by reading the report.
+  //
+  // `f.widget` is scan-page.js saying "no verb here operates this control",
+  // and buildPlan reads it. The answer still resolves — `value` and `pick` are
+  // on the defer — so the speed is kept and only the false claim is dropped.
+  const banked = path.join(os.tmpdir(), "aj-shape-g-answers.yaml")
+  fs.writeFileSync(
+    banked,
+    'answers:\n  - id: a-900\n    question: Have you previously worked at this company?\n' +
+      '    answer: "No"\n    added: 2026-08-01\n',
+  )
+  const s = {
+    url: "https://board.test/apply",
+    kind: "form",
+    fields: [
+      {
+        k: "g1",
+        t: "radio",
+        l: "Have you previously worked at this company?",
+        widget: "buttons",
+        o: [
+          { k: "f1", l: "Yes" },
+          { k: "f2", l: "No" },
+        ],
+      },
+    ],
+    btns: [],
+  }
+  const plan = buildPlan({
+    scan: s,
+    resolved: resolveFields(s.fields, { profile: PROFILE, answers: banked }),
+    adapter: GENERIC,
+    url: s.url,
+  })
+  assert.deepEqual(plan.items, [])
+  assert.deepEqual(plan.actuated, [])
+  assert.deepEqual(
+    plan.defer.map((d) => [d.why, d.value, d.pick]),
+    [["confirm-widget", "No", "f2"]],
+    "the answer still travels — only the claim that it was ticked is dropped",
+  )
+
+  // The canary: with the marker removed the field IS taken into `items`, which
+  // is what makes the assertion above about the marker and not about something
+  // else on the page.
+  const bare = JSON.parse(JSON.stringify(s))
+  delete bare.fields[0].widget
+  const loose = buildPlan({
+    scan: bare,
+    resolved: resolveFields(bare.fields, { profile: PROFILE, answers: banked }),
+    adapter: GENERIC,
+    url: bare.url,
+  })
+  assert.deepEqual(
+    loose.items.map((i) => i.how),
+    ["check"],
   )
 })

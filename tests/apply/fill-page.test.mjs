@@ -2005,8 +2005,13 @@ test("all three copies of the probe guard are identical", () => {
     "utf8",
   )
   const scanner = fs.readFileSync(SCANNER_PATH, "utf8")
-  const re = /\/\\b\(withdraw\|delete[^\n]*\/i/
-  const found = [engine, DRIVER, scanner].map((s) => re.exec(s)?.[0])
+  // ANCHORED ON THE CONSTANT'S NAME, not on the regex text alone. scan-page.js
+  // grew a SECOND destructive word list — the button-pair detector's backstop,
+  // which is a different guard with a different job — and it sits earlier in
+  // the file, so a search for the regex text alone found that one and reported
+  // a drift the probe guard had not suffered.
+  const re = /DESTRUCTIVE_LABEL\s*=\s*(\/\\b\(withdraw\|delete[^\n]*\/i)/
+  const found = [engine, DRIVER, scanner].map((s) => re.exec(s)?.[1])
   assert.ok(found[0], "the engine's DESTRUCTIVE_LABEL must be findable")
   assert.equal(found[1], found[0], "scan.driver.mjs drifted from the engine")
   assert.equal(found[2], found[0], "scan-page.js drifted from the engine")

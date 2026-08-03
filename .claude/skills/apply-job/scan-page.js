@@ -33,6 +33,12 @@
 //               operate one; see the block that collects them for why that is
 //               deliberate, and for why the DETECTOR is focusability rather
 //               than a list of roles.
+//               "buttons" on a QUESTION ANSWERED BY A PAIR OF <button>s — see
+//               the block that collects those. Same meaning, and it is set
+//               whether or not the answer set was recognised, because the
+//               fill engine refuses to touch a <button> either way. What the
+//               recognition changes is `t`, and through it whether the answer
+//               travels with the defer; it never makes the control operable.
 // `t` is correspondingly "aria-<role>" when the element declares a role this
 // file recognises ("aria-checkbox", "aria-menuitemradio", "aria-option", ...)
 // and the generic "widget" when it does not. BOTH are types fill-plan.mjs's
@@ -771,6 +777,282 @@ window.__ajScan = async (PROBE = true) => {
                   )
                 ? "auth"
                 : "other"
+
+  // --- a question answered by a PAIR OF BUTTONS ----------------------------
+  // THIS RUNS BEFORE THE BUTTON LOOP, FOR THE SAME REASON THAT LOOP RUNS
+  // BEFORE THE WIDGET SWEEP: it stamps what it collects, and every later pass
+  // skips anything already stamped this run. Whether a control is a field or
+  // an action is decided in ONE place — the first pass that recognises it —
+  // rather than by a selector list each later pass has to walk around.
+  //
+  // THE SILENT MISS THIS ENDS (Ashby, 2026-08-03). "Will you now or in the
+  // future require sponsorship for employment visa status?" is rendered there
+  // as two <button>s. roleOf() names neither, so both were filed in `btns`
+  // with r:"other" — a list fill-plan.mjs never reads. The plan reported four
+  // deferred fields and DID NOT MENTION THE QUESTION AT ALL; it was found by
+  // hand-reading the DOM. A required work-authorisation answer went missing
+  // and nothing anywhere said so. This file's own header: A SILENCE IS NOT A
+  // REFUSAL, and a silence is the worse of the two failure modes.
+  //
+  // WHY THE BUTTON LOOP'S OWN ESCAPE HATCH DID NOT CATCH IT. That loop hands a
+  // control down to the widget sweep only when it carries aria-checked /
+  // aria-pressed / aria-selected. Ashby's buttons carry none: the selected one
+  // is marked with a build-hashed CSS class (_active_1svni_57), which is not a
+  // signal — it is a different string after the board's next deploy. This is
+  // precisely the residual hole the sweep states about itself ("AND ONE NAME
+  // LIST, THREE ENTRIES, WHICH IS THE RESIDUAL HOLE"), hit in production.
+  //
+  // THE DETECTOR CARRIES NO NAME LIST. It is structural: two or more <button>s
+  // that roleOf() could not name, all short-labelled, under the nearest
+  // container that ASKS A QUESTION and holds nothing else. A name list here
+  // would be the same defect one rewording later, which is the lesson Shape E
+  // paid for twice.
+  //
+  // TWO TIERS, AND ONLY THE SECOND IS ABOUT SPEED:
+  //
+  //   TIER 1 — everything this detector sees becomes t:"widget", a type
+  //   fill-plan.mjs's VERB map has no entry for, so it lands in that file's
+  //   `unsupported field type` defer: reported to the user, blocking, never
+  //   acted on. REPORTING IS NOT A VERB. Tier 1 grants no capability at all;
+  //   it converts a silence into a refusal, and that is the safety half.
+  //
+  //   TIER 2 — a RECOGNISED CLOSED ANSWER SET (Yes/No, today) is emitted as
+  //   the same group shape the radio/checkbox branch above builds, because
+  //   that is what the pair IS. It then travels the existing route: verb
+  //   "check" -> fill-plan.mjs's confirm-widget gate -> the exact-text bank
+  //   exemption, which fills it only from an answer the user recorded against
+  //   this exact question, with no model turn. NOTHING HERE WEAKENS THAT GATE,
+  //   and that is what makes tier 2 safe: this file grants no reach the gate
+  //   does not already govern, and submitReadiness() still refuses the
+  //   unattended path on `actuated`.
+  //
+  // THE ANSWER-SET LIST IN TIER 2 IS A RESTRICTION ON TOP OF THE STRUCTURAL
+  // DETECTOR, NEVER THE DETECTOR ITSELF. An unrecognised pair — "Delete my
+  // account" / "Keep" — falls back to tier 1 and defers loudly. The two
+  // failure modes point the same way: a pair this file cannot read is still
+  // SEEN.
+  //
+  // ONE STATED LIMIT, so nobody mistakes it for coverage. The walk up stops at
+  // a container holding ANOTHER control, because the alternative is stamping
+  // that control's label onto this pair — the E8 trap, and a wrong label is
+  // worse than an empty one because the user acts on it. So a pair that shares
+  // a row with a text input, and whose own container asks nothing, is STILL
+  // missed: it falls through to `btns` exactly as it did before this block
+  // existed. That is the same conservative direction the rest of the file
+  // takes, and it is a smaller hole than the one being closed, not none.
+  //
+  // WHICH BUTTON IS SELECTED IS REPORTED ONLY WHEN THE PAGE SAYS SO. On the
+  // board this was found on, the selection is a hashed class name and there is
+  // no honest way to read it, so `on` is absent rather than guessed — a
+  // consumer asking "is one already chosen" gets no answer instead of a wrong
+  // one. A pair that DOES declare aria-checked / -pressed / -selected gets a
+  // real `on`, because then the page has stated it.
+  const PAIR_OPT_MAX = 40
+  const PAIR_OPT_COUNT_MAX = 4
+  const PAIR_QUESTION_MAX = 300
+  const MAX_PAIRS = 8
+  // Containers holding one of these are somebody else's question, so the walk
+  // up stops rather than adopting their label.
+  //
+  // "ONE OF THESE" MEANS A CONTROL THIS SCANNER WOULD ITSELF COLLECT, which is
+  // to say a VISIBLE one — and that is not a refinement, it is the difference
+  // between this block working on Ashby and not. MEASURED on a live Ashby form
+  // (2026-08-03): each Yes/No pair sits in a container that ALSO holds
+  //   <input type="checkbox" tabindex="-1" name="question_7097054005">
+  // at display:none — the board's own backing store for the pair, not a second
+  // question. An earlier version of this guard exempted `type="hidden"` only,
+  // rejected that container, and the live page still reported both questions in
+  // `btns`: the fix passed every fixture and did nothing on the real board.
+  // A file input is collected whatever its visibility (see the field loop's own
+  // `type !== "file"`), so it counts here whatever its visibility too.
+  const PAIR_FOREIGN =
+    "input,select,textarea,[contenteditable],[role='combobox'],[role='checkbox'],[role='radio'],[role='listbox']"
+  const isFileInput = (c) =>
+    c.tagName === "INPUT" && full(c.getAttribute("type")).toLowerCase() === "file"
+  const holdsForeignControl = (a) => {
+    try {
+      for (const c of a.querySelectorAll(PAIR_FOREIGN)) {
+        if (isFileInput(c) || vis(c)) return true
+      }
+    } catch {
+      return true
+    }
+    return false
+  }
+  // A candidate OPTION button: one the loop below would have filed as the role
+  // it could not name.
+  //
+  // A STATEFUL <button> IS NOT EXCLUDED HERE, AND THAT IS DELIBERATE. The loop
+  // below skips a control carrying aria-checked / -pressed / -selected so the
+  // widget sweep can report it — but the sweep skips NATIVE tags, and BUTTON is
+  // one, so for a <button> that hand-off goes NOWHERE. Measured: a lone
+  // <button aria-pressed="false">I certify the information above is true</button>
+  // produces no field AND no button. That is a separate, pre-existing hole and
+  // it is not fixed here; what IS fixed is the paired case, which this block
+  // can see. Excluding stateful buttons would have been deferring to a catcher
+  // that does not exist.
+  const PAIR_STATE = ["aria-checked", "aria-pressed", "aria-selected"]
+  const pairOptionLabel = (el) => {
+    if (!vis(el) || el.disabled || claimedNow(el)) return ""
+    const l = txt(el.innerText || el.value || labelOf(el), 60)
+    if (!l || l.length > PAIR_OPT_MAX) return ""
+    return roleOf(l) === "other" ? l : ""
+  }
+  // "true" on any of the three state attributes, and nothing at all when the
+  // page declares none. Same rule as everywhere else in this file: a hashed
+  // class is not a signal, so a board that marks its selection with one gets
+  // no `on` rather than a guessed one.
+  const pairOptionOn = (el) => {
+    for (const a of PAIR_STATE) {
+      if (full(el.getAttribute(a)).toLowerCase() === "true") return true
+    }
+    return undefined
+  }
+  // The container's own words, with the options' words taken out — "Yes No"
+  // is not a question. Removed from the END: an option's text can occur
+  // inside the question ("Note" contains "No"), and the buttons render after
+  // the label.
+  const withoutOptions = (t, labels) => {
+    let s = t
+    for (let i = labels.length - 1; i >= 0; i--) {
+      const j = s.lastIndexOf(labels[i])
+      if (j >= 0) s = s.slice(0, j) + " " + s.slice(j + labels[i].length)
+    }
+    return full(s)
+  }
+  // The LAST sentence ending in a question mark. "" when the text asks
+  // nothing, which is what keeps a toolbar of short unnamed buttons — Bold,
+  // Italic, Underline — out of `fields` entirely.
+  const questionIn = (t) => {
+    const i = t.lastIndexOf("?")
+    if (i < 0) return ""
+    const head = t.slice(0, i + 1)
+    let start = 0
+    for (const mark of [". ", "? ", "! "]) {
+      const j = head.lastIndexOf(mark, head.length - 2)
+      if (j >= 0 && j + mark.length > start) start = j + mark.length
+    }
+    return txt(head.slice(start))
+  }
+  // Sorted, because the comparison sorts. One entry today.
+  const CLOSED_SETS = [["no", "yes"]]
+  const closedKey = (l) =>
+    full(l)
+      .toLowerCase()
+      .replace(/[.!?,]+$/, "")
+  const isClosedSet = (opts) => {
+    const keys = opts.map((o) => closedKey(o.l)).sort()
+    return CLOSED_SETS.some(
+      (set) => set.length === keys.length && set.every((v, i) => v === keys[i]),
+    )
+  }
+  // A BACKSTOP, AND SAID TO BE ONE. What actually stops tier 2 acting on a
+  // hostile pair is that it only ever fills from an EXACT bank hit — the
+  // user's own recorded wording of this exact question — so a question they
+  // never answered resolves UNKNOWN and defers. This list closes the one case
+  // where being wrong cannot be undone, and closes nothing else: the 26th
+  // rewording is free here exactly as it is everywhere else in this repo.
+  const PAIR_DESTRUCTIVE =
+    /\b(withdraw|delete|deactivate|revoke|erase)\b|\bclose (my )?(account|profile)\b|\bsubmit\b/i
+
+  const pairCands = new Map()
+  for (const el of document.querySelectorAll("button")) {
+    const l = pairOptionLabel(el)
+    if (l) pairCands.set(el, l)
+  }
+  let ngroup = groups.size
+  let pairCut = 0
+  const pairTaken = new Set()
+  if (pairCands.size >= 2) {
+    for (const el of pairCands.keys()) {
+      if (pairTaken.has(el)) continue
+      // Nearest ancestor that asks a question and holds this pair and nothing
+      // else. ANCESTORS, not siblings: whether the two buttons share a parent
+      // or each sits in its own wrapper is a fact about one board's CSS, not
+      // about forms, and a detector that turned on it would miss the next
+      // board for a reason that has nothing to do with the question.
+      for (let a = el.parentElement, i = 0; a && i < 5; a = a.parentElement, i++) {
+        if (a.tagName === "BODY" || a.tagName === "HTML") break
+        let all = []
+        try {
+          all = [...a.querySelectorAll("button")]
+        } catch {
+          break
+        }
+        // A button ANOTHER pair already owns means this container spans two
+        // questions; stop rather than merge them under one label.
+        if (all.some((b) => pairTaken.has(b))) break
+        const mine = all.filter((b) => pairCands.has(b))
+        if (mine.length < 2) continue
+        // A closed answer set rendered as buttons is two to four options. More
+        // than that is a container of several questions, not one question, and
+        // adopting its text would stamp the wrong question on the group — the
+        // E8 trap the widget sweep records ("a wrong label is worse than an
+        // empty one"). Stop; those buttons reach `btns` exactly as today.
+        if (mine.length > PAIR_OPT_COUNT_MAX) break
+        // An action sharing the container — a compact row of Yes / No /
+        // Submit — is NOT a reason to give up on the question: giving up is
+        // the silent miss this block exists to end. Its words come out of the
+        // text with the options', and the button itself is left for the loop
+        // below, so nothing that was in `btns` stops being in `btns`.
+        if (holdsForeignControl(a)) break
+        const raw = withoutOptions(
+          full(a.innerText),
+          all.map((b) => pairCands.get(b) ?? txt(b.innerText || b.value, 60)),
+        )
+        if (raw.length > PAIR_QUESTION_MAX) break
+        const question = questionIn(raw)
+        if (!question) continue
+        pairCut++
+        // The cut is STATED, never silent — same reasoning as optsTruncated
+        // and the widget sweep's own cap. What is skipped falls through to
+        // `btns` exactly as before, which is the miss, so it is said out loud.
+        if (pairCut > MAX_PAIRS) break
+        const opts = mine.map((b) => ({ el: b, l: pairCands.get(b) }))
+        const recognised =
+          isClosedSet(opts) && !PAIR_DESTRUCTIVE.test(question)
+        const g = {
+          k: "g" + ++ngroup,
+          t: recognised ? "radio" : "widget",
+          l: question,
+          req: isReq(a, raw) || undefined,
+          o: opts.map((o) => ({
+            k: stamp(o.el, "f"),
+            sel: stableSel(o.el),
+            ...identityOf(o.el),
+            l: o.l,
+            on: pairOptionOn(o.el),
+          })),
+          // ON BOTH TIERS, INCLUDING THE RECOGNISED ONE, AND THAT IS THE POINT.
+          // Same meaning as the widget sweep's "aria": NO VERB IN THIS PIPELINE
+          // OPERATES THIS CONTROL. It is literally true here — fill-engine.mjs's
+          // kindOf() answers "forbidden:button" for a <button> and actOn()
+          // refuses it — so a tier-2 group that reached `items` as how:"check"
+          // would be an instruction the engine cannot carry out, reported as
+          // ticked by a plan that could never tick it. Emitting the key on both
+          // tiers is what lets fill-plan.mjs route this to the confirm-widget
+          // defer WITH the resolved value and pick, which is the actuation rule
+          // 6 describes: the agent acts and names it. Removing this key from the
+          // recognised tier does not make the click work; it makes the plan lie.
+          widget: "buttons",
+        }
+        if (!recognised) {
+          g.labelWhy =
+            "answered by buttons whose answer set this scanner does not recognise"
+        }
+        fields.push(g)
+        for (const b of mine) pairTaken.add(b)
+        break
+      }
+    }
+  }
+  if (pairCut > MAX_PAIRS) {
+    signals.push(
+      pairCut -
+        MAX_PAIRS +
+        " further button-pair question(s) were not reported — fill this form by hand",
+    )
+  }
 
   const btns = []
   for (const el of document.querySelectorAll(

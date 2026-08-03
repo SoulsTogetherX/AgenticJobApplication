@@ -1278,8 +1278,20 @@ export function buildPlan({
       // by this branch is recorded with `assent: true` so the run reports what
       // it ticked. Rule 6's "the user is delegating assent, not waiving the
       // record of it" is that flag.
+      //   * THE ENGINE MUST BE ABLE TO PERFORM THE ACT. `f.widget` is
+      //     scan-page.js saying "no verb in this pipeline operates this
+      //     control" — today that is an ARIA widget or a question answered by
+      //     a pair of <button>s, and for the buttons it is literally true:
+      //     fill-engine.mjs's kindOf() answers "forbidden:button" and actOn()
+      //     refuses. Taking such a field into `items` would emit how:"check"
+      //     against a control the engine will not touch AND record it in
+      //     `actuated`, so the run would report a tick that never happened —
+      //     the silent miss inverted, which is worse than the defer. So it
+      //     defers instead, carrying `value` and `pick`: the answer is still
+      //     resolved with no model turn, and the agent actuates and names it,
+      //     which is what rule 6 asks for on the user-directed path.
       const exactBank = /^a-\d+@exact/.test(r.source ?? "")
-      if (exactBank && r.status === "OK" && r.pick) {
+      if (exactBank && r.status === "OK" && r.pick && !f.widget) {
         items.push({
           k: f.k,
           sel: r.pickSel ?? r.sel ?? f.sel,

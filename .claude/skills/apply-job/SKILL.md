@@ -2,8 +2,8 @@
 name: apply-job
 description: Apply to a job in the browser via Playwright MCP - capture the
   posting, tailor resume and cover letter, fill the application form from
-  approved facts, and hand off to the user for the final submit. Use when the
-  user gives a job posting URL to apply to, or asks to apply for a job.
+  approved facts, and submit it. Use when the user gives a job posting URL to
+  apply to, or asks to apply for a job.
 ---
 
 Drive one job application end-to-end using the Playwright MCP browser tools.
@@ -13,20 +13,30 @@ Two design rules explain every step below:
 1. **Batch by phase, not by field.** Scan the whole page in one call, resolve
    every answer in one call, decide in one pass, fill in one call, verify once.
    Never inspect-then-fill field by field.
-2. **Spend human attention once.** The user is asked exactly twice per
+2. **Spend human attention once.** The user is asked exactly ONCE per
    application: one approval message (tailoring + unknown questions + reuse
-   offer, together), and the final Submit click. Everything that can be learned
-   before that message — including what the form actually asks — is learned
-   first, so it can ride along in it.
+   offer, together). Everything that can be learned before that message —
+   including what the form actually asks — is learned first, so it can ride
+   along in it. After that approval the agent submits; a second interruption at
+   the button is the hand-off rule 6 removed.
 
 ## Hard boundaries (never cross these)
 
-- **NEVER click a button the scan classifies `r: "submit"`.** The user submits.
-  Hard rule 6 was rewritten on 2026-07-31 to permit an unattended submit — but
-  only on the Phase 3 auto path, behind a **mechanical** trust gate, and that
-  runner does not exist (`scripts/auto/` holds guards and an audit record, not
-  a runner). **This skill is not that path**, whatever ships there, and no
-  reading of rule 6 authorises it to click submit.
+- **Click `r: "submit"` when the user gave you the posting URL.** Hard rule 6,
+  revised 2026-08-03: _"if I give you a URL to apply to, you should apply no
+  matter what"_. This skill IS that path — it runs because the user handed over
+  a URL — so it sends the application rather than stopping at the button. A
+  hand-off has been asked for and removed twice; do not reinstate it.
+  - **Consent tickboxes and `confirm-widget` defers may be actuated here**, and
+    **every one that is must be named in the final report with its label
+    quoted**. The user is delegating assent, not waiving the record of it.
+  - **What still stops the click, because each means a field would be a guess:**
+    any `UNKNOWN` field, unprobed dropdown or failed fill; `verify-claims` not
+    passing; the documents not yet user-approved. Say which, and stop. That is
+    a stated deferral, not a hand-off — and it is rule 1, which did not move.
+  - **The UNATTENDED runner in `scripts/auto/` is a different question** and is
+    still gated on `auto_apply.enabled` plus a `board_allowlist` in
+    `docs/application-limits.yaml`, which is the user's file.
 - **Never click `r: "start"` on a page that already has fields** — on most ATSs
   the final button is worded "Apply"/"Submit Application" and the scanner cannot
   tell the difference by text alone.
@@ -151,11 +161,14 @@ This runs `answer-bank.mjs` internally (profile + answer bank only, never a
 guess) and writes `jobs/<slug>/fill-plan.js` + `.json`. It prints:
 
 - **`ready=true|false`** — whether any model judgment is still required. On
-  `ready=true` there is nothing here to think about: go straight to D, fill,
-  and hand over. On `ready=false` the `reason=` says why,
-- **`submitReady=true|false`** — the stricter twin: is anything at all left
-  undecided, consent included? **Neither flag authorises a submit click**, and
-  nothing on this path clicks one.
+  `ready=true` there is nothing here to think about: go straight to D and fill.
+  On `ready=false` the `reason=` says why,
+- **`submitReady=true|false`** — the stricter twin, and it answers a question
+  about the **UNATTENDED runner**, not about this path: may a click happen with
+  nobody watching? It is `false` for every actuated widget by design, so do not
+  read a `false` here as "do not submit". What governs the click on THIS path
+  is the boundary at the top of this file: the user gave you the URL, so the
+  application is sent unless a field would be a guess.
 - `items=<n>` — fields that will be filled with no model involvement,
 - one `defer` line per field a human must answer (`defer\t<key>\t<why>\t<label>`),
   each with a reason: `consent` (an agreement — always yours to accept, never
@@ -390,18 +403,28 @@ safe. Two automatic retries, then take it to the user.
 `browser_fill_form` or clicking dropdown options one at a time, you have left
 this flow — go back to B.
 
-### F. Advance or hand off
+### F. Advance, or submit
 
 - A `r: "next"` button exists → `browser_click` it, then go back to A for the
   next page (the scanner is already installed — just re-scan). New unknowns on a
   later page get their own batched question round.
-- Only a `r: "submit"` button is left → **stop**. Summarize the application,
-  name anything left blank and why, and tell the user the form is ready for them
-  to review and submit.
+- Only a `r: "submit"` button is left → **write the summary below FIRST, then
+  click it.** The user gave you the URL; the application gets sent. Then run
+  `scripts/apply/capture-post-submit.mjs` on the page that comes back — the
+  post-submit corpus is empty, and an attended apply is the only lawful way to
+  fill it.
+- **Unless a field would be a guess.** An `UNKNOWN` field, an unprobed dropdown,
+  a failed fill, a `verify.mismatch`, an unapproved document — do not click.
+  Say which one and stop. That is a stated deferral, not a hand-off.
 
 **This summary is hard rule 5's guardrail, not a status line.** It is the last
 thing between a wrong answer and a submitted application, so every line in it
 must come from what the fill **observed**, not from what the plan intended.
+
+**Name every control you actuated on the user's behalf** — each consent
+tickbox, each `confirm-widget`, each `confirm` defer you answered from the fact
+base — and **quote its label**. The user is delegating assent, not waiving the
+record of it (hard rule 6).
 
 Say what you actually have, and no more. The engine returns **no field → value
 list** for the fields it filled from the fact base — `items=<n>` is a count and
@@ -432,12 +455,14 @@ never act on it.
 | `seen: "gone"`     | the input was replaced by the page's attached-file view. **Normal — Greenhouse does this on every successful upload.** Report it as attached; it is not a warning        |
 | `seen` absent      | the readback did not run. Say nothing about the page rather than implying it confirmed anything                                                                          |
 
-The engine reports `next` but has no verb that can click it — advancing is
-always an explicit `browser_click` you make, and submitting is always the user.
+The engine reports `next` but has no verb that can click it — advancing and
+submitting are both explicit `browser_click` calls you make. The engine has no
+click verb at all, and that absence is deliberate: a plan can never click
+anything, so an injected plan cannot submit an application.
 
 ## After submission
 
-Once the user confirms they submitted:
+Once the application is submitted:
 
 ```bash
 node scripts/applications/log-application.mjs <slug> --company "<Company>" --title "<Title>" --url "<posting url>"

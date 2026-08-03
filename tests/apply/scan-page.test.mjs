@@ -1686,12 +1686,15 @@ test("buttons wrapped one per div are still one group — ancestors, not sibling
 
 test("a STATEFUL button pair is seen too, and its declared state is reported", async () => {
   // MEASURED, not assumed. The button loop skips a control carrying
-  // aria-checked / -pressed / -selected so the widget sweep can report it —
-  // but the sweep skips NATIVE tags and BUTTON is one, so for a <button> that
-  // hand-off goes NOWHERE: a lone <button aria-pressed> produces no field and
-  // no button at all. That pre-existing hole is not closed here. What is
-  // closed is the paired case, and because the page DID declare its state,
-  // `on` is reported instead of guessed.
+  // aria-checked / -pressed / -selected so the widget sweep can report it, and
+  // because the page DID declare its state here, `on` is reported instead of
+  // guessed.
+  //
+  // It also pins WHICH pass wins, which started mattering when the lone case
+  // below was fixed: the sweep would now report these two buttons as two
+  // unrelated widgets, and it does not, because this block runs first and
+  // stamps them. The question survives as ONE group carrying two options
+  // rather than being shredded into a pair of anonymous defers.
   const out = await scan(
     h("body", {}, [
       h("form", {}, [
@@ -1719,6 +1722,152 @@ test("a STATEFUL button pair is seen too, and its declared state is reported", a
     ],
   )
   assert.deepEqual(out.btns, [], "neither is an action")
+})
+
+// A stateful control that is ALONE — no pair for the block above to recognise.
+// This is the hole the pair detector measured on 2026-08-03 and deliberately
+// left open to keep that change scoped; the three tests below are what closed
+// it. Reused across them so the assertions compare one string.
+const CERTIFY = "I certify the information above is true"
+
+test("a LONE stateful <button> is reported — the hand-off no longer goes nowhere", async () => {
+  // THE SILENT MISS THIS ENDS, measured before the fix through the same DOM
+  // these tests use. The button loop skips a control carrying aria-checked /
+  // -pressed / -selected so the widget sweep can report it — but the sweep's
+  // first line skipped NATIVE tags and BUTTON is one, and SWEEP_SEL
+  // ([tabindex],[contenteditable] plus the control roles) matched a bare
+  // <button aria-pressed> not at all. So the hand-off landed nowhere and the
+  // control appeared in NEITHER `fields` NOR `btns`.
+  //
+  // That is the failure mode this scanner's header calls the worse one: a
+  // consent tick rendered as a stateful native button was neither ticked
+  // (safe) nor DEFERRED (not safe), so it reached no approval message, no
+  // pending question and no defer list. A silence is not a refusal.
+  //
+  // The type is `widget`, which fill-plan.mjs's VERB map has no entry for, so
+  // this REPORTS and never acts. The stated cost is unchanged and is now paid
+  // by native buttons too: a genuine toolbar toggle ("Bold") becomes an
+  // unfillable defer instead of vanishing — a visible defer beats a silence.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("label", { for: "n" }, ["Name"]),
+        h("input", { id: "n", type: "text" }),
+        h("button", { type: "button", "aria-pressed": "false" }, [CERTIFY]),
+      ]),
+    ]),
+  )
+  assert.deepEqual(
+    out.fields.map((f) => [f.t, f.l, f.widget, f.labelWhy]),
+    [
+      ["text", "Name", undefined, undefined],
+      ["widget", CERTIFY, "aria", undefined],
+    ],
+  )
+  assert.deepEqual(out.btns, [], "a control that carries state is a value")
+})
+
+test("the hand-off covers every native shape the button loop defers, not just <button>", async () => {
+  // WHY THIS IS NOT A <button>-ONLY FIX. That loop defers on STATE, and its
+  // selector matches five shapes; four of them are native and ALL FOUR fell
+  // through the sweep for the same reason. Only <div role="button"
+  // tabindex="0" aria-pressed> — the case the loop's own comment was written
+  // against — ever reached it, which is how a hole this size stayed invisible.
+  //
+  // <input type="submit"> also pins the label route: it renders its words in
+  // `value` and has no innerText at all, so without the sweep reading `value`
+  // the waterfall falls through to its INFERRED branch and stamps "Name", the
+  // field beside it, onto a certification. A wrong label is worse than an
+  // empty one, because the user acts on it.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("label", { for: "n" }, ["Name"]),
+        h("input", { id: "n", type: "text" }),
+        h("input", { type: "submit", value: CERTIFY, "aria-checked": "false" }),
+        h("a", { href: "/policy", "aria-selected": "false" }, [CERTIFY]),
+      ]),
+    ]),
+  )
+  assert.deepEqual(
+    out.fields.map((f) => [f.t, f.l, f.labelWhy]),
+    [
+      ["text", "Name", undefined],
+      ["widget", CERTIFY, undefined],
+      ["widget", CERTIFY, undefined],
+    ],
+  )
+  assert.deepEqual(out.btns, [], "all three are values, not actions")
+})
+
+test("carrying a state attribute is not on its own enough to be REPORTED", async () => {
+  // The three attributes went into SWEEP_SEL, which widens what is ENUMERATED;
+  // every filter under it is unchanged, so an element that merely carries one
+  // and is neither focusable nor a declared control is still dropped. Pinned
+  // because the alternative is a grid of aria-selected cells arriving as
+  // twenty-five unfillable defers, which is how a checker starts crying wolf
+  // and gets ignored — and because it is the difference between "the sweep
+  // sees more" and "the sweep reports more".
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("label", { for: "n" }, ["Name"]),
+        h("input", { id: "n", type: "text" }),
+        h("span", { "aria-pressed": "false" }, ["Row one"]),
+        h("div", { "aria-selected": "true" }, ["Row two"]),
+      ]),
+    ]),
+  )
+  assert.deepEqual(
+    out.fields.map((f) => f.t),
+    ["text"],
+  )
+})
+
+test("a job ad carrying a Save toggle is still an `ad`, not a `form`", async () => {
+  // THE REGRESSION THE FIX ABOVE WOULD OTHERWISE HAVE SHIPPED, measured before
+  // it was closed. `kind` used to read `fields.length ? "form"`, so the moment
+  // a stateful <button> became a field, an ad carrying a bookmark toggle came
+  // back `form` — and per SKILL.md's routing table `form` sends the skill to
+  // step B to build a plan, while `ad` clicks the start button and re-scans.
+  // The plan would hold one unfillable defer and the apply would stall on a
+  // page that was never the application. Save/Follow toggles are ordinary
+  // furniture on a job ad, so this is the common case, not a corner of one.
+  const out = await scan(
+    h("body", {}, [
+      h("h1", {}, ["Senior Engineer"]),
+      h("p", {}, ["We are hiring."]),
+      h("button", { type: "button", "aria-pressed": "false" }, ["Save job"]),
+      h("a", { href: "/apply" }, ["Apply now"]),
+    ]),
+  )
+  assert.equal(out.kind, "ad")
+  assert.deepEqual(
+    out.fields.map((f) => [f.t, f.l]),
+    [["widget", "Save job"]],
+    "the toggle is still REPORTED — it is the classification that changed",
+  )
+})
+
+test("an operable field still wins: a widget-only form is a `form`", async () => {
+  // The other side of the same test, so the ad fix cannot quietly swallow a
+  // real form. A page with no operable field only falls to `ad` when a `start`
+  // button says the application has not begun; here the button is a submit, so
+  // the single unfillable consent is a form to be deferred on, not an ad to be
+  // clicked through. escalated-aria-checkbox.html is exactly this shape.
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        h("button", { type: "button", "aria-pressed": "false" }, [CERTIFY]),
+        h("button", { type: "submit" }, ["Submit Application"]),
+      ]),
+    ]),
+  )
+  assert.equal(out.kind, "form")
+  assert.deepEqual(
+    out.fields.map((f) => f.t),
+    ["widget"],
+  )
 })
 
 test("STATED LIMIT: a pair sharing a container with another control is still missed", async () => {

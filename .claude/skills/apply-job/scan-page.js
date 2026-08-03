@@ -27,12 +27,16 @@
 //               that tells resume from cover letter is this heading, which
 //               sits outside the element the label waterfall reads. REPORTED,
 //               never merged into `l` — see the block that computes it.
-//   widget      "aria" on any FOCUSABLE NON-NATIVE control — a div, span or
-//               custom element with tabindex >= 0 or contenteditable that none
-//               of the native loops collected. No verb in this pipeline can
-//               operate one; see the block that collects them for why that is
-//               deliberate, and for why the DETECTOR is focusability rather
-//               than a list of roles.
+//   widget      "aria" on a control none of the native loops collected: a div,
+//               span or custom element with tabindex >= 0 or contenteditable,
+//               a declared control role, or DECLARED STATE. The last of those
+//               is the only one that can be a native tag — a <button> or an
+//               <input type="submit"> carrying aria-checked / -pressed /
+//               -selected is a value rather than an action, and the button
+//               loop hands it over rather than filing it. No verb in this
+//               pipeline can operate any of them; see the block that collects
+//               them for why that is deliberate, and for why the DETECTOR is
+//               reachability and state rather than a list of roles.
 //               "buttons" on a QUESTION ANSWERED BY A PAIR OF <button>s — see
 //               the block that collects those. Same meaning, and it is set
 //               whether or not the answer set was recognised, because the
@@ -882,15 +886,20 @@ window.__ajScan = async (PROBE = true) => {
   // A candidate OPTION button: one the loop below would have filed as the role
   // it could not name.
   //
-  // A STATEFUL <button> IS NOT EXCLUDED HERE, AND THAT IS DELIBERATE. The loop
-  // below skips a control carrying aria-checked / -pressed / -selected so the
-  // widget sweep can report it — but the sweep skips NATIVE tags, and BUTTON is
-  // one, so for a <button> that hand-off goes NOWHERE. Measured: a lone
-  // <button aria-pressed="false">I certify the information above is true</button>
-  // produces no field AND no button. That is a separate, pre-existing hole and
-  // it is not fixed here; what IS fixed is the paired case, which this block
-  // can see. Excluding stateful buttons would have been deferring to a catcher
-  // that does not exist.
+  // A STATEFUL <button> IS NOT EXCLUDED HERE, AND THAT IS DELIBERATE — but the
+  // reason has changed, and the old one is worth keeping because it is what
+  // the hole looked like from inside. It was: the loop below defers a control
+  // carrying aria-checked / -pressed / -selected to the widget sweep, the
+  // sweep skipped NATIVE tags and BUTTON is one, so for a <button> that
+  // hand-off went NOWHERE, and excluding stateful buttons here would have been
+  // deferring to a catcher that does not exist. That hole is now closed in the
+  // sweep, which carries the measurement.
+  //
+  // The non-exclusion stands on its own footing instead: THIS BLOCK MUST WIN.
+  // A stateful pair the sweep reached first would come back as two unrelated
+  // widgets with no question attached to either; recognised here it is one
+  // group, and its state is reported as `on`. Order does the work — this runs
+  // first and stamps what it takes, and the sweep skips anything stamped.
   const PAIR_STATE = ["aria-checked", "aria-pressed", "aria-selected"]
   const pairOptionLabel = (el) => {
     if (!vis(el) || el.disabled || claimedNow(el)) return ""
@@ -1055,6 +1064,15 @@ window.__ajScan = async (PROBE = true) => {
   }
 
   const btns = []
+  // WHAT THIS LOOP HANDS DOWN TO THE WIDGET SWEEP, RECORDED RATHER THAN
+  // RE-DERIVED. The hand-off below used to be implicit: this loop dropped a
+  // stateful control on the floor and TRUSTED the sweep's selector list to pick
+  // it up again. For every NATIVE tag in this loop's own selector it did not,
+  // and the control was then reported NOWHERE — the sweep block carries the
+  // measurement. A Set is the fix because it cannot drift: whatever this loop
+  // declines to file as an action is, by construction, exactly what the sweep
+  // is obliged to look at, however either selector list is edited later.
+  const handedToSweep = new Set()
   for (const el of document.querySelectorAll(
     "button,[role='button'],input[type='submit'],input[type='button'],a[href]",
   )) {
@@ -1068,12 +1086,19 @@ window.__ajScan = async (PROBE = true) => {
     // would never defer. The cost is that a genuine toolbar toggle ("Bold" in
     // a rich-text editor) reports as an unfillable field instead of a button,
     // which is a visible defer rather than a silent miss.
+    //
+    // THE HAND-OFF IS RECORDED, NOT ASSUMED. Leaving it implicit is what made
+    // the paragraph above FALSE for four of the five shapes this loop's own
+    // selector matches: the sweep never saw them, so "left for the widget
+    // sweep" meant dropped. The measurement is in the sweep block.
     if (
       el.hasAttribute("aria-checked") ||
       el.hasAttribute("aria-pressed") ||
       el.hasAttribute("aria-selected")
-    )
+    ) {
+      handedToSweep.add(el)
       continue
+    }
     const label = txt(el.innerText || el.value || labelOf(el), 60)
     if (!label) continue
     const r = roleOf(label)
@@ -1197,13 +1222,56 @@ window.__ajScan = async (PROBE = true) => {
   // claiming to widen it is the worst possible outcome here, so the two
   // detectors are OR'd — declared control role, OR focusable — and nothing
   // Shape E saw can stop being seen.
+  //
+  // A THIRD DETECTOR JOINS THAT UNION: DECLARED STATE. The two above ask "can
+  // the user reach this control" and "does it say it is one". Neither asks
+  // whether it HOLDS A VALUE, and a native <button aria-pressed> answers only
+  // the third — it matched nothing here, so the button loop's hand-off landed
+  // on an empty selector and the control was reported NOWHERE. Not in
+  // `fields`, not in `btns`, not anywhere.
+  //
+  // MEASURED 2026-08-03 through tests/fixtures/boards/dom.mjs, one lone
+  // stateful control per page beside a plain text input:
+  //   <button aria-pressed>                      no field, no button  MISSED
+  //   <button tabindex="0" aria-pressed>         no field, no button  MISSED
+  //   <input type=submit aria-pressed>           no field, no button  MISSED
+  //   <a href aria-pressed>                      no field, no button  MISSED
+  //   <div role=button tabindex=0 aria-pressed>  widget field         seen
+  // The ONE shape that worked is the one the button loop's comment was written
+  // against, and that is how a hole this size stayed invisible: that case is
+  // not NATIVE, so it reached this sweep, while every native shape in that
+  // loop's own selector fell through both passes. A consent tick rendered as a
+  // stateful <button> was therefore neither ticked (safe) nor DEFERRED (not
+  // safe) — it reached no approval message, no pending question, no defer
+  // list. A silence is not a refusal, and per this file's header a silence is
+  // the worse of the two failure modes.
+  //
+  // The state attributes go in the SELECTOR, never in the filters: an element
+  // that merely carries one and is neither focusable nor a declared control —
+  // a <td aria-selected> in a grid, a <span aria-checked> — is still dropped
+  // below exactly as before. What is enumerated widened; what is REPORTED
+  // widened by precisely the set the button loop hands over.
   const SWEEP_SEL =
     "[tabindex],[contenteditable]," +
+    STATE_ATTR.map((a) => "[" + a + "]").join(",") +
+    "," +
     Object.keys(CONTROL_ROLE)
       .map((r) => "[role='" + r + "']")
       .join(",")
   for (const el of document.querySelectorAll(SWEEP_SEL)) {
-    if (NATIVE[el.tagName]) continue
+    // THE HAND-OFF, HONOURED. The button loop already decided this control is a
+    // VALUE rather than an ACTION, so it must be looked at whatever its tag and
+    // whether or not it is a tab stop. This overrides those two structural
+    // skips and NOTHING else: `handed` already implies visible, enabled and
+    // unclaimed, because that loop tested all three before handing it over, and
+    // every check below still applies unchanged.
+    const handed = handedToSweep.has(el)
+    // Exclusion 1 (NATIVE) exists to stop a double report of something the
+    // loops above collected. A handed control is by definition one NONE of them
+    // collected — BUTTON, which no loop above collects at all, and the inputs
+    // whose `type` the field loop refuses — so the reason for the skip is
+    // absent and the skip is too.
+    if (NATIVE[el.tagName] && !handed) continue
     if (claimedNow(el)) continue
     const role = full(el.getAttribute("role")).toLowerCase()
     const stateful = STATE_ATTR.some((a) => el.hasAttribute(a))
@@ -1214,7 +1282,11 @@ window.__ajScan = async (PROBE = true) => {
     const ce = el.getAttribute("contenteditable")
     const tabbable = ti !== null && /^\s*\d+\s*$/.test(ti)
     const editable = ce !== null && !/^(false|inherit)$/i.test(full(ce))
-    if (!tabbable && !editable && !CONTROL_ROLE[role]) continue
+    // A handed control needs no tabindex to earn its place: <button> and
+    // <input> are tab stops by their tag, which is the same reason
+    // NATIVE_NONFORM has to exist a few lines up. Requiring the attribute here
+    // would re-close the hole for the commonest spelling of it.
+    if (!tabbable && !editable && !CONTROL_ROLE[role] && !handed) continue
     if (!vis(el)) continue
     if (el.getAttribute("aria-disabled") === "true") continue
     if (el.getAttribute("aria-hidden") === "true") continue
@@ -1249,7 +1321,13 @@ window.__ajScan = async (PROBE = true) => {
     // so nothing downstream mistakes it for the control's own words.
     const INFERRED = { near: 1, legend: 1, attr: 1 }
     const declared = INFERRED[da.src] ? "" : txt(da.text)
-    const ownText = txt(el.innerText)
+    // `value` because a handed <input type="submit"> renders its label there
+    // and has no innerText at all — without it the waterfall falls through to
+    // the INFERRED branch and stamps a neighbouring field's label on it, which
+    // is the E8 trap above in its exact shape. No effect on anything that
+    // reached this sweep before: `.value` is undefined on a plain element, and
+    // innerText wins whenever there is any.
+    const ownText = txt(el.innerText || el.value)
     const label = declared || ownText || txt(da.text)
     const inferred = !declared && !ownText && !!label
     const checked = el.getAttribute("aria-checked")
@@ -1509,17 +1587,41 @@ window.__ajScan = async (PROBE = true) => {
   }
 
   const body = txt(document.body.innerText, 3000)
+  // A PAGE WHOSE ONLY "FIELDS" ARE CONTROLS NO VERB CAN OPERATE IS NOT YET A
+  // FORM, and this test had to grow a second half the moment the sweep started
+  // reporting stateful NATIVE buttons.
+  //
+  // MEASURED 2026-08-03: a job ad — <h1>, prose, an "Apply now" link and a
+  // <button aria-pressed="false">Save job</button> — used to classify `ad`,
+  // because the toggle was the silent miss and `fields` came back empty. Once
+  // it is reported, `fields.length` alone flips the page to `form`, and per
+  // SKILL.md's routing table that sends the skill to step B to build a plan
+  // instead of clicking Apply. The plan then holds one unfillable defer and
+  // the apply stalls on a page that was never the application. Bookmark and
+  // follow toggles are ordinary furniture on a job ad, so this is the common
+  // case, not a corner of one.
+  //
+  // `widget` is already the key meaning "no verb in this pipeline operates
+  // this control" (see the header), so the discriminator is the one the file
+  // already has, not a new one. AN OPERABLE FIELD STILL WINS: a real form
+  // whose consent is a <div role="checkbox"> is unaffected, and so is a
+  // widget-only form, because neither carries a `start` button — only the
+  // three-way tie of "no operable field", "a start button" and "something
+  // swept in" resolves differently than before.
+  const operable = fields.some((f) => !f.widget)
   const kind = signals.some((s) => s.startsWith("password"))
     ? "login"
     : /thank you for applying|application (was )?(received|submitted)|we('| ha)ve received your application/i.test(
           body,
         )
       ? "confirm"
-      : fields.length
+      : operable
         ? "form"
         : btns.some((b) => b.r === "start")
           ? "ad"
-          : "unknown"
+          : fields.length
+            ? "form"
+            : "unknown"
 
   return {
     url: location.href,

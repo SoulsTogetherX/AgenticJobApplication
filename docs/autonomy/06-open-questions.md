@@ -3,11 +3,22 @@
 Seven decisions that are genuinely yours. Each is a concrete choice with a recommendation and the
 consequence of each option. **None of these edit your files; they propose values.**
 
-### 6.0 — ANSWERED by the user, 2026-08-01. Three of the seven are settled.
+### 6.0 — ANSWERED by the user. Four settled 2026-08-01/02.
 
 Recorded by `build-manager` at the moment they were given, because a decision that lives only in
 a chat transcript is re-litigated by the next session that cannot see it. **Do not reopen these.**
 
+- **Supply shape — ACCEPTED burst-then-idle, 2026-08-02.** Not one of the original seven; it
+  became a real choice only once 0.11 measured that adding boards buys a one-time backlog and then
+  a trickle (§7 R-8). Put to the user as reframe-the-requirement-as-sustained versus
+  accept-bursts; **the user chose bursts.** So **the throughput target is a peak, not a floor, and
+  an idle runner is a correct state rather than a symptom.** The binding consequence is that a
+  burst is capped by staleness: at `per_day_max: 10` against `max_age_days: 30`, a harvest beyond
+  ~230 leads expires unapplied, which at ~12 leads per board means **batches of about 19 boards**.
+  Phase 6.1 carries the rule and a second completion criterion measuring **conversion before
+  expiry**, because a sustained-rate criterion would score a 300-lead batch converting 40 as a
+  success. **A ~6,600–8,800 board count is still what a sustained 999/day would require** — this
+  decision changes when throughput arrives, not that arithmetic.
 - **6.2 Résumé register — ACCEPTED, deterministic assembly.** The user chose plain deterministic
   assembly, **not** the variant that retains model rephrasing for attended sessions. So the
   register decision is uniform across both paths: tailored documents are composed of the user's
@@ -19,6 +30,13 @@ a chat transcript is re-litigated by the next session that cannot see it. **Do n
   Hard rule 2 means no agent may make it. Phase 3 must therefore **measure and report** the
   shape of the existing bullets before it assumes they are usable, and say plainly which ones
   are not.
+  **MEASURED 2026-08-02 (`build-manager`), and the user action is NOT needed: 33 bullets, 32 of
+  them capitalised and ending in terminal punctuation, lengths 51–250 chars (median 119), and
+  `meta.approved_by_user: true`.** They are sentence-shaped, so Phase 3.1 can emit them verbatim
+  and the one-time editing pass is off the critical path. Shape only was inspected — lengths and
+  punctuation, never content into a transcript. The single bullet without terminal punctuation is
+  not worth a user's time; if it reads badly in an assembled résumé, that is a one-line fix the
+  user may make whenever they like, and nothing waits on it.
 - **6.3 Scheduling — ACCEPTED as recommended.** Hourly resumable invocations against a durable
   queue, `-ExecutionTimeLimit 04:00`, `-StartWhenAvailable`, **no run-level lock** (§4.3; per-job
   claims are the correctness boundary). The 1h single-campaign shape and its ~60-90 application

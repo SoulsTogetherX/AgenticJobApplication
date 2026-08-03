@@ -3,7 +3,16 @@
 # ignored directory, which would make the example-file negation dead.
 profile/*
 !profile/profile.example.yaml
-jobs/
+# ANCHORED with a leading slash, and it must stay that way. An unanchored
+# `jobs/` matches a directory of that name at ANY depth, which silently
+# swallowed all 8 of Phase 3's input fixtures in
+# tests/documents/assemble/jobs/ — their golden files committed, their inputs
+# did not, so the byte-identical check would have been untestable on a fresh
+# clone while passing locally. Found by qa (QA-B1-5) via the
+# "nothing under tests/ is gitignored" test, which exists for exactly this.
+# The personal data this protects is the per-job workspace tree, and that
+# lives only at the repo root.
+/jobs/
 
 # Scratch copies of the fact base. docs/next-session-prompt.md documents a
 # repair recipe that stages the real answers.yaml at the REPO ROOT:

@@ -72,6 +72,24 @@ Phase 0.11 measures the second one **before** six phases are built on an assumpt
 > qualifying leads/day _arriving_. Adding boards yields a one-time backlog and then a trickle, so a
 > large expansion produces a burst and reverts. Nothing in this document currently separates the
 > burst from the steady state, and the requirement is a steady-state one.
+>
+> **USER DECISION 2026-08-02: accept burst-then-idle.** Put to the user as a choice between reframing
+> the requirement as sustained or accepting a burst-then-idle pattern; the user chose bursts. **The
+> throughput target is therefore a peak, not a floor, and an idle runner is a correct state rather
+> than a symptom.** Two things follow that the rest of this plan must respect.
+>
+> First, **a burst is bounded by staleness rather than by ambition.** `max_age_days` is 30 and
+> `per_day_max` is 10, so a harvest larger than roughly 230 leads expires before it can be applied
+> to — at ~12 leads per board cold-start, that is **batches of about 19 boards**, not thousands at
+> once. The batch-size rule and its arithmetic are in Phase 6.1.
+>
+> Second, **this changes what "done" means for supply.** A sustained-rate criterion scores a batch
+> that harvests 300 leads and converts 40 as a success. Under this decision the honest measure of a
+> burst is **conversion before expiry**, and Phase 6.1's completion criterion is amended to carry
+> both.
+>
+> What it does not change: the ~6,600–8,800 boards a sustained 999/day would need. Bursts change
+> **when** throughput arrives, not the board count the steady state requires.
 
 **The sequencing principle:** everything before the first real click is cheap and reversible;
 everything after it is irreversible and signed with the user's name. Order accordingly — state

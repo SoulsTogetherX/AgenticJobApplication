@@ -77,6 +77,16 @@ before supply catches up, and that is the correct order.
 > cheaper than widening the gates is an answerable question nobody has asked. The rejection breakdown
 > by reason is **not** captured here — it prints only in human mode, and CLAUDE.md forbids passing
 > `--verbose` from a tool call, so it needs a purpose-built script rather than a flag.
+>
+> **USER DECISION 2026-08-02: accept burst-then-idle.** R-8 is therefore **not** mitigated by reaching
+> a sustained 999/day, and should stop being scored as though it were. The risk it now names is
+> narrower and more tractable: **that a harvested burst expires before it is applied to.** At
+> `per_day_max: 10` against `max_age_days: 30`, anything beyond ~230 leads in a batch is harvested and
+> wasted — so the failure mode is a board-expansion campaign that looks successful by lead count and
+> converts a small fraction of it. _Mitigation:_ Phase 6.1 gains a batch-size rule (~19 boards at a
+> time at today's caps) and a second completion criterion measuring **conversion before expiry**, not
+> only sustained rate. _Accepted:_ the runner is idle much of the time between bursts, and under this
+> decision that is a correct state rather than a symptom.
 
 **R-9 — Silent quality-tiering by the employer side, and challenge incidence rising with volume.**
 _Mitigation:_ the fact-grounded, per-posting-tailored document is exactly what survives a

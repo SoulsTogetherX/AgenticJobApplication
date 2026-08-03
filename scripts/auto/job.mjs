@@ -60,6 +60,8 @@ import {
   SubmitAmbiguous,
   ClassifierRequired,
 } from "./submit.mjs"
+import { walkPages } from "./multipage.mjs"
+import { AdvanceAmbiguous } from "./advance.mjs"
 import { classifyPlanDefers, reasonRecord, toStateOpts } from "./taxonomy.mjs"
 import { safeText } from "./untrusted-text.mjs"
 import { StopError } from "./guard.mjs"
@@ -263,18 +265,133 @@ export async function runJob({
       )
 
     const liveUrl = nav.url ?? applyUrl
-    const scan = await scanStage(page, { url: liveUrl, job, lead })
-    const plan = await planStage({ scan, url: liveUrl, job, lead, documents })
+
+    // THE WALK (§4.2c). One page or several — the single-page case is the same
+    // code path with the loop running once, so a multi-page form is not a
+    // special case to be remembered. The scan, plan and fill stages are handed
+    // through unchanged; what walkPages adds is the Next click between pages
+    // and the explicit draft abandonment when a later page cannot be resolved.
+    //
+    // `mintToken` is this same authorizeSubmit call, per page, so STOP, the
+    // caps and the trust gate are re-read at every page transition — a brake
+    // pulled while a worker is on page 2 of 4 stops it there.
+    const authorizeFor = (pageSha, pagePlan, pageReport) =>
+      authorizeSubmit({
+        lead,
+        plan: pagePlan,
+        planSha: pageSha,
+        report: pageReport,
+        config: limits?.auto_apply ?? null,
+        trustVerdict: {
+          ok: trust.ok,
+          reason: trust.reason ?? "allowlisted ATS",
+        },
+        screening,
+        sentThisRun,
+        dbFile,
+        ...(stopPath === undefined ? {} : { stopPath }),
+        runId: run.id,
+      })
+
+    let walk
+    try {
+      walk = await walkPages(page, {
+        slug,
+        mode,
+        job,
+        lead,
+        documents,
+        board: trust?.entry?.ats ?? job?.board_key ?? null,
+        url: liveUrl,
+        scanStage: (p, c) => scanStage(p, c),
+        planStage: (c) => planStage(c),
+        fillStage: fillStage ? (p, pl, c) => fillStage(p, pl, c) : null,
+        mintToken: async (pageSha, { plan: pagePlan }) =>
+          authorizeFor(pageSha, pagePlan, null),
+        planSha256,
+        // Written per page, before that page's fill, so a SIGKILL anywhere in
+        // the walk lands on `planned` with the sha of the page it died on.
+        onPagePlanned: ({ sha: pageSha }) =>
+          setAutoJobState(db, slug, "planned", {
+            run_id: run.id,
+            plan_sha256: pageSha,
+          }),
+      })
+    } catch (e) {
+      if (e instanceof StopError) throw e
+      // AdvanceAmbiguous: a Next click went out and the page did not become
+      // what was expected. If the scanner's role regex was wrong, that click
+      // was a submit — so this is NOT abandoned and NOT retried, exactly like
+      // an ambiguous submit.
+      if (e instanceof AdvanceAmbiguous)
+        return terminate(
+          "post-submit-unclassified",
+          "plan",
+          safeText(e.detail ?? e.message, 200),
+        )
+      throw e
+    }
+
+    const plan = walk.plan
+    const report = walk.report
+    // THE LAST PAGE'S SCAN, never the first. The submit control lives on the
+    // final page, and an earlier page's stamps do not exist in that DOM.
+    const scan = walk.pages?.[walk.pages.length - 1]?.scan ?? null
+    // The MERGED sha, replacing the per-page one the walk left on the row. This
+    // is the sha the submit token binds to, and it has to cover every page — a
+    // token bound to the last page alone would authorise a submit whose earlier
+    // pages nothing checked.
     const sha = planSha256(plan)
     setAutoJobState(db, slug, "planned", { run_id: run.id, plan_sha256: sha })
 
-    // The fill runs Playwright-side and nothing is read back out of the page.
-    // Its REPORT is what submitReadiness reads for uploads — never the plan,
-    // because a plan says what was intended and only the report says what
-    // landed.
-    const report = fillStage ? await fillStage(page, plan, { job, lead }) : null
+    // A DRY RUN STOPS AT PAGE 1, because nothing was clicked and there is no
+    // page 2 to read. Reporting the pages it DID resolve is honest; carrying on
+    // as though the form were walked would make the rehearsal a rehearsal of
+    // something else.
+    if (
+      walk.dryRun &&
+      (walk.pages?.length ?? 0) === 1 &&
+      walk.pages[0]?.hasNext
+    )
+      return terminate("multipage-unresolvable", "plan", walk.reason)
 
-    // Everything the machine did not understand, as ONE typed kind.
+    if (!walk.ok) {
+      // A walk that stopped for a reason of its own — a later page's defers, a
+      // page nothing understood, a mid-form authorisation refused. Its
+      // abandonment is folded into the detail rather than dropped: a partial
+      // application left in an employer's ATS is a thing the user may need to
+      // know about, and not saying so is the silent skip rule 6 forbids.
+      const suffix = walk.abandonment
+        ? ` — ${safeText(walk.abandonment.how, 200)}`
+        : ""
+      if (walk.kind !== "plan-defer")
+        return terminate(
+          walk.kind === "authorize" ? "plan-error" : walk.kind,
+          "plan",
+          `${safeText(walk.reason, 200)}${suffix}`,
+        )
+      // A defer on some page: type it from the merged plan's own defer entries,
+      // so the kind comes from the shipped taxonomy rather than from here.
+      const walkDefer = classifyPlanDefers(plan.defer, {
+        stage: "plan",
+        ...ctx,
+      })
+      if (walkDefer) {
+        setAutoJobState(db, slug, walkDefer.state, {
+          run_id: run.id,
+          ...toStateOpts(walkDefer),
+          reason_detail: `${walkDefer.detail ?? ""}${suffix}`,
+        })
+        if (walkDefer.state === "failed") run.failJob(job, walkDefer.detail)
+        else run.deferJob(job, `${walkDefer.kind}: ${walkDefer.detail ?? ""}`)
+        return done(walkDefer.state, walkDefer)
+      }
+      return terminate("unknown-field", "plan", `${walk.reason}${suffix}`)
+    }
+
+    // Everything the machine did not understand, as ONE typed kind. Kept for
+    // the single-page path and as a second net: a walk reporting ok with defers
+    // in its merged plan would otherwise reach the submit gate.
     const planDefer = classifyPlanDefers(plan.defer, { stage: "plan", ...ctx })
     if (planDefer) {
       setAutoJobState(db, slug, planDefer.state, {

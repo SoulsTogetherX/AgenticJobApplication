@@ -30,8 +30,12 @@
 // trust decision, and NO CLICK. In dry-run it records a `dry_run` submission
 // row exactly as the real path would and stops there.
 //
-// When the runner lands, the correct move is for this file to drive IT instead
-// of its own pool. The pool below is ~40 lines and is marked.
+// DONE 2026-08-03 (Phase 5 W3): the pool is no longer this file's. It calls the
+// shipped `runPool` from scripts/auto/pool.mjs, which carries the ORIGIN
+// exclusion key the old local loop did not — so `max_in_flight` is now a number
+// a production run can actually reach rather than an upper bound on a
+// scheduler that never shipped. The per-job driver is still `oneJob` below, and
+// the reason is stated at the call site.
 //
 // ===========================================================================
 // MEASURED vs DERIVED — and why one column changed definition
@@ -100,6 +104,10 @@ import {
   MEASURED_FILES,
 } from "./bench-apply.mjs"
 import { start as startFixture } from "../../tests/fixtures/boards/server.mjs"
+// The SHIPPED pool (§4.2). This harness used to carry its own, which had no
+// origin exclusion and could therefore report a concurrency this runner cannot
+// reach — see the note at the pool call below.
+import { runPool } from "../auto/pool.mjs"
 import {
   openDb,
   enqueueAutoJobs,
@@ -447,41 +455,38 @@ export async function runCampaign({
   }
 
   const before = readCounters()
-  let inFlight = 0
-  let maxInFlight = 0
-  let cursor = 0
-  const results = []
   const t0 = performance.now()
 
-  async function worker() {
-    for (;;) {
-      const i = cursor++
-      if (i >= jobs.length) return
-      inFlight += 1
-      maxInFlight = Math.max(maxInFlight, inFlight)
-      try {
-        results.push(
-          await oneJob({
-            db,
-            job: jobs[i],
-            boardName,
-            jobsDir,
-            behaviour,
-            realSleep,
-            mode,
-            runId,
-            edgeSpacingMs,
-          }),
-        )
-      } finally {
-        inFlight -= 1
-      }
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, jobs.length) }, worker),
-  )
+  // THE SHIPPED POOL, not a second one. Until Phase 5 W3 this file ran its own
+  // cursor-and-workers loop, and that loop had NO ORIGIN EXCLUSION — so it
+  // could report max_in_flight 8 on a queue the real runner would serialise to
+  // 1, and the CI gate would then have been enforcing a throughput number that
+  // no production run could reach. The header always named this as the move to
+  // make once the runner landed; it has landed.
+  //
+  // The per-job driver below is still this harness's own `oneJob`, not
+  // job.mjs's `runJob`: runJob needs a trust verdict, a verification row and a
+  // document descriptor per slug, which a benchmark would have to fabricate.
+  // What matters for the numbers this file reports is the SCHEDULING, and that
+  // is now the shipped module rather than a copy of it.
+  const pool = await runPool({
+    jobs,
+    concurrency,
+    runOne: (job) =>
+      oneJob({
+        db,
+        job,
+        boardName,
+        jobsDir,
+        behaviour,
+        realSleep,
+        mode,
+        runId,
+        edgeSpacingMs,
+      }),
+  })
+  const results = pool.results
+  const maxInFlight = pool.max_in_flight
   const wallMs = performance.now() - t0
   // Deltas, not totals: the fixture startup and the module graph made requests
   // and spawns of their own before the first job, and attributing those to the

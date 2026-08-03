@@ -128,13 +128,18 @@ dry_run: true` in `docs/application-limits.yaml`'s `auto_apply` block, and
    pool all exist, and `scripts/auto/submit.mjs` contains exactly one click. Its
    replacement is mechanical and is asserted by a test rather than by this
    sentence — `.click(` appears under `scripts/auto/` **only** in `submit.mjs`
-   (and, once W3 lands, `advance.mjs`, which may click only a `next`-role
-   control): `tests/auto/click-surface.test.mjs`.
+   and `advance.mjs`, and `advance.mjs` may click only a `next`-role control:
+   `tests/auto/click-surface.test.mjs`.
 
    The **post-click classifier**, the **scoped `raiseStop`**, **`reconcile.mjs`**
-   and the **breaker's board pause** all exist (W2, 2026-08-03). Missing is the
-   **navigate verb** (W3). `submit.mjs` refuses a live submit outright without a
+   and the **breaker's board pause** all exist (W2), and so do the **navigate
+   verb**, the **multi-page walk** and the **concurrency-8 proof** (W3,
+   2026-08-03). `submit.mjs` refuses a live submit outright without a
    classifier, so the live path is a refusal rather than a stub.
+
+   **The click surface is TWO files now, not one** — `submit.mjs` (the submit)
+   and `advance.mjs` (a `next`-role control, never a submit). That is a real
+   widening and `tests/auto/click-surface.test.mjs` is what keeps it at two.
 
    **The classifier is built and deliberately blind on every real board.** Its
    rules carry their evidence, and a rule justified by a fixture page may fire

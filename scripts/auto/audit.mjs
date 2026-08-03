@@ -171,6 +171,14 @@ export function startRun({
     dbFile,
     stopPath: stop,
     jobsDir,
+    // Explicit, and it has to be. `raiseStop` defaults `inboxPath` to the REAL
+    // tree while taking `jobsDir` from the caller, so a redirected tree that
+    // does not also redirect the inbox writes an alert that assertInsideJobs
+    // refuses — and appendInbox swallows that failure by design, because an
+    // alert channel must never break its caller. The result was an alert that
+    // silently went nowhere, invisible in production the day anything runs with
+    // a non-default jobsDir. Every raiseStop call in this file now names it.
+    inboxPath: path.join(autoDir, "INBOX.md"),
   })
 
   const run_id = newRunId(now)
@@ -405,10 +413,28 @@ function persist(ctx, state) {
 
 function makeRun(ctx, state) {
   let finished = false
-  // The durable intent beginSubmit() wrote, cleared by the record that resolves
-  // it. One intent resolves one submit; a second record with no second intent
-  // is an anomaly and stops the runner.
-  let pendingAttempt = null
+
+  // The open intents beginSubmit() wrote, each cleared by the record that
+  // resolves it. One intent resolves one submit; a record with no matching
+  // intent is an anomaly and stops the runner.
+  //
+  // A MAP KEYED BY SLUG, NOT ONE SLOT — and the single slot was a W3 blocker
+  // rather than an inefficiency (phase-5.md names it). At concurrency 1 the
+  // slot was correct and its overwrite check was a real safety net: job 4
+  // finding job 3's intent still open meant job 3 was never resolved. At
+  // concurrency 8 that is the ORDINARY state — eight workers legitimately hold
+  // eight attempts at once — so the slot would have raised STOP on every
+  // healthy concurrent run, and the pressure would then have been to delete the
+  // check rather than to key it correctly.
+  //
+  // THE OVERWRITE DETECTOR SURVIVES, PER SLUG. Two beginSubmit calls for the
+  // SAME slug with nothing between them is still exactly the anomaly it always
+  // was: the same posting attempted twice without the first being resolved. It
+  // is now impossible for a different slug to trip it, which is the only thing
+  // that changed.
+  const pendingAttempts = new Map()
+  const pendingFor = (slug) => pendingAttempts.get(slug) ?? null
+  const openAttempts = () => [...pendingAttempts.values()]
 
   const event = (type, data = {}) => {
     appendEvent(ctx, { t: type, run_id: state.run_id, ...data })
@@ -424,6 +450,10 @@ function makeRun(ctx, state) {
     get state() {
       return { ...state }
     },
+    /** The attempts THIS PROCESS currently holds open, for reports and
+     *  assertions. Never a gate: finish() and assertNoOrphanAttempts query the
+     *  ledger, because a worker that died leaves a row this map never saw. */
+    openAttempts,
     jsonl: ctx.jsonl,
     event,
 
@@ -512,20 +542,22 @@ function makeRun(ctx, state) {
       // wrong-mode token. Not spent here: the click spends it.
       assertTokenMatches(token, { slug, planSha, mode: state.mode })
 
-      // THE SLOT WAS ALREADY OCCUPIED. Job 3 wrote an intent, something went
-      // wrong, nobody resolved or abandoned it, and job 4 is now about to
-      // overwrite the only in-memory record of it. Before this check, that
-      // attempt became invisible to BOTH safety nets: finish() only ever saw
-      // the last slot, and readOrphanAttempts only sees attempts whose RUN
-      // never finished. An unresolved previous attempt is exactly the anomaly
-      // this machinery exists to surface, so it stops the runner.
-      if (pendingAttempt && pendingAttempt.slug !== slug) {
-        const stale = pendingAttempt
-        pendingAttempt = null
+      // THIS SLUG ALREADY HAS AN OPEN INTENT. Something went wrong, nobody
+      // resolved or abandoned it, and the same posting is about to be attempted
+      // again — which would overwrite the only in-memory record of the first.
+      // Before this check that attempt became invisible to BOTH safety nets:
+      // finish() only ever saw what was in memory, and readOrphanAttempts only
+      // sees attempts whose RUN never finished.
+      //
+      // KEYED ON THE SAME SLUG. A different slug holding an open intent is the
+      // ordinary state of a concurrent run and says nothing about this one.
+      if (pendingFor(slug)) {
+        const stale = pendingFor(slug)
+        pendingAttempts.delete(slug)
         const reason =
           `a submit attempt for "${stale.slug}" at ${stale.apply_url ?? "url not recorded"} ` +
-          `was never resolved or abandoned, and "${slug}" is about to overwrite it — ` +
-          `the first one may already be an application`
+          `was never resolved or abandoned, and the SAME slug is being attempted ` +
+          `again — the first one may already be an application`
         event("submit.unresolved", { slug: stale.slug, next: slug })
         // TWO SEPARATE HALTS, and they are separate because they have
         // different evidence behind them.
@@ -535,14 +567,15 @@ function makeRun(ctx, state) {
         // that is the whole of what this proves about future runs.
         //
         // The thrown StopError halts THIS run in-process, which it must —
-        // pendingAttempt is a single slot and the bookkeeping that was supposed
-        // to protect it just failed, so continuing would mean trusting the same
-        // slot again. It writes no file, so the next invocation starts clean
+        // the bookkeeping that was supposed to resolve this slug's first
+        // attempt just failed, so continuing would mean trusting it again. It
+        // writes no file, so the next invocation starts clean
         // and only the braked company is held back.
         raiseStop(reason, {
           ...companyScope(stale.company),
           stopPath: ctx.stop,
           jobsDir: ctx.jobsDir,
+          inboxPath: ctx.inbox,
           meta: { run_id: state.run_id, attempt: stale },
         })
         throw new StopError(CHECKPOINTS.PRE_SUBMIT, reason)
@@ -552,7 +585,7 @@ function makeRun(ctx, state) {
       // gets its own pass in appendEvent, but the auto_submissions row does
       // not — db.mjs stores `doc: JSON.stringify(sub)` — and two copies that
       // disagree about what a page said are worse than either copy alone.
-      pendingAttempt = scrubbed({
+      const attempt = scrubbed({
         run_id: state.run_id,
         slug,
         company: job?.company ?? null,
@@ -568,7 +601,8 @@ function makeRun(ctx, state) {
         // key, and this line is one of the reasons why).
         authorized: { nonce: token.nonce, issued_at: token.issued_at },
       })
-      event("submit.attempt", pendingAttempt)
+      pendingAttempts.set(slug, attempt)
+      event("submit.attempt", attempt)
 
       // THE LEDGER CLAIM. recordAutoSubmission is an INSERT ... ON CONFLICT DO
       // NOTHING on (slug, mode), so it returns 0 when this slug already has a
@@ -588,14 +622,13 @@ function makeRun(ctx, state) {
       let existing = null
       const db = openDb(ctx.dbFile)
       try {
-        claimed = recordAutoSubmission(db, pendingAttempt)
-        if (claimed === 0)
-          existing = readAutoSubmission(db, slug, pendingAttempt.mode)
+        claimed = recordAutoSubmission(db, attempt)
+        if (claimed === 0) existing = readAutoSubmission(db, slug, attempt.mode)
       } finally {
         db.close()
       }
       if (claimed === 0) {
-        pendingAttempt = null
+        pendingAttempts.delete(slug)
         const reason =
           `the ledger already holds a ${existing?.mode ?? state.mode} row for "${slug}" ` +
           `(${existing?.outcome ?? "outcome unknown"}, run ${existing?.run_id ?? "unknown"}, ` +
@@ -611,11 +644,12 @@ function makeRun(ctx, state) {
           ...companyScope(job?.company ?? existing?.company),
           stopPath: ctx.stop,
           jobsDir: ctx.jobsDir,
+          inboxPath: ctx.inbox,
           meta: { run_id: state.run_id, slug, existing },
         })
         throw new StopError(CHECKPOINTS.PRE_SUBMIT, reason)
       }
-      return pendingAttempt
+      return attempt
     },
 
     /**
@@ -652,23 +686,24 @@ function makeRun(ctx, state) {
         throw new TypeError(
           "abandonAttempt requires a stated reason — a silent skip is not a deferral",
         )
-      if (!pendingAttempt || pendingAttempt.slug !== slug)
+      const open = pendingFor(slug)
+      if (!open)
         throw new TypeError(
           `abandonAttempt: no open attempt for "${slug}"` +
-            (pendingAttempt
-              ? ` (the open one is "${pendingAttempt.slug}")`
+            (pendingAttempts.size
+              ? ` (${pendingAttempts.size} other slug(s) have one: ${[...pendingAttempts.keys()].slice(0, 4).join(", ")})`
               : ""),
         )
 
       const row = scrubbed({
-        ...pendingAttempt,
+        ...open,
         outcome: "abandoned",
         abandoned_at: new Date().toISOString(),
         // Page-derived: an abandon reason is usually a locator or a browser
         // error message with the form's own text quoted inside it.
         abandon_reason: reason,
       })
-      pendingAttempt = null
+      pendingAttempts.delete(slug)
       event("submit.abandoned", { slug, reason })
 
       // acknowledge, not record: this RESOLVES the claim beginSubmit already
@@ -711,13 +746,15 @@ function makeRun(ctx, state) {
           "recordRehearsal is for dry runs only — a live run that rehearsed a " +
             "slug would consume its (slug, 'live') claim without submitting anything",
         )
-      const attempt = pendingAttempt
-      if (!attempt || attempt.slug !== (sub?.slug ?? null))
+      const attempt = pendingFor(sub?.slug ?? null)
+      if (!attempt)
         throw new TypeError(
           `recordRehearsal: no open attempt for "${sub?.slug ?? "(no slug)"}"` +
-            (attempt ? ` (the open one is "${attempt.slug}")` : ""),
+            (pendingAttempts.size
+              ? ` (open: ${[...pendingAttempts.keys()].slice(0, 4).join(", ")})`
+              : ""),
         )
-      pendingAttempt = null
+      pendingAttempts.delete(attempt.slug)
 
       const row = scrubbed({
         run_id: state.run_id,
@@ -754,8 +791,8 @@ function makeRun(ctx, state) {
      * exists and the user can still find and withdraw the application.
      */
     recordSubmission(sub) {
-      const attempt = pendingAttempt
-      if (!attempt || attempt.slug !== (sub?.slug ?? null)) {
+      const attempt = pendingFor(sub?.slug ?? null)
+      if (!attempt) {
         // A DETECTOR, and it says so. A submit with no preceding intent means
         // the click happened outside the path that writes one, so the durable
         // row that survives a crash was never written — but the click has
@@ -773,11 +810,12 @@ function makeRun(ctx, state) {
           {
             stopPath: ctx.stop,
             jobsDir: ctx.jobsDir,
+            inboxPath: ctx.inbox,
             meta: { run_id: state.run_id },
           },
         )
       }
-      pendingAttempt = null
+      if (attempt) pendingAttempts.delete(attempt.slug)
 
       const required = [
         "slug",
@@ -834,6 +872,7 @@ function makeRun(ctx, state) {
             ...companyScope(row.company ?? attempt?.company),
             stopPath: ctx.stop,
             jobsDir: ctx.jobsDir,
+            inboxPath: ctx.inbox,
             meta: { run_id: state.run_id },
           },
         )
@@ -891,15 +930,18 @@ function makeRun(ctx, state) {
       // Every intent this run wrote and never resolved — READ BACK FROM THE
       // LEDGER, not from the in-memory slot.
       //
-      // The slot holds one attempt. An attempt abandoned at job 3 of 200 that
-      // nobody resolved is gone from the slot the moment job 4 calls
-      // beginSubmit, and readOrphanAttempts cannot see it either, because that
-      // query only returns attempts whose RUN never finished and this run is
-      // about to finish. Querying the ledger is the only reading that catches
-      // all of them; the slot would catch at most the last one. (beginSubmit
-      // now also stops the runner rather than overwriting an occupied slot, so
-      // this is the second net under a hole that should no longer open.)
-      pendingAttempt = null
+      // THE LEDGER IS QUERIED, NOT THE IN-MEMORY MAP, and that stays true now
+      // that the map holds every open attempt rather than only the last one.
+      // The map is per-PROCESS: a worker that died, a run resumed from a
+      // previous invocation, or an attempt whose resolve path itself threw all
+      // leave a row the map never knew about. readAttemptsForRun is the only
+      // reading that catches every one of them, and it is the reading that has
+      // to be right — an attempt this run leaves open may already be an
+      // application.
+      //
+      // The map is cleared so that a run object used after finish() cannot
+      // resolve anything, not because its contents were the answer.
+      pendingAttempts.clear()
       let unresolved = []
       {
         const db = openDb(ctx.dbFile)
@@ -949,6 +991,7 @@ function makeRun(ctx, state) {
             ...companyScope(a.company),
             stopPath: ctx.stop,
             jobsDir: ctx.jobsDir,
+            inboxPath: ctx.inbox,
             meta: { run_id: state.run_id, attempt: a },
           },
         )
@@ -970,6 +1013,7 @@ function makeRun(ctx, state) {
             key: state.run_id,
             stopPath: ctx.stop,
             jobsDir: ctx.jobsDir,
+            inboxPath: ctx.inbox,
             meta: {
               run_id: state.run_id,
               start: state.profile_sha_start,

@@ -446,57 +446,93 @@ test("a run that finishes with an attempt still open stops itself", () => {
   assert.match(scopedStop(s, "company", "Acme"), /boards\.test/)
 })
 
-test("an attempt the in-memory slot lost is still caught at finish()", () => {
-  // THE HOLE THIS CLOSES. `pendingAttempt` is one slot. Before this, job 4's
-  // beginSubmit overwrote job 3's unresolved attempt and that application
-  // became invisible to BOTH nets: finish() only ever saw the last slot, and
-  // readOrphanAttempts only sees attempts whose RUN never finished.
-  //
-  // Reached here through the public API: the slot-occupied check clears the
-  // slot on its way out, so after it fires the ledger holds an attempt that the
-  // slot no longer knows about. finish() must still find it, and it can only do
-  // that by querying.
+test("EIGHT slugs may hold attempts at once — that is what concurrency IS", () => {
+  // THE W3 BLOCKER, as a test. `pendingAttempt` used to be ONE slot, and
+  // beginSubmit raised STOP whenever a DIFFERENT slug's attempt was open. That
+  // was correct single-threaded and fatal at concurrency 8, where eight workers
+  // legitimately hold eight attempts at once: every healthy concurrent run
+  // would have halted, and the pressure would then have been to delete the
+  // check rather than to key it correctly.
   const s = sandbox()
   const run = startRun({ mode: "live", ...s.opts })
-  attempt(run, s, { slug: "three", url: "https://boards.test/three" })
+  for (let i = 0; i < 8; i++)
+    attempt(run, s, { slug: `job-${i}`, url: `https://boards.test/${i}` })
 
-  const token = tokenFor(s, { slug: "four", mode: "live" })
-  assert.throws(
-    () => run.beginSubmit({ slug: "four" }, PLAN_SHA, "u", token),
-    (e) => e instanceof StopError,
-    "overwriting an unresolved attempt stops the runner",
+  assert.equal(run.openAttempts().length, 8)
+  assert.equal(
+    readStop({ stopPath: s.stopPath }),
+    null,
+    "and nothing stopped: eight open attempts is the ordinary state",
   )
-  // Clear the brake so finish()'s own reason is the one under test. Both the
-  // slot-overwrite brake and finish()'s land on the same company file, and
-  // first-reason-wins would otherwise leave the earlier text in place.
-  fs.rmSync(at(s, "company", "Acme"))
 
-  const final = run.finish({ outcome: "ok" })
-  assert.equal(final.outcome, "stopped")
-  assert.match(
-    scopedStop(s, "company", "Acme"),
-    /"three" at https:\/\/boards\.test\/three/,
-    "the slot had forgotten it; the ledger had not",
+  // Each resolves independently, and resolving one does not disturb the others.
+  run.recordSubmission(fullSubmission("job-3"))
+  assert.equal(run.openAttempts().length, 7)
+  run.abandonAttempt("job-5", "the submit control never appeared", {
+    beforeClick: true,
+  })
+  assert.equal(run.openAttempts().length, 6)
+  assert.ok(
+    !run.openAttempts().some((a) => ["job-3", "job-5"].includes(a.slug)),
+    "the right two were resolved",
   )
 })
 
-test("beginSubmit stops rather than overwriting an unresolved attempt", () => {
+test("the SAME slug twice with nothing between it is still an anomaly", () => {
+  // The overwrite detector survives the re-keying — it just cannot be tripped
+  // by a different slug any more. Two attempts on one posting with the first
+  // unresolved means that posting may already have been applied to.
   const s = sandbox()
   const run = startRun({ mode: "live", ...s.opts })
   attempt(run, s, { slug: "three", url: "https://boards.test/three" })
-  const token = tokenFor(s, { slug: "four", mode: "live" })
+  const token = tokenFor(s, { slug: "three", mode: "live" })
   assert.throws(
-    () => run.beginSubmit({ slug: "four" }, PLAN_SHA, "u", token),
+    () => run.beginSubmit({ slug: "three" }, PLAN_SHA, "u", token),
     (e) =>
       e instanceof StopError && /never resolved or abandoned/.test(e.message),
   )
   const stop = scopedStop(s, "company", "Acme")
   assert.match(stop, /"three"/)
-  assert.match(stop, /"four" is about to overwrite it/)
+  assert.match(stop, /the SAME slug is being attempted again/)
   assert.ok(
     lines(run.jsonl).some((e) => e.t === "submit.unresolved"),
     "and the JSONL says so too",
   )
+})
+
+test("finish() catches EVERY unresolved attempt, not just the last one", () => {
+  // THE HOLE THAT STAYS CLOSED, and the reason the re-keying deliberately did
+  // NOT make the map the source of truth. finish() queries the ledger, so it
+  // sees every attempt this run left open — including ones a crashed worker's
+  // map would never have held. Under the old single slot it saw at most one.
+  const s = sandbox()
+  const run = startRun({ mode: "live", ...s.opts })
+  for (const slug of ["one", "two", "three"])
+    attempt(run, s, { slug, url: `https://boards.test/${slug}` })
+
+  // One resolves normally. The other two are left open, as a killed worker
+  // would leave them.
+  run.recordSubmission(fullSubmission("two"))
+
+  const final = run.finish({ outcome: "ok" })
+  assert.equal(final.outcome, "stopped")
+
+  // THE INBOX HAS BOTH SURVIVORS. Under the old single slot it would have had
+  // at most one, because only one could be in memory to be reported.
+  const inbox = fs.readFileSync(path.join(s.autoDir, "INBOX.md"), "utf8")
+  for (const slug of ["one", "three"])
+    assert.match(inbox, new RegExp(`"${slug}"`), `${slug} must be reported`)
+  assert.doesNotMatch(
+    inbox,
+    /without resolving a submit attempt for "two"/,
+    "and the resolved one is not",
+  )
+
+  // THE BRAKE FILE NAMES THE FIRST ONLY, and that is the alert channel's
+  // designed asymmetry rather than a loss: both orphans are on the same
+  // company, first-reason-wins is per key, and a later blander reason must not
+  // bury the first. The inbox above is the copy that takes everything.
+  assert.match(scopedStop(s, "company", "Acme"), /"one"/)
 })
 
 // --- abandoning an attempt that never became a click -------------------------

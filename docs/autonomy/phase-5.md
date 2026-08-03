@@ -3,8 +3,35 @@
 **Capability:** the machine sends applications unattended, at the volume the lead supply allows,
 and survives every way it can be interrupted.
 
-> **STATUS 2026-08-03: W1 LANDED. W2 IS BUILT AND GATED ON ITS CORPUS. W3 and W4 are
-> outstanding, though W4's breaker landed early because W2's own check names it.**
+> **STATUS 2026-08-03: W1 AND W3 LANDED. W2 IS BUILT AND GATED ON ITS CORPUS. W4's breaker
+> landed early, because W2's own check names it; W4's remaining half is the multi-board run.**
+>
+> #### What W3 added
+>
+> - **`pendingAttempt` is a map keyed by slug.** It was one slot, and `beginSubmit` raised STOP
+>   whenever a _different_ slug's attempt was open — correct single-threaded and **fatal at
+>   concurrency 8**, where eight workers legitimately hold eight attempts. The per-slug overwrite
+>   detector survives; only "a different slug tripped it" is gone.
+> - **`advance.mjs`** (§4.2c): `advanceOnce()` clicks a `next`-role control and refuses `submit`,
+>   under the same origin binding and token discipline as `submitOnce`. It re-checks the origin
+>   **after** the navigation, and it does **not spend** the token — a form needs many advances and
+>   exactly one submit. `click-surface.test.mjs`'s outstanding skip is now a pass.
+> - **`multipage.mjs`** resolves page by page and **abandons the draft explicitly** when a later
+>   page cannot be resolved. `DRAFT_ABANDONERS` is empty for every production board, for §4.9's
+>   reason: none exposes a candidate-facing discard. It records instead of acting, and says so.
+> - **The concurrency check passes**: 50 jobs, concurrency 8, **observed** max-in-flight 8 across 8
+>   origins; durable rows === applications; zero orphans; every queued job reaches a terminal state
+>   with a typed reason.
+> - **The C9 regression test exists and has a canary.** Two per-job contexts on one origin cannot
+>   see each other's `localStorage`, cookies, `sessionStorage` or IndexedDB — and a fifth test
+>   proves two pages in the SAME context DO leak, so the four above are not passing vacuously.
+> - **`bench-runner.mjs` drives the shipped pool.** Its own loop had **no origin exclusion**, so it
+>   could report a `max_in_flight` no production run can reach — and that number is what the CI
+>   gate enforces. Measured after the change: `concurrency_observed: 8` across `origins: 8`.
+>
+> A defect W3 found rather than introduced: six `raiseStop` call sites in `audit.mjs` passed
+> `jobsDir` but not `inboxPath`, so under a redirected tree the alert silently went nowhere —
+> `appendInbox` swallows its own failures by design. All six now name it.
 >
 > #### What W2 added, and the one thing it cannot finish
 >

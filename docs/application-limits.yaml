@@ -303,3 +303,26 @@ auto_apply:
   per_day_max: 10
   per_company_max_per_week: 5
   cache_max_age_days: 30
+
+  # The boards the trust gate will consider. NESTED UNDER auto_apply ON
+  # PURPOSE — trust.mjs and auto-apply.mjs both read `auto_apply.board_allowlist`,
+  # so the same four lines at the top level of this file are read by nothing and
+  # the gate refuses every board. Moved here 2026-08-03.
+  #
+  # `domain: ats-id`. The id must name an adapter this repo ships, because the
+  # gate checks the DECLARED ats rather than inferring one from the URL — a
+  # board that puts "greenhouse" in its own path would otherwise be trusted as
+  # Greenhouse.
+  #
+  # WHAT THIS LIST CAN AND CANNOT DO, because it is easy to read it as more than
+  # it is: every Greenhouse tenant is same-origin with every other Greenhouse
+  # tenant, and ATS tenancy is self-service. So this answers "is this the
+  # vendor's software", while the gate is being asked "is this party safe to
+  # submit to unattended". The allowlist can never be load-bearing against a
+  # hostile tenant; the controls that survive that are structural (carry no
+  # session cookie, read nothing back out of the page).
+  board_allowlist:
+    boards.greenhouse.io: greenhouse
+    job-boards.greenhouse.io: greenhouse
+    jobs.lever.co: lever
+    jobs.ashbyhq.com: ashby

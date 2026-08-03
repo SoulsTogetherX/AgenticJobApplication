@@ -37,9 +37,34 @@
 //     their value and never create, so those queries stay allowed.
 // Anything not on the allowlist is denied: a guardrail fails closed.
 //
+// 2026-08-03: the branch check asked the WRONG REPOSITORY. `gitInvocation()`
+// already parsed the global options that pick a repository (-C, --git-dir,
+// --work-tree) but used them only to skip past them and find the subcommand;
+// the branch was always read from the session cwd. Both directions were wrong,
+// and the under-match is the same class of defect the 2026-07-31 note above
+// describes — a rule anchored on the wrong thing:
+//
+//   OVER — a session whose cwd was a worktree on `claude/...` ran
+//   `git -C <main-checkout> commit`. The main checkout was on `dev`, i.e.
+//   exactly what this policy wants, and it was denied anyway. The workaround
+//   was to prefix `git -C <main> checkout dev` — a no-op that only set
+//   switchedToDev — so the guardrail was satisfied by a trick rather than by
+//   the invariant it asserts.
+//
+//   UNDER — the mirror, and the one that matters: from a session cwd on `dev`,
+//   `git -C /other/repo commit` (or reset/rebase/cherry-pick/am/apply) was
+//   allowed no matter which branch /other/repo was on.
+//
+// So the repository is now RESOLVED from the parsed invocation (see repoDir)
+// and that directory is what the branch is read from. switchedToDev and the
+// resolved branch are keyed per repository too, because `git -C /a checkout
+// dev` must not unlock a commit in /b.
+//
 // NOTE: no process.exit() after writing — on Windows, exiting immediately after
 // console.log drops buffered pipe output (same caveat as protect-profile.js).
 import { spawnSync } from "node:child_process"
+import fs from "node:fs"
+import path from "node:path"
 
 function deny(reason) {
   console.log(
@@ -260,16 +285,77 @@ const GIT_GLOBAL_VALUE = new Set([
   "--super-prefix",
 ])
 
+// The subset of the above that decides WHICH repository the command acts on.
+// Collected with their values, in order, so repoDir() can replay them.
+const GIT_DIR_OPTS = new Set(["-C", "--git-dir", "--work-tree"])
+
 function gitInvocation(tokens) {
   const gitIdx = tokens.findIndex((t) => GIT_PROG.test(t))
   if (gitIdx === -1) return null
   let i = gitIdx + 1
+  const dirOpts = []
   while (i < tokens.length && tokens[i].startsWith("-")) {
-    i += GIT_GLOBAL_VALUE.has(tokens[i]) ? 2 : 1
+    const tok = tokens[i]
+    const eq = tok.indexOf("=")
+    const name = eq === -1 ? tok : tok.slice(0, eq)
+    // Only the exact `--git-dir` spelling swallows the next token; the
+    // `--git-dir=x` form carries its value, exactly as before this comment.
+    const takesValue = eq === -1 && GIT_GLOBAL_VALUE.has(tok)
+    if (GIT_DIR_OPTS.has(name)) {
+      const value = eq === -1 ? tokens[i + 1] : tok.slice(eq + 1)
+      if (value !== undefined) dirOpts.push([name, value])
+    }
+    i += takesValue ? 2 : 1
   }
   if (i >= tokens.length) return null
-  return { sub: tokens[i], args: tokens.slice(i + 1) }
+  return { sub: tokens[i], args: tokens.slice(i + 1), dirOpts }
 }
+
+// ------------------------------------------------------- which repo is this?
+// Probed against git 2.54 rather than read off the manual, because the
+// precedence here is not guessable, and one of the four rules is a trap:
+//
+//   git -C ../b branch --show-current        -> b's branch   (-C moves cwd)
+//   git -C .. -C b branch --show-current     -> b's branch   (-C repeats, each
+//                                                             resolved against
+//                                                             the previous one)
+//   git --git-dir=../b/.git ...              -> b's branch
+//   git --git-dir=.git -C ../b ...           -> b's branch   (EVERY -C applies
+//                                                             first, whatever
+//                                                             the order on the
+//                                                             command line)
+//   git --work-tree=../b ...                 -> the CWD repo's branch  <-- trap
+//   git -C '' ...                            -> no-op
+//
+// --work-tree relocates the files a command reads and writes, NOT the HEAD it
+// moves: `git --work-tree=/other commit` still commits on the cwd repo's
+// branch. So it is parsed and its value consumed, but it must not redirect
+// this check — doing so would re-create the very over-match this resolution
+// step exists to fix. `git --git-dir=X --work-tree=Y` is governed by X.
+//
+// Passing a .git directory as the spawn cwd reports that repository's branch
+// (probed), which is what lets a single resolved path stand in for both -C and
+// --git-dir instead of threading two values through currentBranch().
+//
+// Returns null when the directory cannot be resolved: a guardrail that cannot
+// tell which branch it is protecting must fail closed.
+function repoDir(dirOpts, cwd) {
+  if (!dirOpts.length) return cwd // overwhelmingly the common case: no syscall
+  let dir = cwd
+  for (const [name, value] of dirOpts) {
+    if (name === "-C" && value !== "") dir = path.resolve(dir, value)
+  }
+  const gitDir = dirOpts.filter(([name]) => name === "--git-dir").pop()
+  if (gitDir) dir = path.resolve(dir, gitDir[1])
+  try {
+    return fs.statSync(dir).isDirectory() ? dir : null
+  } catch {
+    return null // missing, or a path we are not allowed to stat
+  }
+}
+
+const describeDirOpts = (dirOpts) =>
+  dirOpts.map(([name, value]) => `${name} ${value}`).join(" ")
 
 // ------------------------------------------------------- checkout / switch
 const CREATE_FLAGS = new Set([
@@ -430,18 +516,27 @@ function fallbackDecision(cmd) {
 
 function decide(cmd, cwd) {
   const clauses = splitClauses(maskHeredocs(cmd))
-  let switchedToDev = false
-  let headBranch // resolved lazily, at most once
+  // Both keyed by resolved repository: `git -C /a checkout dev` must not
+  // unlock `git -C /b commit`. Without any -C/--git-dir there is exactly one
+  // key (cwd), so the common case behaves as it always has.
+  const switchedToDev = new Set()
+  const headBranch = new Map() // resolved lazily, at most once per repo
+  const unresolved = (dirOpts) =>
+    `Cannot resolve which repository \`${describeDirOpts(dirOpts)}\` refers to, so the dev-branch check cannot run. Denied rather than assumed safe.`
   for (const tokens of clauses) {
     const inv = gitInvocation(tokens)
     if (!inv) continue
-    const { sub, args } = inv
+    const { sub, args, dirOpts } = inv
 
     if (sub === "checkout" || sub === "switch") {
       const target = checkoutTarget(args)
       if (target === null) continue // path restore / interactive patch
       if (target === "dev") {
-        if (!args.includes("--")) switchedToDev = true
+        if (!args.includes("--")) {
+          const dir = repoDir(dirOpts, cwd)
+          if (dir === null) return unresolved(dirOpts)
+          switchedToDev.add(dir)
+        }
         continue
       }
       return `Only the \`dev\` branch may be used, but this would move to "${target}". Switch with \`git checkout dev\` (or \`git checkout -b dev\`).`
@@ -466,11 +561,20 @@ function decide(cmd, cwd) {
       return "Pushing to main/master is blocked. Only `git push origin dev` is allowed."
     }
 
-    if (STATE_CHANGING.has(sub) && !switchedToDev) {
+    if (STATE_CHANGING.has(sub)) {
       if (sub === "tag" && !args.some((a) => !a.startsWith("-"))) continue
-      if (headBranch === undefined) headBranch = currentBranch(cwd)
-      if (headBranch && headBranch !== "dev") {
-        return `HEAD is on "${headBranch}" but only the \`dev\` branch may be modified. Run \`git checkout dev\` first.`
+      const dir = repoDir(dirOpts, cwd)
+      if (dir === null) return unresolved(dirOpts)
+      if (switchedToDev.has(dir)) continue
+      if (!headBranch.has(dir)) headBranch.set(dir, currentBranch(dir))
+      const branch = headBranch.get(dir)
+      if (branch && branch !== "dev") {
+        // The no--C wording is unchanged; naming the repo only when it is not
+        // the session cwd is what makes the OVER case above diagnosable.
+        const head = dir === cwd ? "HEAD" : `HEAD of ${dir}`
+        const fix =
+          dir === cwd ? "git checkout dev" : `git -C ${dir} checkout dev`
+        return `${head} is on "${branch}" but only the \`dev\` branch may be modified. Run \`${fix}\` first.`
       }
     }
   }

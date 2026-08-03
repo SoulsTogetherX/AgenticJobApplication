@@ -387,6 +387,142 @@ test("guard-bash lets a command switch to dev first, then change state", () => {
   }
 })
 
+// ---------- guard-bash: the branch is read from the TARGETED repo ----------
+// 2026-08-03. `git -C /other/repo commit` was judged against the SESSION repo's
+// branch, because the parsed -C/--git-dir/--work-tree options were only used to
+// locate the subcommand, never to pick the repo to ask. Two directions:
+//   OVER  — a session in a worktree on claude/... was denied `git -C <main>
+//           commit` even though <main> was on dev.
+//   UNDER — from a session on dev, `git -C /elsewhere commit` was allowed
+//           whatever branch /elsewhere was on. This is the half that matters.
+//
+// Every test below builds two throwaway repos: `a` on dev, `b` on trunk.
+function withTwoRepos(fn) {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "guard-git2-"))
+  try {
+    const a = path.join(base, "a")
+    const b = path.join(base, "b")
+    fs.mkdirSync(a)
+    fs.mkdirSync(b)
+    assert.equal(spawnSync("git", ["init", "-b", "dev", a]).status, 0)
+    assert.equal(spawnSync("git", ["init", "-b", "trunk", b]).status, 0)
+    // `cwd` is the session cwd the hook is told about — the thing that used to
+    // be the only repo it ever asked.
+    const at = (cwd) => (command) =>
+      runHook(
+        GUARD_BASH,
+        JSON.stringify({ tool_name: "Bash", cwd, tool_input: { command } }),
+      ).decision
+    fn({ base, a, b, fromDev: at(a), fromTrunk: at(b) })
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true })
+  }
+}
+
+test("guard-bash: -C targeting a repo on dev is allowed from a non-dev session", () => {
+  // The OVER case, verbatim: the session sits on a non-dev branch, but the repo
+  // the command actually modifies is on dev, which is what the policy wants.
+  withTwoRepos(({ a, fromTrunk }) => {
+    for (const c of [
+      `git -C ${a} commit -m msg`,
+      `git -C ${a} reset --hard`,
+      `git -C ${a} rebase origin/dev`,
+      `git -C ${a} cherry-pick abc123`,
+      `git -C ../a commit -m msg`, // relative, resolved against the session cwd
+    ]) {
+      assert.equal(fromTrunk(c), null, `expected allow for: ${c}`)
+    }
+  })
+})
+
+test("guard-bash: -C targeting a non-dev repo is denied from a dev session", () => {
+  // The UNDER case. Every one of these was allowed before 2026-08-03.
+  withTwoRepos(({ b, fromDev }) => {
+    for (const c of [
+      `git -C ${b} commit -m msg`,
+      `git -C ${b} reset --hard`,
+      `git -C ${b} rebase main`,
+      `git -C ${b} cherry-pick abc123`,
+      `git -C ${b} am patch.mbox`,
+      `git -C ${b} apply patch.diff`,
+      `git -C ../b commit -m msg`,
+    ]) {
+      assert.equal(fromDev(c), "deny", `expected deny for: ${c}`)
+    }
+  })
+})
+
+test("guard-bash: --git-dir picks the repo, --work-tree does not", () => {
+  withTwoRepos(({ a, b, fromDev, fromTrunk }) => {
+    // --git-dir relocates HEAD, in both spellings.
+    assert.equal(fromDev(`git --git-dir=${b}/.git commit -m msg`), "deny")
+    assert.equal(fromDev(`git --git-dir ${b}/.git commit -m msg`), "deny")
+    assert.equal(fromTrunk(`git --git-dir=${a}/.git commit -m msg`), null)
+    assert.equal(fromTrunk(`git --git-dir ${a}/.git commit -m msg`), null)
+    // --git-dir wins over a --work-tree pointing the other way.
+    assert.equal(
+      fromTrunk(`git --git-dir=${a}/.git --work-tree=${a} commit -m msg`),
+      null,
+    )
+    // Probed: --work-tree ALONE relocates the files a command touches, not the
+    // HEAD it moves — `git --work-tree=<b> commit` still commits on the session
+    // repo's branch. Honouring it here would be a fresh over-match, so a
+    // dev-branch session stays allowed and a trunk session stays denied,
+    // whichever work tree is named.
+    assert.equal(fromDev(`git --work-tree=${b} commit -m msg`), null)
+    assert.equal(fromTrunk(`git --work-tree=${a} commit -m msg`), "deny")
+  })
+})
+
+test("guard-bash: repeated -C composes, each relative to the last", () => {
+  withTwoRepos(({ fromDev, fromTrunk }) => {
+    // From a (dev): .. then b lands on trunk.
+    assert.equal(fromDev("git -C .. -C b commit -m msg"), "deny")
+    // From b (trunk): .. then a lands on dev.
+    assert.equal(fromTrunk("git -C .. -C a commit -m msg"), null)
+    // An empty -C is a no-op (probed), so this still resolves to a/dev.
+    assert.equal(fromDev('git -C "" commit -m msg'), null)
+    // -C applies before --git-dir even when written after it.
+    assert.equal(fromDev("git --git-dir=.git -C ../b commit -m msg"), "deny")
+  })
+})
+
+test("guard-bash: an unresolvable -C is denied, not assumed safe", () => {
+  withTwoRepos(({ base, fromDev }) => {
+    const missing = path.join(base, "no-such-repo")
+    for (const c of [
+      `git -C ${missing} commit -m msg`,
+      `git -C ${missing} reset --hard`,
+      `git --git-dir=${missing} commit -m msg`,
+      // Resolving to a FILE rather than a directory is equally unresolvable.
+      `git -C ${path.join(base, "a", ".git", "HEAD")} commit -m msg`,
+    ]) {
+      assert.equal(fromDev(c), "deny", `expected deny for: ${c}`)
+    }
+  })
+})
+
+test("guard-bash: switching to dev in one repo does not unlock another", () => {
+  withTwoRepos(({ a, b, fromDev, fromTrunk }) => {
+    // The workaround the OVER case forced: a checkout that is a no-op must not
+    // be what satisfies the guardrail for a DIFFERENT repo.
+    assert.equal(
+      fromTrunk(`git -C ${a} checkout dev && git -C ${b} commit -m msg`),
+      "deny",
+    )
+    // ...while the honest remedy, in the repo actually being modified, works.
+    assert.equal(
+      fromTrunk(`git -C ${b} checkout dev && git -C ${b} commit -m msg`),
+      null,
+    )
+    // And a bare `git checkout dev` still only covers the session repo.
+    assert.equal(
+      fromDev(`git checkout dev && git -C ${b} commit -m msg`),
+      "deny",
+    )
+  })
+})
+
 test("guard-bash tolerates malformed or empty input", () => {
   assert.equal(runHook(GUARD_BASH, "not json").status, 0)
   assert.equal(runHook(GUARD_BASH, "").status, 0)

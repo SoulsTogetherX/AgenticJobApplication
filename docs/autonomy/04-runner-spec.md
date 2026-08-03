@@ -277,9 +277,10 @@ defensible wall-clock number in this document, and putting one here would repeat
 
 Known cost worth attacking once `--browser-fill` exists: 93% of the 14-combo per-application cost is
 unconditional sleep, and reordering `plan.comboStrategies` to try `type-click` (conditional,
-measured ~86ms) before `type-enter` (`page.waitForTimeout(500)`, `fill-engine.mjs:317`) is worth
-~414ms per combo. It must land with a before/after **and** a real-DOM correctness check, budget
-declared as "correctness-neutral or revert". Owner `w2-engine`; not on the runner's critical path.
+measured ~86ms) before `type-enter` (the `page.waitForTimeout(500)` inside `fill-engine.mjs`'s
+`type-enter` combo strategy) is worth ~414ms per combo. It must land with a before/after **and** a
+real-DOM correctness check, budget declared as "correctness-neutral or revert". Owner `implementer`;
+not on the runner's critical path.
 
 **Recency SLA:** green-tier leads submitted within 24h of `posted_at`, reported per run and checkable
 in SQL. This SLA is what bounds §4.2b's arrival shaping. Minutes-level continuous sweeping is **not**
@@ -311,8 +312,8 @@ stay true.
 
 ### 4.9 Reconciliation, and scoping the STOP blast radius
 
-`assertNoOrphanAttempts` (worktree-only, `audit.mjs:189`, §0.2) raises STOP at `RUN_START` and
-throws, halting **every future run** on a single unresolved attempt, clearable only by a human
+`assertNoOrphanAttempts` (`scripts/auto/audit.mjs`; §0.2 records it as worktree-only at `fa192a1` —
+it is committed now) raises STOP at `RUN_START` and throws, halting **every future run** on a single unresolved attempt, clearable only by a human
 deleting STOP — and nothing surfaces STOP to the user. Right at N=3, wrong at N=999 for the same
 reason: the blast radius of the halt scaled and the trigger did not.
 
@@ -410,7 +411,7 @@ submitting.** The user is on the submit button for every application today; atte
 
 ### 4.11 What must be true of the runner, as tests
 
-Owned by `w4-autonomy` (`tests/auto/` is theirs), cross-checked by `qa-adversary`:
+Owned by `implementer` (`tests/auto/` covers code it owns), cross-checked by `qa`:
 
 1. `grep -rn "\.click(" scripts/auto/` returns lines only in `submit.mjs` and `advance.mjs` —
    asserted by a test, not by a habit — and `advance.mjs` refuses any control whose scanned role is
@@ -421,10 +422,10 @@ Owned by `w4-autonomy` (`tests/auto/` is theirs), cross-checked by `qa-adversary
    kill between click-return and the acknowledgement write, resolved by `reconcile.mjs` without a
    human** (C10).
 4. One req cross-listed in multiple cities/boards resolves to **exactly one** application. This
-   exercises `dedupeLeads` (`find-jobs.mjs:515`), `cluster.mjs` and `repostSightings` together. The
-   defences exist and have **never once been exercised by an unattended runner**; the comparable
-   failure — Sonara sending 15+ applications to one job — is the most reputation-destroying on
-   record. Owner `w5-leads`.
+   exercises `dedupeLeads` (`scripts/leads/find-jobs.mjs`), `cluster.mjs` and `repostSightings`
+   together. The defences exist and have **never once been exercised by an unattended runner**; the
+   comparable failure — Sonara sending 15+ applications to one job — is the most
+   reputation-destroying on record. Owner `implementer`.
 5. A board failing every job pauses that board, strands its jobs **with `board-paused` written**, and
    does not stop the run; a probe re-admission clears it (W4).
 6. `model_turns === 0` (**observed, not derived** — Phase 4.7) and `spawns_per_app === 0` on every

@@ -55,6 +55,24 @@ constraint**: the measured yield implies an achievable ceiling closer to ~100 ap
 999 even after board expansion (C12). Neither is engineered around by lowering the requirement.
 Phase 0.11 measures the second one **before** six phases are built on an assumption about it.
 
+> **0.11 has now measured it (2026-08-02, `build-manager`; full derivation and caveats in §7 R-8), and
+> the second constraint is not merely the harder one — it is the only one with no known path to the
+> requirement.** From the 44 configured boards: **≈5–7 new qualifying leads per day**. Reaching 999/day
+> needs **~6,600–8,800 boards**, a 150x–200x expansion, and both caveats on that figure push it up
+> rather than down.
+>
+> Two things follow for this document's own argument. **The "~100/day even after board expansion"
+> figure above was an inference and is superseded by a measurement an order of magnitude below it.**
+> And the sequencing principle still holds, but its meaning changes: Phase 3 lifts the _first_
+> constraint, and when it does, the runner is not throughput-bound — it is **supply-bound, at the
+> user's current `per_day_max` of 10, immediately.** That is the correct order and it was measured
+> before six phases were built on it, which is exactly what 0.11 existed to do.
+>
+> **The distinction this plan has been missing:** 999 applications/day _sustained_ requires 999
+> qualifying leads/day _arriving_. Adding boards yields a one-time backlog and then a trickle, so a
+> large expansion produces a burst and reverts. Nothing in this document currently separates the
+> burst from the steady state, and the requirement is a steady-state one.
+
 **The sequencing principle:** everything before the first real click is cheap and reversible;
 everything after it is irreversible and signed with the user's name. Order accordingly — state
 before behaviour, correctness-of-content before volume-of-content, volume last, because volume

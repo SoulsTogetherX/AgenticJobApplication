@@ -203,35 +203,36 @@ finish its work.
 
 No node is unchecked, including the manager.
 
-| Agent              | Verifies                                                        | Is verified by                        |
-| ------------------ | --------------------------------------------------------------- | ------------------------------------- |
-| `build-manager`    | Every returned diff against its owned set; the suite; the gate  | the three innovators; the CI pipeline |
-| `innov-architect`  | That rewrites buy a named property; roster distribution         | `innov-perf`, `innov-resilience`      |
-| `innov-perf`       | Every performance claim; that budgets were declared up front    | `innov-architect`, `qa-breaker`       |
-| `innov-resilience` | That security fixes are structural, not just currently-unbroken | `innov-architect`, `qa-adversary`     |
-| `w1-security`      | `w5-leads`' injection gate actually rejects                     | `qa-adversary`, `innov-resilience`    |
-| `w2-engine`        | `w3-resolution` applied the bootstrap spec unmodified           | `qa-adversary`, `qa-breaker`          |
-| `w3-resolution`    | `w2-engine`'s engine contract still holds at the plan boundary  | `qa-breaker`, `innov-resilience`      |
-| `w4-autonomy`      | That blast-radius controls survive the other agents' changes    | `innov-resilience`, `qa-breaker`      |
-| `w5-leads`         | That gate changes did not grow the reject list                  | `qa-adversary`, `innov-perf`          |
-| `w6-documents`     | That no rendered document carries hidden text                   | `qa-adversary`, `doc-scribe`          |
-| `ci-engineer`      | That every agent's tests actually run in the pipeline           | `qa-breaker` (canary), `innov-perf`   |
-| `doc-scribe`       | That every doc matches the code it describes                    | every file owner it documents         |
-| `qa-adversary`     | That security fixes stop attacks at the consumer                | `w1-security`, `innov-resilience`     |
-| `qa-breaker`       | That CI fails when it should; that edge cases are handled       | `ci-engineer`, `innov-perf`           |
-| `researcher`       | That the pipeline's assumptions about hiring are still true     | `w6-documents`, `qa-adversary`        |
+**Rebuilt 2026-08-02 for the 5-agent roster.** The previous matrix had 16 rows
+and every one of them named an agent that no longer exists. A cross-check table
+that cannot be executed is worse than none, because it reads as coverage.
 
-**Why `researcher` is checked by `w6-documents` and `qa-adversary`
-specifically.** It is the only agent whose primary input is the open web, so
-its two failure modes are distinct from everyone else's: laundering folklore
-into the repository as though it were fact, and carrying a page's own text
-inward. `w6-documents` owns the résumé pipeline that would consume a bad
-keyword recommendation; `qa-adversary` is the agent that assumes text from
-outside is hostile. A researcher finding that survives both is worth acting on.
+| Agent           | Verifies                                                                             | Is verified by                        |
+| --------------- | ------------------------------------------------------------------------------------ | ------------------------------------- |
+| `build-manager` | Every returned diff against its owned set; the suite; the gate                       | `architect`; the CI pipeline          |
+| `architect`     | That rewrites buy a named property; that budgets were declared; structural soundness | `build-manager`, `qa`                 |
+| `implementer`   | That its own change is tested, including failure and boundary cases                  | `qa`, `architect`, `ci-engineer`      |
+| `qa`            | That the change breaks under hostile input; that CI fails when it should             | `implementer` (on repro), `architect` |
+| `ci-engineer`   | That every agent's tests actually run in the pipeline                                | `qa` (canary), `build-manager`        |
+| `doc-scribe`    | That every doc matches the code it describes                                         | every file owner it documents         |
+
+**The load-bearing asymmetry: `implementer` writes its own tests, so `qa` is
+not its test-writer and must not become one.** `qa` arrives after or alongside,
+tries to break the change, and files a repro. It never patches product code.
+That is what keeps the check independent — an agent that fixes what it finds
+stops looking once the fix compiles.
+
+**`architect` is the outward lens as well as the reviewer**, having absorbed the
+retired `researcher`. Its two failure modes are distinct from everyone else's:
+laundering folklore into the repository as fact, and carrying a page's own text
+inward. So its outward-facing findings are checked by `implementer` (which owns
+the résumé pipeline a bad keyword recommendation would reach) and by `qa` (which
+assumes text from outside is hostile). A research finding that survives both is
+worth acting on.
 
 ### Two checks that matter more than the rest
 
-**`qa-breaker` canaries the pipeline.** A CI config that cannot fail is the
+**`qa` canaries the pipeline.** A CI config that cannot fail is the
 purest form of slacking, and it hides everyone else's. Periodically introduce a
 deliberate failure — a broken assertion, a removed fixture — and confirm the
 build goes **red**, then revert it. A pipeline nobody has ever seen fail is

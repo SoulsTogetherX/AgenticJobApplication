@@ -90,7 +90,7 @@ what Sonara's shutdown did to its users.
 submit endpoint — verified 2026-08-01, and the only one of its kind across six ATSes surveyed
 (SmartRecruiters documents a public Application API but it is customer-token-gated and therefore not
 candidate-usable).
-_Recommendation:_ yes, but after Phase 5 W4, and only once `w5-leads` has added Recruitee boards —
+_Recommendation:_ yes, but after Phase 5 W4, and only once `implementer` has added Recruitee boards —
 **there are zero Recruitee leads today** (measured).
 _Consequence:_ it gives the runner a second lane shape to be generic over, removes the browser from
 the critical path for one board family, and is the only lane with zero bot-scoring exposure.

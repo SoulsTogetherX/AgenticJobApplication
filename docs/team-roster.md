@@ -13,36 +13,44 @@ every agent verifies another, including the manager.
 
 ## Roles and privileges
 
-Seven roles. `cicd`, `scribe` and `researcher` are **distinct roles**, not
-worker specialisations: a worker ships features, `ci-engineer` ships the
-machinery that proves features work, `doc-scribe` ships what the project says
-about itself, and `researcher` supplies the facts about the world that none of
-the others can get from this repository.
+**Five roles, rebuilt 2026-08-02 for the collapsed roster.** This section
+described seven and named `researcher` and `innovator` as live roles; both were
+retired into `architect` on 2026-08-02 and the table below was unexecutable.
+`cicd` and `scribe` remain **distinct roles**, not worker specialisations: a
+worker ships features, `ci-engineer` ships the machinery that proves features
+work, and `doc-scribe` ships what the project says about itself.
 
-| Role       | Agent tool | Playwright | Web     | Commits | Writes product code        |
-| ---------- | ---------- | ---------- | ------- | ------- | -------------------------- |
-| manager    | **yes**    | no         | no      | **yes** | no                         |
-| innovator  | no         | no         | yes     | no      | no (harnesses only)        |
-| worker     | no         | no         | w5 only | no      | yes                        |
-| QA         | no         | no         | no      | no      | tests only                 |
-| cicd       | no         | no         | no      | no      | pipeline and config only   |
-| scribe     | no         | no         | no      | no      | **no — comments and docs** |
-| researcher | no         | no         | **yes** | no      | **no — findings only**     |
+| Role     | Agent tool | Playwright | Web     | Commits | Writes product code        |
+| -------- | ---------- | ---------- | ------- | ------- | -------------------------- |
+| manager  | **yes**    | no         | no      | **yes** | no                         |
+| worker   | no         | no         | no      | no      | yes                        |
+| QA       | no         | no         | no      | no      | tests and harnesses only   |
+| reviewer | no         | no         | **yes** | no      | **no — findings only**     |
+| cicd     | no         | no         | no      | no      | pipeline and config only   |
+| scribe   | no         | no         | no      | no      | **no — comments and docs** |
+
+**On the worker's Web column, which used to read "w5 only".** `w5-leads` was the
+one worker permitted the open web, and it is retired. Workers now have none:
+running a project script that makes network calls (`find-jobs.mjs` sweeps public
+boards by design) is not web access in this sense. What is forbidden is a worker
+reading arbitrary pages, because a worker writes product code and rule 0 says a
+third-party page is an attack surface. `architect` holds the outward lens.
 
 The Agent tool is a manager-only privilege. That is what keeps the tree bounded
 and makes "no subagent ever drives a real employer's form" structural rather
 than aspirational.
 
-**`researcher` is the outward lens.** Every other non-manager role reads this
-repository; the researcher reads the world it operates in — keywords and how
-ranking systems actually behave, hiring conventions, what the market rewards
-now, and what comparable services already do. It is the only role whose primary
-input is the open web, which makes hard rule 0 load-bearing for it: a page that
-addresses the agent is an attack, because its output feeds documents that go out
-under the user's name. Two limits follow and they are not negotiable — it never
-writes to `profile/` (research is advice about **presentation**, never a new
-fact about the user) and it never writes into `jobs/<slug>/` (a finding reaches
-a tailored document only through a human or a deterministic script).
+**`architect` is the outward lens**, having absorbed the retired `researcher`.
+Every other non-manager role reads this repository; `architect` also reads the
+world it operates in — keywords and how ranking systems actually behave, hiring
+conventions, what the market rewards now, and what comparable services already
+do. It is the only role whose input includes the open web, which makes hard rule
+0 load-bearing for it: a page that addresses the agent is an attack, because its
+output feeds documents that go out under the user's name. Two limits follow and
+they are not negotiable — it never writes to `profile/` (research is advice about
+**presentation**, never a new fact about the user) and it never writes into
+`jobs/<slug>/` (a finding reaches a tailored document only through a human or a
+deterministic script).
 
 ## Staffing constraints
 
@@ -55,11 +63,15 @@ a tailored document only through a human or a deterministic script).
    to hiring another**, and do not spawn a fresh agent for a follow-up small
    enough that rebuilding its context costs more than the fix.
 
-1. **Floor: at least one of each of the seven roles at all times.**
+1. **Floor: at least one of each of the five roles at all times.**
 2. Managers may hire managers. **Depth cap: two manager levels.**
 3. **Ceiling: 16 concurrent agents**, plus a token budget the manager tracks.
-4. Consult an innovator before restructuring the roster — `innov-architect` for
-   splitting a domain, `innov-perf` for whether parallelism is the bottleneck.
+   **In practice the cap is 3** — see Dispatch discipline in
+   [agent-protocol.md](agent-protocol.md); a six-agent wave exhausted a session
+   usage limit on 2026-08-02 and killed all six mid-edit.
+4. Consult `architect` before restructuring the roster — both for whether a
+   domain should split and for whether parallelism is actually the bottleneck.
+   It absorbed all three innovator roles on 2026-08-02.
 5. **Announce every hire and every fire to all active agents** (user decision
    2026-07-31). A manager that changes the roster silently leaves workers
    holding a stale map: they send to an agent that no longer exists, they
@@ -143,11 +155,29 @@ a single edit.
 | --------------- | -------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `build-manager` | manager  | Opus   | Process only: this file, `agent-protocol.md`, the git history, the decision to ship                                                             |
 | `implementer`   | worker   | Opus   | **All of `scripts/**` except `hooks/` and `dev/bench-*`, plus the tests for the code it changes** (`tests/<domain>/<file>.test.mjs`)            |
-| `qa`            | QA       | Opus   | `tests/security/*`, `tests/fixtures/*`, `scripts/dev/bench-*.mjs`, `tests/dev/*`                                                                |
+| `qa`            | QA       | Opus   | `tests/security/*`, `tests/fixtures/*`, `scripts/dev/bench-*.mjs`, `tests/dev/*`, **`docs/measurements.md`**                                    |
 | `architect`     | reviewer | Opus   | Nothing. Rulings, failure modes, structure, deletion candidates, outward-facing research. **Writes no product code**                            |
 | `doc-scribe`    | scribe   | Opus   | `CLAUDE.md`, `README.md`, `docs/reference/*`, most `docs/*.md`, `.claude/skills/*`, `schemas/*`                                                 |
 | `ci-engineer`   | cicd     | Opus   | `.github/workflows/*`, `package.json`, `scripts/hooks/*`, `.gitignore`, `.prettierignore`, `tests/hooks/*` — **never `.claude/settings*.json`** |
 | `job-worker`    | worker   | Sonnet | Pre-existing. Per-job runtime worker for `pipeline-jobs`; not part of this build                                                                |
+
+**Ruling 2026-08-02 — `docs/measurements.md` belongs to `qa`, not `architect`.**
+The plan assigns the measurement ledger to `innov-perf` (4.8, R-12), and the
+mechanical retirement mapping would send that to `architect`. That would be
+wrong: `architect` owns **nothing** by design and writes no product code, so an
+owned file contradicts its role, while `qa` already owns `scripts/dev/bench-*.mjs`
+— the harnesses that produce the numbers the ledger records. Splitting a ledger
+from the harness that fills it is the same mistake that let `check-applied.mjs`
+drift from its schema. **The file-set table above is the authority on ownership;
+the retirement mapping is only a default, and this is a case where it loses.**
+`architect` still rules on whether a measurement's _method_ is sound — that is a
+ruling, not a write. Raised by `doc-scribe` during the plan repair; it wrote `qa`
+into 4.7, 4.8 and R-12 pending this, and that stands.
+
+**Anyone may append an entry to `docs/measurements.md`** — `implementer` records
+its own before/after numbers there and should. What `qa` owns is the file's
+**structure**: the template, the standing caveats, and the baselines. Appending
+an entry is not a restructure; reorganising the ledger is.
 
 **The load-bearing change is not the headcount — it is that `implementer` writes
 its own tests.** The old split made testing someone else's job, so every change
@@ -186,7 +216,7 @@ the shipped product. Development-only skills declare it in frontmatter:
 ```yaml
 scaffolding: true
 remove_after: phase-2
-owner: qa-breaker
+owner: qa
 ```
 
 **Three keys, not two** — `owner:` was read by the reaper and documented
@@ -207,8 +237,11 @@ holds security, engine, autonomy and pipeline work where a subtle mistake is
 expensive; Sonnet holds mechanical file-by-file work per the token-discipline
 rule in CLAUDE.md.
 
-`innov-perf` measures per-role model performance the same way it measures
-everything else, and the manager re-staffs on the numbers.
+**All five current agents are on Opus, so the hypothesis above is currently
+untested rather than confirmed.** `qa` measures per-role model performance the
+same way it measures everything else, into `docs/measurements.md`, and the
+manager re-staffs on the numbers. Nobody has produced that measurement yet;
+until someone does, the paragraph above is a plan and not a finding.
 
 ## Log — moved to [roster-log.md](roster-log.md)
 

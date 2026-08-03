@@ -45,6 +45,10 @@ Phases 0–4 are sequential. Phase 5 is gated on 0–4. Phase 6 may start any ti
 and does not gate the runner — **except 0.11, which is hoisted into Phase 0 precisely because
 it gates the plan's own arithmetic.**
 
+**Phase 0 is open, not closed** (0.11, 0.13 and the B1 baseline are outstanding as of 2026-08-02) —
+its status block says which and why. Phases 1 and 2 were opened ahead of it. Take a phase's own
+status block as the answer, never this table.
+
 | Phase                    | Goal, as a capability                                                     |
 | ------------------------ | ------------------------------------------------------------------------- |
 | [0](autonomy/phase-0.md) | Class removers, and the measurements everything else is priced against    |

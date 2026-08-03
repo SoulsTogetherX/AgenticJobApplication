@@ -46,12 +46,12 @@ kept, not merged away, so the wrong reasoning stays legible.
 returns `9`: **eight** inline `> **Superseded …**` blocks — one per correction C1-C7, plus a second
 C4 pointer at risk item 6 under §"Risks, ranked", which asserted the 26h heartbeat as an existing
 control in a second place a reader can reach without passing the first — and **one** banner under
-the title saying the document is v1. (A tenth `Superseded` marker at `autonomy-plan.md:1173` is
-`innov-resilience`'s from 2026-07-31 and is unrelated to C1-C7.) **C8-C13 are
+the title saying the document is v1. (A tenth `Superseded` marker in `autonomy-plan.md`, the one
+dated 2026-07-31, is `innov-resilience`'s and is unrelated to C1-C7.) **C8-C13 are
 deliberately not marked in `autonomy-plan.md`** — they correct revision 1 of _this_ document, and
 marking them there would attribute revision 1's errors to v1.
 
-**C1 — `autonomy-plan.md:882-890`, "§3.5 The honest limitation", is wrong.**
+**C1 — `autonomy-plan.md` §3.5, "The honest limitation", is wrong.**
 It says: _"The runner cannot tailor — tailoring needs a model. So the 12h loop is sweep, then
 apply to what's already prepped."_ The premise is false. Rule 1 already restricts a résumé to
 facts from the fact base; `buildFactIndex` (`scripts/lib/lib.mjs:147-183`) already stores ready
@@ -98,8 +98,9 @@ It re-keyed `auto_submissions` to `PRIMARY KEY (slug)` with `ON CONFLICT DO NOTH
 go into the same table — verified, `db.mjs:216`: _"A dry-run row is recorded too, with mode
 `dry_run`"_ — and all of Phase 5's ladder was `dry_run`. After the rehearsal, every rehearsed
 slug already holds a row, the live insert reports 0 changes, and `submitOnce` refuses forever.
-Worse, the same comment block warns that caps count dry-run rows **on purpose**
-(`db.mjs:866-874`), so a 999-job rehearsal against the real DB would exhaust `per_day_max` and
+Worse, the same comment block warns that caps count dry-run rows **on purpose** (`db.mjs`, the
+comment above `companySubmissionBreakdown`), so a 999-job rehearsal against the real DB would
+exhaust `per_day_max` and
 every company window before the first live click.
 **Replaced by:** claim key `(slug, mode)`; cap queries continue to read both modes, unchanged;
 and every Phase 5 rehearsal runs against a **fixture DB path** the runner refuses to combine with
@@ -158,7 +159,7 @@ leads/day — roughly **100 applications/day against a target of 999**, an order
 short, delivered by the plan's own remedy. Revision 1's Phase 6 check ("qualifying leads per
 sweep, tracked over four sweeps") carried **no numeric target**, so it could not go red, and
 Phase 6 was scheduled last and non-gating.
-**Replaced by:** Phase **0.11** — one sweep, owned by `w5-leads`, reporting qualifying leads per
+**Replaced by:** Phase **0.11** — one sweep, owned by `implementer`, reporting qualifying leads per
 board per sweep and extrapolating the board count needed for 999/day **as a number in this plan**
 — and a numeric completion criterion for 6.1 derived from it.
 **Partially rejected:** the critic's suggestion to "re-derive the runner's requirements against

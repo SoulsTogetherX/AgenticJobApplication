@@ -1,3 +1,12 @@
+**Standing note on citations: cite by symbol, not by line.** A `file.mjs:NNN` anywhere in this plan
+was true at the commit it was authored against and drifts with every commit after it, silently — the
+link still looks valid when it is pointing at unrelated code. Re-derive it (`grep -n "<symbol>"`)
+before you act on it. This has already misdirected work three times: Phase 1.4 sent a worker to
+`automatability.mjs:454-473` for a `hasVerifiedResume` block that had moved, and `authorize.mjs`
+went stale twice at two different line numbers (§0.2's third bullet). Line numbers that survive
+below are either **pinned to a named commit** — §0.2's table reads committed blobs via `git show`,
+so it stays reproducible — or kept deliberately as the record of where something used to be.
+
 ## 0.0 What review changed
 
 The attack stage did real work. It found **six fatal defects**, all six accepted, three of which
@@ -57,9 +66,11 @@ artifacts. They are not churned here.
 
 The v1 plan wrote specifications in the indicative. Three times, a control that did not exist
 was believed in because a plan sentence described it as though it did — `INBOX.md`, the 26h
-staleness heartbeat, and the "guards are structurally unskippable" claim in
-`scripts/auto/guard.mjs:20-22`. All three read as descriptions of the system. All three were
-descriptions of an intention.
+staleness heartbeat, and the "guards are structurally unskippable" claim in `scripts/auto/guard.mjs`'s
+header. (That claim is gone at HEAD; the header's "NOTE ON SCOPE" block now quotes it back and
+records why it was false — recording happens **after** submitting, so a check on the path to the
+record cannot stop the click it was supposed to stop.) All three read as descriptions of the system.
+All three were descriptions of an intention.
 
 So, in this document:
 
@@ -76,7 +87,7 @@ A sentence in this plan is never evidence that code exists. The command next to 
 **CORRECTION (review, F-material, `attack:feasibility` and `attack:correctness` concurring).**
 Revision 1's table was stamped "at `fa192a1`" and was run against a **dirty, partly untracked
 tree**. Two of its citations describe code in a tree state that exists nowhere: §4.9 cited
-`assertNoOrphanAttempts` at `audit.mjs:189-217`, which does **not** exist at `fa192a1`; §4.10
+`assertNoOrphanAttempts` (`audit.mjs`) at a line range that does **not** exist at `fa192a1`; §4.10
 argued at length about `preSubmitCheck`, which exists at `fa192a1` and has **already been
 deleted** by the in-flight wave. A document that makes provenance a rule in §0.1 and then breaks
 it in the table that establishes its credibility is worse than one that never claimed it. The
@@ -91,9 +102,9 @@ table went wrong.
 
 **Why `file_sha1` and not just the commit sha.** A commit sha says which tree; a file sha says
 which bytes were read. The column is the first 12 hex of the sha1 of the file's content, the same
-digest `bench-apply.mjs`'s `provenance()` computes over `MEASURED_FILES` (`scripts/dev/bench-apply.mjs:1999-2036`),
-which exists in this repo because M2 and M6 were both destroyed by an uncommitted edit landing
-mid-measurement. Reproduce the whole column with:
+digest `bench-apply.mjs`'s `provenance()` computes over its `MEASURED_FILES` list, which exists in
+this repo because M2 and M6 were both destroyed by an uncommitted edit landing mid-measurement.
+Reproduce the whole column with:
 
 ```sh
 for f in <paths>; do echo "$f $(git show 9e0a159:$f | sha1sum | cut -c1-12)"; done
@@ -124,19 +135,25 @@ row's job is to fail when the tree moves. What it was cited for — that the fix
 distinguish a **tenant** from an **origin** — is unchanged, and the second greenhouse route makes
 the problem sharper rather than smaller. Run against the two fixture URLs, `boardKey` returns
 `127.0.0.1/boards.greenhouse.io` for **both**: two Greenhouse tenants, one `board_key`, and — since
-every route in this fixture is served from one loopback host and one ephemeral port
-(`server.mjs:360`, `host = "127.0.0.1"`) — **one origin for every fixture board, Lever and Ashby
-included.** So a fixture-backed test of §4.2's replacement key cannot show concurrency at all: keyed
-on registrable origin, the whole fixture serialises to one in-flight job. That is a gap in the test
-substrate, not in the design, and it is filed to the owner of `tests/fixtures/` rather than patched
-here.
+every route in this fixture was served from one loopback host and one ephemeral port
+(`server.mjs`'s `start()` default, `host = "127.0.0.1"`) — **one origin for every fixture board,
+Lever and Ashby included.** So a fixture-backed test of §4.2's replacement key cannot show
+concurrency at all: keyed on registrable origin, the whole fixture serialises to one in-flight job.
+That is a gap in the test substrate, not in the design, and it is filed to the owner of
+`tests/fixtures/` rather than patched here.
+
+> **CLOSED 2026-08-02 by Phase 0.10.** `server.mjs` now takes `origins: N` / `--origins N` and binds
+> N listeners on N ephemeral ports — distinct ports are distinct origins — alongside the
+> parameterised employer segment `/boards.greenhouse.io/fixture-emp-<n>/jobs/<id>`. A 50-job run at
+> concurrency 8 now spans 8 origins instead of serialising to one. The paragraph above is kept
+> because the reasoning is why the flag exists; the substrate gap it names is gone.
 
 **Row 11 cannot satisfy §0.1's rule and should stop pretending to.** `jobs/leads.db` is gitignored
 (`.gitignore:6`), so there is no commit that pins it and no `file_sha1` that means anything a day
 later — the digest and mtime above are a snapshot, not a citation. The dismissal rate moved from
 82.3% to 77.9% between two reads eighteen hours apart while the dismissed **count** stayed at 116,
 which is exactly what a live denominator does. **C12's supply arithmetic uses the ~82% figure**;
-whether ~78% changes its conclusion is `w5-leads`'s to redo under Phase 0.11, not something to
+whether ~78% changes its conclusion is `implementer`'s to redo under Phase 0.11, not something to
 re-derive in a footnote here.
 
 **The three "WORKING TREE ONLY" bullets are resolved — all three settled at `9e0a159`.** They are
@@ -149,17 +166,19 @@ citations in the document pointed at bytes that existed on one machine.
   being able to read it at a fixed tree: the two citations `:427` and `:443-480` appear **nowhere
   else in this document** — the bullet claiming to list "every citation of it" listed two that do
   not exist. And `authorize.mjs:305-315` — **superseded 2026-08-01: the line was `:342-352` at
-  `9e0a159`, and Phase 0.3 has since landed, so the behaviour it describes no longer exists. At
-  `74c7970` the reason is built by `safeText()` at `authorize.mjs:417`** — cited by Phase 0.3 as
-  where the raw third-party label
+  `9e0a159`, and Phase 0.3 has since landed, so the behaviour it describes no longer exists. The
+  reason is now built by `safeText()` inside `authorize.mjs`'s `plan_defer` push** — cited by Phase
+  0.3 as where the raw third-party label
   enters a defer reason, is the **wrong location**: at `9e0a159` those lines are the trust-gate and
   screening pushes. The label reaches the reason string at **`:342-352`**, `d?.label` at `:348`.
-  Phase 0.3's finding is unaffected; only its line number is. Correcting that row is `w4-autonomy`'s
-  or the plan owner's call, and it is filed, not silently edited.
+  Phase 0.3's finding is unaffected; only its line number is. **Closed:** Phase 0.3's row now
+  carries the correction and cites the symbol; this bullet stays as the record of a citation that
+  went stale twice, at two different line numbers, which is why the standing note at the top of this
+  file exists.
 - **`assertNoOrphanAttempts` is committed** — `git grep -n "assertNoOrphanAttempts" 9e0a159 -- scripts tests`
   → `scripts/auto/audit.mjs:139` (call site) and `:192` (definition), in `19fce3042058`. Revision 1
   cited `:136`/`:189` from the worktree; three lines out, and at `fa192a1` the symbol did not exist
-  at any line.
+  at any line. (Both numbers have moved again since; grep for the symbol.)
 - **`preSubmitCheck` is gone.** `git grep -n "preSubmitCheck" 9e0a159 -- scripts tests` returns
   nothing. §4.10's rationale is now stated against a shape that exists rather than one mid-deletion.
 
@@ -215,9 +234,14 @@ the roster used for `scripts/applications/*` — they are readers of `scripts/li
 `w4-autonomy` already owns, and splitting a reader from its schema is what let
 `check-applied.mjs` drift.
 
-> **RESOLVED.** `build-manager` assigned both to `w4-autonomy`, on exactly that reasoning —
-> `docs/team-roster.md:143` now carries `scripts/status.mjs` and `scripts/maintenance/*` on the
-> `w4-autonomy` row. Phase 1 is no longer blocked on this. The flag above is kept rather than
-> deleted because the recommendation and its reasoning are why the assignment went where it did.
+> **RESOLVED 2026-08-01.** `build-manager` assigned both to `w4-autonomy`, on exactly that reasoning
+> — the roster's `w4-autonomy` row carried `scripts/status.mjs` and `scripts/maintenance/*`. Phase 1
+> is no longer blocked on this. The flag above is kept rather than deleted because the
+> recommendation and its reasoning are why the assignment went where it did.
+>
+> **Superseded 2026-08-02 by the roster collapse.** `w4-autonomy` is retired and that row is gone.
+> Both paths now fall inside `implementer`'s "all of `scripts/**` except `hooks/` and `dev/bench-*`",
+> so they are owned by construction rather than by a named exception — check
+> [`docs/team-roster.md`](../team-roster.md)'s **Current roster** table, not a line number in it.
 
 ---

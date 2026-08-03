@@ -792,6 +792,11 @@ export function buildPlan({
   )
   const items = []
   const defer = []
+  // Checkbox/radio groups this plan will ACTUATE on the user's behalf, each
+  // from an exact-text banked answer. Carried separately from `items` so the
+  // caller can name every one without walking the whole plan — rule 6 requires
+  // the record, and a record nobody can find cheaply does not get read.
+  const actuated = []
   const byKey = new Map(resolved.map((r) => [r.k, r]))
   let fileIndex = 0
 
@@ -1241,6 +1246,66 @@ export function buildPlan({
       // confirm-widget defer on a field the form itself does NOT mark
       // required is exempt from blocking readiness; a required one is not
       // rescued, and correctly still forces a human before the fast path.
+      //
+      // ===================================================================
+      // THE ONE EXEMPTION: AN EXACT-TEXT BANKED ANSWER (2026-08-03)
+      // ===================================================================
+      //
+      // User decision, hard rule 6 as revised: on the user-directed path the
+      // agent applies, and a widget whose question the user has ALREADY
+      // ANSWERED VERBATIM is not a judgement anybody still has to make.
+      // Deferring it made the agent go hunting through the DOM for a question
+      // the fact base could answer outright — measured on the Runpod/Ashby
+      // apply as ~4 extra browser round-trips for one banked "No".
+      //
+      // WHAT MAKES THIS SAFE, and each clause is load-bearing:
+      //
+      //   * `@exact` ONLY, never a fuzzy match. Gotcha A: "a fuzzy yes/no
+      //     match can return the right concept with the WRONG TRUTH VALUE
+      //     ('authorized to work without sponsorship'). Defer, never
+      //     auto-invert." An exact hit means the form's question text
+      //     normalises to a question the user themselves answered, so there
+      //     is no polarity to invert — the answer was given to THIS question.
+      //   * `status === "OK"` only. NEEDS-CHOICE means the bank had an answer
+      //     but no option matched it cleanly; that is still a judgement.
+      //   * a real `pick`. No option, no act.
+      //   * CONSENT IS NOT REACHABLE HERE. isConsent()/looksLikeAgreementProse
+      //     defer far above this point, so no wording of this exemption can
+      //     tick an agreement box. That ordering is the control; do not
+      //     re-order it.
+      //
+      // Everything else still defers exactly as before, and every field taken
+      // by this branch is recorded with `assent: true` so the run reports what
+      // it ticked. Rule 6's "the user is delegating assent, not waiving the
+      // record of it" is that flag.
+      const exactBank = /^a-\d+@exact/.test(r.source ?? "")
+      if (exactBank && r.status === "OK" && r.pick) {
+        items.push({
+          k: f.k,
+          sel: r.pickSel ?? r.sel ?? f.sel,
+          how: verb,
+          value: r.value,
+          pick: r.pick,
+          pickSel: r.pickSel,
+          label: displayLabel,
+          ...mLabel(),
+          // Read by the report. An actuated widget that is not named is the
+          // silent skip rule 6 forbids, inverted.
+          assent: true,
+          bank: r.source,
+          req: !!f.req,
+        })
+        actuated.push({
+          k: f.k,
+          label: displayLabel,
+          value: r.value,
+          pick: r.pick,
+          bank: r.source,
+          req: !!f.req,
+        })
+        continue
+      }
+
       defer.push({
         k: f.k,
         label: displayLabel,
@@ -1340,6 +1405,9 @@ export function buildPlan({
     valueAliases: adapter.valueAliases ?? [],
     items,
     defer,
+    // Widgets actuated from an exact-text banked answer (rule 6, 2026-08-03).
+    // Empty on every form that has none, which is most of them.
+    actuated,
     disclosure,
   }
 }
@@ -1538,6 +1606,45 @@ export function submitReadiness(plan, report = null) {
     return {
       ready: false,
       reason: `${plan.defer.length} deferred field(s) need a human`,
+    }
+  }
+  // AN ACTUATED WIDGET BLOCKS THE UNATTENDED CLICK. Added 2026-08-03, in the
+  // same change that let an exact-text banked answer tick a widget instead of
+  // deferring it — and this half is why that change is not a security
+  // regression.
+  //
+  // THE BUG THIS CLOSES, caught by "ready=true is still reachable" going green
+  // when it should not have. The old signal for "nobody assented to this tick"
+  // was the widget's presence in `plan.defer`, and the exemption moved it to
+  // `plan.items` — so submitReadiness stopped seeing it and started returning
+  // true. That silently relaxed the UNATTENDED gate as a side effect of a
+  // decision the user made about the path where THEY hand over a URL.
+  //
+  // The two gates answer different questions and now read different fields:
+  //
+  //   readiness()       "must a MODEL think before the engine runs?"  -> no.
+  //                     An exact-text banked answer needs no thought, so the
+  //                     attended fast path keeps the speed win.
+  //   submitReadiness() "may an UNATTENDED click happen?"             -> no.
+  //                     Rule 6 delegates assent when the USER hands over a
+  //                     URL. The runner has no such instruction, and a tick
+  //                     is an act, not a value.
+  //
+  // So the runner still refuses every form carrying one, exactly as it did
+  // when the widget deferred. `actuated` is the durable signal, and it is on
+  // the plan rather than inferred, so this cannot drift back.
+  if (plan.actuated?.length) {
+    return {
+      ready: false,
+      reason:
+        `${plan.actuated.length} widget(s) were ticked from banked answers ` +
+        `(${plan.actuated
+          .slice(0, 3)
+          .map((a) => a.label)
+          .join(
+            "; ",
+          )}) — the user delegates assent when they hand over a URL, ` +
+        `and an unattended run has no such instruction`,
     }
   }
   if (!fillable.length) {
@@ -1982,6 +2089,15 @@ function main() {
     }
     for (const s of skipped) {
       console.log(`skip\t${s.k}\t${s.why}\t${s.label}`)
+    }
+    // Rule 6: a widget ticked on the user's behalf is named, every time, with
+    // the bank entry that authorised it. Printed even though these are also in
+    // `items`, because "what did it assent to for me" is a question the reader
+    // must be able to answer without opening the plan file.
+    for (const a of plan.actuated ?? []) {
+      console.log(
+        `actuated\t${a.k}\t${a.bank}\t${a.pick}\t${a.label}${a.req ? "\t(required)" : ""}`,
+      )
     }
     // A label that also attempted to instruct the agent (labelFlag, see
     // labelHazard()) — printed for EVERY item that carries the flag,

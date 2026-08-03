@@ -1,7 +1,7 @@
 ---
 name: tailor-resume
 description:
-  Tailor Xavier's resume to a specific job posting using only approved
+  Tailor the user's resume to a specific job posting using only approved
   facts from profile/profile.yaml. Use when the user asks to tailor, customize,
   or generate a resume for a job, posting, or application. Arguments may be a
   job slug, URL, or pasted posting text.
@@ -89,6 +89,6 @@ it is the contract; violations of it are bugs.
 
 10. **Render**:
     ```bash
-    node scripts/documents/render-pdf.mjs jobs/<slug>/resume.md "jobs/<slug>/Xavier Alvarez Resume - <Company>.pdf"
+    node scripts/documents/render-pdf.mjs jobs/<slug>/resume.md "jobs/<slug>/<Full Name> Resume - <Company>.pdf"
     ```
     Confirm the PDF opens/exists, set `status: "rendered"`, and tell the user the path.

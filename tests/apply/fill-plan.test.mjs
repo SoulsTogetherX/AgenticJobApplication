@@ -2707,19 +2707,23 @@ test("ready=true is still reachable: pure `datum` TEXT fields need no human, and
   // would show.
   assert.deepEqual(
     plan.items.filter((i) => i.how !== "skip").map((i) => `${i.k}:${i.how}`),
-    ["f1:fill", "f2:fill", "f3:fill"],
+    ["f1:fill", "f2:fill", "f3:fill", "g1:check"],
   )
-  // The radio group does not, whatever its class. Asserted as the WHOLE defer
-  // list, so a second unrelated field starting to defer cannot hide here.
-  assert.deepEqual(plan.defer, [
+  // CHANGED 2026-08-03 (rule 6 revision). The radio group used to defer as
+  // `confirm-widget` whatever its class. It now ACTUATES, because its question
+  // — "What is your highest level of education?" — is an EXACT-text hit on an
+  // answer the user banked themselves, which is not a judgement anybody still
+  // has to make. The defer list is empty and is still asserted WHOLE, so a
+  // second unrelated field starting to defer cannot hide here.
+  assert.deepEqual(plan.defer, [])
+  // And it is NAMED. Rule 6: the user delegates assent, not the record of it.
+  assert.deepEqual(plan.actuated, [
     {
       k: "g1",
       label: "What is your highest level of education?",
-      n: "edu",
-      why: "confirm-widget",
       value: "Bachelor's degree",
       pick: "f4",
-      pickSel: "#e1",
+      bank: "a-004@exact",
       req: false,
     },
   ])
@@ -2753,11 +2757,41 @@ test("ready=true is still reachable: pure `datum` TEXT fields need no human, and
     adapter,
     url: reqScan.url,
   })
-  assert.equal(reqPlan.defer.length, 1)
-  assert.equal(reqPlan.defer[0].why, "confirm-widget")
-  assert.equal(reqPlan.defer[0].req, true)
+  // CHANGED 2026-08-03. Required-ness does not change WHOSE answer it is: an
+  // exact-text hit means the user answered this very question, so it actuates
+  // whether or not the form insists. What still blocks the unattended click is
+  // submitReadiness, below.
+  assert.deepEqual(reqPlan.defer, [])
+  assert.equal(reqPlan.actuated.length, 1)
+  assert.equal(reqPlan.actuated[0].req, true)
+  assert.equal(readiness(reqPlan).ready, true, "no model turn is needed")
   assert.equal(
-    readiness(reqPlan).ready,
+    submitReadiness(reqPlan).ready,
+    false,
+    "but an UNATTENDED run never inherits the assent the user delegated by handing over a URL",
+  )
+
+  // THE PROPERTY THIS TEST HAS ALWAYS EXISTED FOR, restated against the new
+  // rule: a required widget the bank did NOT answer verbatim still defers and
+  // still blocks. The exemption is exact-hit-only, and this is where a widening
+  // of it would show up.
+  const fuzzyPlan = buildPlan({
+    scan: reqScan,
+    resolved: resolveFields(reqScan.fields, {
+      profile: HOSTILE_PROFILE,
+      answers: HOSTILE_ANSWERS,
+    }).map((r) =>
+      r.k === "g1" ? { ...r, source: "a-004@fuzzy" } : r,
+    ),
+    adapter,
+    url: reqScan.url,
+  })
+  assert.equal(fuzzyPlan.defer.length, 1)
+  assert.equal(fuzzyPlan.defer[0].why, "confirm-widget")
+  assert.equal(fuzzyPlan.defer[0].req, true)
+  assert.deepEqual(fuzzyPlan.actuated, [])
+  assert.equal(
+    readiness(fuzzyPlan).ready,
     false,
     "a REQUIRED confirm-widget defer must block: the form insists on an answer and nobody has reviewed one",
   )
@@ -2842,4 +2876,172 @@ test("no stored answer auto-ticks a widget: swept over the whole fixture answer 
     ["confirm-widget"],
     `every widget defer must carry the widget marker; got ${JSON.stringify([...new Set(deferred)])}`,
   )
+})
+
+// --- the exact-text bank exemption for confirm-widgets (rule 6, 2026-08-03) --
+//
+// A widget whose question the user has ALREADY ANSWERED VERBATIM is not a
+// judgement anybody still has to make, and deferring it sent the agent hunting
+// through the DOM for an answer the fact base already held — measured at ~4
+// extra browser round-trips on one Ashby apply.
+//
+// Every test below is a clause of the exemption. Read them as the boundary,
+// not as coverage: the exemption is narrow ON PURPOSE and each clause is what
+// keeps it that way.
+
+const exactRadio = (over = {}) =>
+  scanOf([
+    {
+      k: "g1",
+      t: "radio",
+      l: "Will you now or in the future require sponsorship for employment visa status?",
+      o: [
+        { k: "o1", l: "Yes", sel: "#yes" },
+        { k: "o2", l: "No", sel: "#no" },
+      ],
+      ...over,
+    },
+  ])
+
+const resolvedExact = (over = {}) => [
+  {
+    k: "g1",
+    status: "OK",
+    value: "No",
+    pick: "o2",
+    pickSel: "#no",
+    source: "a-006@exact",
+    ...over,
+  },
+]
+
+test("an EXACT-text banked answer actuates the widget instead of deferring", () => {
+  const plan = buildPlan({
+    scan: exactRadio(),
+    resolved: resolvedExact(),
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.defer.length, 0, "nothing left for a human")
+  assert.equal(plan.items.length, 1)
+  assert.equal(plan.items[0].k, "g1")
+  assert.equal(plan.items[0].pick, "o2")
+  assert.equal(
+    plan.items[0].sel,
+    "#no",
+    "targets the OPTION — a group has no element of its own",
+  )
+})
+
+test("every actuated widget is NAMED, with the entry that authorised it", () => {
+  // Rule 6: "the user is delegating assent, not waiving the record of it."
+  const plan = buildPlan({
+    scan: exactRadio(),
+    resolved: resolvedExact(),
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.actuated.length, 1)
+  const a = plan.actuated[0]
+  assert.equal(a.bank, "a-006@exact", "the record names its authority")
+  assert.equal(a.pick, "o2")
+  assert.match(a.label, /sponsorship/)
+  assert.equal(plan.items[0].assent, true, "and the item carries the flag")
+})
+
+test("a FUZZY bank hit still defers — polarity is the whole reason", () => {
+  // Gotcha A: "a fuzzy yes/no match can return the right concept with the
+  // WRONG TRUTH VALUE ('authorized to work without sponsorship'). Defer, never
+  // auto-invert." An exact hit has no polarity to invert because the answer was
+  // given to THIS question; a fuzzy one has not.
+  for (const source of [
+    "a-006@fuzzy",
+    "a-006@label",
+    "profile:contact",
+    "eeo:decline",
+    undefined,
+  ]) {
+    const plan = buildPlan({
+      scan: exactRadio(),
+      resolved: resolvedExact({ source }),
+      adapter: greenhouse,
+      files,
+    })
+    assert.equal(plan.items.length, 0, `source ${source} must not actuate`)
+    assert.equal(plan.defer[0].why, "confirm-widget")
+    assert.equal(plan.actuated.length, 0)
+  }
+})
+
+test("NEEDS-CHOICE never actuates — the bank answered, no option matched", () => {
+  // It resolves to a `skip` on an OPTIONAL group ("not in the fact base
+  // (needs-choice)"), which is why this asserts on the ACT rather than on
+  // items.length: the exemption must not fire, and what the pre-existing
+  // optional-field path then does with it is not this test's business.
+  const plan = buildPlan({
+    scan: exactRadio(),
+    resolved: resolvedExact({ status: "NEEDS-CHOICE" }),
+    adapter: greenhouse,
+    files,
+  })
+  assert.deepEqual(plan.actuated, [])
+  assert.equal(
+    plan.items.filter((i) => i.how === "check").length,
+    0,
+    "nothing was ticked",
+  )
+})
+
+test("no matching option means no act, exact hit or not", () => {
+  const plan = buildPlan({
+    scan: exactRadio(),
+    resolved: resolvedExact({ pick: null, pickSel: null }),
+    adapter: greenhouse,
+    files,
+  })
+  assert.equal(plan.items.length, 0)
+  assert.equal(plan.actuated.length, 0)
+})
+
+test("A CONSENT BOX IS NEVER ACTUATED, however exactly it is banked", () => {
+  // The clause that matters most. isConsent()/looksLikeAgreementProse defer far
+  // above the confirm-widget branch, so no wording of the exemption can reach
+  // an agreement box — that ORDERING is the control. If this test ever fails,
+  // the exemption has been moved above the consent gate and must be moved back.
+  for (const label of [
+    "I agree to the processing of my personal data",
+    "I consent to receiving marketing emails",
+    "I have read and accept the privacy policy",
+  ]) {
+    const plan = buildPlan({
+      scan: scanOf([
+        { k: "g1", t: "checkbox", l: label, o: [{ k: "o1", l: label, sel: "#c" }] },
+      ]),
+      resolved: [
+        {
+          k: "g1",
+          status: "OK",
+          value: "Yes",
+          pick: "o1",
+          pickSel: "#c",
+          source: "a-099@exact",
+        },
+      ],
+      adapter: greenhouse,
+      files,
+    })
+    assert.equal(plan.items.length, 0, `consent actuated: ${label}`)
+    assert.equal(plan.actuated.length, 0)
+    assert.equal(plan.defer[0].why, "consent")
+  }
+})
+
+test("actuated is an empty array on a form with no widgets at all", () => {
+  const plan = buildPlan({
+    scan: scanOf([{ k: "f1", t: "text", l: "Name" }]),
+    resolved: [{ k: "f1", status: "OK", value: "X", source: "profile:contact" }],
+    adapter: greenhouse,
+    files,
+  })
+  assert.deepEqual(plan.actuated, [])
 })

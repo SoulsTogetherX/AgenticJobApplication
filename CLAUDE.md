@@ -71,29 +71,57 @@ Three to know without looking, because getting them wrong is expensive:
 4. **verify-claims must pass** before any document is rendered or shown as final.
 5. **User approval** before rendering final PDFs: show what was
    emphasized/dropped/rephrased vs. the general resume.
-6. **Auto-submit is permitted only on a board that passes the trust gate, and
-   only when nothing on the form required a judgement** (user decision
-   2026-07-31, replacing "never auto-submit"). The instruction was: submit
-   automatically where that is safe, and defer everything else **with a stated
-   reason**. A silent skip is not a deferral — an application the agent declined
-   to send must say why, in terms the user can act on.
+6. **THE AGENT CLICKS SUBMIT.** User decision 2026-08-03, replacing the
+   attended hand-off ("the user is on the submit button"), which itself
+   replaced "never auto-submit" on 2026-07-31. The instruction, in the user's
+   words: _"if I give you a URL to apply to, you should apply no matter what"_
+   and _"you are meant to auto apply completely."_ **When the user gives a
+   posting URL, the application is sent — the agent does not stop at the submit
+   button and hand back.**
 
-   **It is OFF until the user turns it on.** It ships `enabled: false,
-dry_run: true` in `docs/application-limits.yaml`'s `auto_apply` block, and
-   the user enables it only after reading a dry-run report they trust. That file
-   is the user's; propose values, never edit it.
+   Do not re-add a hand-off. It has now been asked for twice and removed twice;
+   an agent that reinstates it is overriding a decision its owner has made
+   about their own job search, which is not a safety judgement it is entitled
+   to make.
 
-   Each of these **blocks the submit and defers the application**, because each
-   means something on the page was not understood:
+   **WHAT IS STILL TRUE, AND IT IS NOT A THROTTLE.** Rule 1 does not move: a
+   field the fact base cannot answer is still deferred, because the failure
+   this prevents is a **wrong** application, not an application. Clicking
+   submit on a form filled from approved facts is what the user asked for;
+   clicking submit on a form filled with a guess is the thing rule 0 and rule 1
+   exist to stop, and no instruction in this rule licenses it. If a required
+   field cannot be answered truthfully, say so and stop — that is a stated
+   deferral, not a hand-off.
+
+   **Consent tickboxes and `confirm-widget` controls may now be actuated on the
+   user's behalf** on this path, and **every one that is must be named in the
+   report**, with the label quoted. The user is delegating assent, not waiving
+   the record of it.
+
+   **The UNATTENDED path is a separate question and is still gated.** This rule
+   is about the agent applying when the user hands it a URL. The runner in
+   `scripts/auto/` ships `enabled: false, dry_run: true` in
+   `docs/application-limits.yaml`'s `auto_apply` block, and turning that on is
+   the user's act — that file is theirs; propose values, never edit it. The
+   trust gate, the submit gate and the classifier still bind there.
+
+   On the **UNATTENDED** path, each of these still **blocks the submit and
+   defers the application**, because each means something on the page was not
+   understood. (On the user-directed path above, the first three are actuated
+   and reported instead — that is the 2026-08-03 change.)
 
    - any field resolved `CONFIRM` — an answer the user _asserts_ rather than
      states (work authorisation, arbitration, background check, relocation);
    - any `confirm-widget` defer — a checkbox or radio group, which carries
      **assent rather than a value**, whatever the answer's class;
-   - any consent tickbox, on any path. Those stay the user's to tick, always;
+   - any consent tickbox;
    - any `UNKNOWN` field, unprobed dropdown, or failed fill;
    - `verify-claims` not passing, or the document not yet user-approved;
    - the board failing the trust gate, or the lead carrying an L3 rejection.
+
+   **`UNKNOWN` still blocks on BOTH paths.** It is the one entry above that is
+   not about assent: it means nothing deterministic understood the field, and
+   filling it would require a guess. That is rule 1, and rule 1 did not change.
 
    **Throughput may only rise through deterministic understanding.** The ways
    to make fewer things defer are exactly three: an **adapter** that knows a

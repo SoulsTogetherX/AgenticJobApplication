@@ -1,6 +1,6 @@
 ---
 name: tailor-cover-letter
-description: Tailor Xavier's cover letter to a specific job posting using only
+description: Tailor the user's cover letter to a specific job posting using only
   approved facts from profile/profile.yaml, staying consistent with the tailored
   resume via the shared job context. Use when the user asks to write, tailor, or
   customize a cover letter for a job, posting, or application.
@@ -59,6 +59,6 @@ exactly — it is the contract; violations of it are bugs.
 
 9. **Render**:
    ```bash
-   node scripts/documents/render-pdf.mjs jobs/<slug>/cover-letter.md "jobs/<slug>/Xavier Alvarez Cover Letter - <Company>.pdf" --letter
+   node scripts/documents/render-pdf.mjs jobs/<slug>/cover-letter.md "jobs/<slug>/<Full Name> Cover Letter - <Company>.pdf" --letter
    ```
    Set `status: "rendered"` and tell the user the path.

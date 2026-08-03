@@ -741,11 +741,21 @@ test("the gate shapes each make their OWN gate fire, and no other", async (t) =>
   })
   const url = board.pageUrl("greenhouse")
 
+  // CHANGED 2026-08-03 (rule 6 revision). The two radio shapes no longer defer:
+  // the bench writes its answers keyed to each question's own text, so both
+  // resolve as EXACT-text bank hits and are actuated instead. That is the
+  // change under test elsewhere; here it means the widget gates read 0 and both
+  // shapes reach ready.
+  //
+  // `gate-confirm` is the one that must NOT move. It is the CONFIRM class — an
+  // answer the user asserts rather than states — and it still defers and still
+  // blocks. If a future widening makes this row read 0, the exemption has
+  // escaped "exact-text banked answer" and is deciding assertions.
   const expected = {
     "gate-base": { confirm: 0, widget: 0, req: 0, ready: true },
     "gate-select": { confirm: 0, widget: 0, req: 0, ready: true },
-    "gate-radio-opt": { confirm: 0, widget: 1, req: 0, ready: true },
-    "gate-radio-req": { confirm: 0, widget: 1, req: 1, ready: false },
+    "gate-radio-opt": { confirm: 0, widget: 0, req: 0, ready: true },
+    "gate-radio-req": { confirm: 0, widget: 0, req: 0, ready: true },
     "gate-confirm": { confirm: 1, widget: 0, req: 0, ready: false },
   }
   for (const kind of GATE_SHAPES) {

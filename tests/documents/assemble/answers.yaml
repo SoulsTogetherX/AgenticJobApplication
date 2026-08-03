@@ -1,0 +1,15 @@
+# Fake answers file for the assembler tests. Answers are form answers, not
+# resume prose: the assembler never emits one. They are here so the fact index
+# and the verify-claims evidence corpus are built from BOTH files, exactly as
+# they are in production, and so the "no sentence came from answers.yaml"
+# property is something the test observes rather than something the fixture
+# makes impossible.
+answers:
+  - id: ans-auth
+    question: Are you legally authorized to work in the United States?
+    answer: "Yes"
+    source: user
+  - id: ans-remote
+    question: Do you have experience with Git?
+    answer: "Yes"
+    source: user

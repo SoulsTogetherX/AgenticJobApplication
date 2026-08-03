@@ -627,3 +627,374 @@ c55b1f72c95ed02c68e623c9ad8bde4de1a0451b  scripts/apply/fill-plan.mjs
    which **does not exist yet** (no application has been prepped since it landed):
    once a few dozen applications have run, that file gives a per-shape census
    without a single extra page load.
+
+---
+
+## B1 — the browser FILL leg: fill wall, unconditional sleep, post-upload remount
+
+- agent: `qa` (owns `tests/dev/*`, `tests/security/*`, `tests/fixtures/*`,
+  `scripts/dev/bench-*.mjs`)
+- harness: `node scripts/dev/bench-apply.mjs --board greenhouse --runs 1 --browser-fill --json`
+  (human form: same without `--json`; paste-ready ledger line: `--ledger`)
+- baseline: n/a — **this entry IS the baseline.** Nothing changed; nothing is
+  compared to anything.
+- after: `0b6db30` — MEASURED_FILES clean on every one of the 32 samples
+  (`provenance.dirty_measured_files === []`, asserted per sample, not assumed)
+- budget: none declared (a measurement, not a change)
+- verdict: **captured, at HEAD and not at the anchor the plan named.** The fill
+  costs **2.75s** on the Greenhouse fixture, of which **2.01s is one wait that
+  never once exited early** and 0.46s is flat sleep.
+- note: The specified `fa192a1` anchor is not merely inconvenient, it is
+  impossible — see **The anchor** below. Read that paragraph before quoting a
+  number here as "the baseline".
+
+### The anchor the plan asked for does not exist, and this is why
+
+Item 0.9 says capture B1 "at a clean `git worktree` of `fa192a1`". **The
+`--browser-fill` leg was added BY item 0.9.** `git show fa192a1:scripts/dev/bench-apply.mjs | grep -c browser-fill`
+returns **0**. There is no measurement to take at that commit: the instrument is
+the deliverable of the item that specifies the reading. Three phases have also
+landed since.
+
+**Captured at HEAD (`0b6db30`) instead, and labelled as such.** Everything below
+is a HEAD number. It is a floor for future comparison, not a "before".
+
+**On the partial comparison, and what it would license.** All three named files
+do exist at `fa192a1`, and one column — `plan_ms`, the accounted plan leg — was
+runnable there. **I did not run it**, and the reason is that its answer would not
+be attributable: `fa192a1..HEAD` is 4 commits over those three files (+661/−174
+lines) but also moved the fixture boards, the scan fixtures and `bench-apply.mjs`
+itself, so a `plan_ms` delta would name three files while measuring six. A number
+that cannot be attributed is the failure mode this ledger's `file_sha1` mechanism
+exists to prevent, and producing one to satisfy the letter of 0.9 would be the
+wrong trade. What it would take to do honestly: a worktree at `fa192a1` with its
+own `node_modules`, running its own fixtures, and a stated claim about `plan_ms`
+only.
+
+**Recording the correction, because the plan has been wrong about its own
+premises repeatedly this session** and each correction has been kept rather than
+edited away. This is the third: M6 corrected the harness's honesty, M7's
+"Premise correction" corrected 0.12's stored-scan assumption, and 0.9's anchor is
+corrected here.
+
+### The three `file_sha1`s the Phase 0 check names
+
+Recorded at `0b6db30`, with the `fa192a1` value beside each — all three changed
+substantially in Phases 1–2, which is the whole reason the hashes are pinned.
+
+| file                            | at `fa192a1`   | at `0b6db30` (B1)  | Δ lines    |
+| ------------------------------- | -------------- | ------------------ | ---------- |
+| `scripts/apply/fill-plan.mjs`   | `3af559212a31` | **`0c948d57fbc4`** | +343 (net) |
+| `scripts/apply/answer-bank.mjs` | `19013fdae708` | **`893801e95d8d`** | +365 (net) |
+| `scripts/apply/field-cache.mjs` | `6ba7a065e134` | **`3f7055894985`** | +127 (net) |
+
+The rest of `MEASURED_FILES` at B1, since a fill number depends on all of them:
+`eb26f79696a8 scan-page.js`, `548909071e69 scan.driver.mjs`,
+`35da2d57dc72 scan-engine.mjs`, `be3f14913628 fill-engine.mjs`. The harness itself
+is **not** in `MEASURED_FILES` and so is pinned by hand: `bench-apply.mjs`
+`38a82884d8e8`; fixture pages `04fad8330b69 greenhouse-step1.html`,
+`02c3cdc76167 lever.html`, `e101c73cabc7 ashby.html`.
+
+### The three columns 0.9 asked for — Greenhouse, LOOPBACK, n=9
+
+Median and full range. Never a bare mean: the remount column's tail is the whole
+story. Each sample is one process, one Chromium, one real file upload.
+
+| column                     | method   | median  | range           |
+| -------------------------- | -------- | ------- | --------------- |
+| **fill_wall_ms**           | measured | 2753.73 | 2707.15–2843.59 |
+| **unconditional_sleep_ms** | measured | 456.14  | 450.80–466.31   |
+| **post_upload_remount_ms** | measured | 2014.58 | 2009.46–2019.59 |
+| conditional_total_ms       | measured | 2014.58 | 2009.46–2019.59 |
+| non_wait_ms                | derived  | 272.15  | 245.02–375.05   |
+
+Context legs from the same samples: `nav` 29.79 (26.85–40.31), `scan` (live DOM)
+391.39 (349.87–665.34), `plan` 147.18 (129.68–389.17).
+
+**The three are separate accumulators, not one number split three ways.**
+`unconditional_sleep_ms` comes from `clockedPage`'s `slept_ms`, which only
+`page.waitForTimeout` writes to. `post_upload_remount_ms` is summed out of
+`by_target` **by selector** (`data-ajup…::locator.waitFor:detached`), never by
+subtracting one total from another. The two are disjoint. `conditional_total_ms`
+is a **superset** of the remount column, and on this board they are equal to the
+0.01ms — the two upload detach waits are the ONLY conditional waits the fill
+pays. `non_wait_ms` is the only derived column and says so.
+
+### Loopback and modelled latency, in separate columns — never merged
+
+`bench-apply.mjs` has **no `--latency` flag** (see FINDING QA-B1-3), so the
+modelled population was taken through the exported leg. Batch B is the same
+driver on loopback, present so B↔C is a latency comparison and not a driver
+comparison; A↔B shows the CLI and the driver agree.
+
+```
+node --input-type=module -e "
+const {start}=await import('./tests/fixtures/boards/server.mjs')
+const {benchBrowserFill}=await import('./scripts/dev/bench-apply.mjs')
+const fs=await import('node:fs'),os=await import('node:os'),p=await import('node:path')
+const board=await start({latency:{nav_ms:300,xhr_ms:150}})   // omit for loopback
+const dir=fs.mkdtempSync(p.join(os.tmpdir(),'b1-'))
+console.log(JSON.stringify(await benchBrowserFill({board,boardName:'greenhouse',jobsDir:dir})))
+await board.stop(); fs.rmSync(dir,{recursive:true,force:true})"
+```
+
+| column                 | A CLI loopback n=9 | B driver loopback n=9 | C driver **modelled** n=9 |
+| ---------------------- | ------------------ | --------------------- | ------------------------- |
+| fill_wall_ms           | 2753.73            | 2743.61               | 2743.86                   |
+|                        | 2707.15–2843.59    | 2710.82–2787.91       | 2706.35–2819.58           |
+| unconditional_sleep_ms | 456.14             | 456.96                | 457.29                    |
+| post_upload_remount_ms | 2014.58            | 2016.75               | 2015.24                   |
+| non_wait_ms (derived)  | 272.15             | 277.45                | 266.01                    |
+| nav_ms                 | 29.79              | 27.31                 | **331.09**                |
+
+C is `mode: "modelled"`, nav 300ms / xhr 150ms declared. **These are different
+populations and must never be averaged with A or B**, per the latency contract at
+`tests/fixtures/boards/server.mjs:31`.
+
+**What the modelled column buys, stated exactly.** It moves `nav` (29.79 →
+331.09, i.e. the declared 300ms lands) and **does not move the fill at all**
+(2743.61 → 2743.86, inside a range that spans 80ms). That is a result, not a
+null: the fill issues no HTTP, so its cost is engine-side waiting and CDP, and
+**no amount of network improvement touches it.** The one number that did move
+oddly is `scan` (404.65 loopback → 242.32 modelled); the plausible cause is that
+a 300ms nav lets the page's own scripts finish before the scan starts. Not
+investigated, not claimed, recorded so nobody quotes it as a speed-up.
+
+### The other two boards, LOOPBACK, n=7 each
+
+Same command with `--board lever` / `--board ashby`.
+
+| column                 | lever n=7                 | ashby n=7                 |
+| ---------------------- | ------------------------- | ------------------------- |
+| fill_wall_ms           | 1783.63 (1758.39–1924.05) | 1685.17 (1652.26–1885.14) |
+| unconditional_sleep_ms | 457.45 (451.06–467.47)    | 458.65 (452.54–462.80)    |
+| post_upload_remount_ms | 1009.98 (1007.29–1015.01) | **null — unmeasured**     |
+| conditional_total_ms   | 1009.98                   | 1004.16 (1000.73–1011.67) |
+| non_wait_ms (derived)  | 307.27 (300.04–451.66)    | 223.16 (189.55–429.60)    |
+| fill report            | ok=5 failed=0 deferred=2  | ok=4 failed=0 deferred=2  |
+| upload landed?         | yes, 1 of 1               | **NO — 0 of 1**, 7/7 runs |
+
+The unconditional 450ms is a **board-independent constant** — three boards, 23
+samples, every median inside 456.1–458.7. It is one `page.waitForTimeout(450)` at
+`fill-engine.mjs:888`, and it is the term removable by editing code.
+
+### The remount column is a CEILING, not a settle time
+
+`post_upload_remount_ms` ÷ waits is 1007ms on Greenhouse (2 waits), 1010ms on
+Lever (1 wait), against a 1000ms ceiling. The engine's own `report.uploads[]` says
+why: **`settled: "timeout"` on all three boards, every run** — observed by
+wrapping `fill-engine.mjs` in-process and dumping the array, which no output path
+prints.
+
+So the reasoning at `fill-engine.mjs:653` — "a board that remounts in 150ms now
+costs 150ms" — is **not exercised by any fixture in this repository.** The early
+exit has zero coverage, and the honest reading of 2014.58ms is "two waits that
+each paid their full ceiling", i.e. on this corpus it is indistinguishable from a
+flat 1000ms per upload item. `tests/dev/b1-browser-fill.test.mjs` pins the
+mechanical reason (the Ashby fixture's re-render strips `data-aj="…"` and leaves
+`data-ajup="…"`, so the watched stamp survives) so the ceiling is never re-read as
+a settle time.
+
+### M6 is genuinely fixed, and here is how that was established
+
+Not by reading `collectIncomplete`. `fill-engine.mjs` was replaced **in-process
+only** (a `module.register` load hook; nothing on disk changed) with a stub
+returning exactly `ok:2 failed:1 deferred:3`, and the real CLI was run:
+
+```
+node --import <hook> scripts/dev/bench-apply.mjs --board greenhouse --runs 1 --browser-fill
+  -> exit 3, "MEASUREMENT REFUSED — the browser fill (board=greenhouse) did not
+     complete", and it NAMES the field: "FAILED f3 how=fill"
+… --ledger  -> exit 3, "REFUSING to emit a ledger entry", stdout empty
+```
+
+The shipped predicate is `failed === 0`, not M6's originally suggested
+`failed > 0 && ok === 0` — which is what makes the partial-success case fail
+closed. **Caveat, and it is an M1-shaped one:** no shipped board, shape or profile
+produces `failed > 0`. All 24 combinations of {3 boards + 5 gate shapes + 3
+synthetic shapes} × {best, typical, worst} report `failed=0`, so the exit-3 branch
+is unreachable from the CLI without injection. It is correct and it is **untested
+by anything that runs in CI**.
+
+### FINDING QA-B1-1 — **BREAKS.** A straight file swap passes `upload_integrity.ok`
+
+`bench-apply.mjs:2219` computes
+`ok = inputs_with_files === planned && files_attached === planned`. That counts.
+It cannot see a **swap**, which is the exact user-facing defect this read-back
+mechanism was built to catch — a cover letter going out as the résumé.
+
+Reproduced against the running harness with a fill engine that attaches crosswise
+(in-process hook, nothing on disk changed):
+
+```
+upload_integrity: { planned: 2, files_attached: 2, inputs_with_files: 2, ok: true }
+per_input: [ { id: "resume",       names: ["cover-letter.pdf"] },
+             { id: "cover_letter", names: ["resume.pdf"] } ]
+measurable: true, exit 0
+```
+
+The evidence is already collected — `per_input[].names` — and simply not compared
+to the plan. Owner: `bench-apply.mjs`. Guard added meanwhile in
+`tests/dev/b1-browser-fill.test.mjs` ("the resume input holds the resume"), which
+asserts the pairing by name off the live DOM.
+
+### FINDING QA-B1-2 — the Ashby upload attaches nothing, and `ok` says otherwise
+
+7 of 7 runs: `fill: ok=4 failed=0 deferred=2`, `_systemfield_resume` holding
+**zero files**. Mechanism, observed not guessed: the fixture's re-render fires
+700ms after the `change` event — inside the engine's own 1000ms settle — and
+`form.innerHTML = html` cannot carry a `FileList`. The engine knows:
+`report.uploads[0]` is `{ settled: "timeout", attached: true, seen: "empty", seenFile: null }`.
+
+**`seen` has no consumer.** `grep` for it across `scripts/` outside
+`fill-engine.mjs` returns nothing. The CLAUDE.md gotcha "`ok` never says a file
+reached the right field — attachments are reported from `report.uploads`" is today
+a promise about a field **nothing reads**, and rule 6's submit path is the consumer
+that will need to. Latent until the runner ships; blocking then.
+
+Scope, honestly: proven against the fixture, and the fixture is a **model**. Its
+`innerHTML` round trip is a worst case; real Ashby React reconciliation may
+preserve the FileList. What this sample supports is "the engine reports `ok` for an
+upload whose file is gone, on a page shaped like this one" — not a claim about live
+Ashby, which this harness will not touch.
+
+### FINDING QA-B1-3 — the harness cannot produce the modelled column 0.10 requires
+
+`bench-apply.mjs`'s `parseArgs` has no `--latency`; `startBoard()` is called with no
+arguments, so every CLI run is loopback. 0.10 requires the two populations side by
+side and never merged; the CLI can only ever emit one of them. Column C above exists
+only because `benchBrowserFill` is exported. Low severity, one option and one line to
+thread through.
+
+### Also observed, not findings
+
+- `node scripts/dev/bench-apply.mjs --board ashby` **exits 0** (confirmed with and
+  without `--browser-fill`, `--runs 1` and default `--runs 5`). 0.10's committed
+  `ashby-step1.scan.json` / `lever-step1.scan.json` are doing their job.
+- `--json` reports `measurable: true` on the Ashby run whose upload attached
+  nothing, and on the swap reproduction. `measurable` is scoped to fill completeness
+  only. The human and `--ledger` outputs both carry `UPLOAD-MISDIRECTION`, so nothing
+  false is printed — but a machine consumer reading one boolean gets the wrong answer.
+- `--shape combo23` and `--shape richtext` report `ok=0` with everything deferred and
+  exit 0. Defensible (a deferral is a decision), but the sleep column of a fill that
+  filled nothing is a number about refusing to act.
+
+### Limits — read before quoting any figure above
+
+1. **n=9 per Greenhouse batch, n=7 per other board, one machine, one session.**
+   Enough to show the ranges are tight (fill_wall spans 5% of its median); not enough
+   for a tail estimate. There is no p95 here and one should not be computed from these.
+2. **Everything is the loopback fixture**, three replica boards. It is not a sample of
+   real ATS pages, and the two most expensive audit quantities (a 14-combo form, a
+   3,000-char cover letter) are absent from all three fixtures. The synthetic shapes
+   cover those and are not part of B1.
+3. **The tree was not quiescent.** At capture, `docs/autonomy/*`,
+   `docs/autonomy-plan-v2.md`, `scripts/documents/verify-claims.mjs` and
+   `scripts/lib/db.mjs` were modified and `scripts/documents/assemble-resume.mjs`
+   untracked — `implementer`'s concurrent work. None is imported by the scan, plan or
+   fill path, and `provenance.dirty_measured_files` was empty on all 32 samples.
+   Contention on this project has previously inflated a duration by 75s → 150s, so the
+   tight ranges are themselves the evidence that it did not here.
+4. **`post_upload_remount_ms` for Ashby is `null`, not 0**, and the row must not be
+   filled in with a zero. There is no remount cost because there was no upload.
+
+---
+
+## M8 — Phase 3: deterministic assembly throughput, and the reuse-check cache
+
+- agent: `implementer`
+- harness: not committed (`scripts/dev/bench-*.mjs` is `qa`'s). Both legs are
+  reproducible from committed modules; the exact commands are given per number
+  below.
+- baseline: `0b6db30` — see per-leg rows; the assembler had no baseline because
+  it did not exist.
+- budget: declared before pickup — **3.4: warm sibling scan ≥40% off the ranking
+  loop, and no end-to-end regression on the uncached path.** The assembler had
+  no declared target: Phase 3's check 3 asks for the number, not a target.
+- verdict: **improved** (3.4, at scale) / **inconclusive at today's tree size**
+  (3.4, N=8) / **measured, first reading** (assembler throughput)
+- note: the cache wins the loop everywhere and only wins the process past ~120
+  workspaces; `jobs/` holds 8 today, so it is deliberately inert.
+
+### Assembler throughput — Phase 3 falsifiable check 3
+
+`assemble-resume.mjs`, `model_turns = 0` by construction (see
+`tests/documents/assemble-purity.test.mjs`).
+
+| leg                                             | ms/doc | docs/hour |
+| ----------------------------------------------- | -----: | --------: |
+| in-process batch, 50 docs, test fixture profile |   3.89 |   924,529 |
+| in-process batch, real profile (101 facts)      |   6.27 |   574,505 |
+| cold node process per document, CLI             |  212.4 |    16,949 |
+
+- fixture batch: `bench-docs.mjs assemble --n 50 --runs 5`, median of 5.
+- real-profile leg: 9 samples over the 8 committed job fixtures, **timing only —
+  nothing from `profile/` was printed or stored**. Scale reported: 101 facts, 33
+  selectable bullets, `approved_by_user: true`.
+- cold-process leg: 9 samples, `assemble-resume.mjs <slug> --jobs-dir <tmp>`.
+  212 ms is ~49 ms of node start plus module load; it is the honest per-call
+  figure for a caller that shells out once per job.
+
+**The attended denominator is NOT measured, and nothing on this machine can
+measure it.** No recorded tailoring duration exists in this repository. The only
+two anchors are `scripts/leads/cluster.mjs`'s header ("several minutes per
+posting", a comment) and B0's audit estimate of ~12 model turns per page
+(labelled an estimate there). So the comparison is stated as a bound rather than
+a ratio: at 60 s/document — an aggressive lower bound for a dozen model turns
+plus a human reading the approval message — the attended path yields 60
+docs/hour, against 16,949 for the slowest assembler leg. The conclusion (three
+orders of magnitude) survives any plausible value of the unmeasured term, which
+is why it is quoted as a bound. **The real change is not wall clock at all: the
+attended path needs a person in the session and this one does not, so the
+ceiling stops being human hours.**
+
+### 3.4 — reuse-check: exported core plus a `workspace_stacks` cache
+
+Isolated ranking loop, cached and uncached back to back in one process,
+4000-char descriptions:
+
+| workspaces | uncached ms | cached ms | saved |
+| ---------: | ----------: | --------: | ----: |
+|         60 |       108.5 |      56.2 |   48% |
+|        200 |       328.1 |     145.6 |   56% |
+|        400 |       778.2 |     266.4 |   66% |
+|            |
+
+End to end (`node scripts/documents/reuse-check.mjs <slug> --dir <tmp> --json`),
+9 interleaved samples per leg, HEAD vs this change:
+
+| workspaces | BEFORE median | AFTER `--cache off` | AFTER `--cache on` |
+| ---------: | ------------: | ------------------: | -----------------: |
+|         60 |         276.1 |               273.7 |              274.0 |
+|        200 |         624.9 |               646.3 |              511.6 |
+
+- **The declared ≥40% target is met on the loop and NOT on the process**, and
+  the reason is fixed cost the cache cannot avoid: `db.mjs` ~18 ms
+  (`node:sqlite`), `openDb` ~4 ms, `node:crypto` ~6 ms. That is ~28 ms against a
+  saving of ~0.26 ms per sibling, so the break-even sits near 60 workspaces and
+  the win is only unambiguous well past it. `CACHE_MIN_WORKSPACES = 120`, and
+  `--cache auto` therefore engages **nothing** on today's 8-workspace `jobs/`.
+- The uncached path was kept honest deliberately: `node:crypto` is imported only
+  on the cache path and the sibling readdir is done once and reused, because a
+  first cut of this change cost the uncached path ~6 ms for a hash it never used.
+- Two later N=200 repeats were taken under heavy contention (BEFORE median moved
+  624.9 → 985.7 → 1152.4 for identical bytes) and are **inconclusive on
+  medians**. On the contention-resistant `min` they agree: 31%, 26%, 31% faster
+  cached. N=400 and N=8 were noise-dominated and are not quoted.
+
+### Limits — read before quoting any figure above
+
+1. **The tree was not quiescent.** `doc-scribe` was editing `docs/autonomy/*` and
+   `qa` was running B1 throughout. Every number above except the first N=200 row
+   was taken with other agents active; the repeats are reported rather than
+   dropped, and the ones that are noise are labelled as noise.
+2. **The 3.4 tables are synthetic trees**, generated locally, uniform 4000-char
+   descriptions across six stacks. A real `jobs/` has variable description
+   lengths and a lower per-sibling scan cost, which moves the break-even UP, not
+   down.
+3. **`docs_per_hour` for the assembler is a rate, not a plan.** Nothing upstream
+   produces 574,000 leads an hour. It is quoted to show the document step is no
+   longer the binding constraint, which is the only claim Phase 3 makes about it.
+4. **The 3.3 cover-letter estimate is not in this ledger** because it is not a
+   measurement: `scripts/documents/letter-plan.mjs --price-only` computes it from
+   declared token counts, and no letter has been authored under that plan yet.

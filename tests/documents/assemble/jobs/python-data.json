@@ -1,0 +1,15 @@
+{
+  "slug": "python-data",
+  "company": "Kestrel Analytics",
+  "title": "Software Engineer, Data",
+  "description": "Kestrel Analytics turns retail feeds into forecasts. This role sits between ingest and reporting.",
+  "requirements": [
+    "Python, ideally with Django",
+    "MySQL and query tuning",
+    "Pandas for batch transforms",
+    "Comfort owning a nightly pipeline"
+  ],
+  "source_url": "https://boards.example.test/python-data",
+  "captured_at": "2026-08-02",
+  "questions": []
+}

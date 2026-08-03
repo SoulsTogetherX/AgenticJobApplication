@@ -341,6 +341,26 @@ CREATE TABLE IF NOT EXISTS verifications (
   PRIMARY KEY (slug, mode, doc_sha256)
 );
 CREATE INDEX IF NOT EXISTS idx_verifications_slug ON verifications(slug, mode);
+
+-- The tech stack a job workspace's posting names, so reuse-check.mjs does not
+-- re-run the whole tech lexicon over every sibling on every call (Phase 3
+-- item 3.4). Derived data, cheap to rebuild, and it is a CACHE in the strict
+-- sense: nothing may read it as a source of truth.
+--
+-- job_sha256 is the invalidation, and it is the whole design. A cached row is
+-- used only when it matches the sha256 of the job.json currently on disk, so
+-- an edited posting recomputes and a stale row can never be believed. That is
+-- the same rule the verifications table uses for doc_sha256, for the same
+-- reason: a keyed cache whose key does not cover its input fails open.
+CREATE TABLE IF NOT EXISTS workspace_stacks (
+  slug        TEXT PRIMARY KEY,
+  job_sha256  TEXT NOT NULL,
+  title       TEXT,
+  company     TEXT,
+  stack       TEXT NOT NULL,   -- JSON array of canonical tech terms
+  title_toks  TEXT NOT NULL,   -- JSON array of title tokens
+  updated_at  TEXT NOT NULL
+);
 `
 
 export function openDb(file = DB_PATH) {
@@ -1544,6 +1564,68 @@ export function hasPassingVerification(
           AND verdict = 'pass'`,
     )
     .get(slug, mode, doc_sha256, profile_sha256)
+}
+
+// --- workspace stack cache ---------------------------------------------------
+
+/**
+ * Every cached workspace stack, as `Map<slug, { job_sha256, title, company,
+ * stack: Set, title_toks: Set }>`. ONE query per run — the point of the cache
+ * is to replace N lexicon scans with a single read, so reading it row by row
+ * would give the saving straight back.
+ *
+ * A row whose JSON will not parse is dropped rather than thrown on: this is a
+ * cache, and an unreadable entry must degrade to a recompute, never to a crash
+ * in a script whose job is to rank resumes.
+ */
+export function readWorkspaceStacks(db) {
+  const out = new Map()
+  for (const r of db.prepare("SELECT * FROM workspace_stacks").all()) {
+    try {
+      out.set(r.slug, {
+        job_sha256: r.job_sha256,
+        title: r.title,
+        company: r.company,
+        stack: new Set(JSON.parse(r.stack)),
+        title_toks: new Set(JSON.parse(r.title_toks)),
+      })
+    } catch {
+      /* unreadable row — recompute */
+    }
+  }
+  return out
+}
+
+/** Upsert one workspace's derived stack. `stack`/`title_toks` may be Sets. */
+export function upsertWorkspaceStack(db, w) {
+  if (!w?.slug) throw new TypeError("upsertWorkspaceStack requires a slug")
+  if (!w.job_sha256)
+    throw new TypeError(
+      "upsertWorkspaceStack requires job_sha256 — a cache row with no " +
+        "invalidation key is worse than no row",
+    )
+  return db
+    .prepare(
+      `INSERT INTO workspace_stacks
+         (slug, job_sha256, title, company, stack, title_toks, updated_at)
+       VALUES ($slug, $job_sha256, $title, $company, $stack, $title_toks, $updated_at)
+       ON CONFLICT(slug) DO UPDATE SET
+         job_sha256 = excluded.job_sha256,
+         title      = excluded.title,
+         company    = excluded.company,
+         stack      = excluded.stack,
+         title_toks = excluded.title_toks,
+         updated_at = excluded.updated_at`,
+    )
+    .run({
+      slug: w.slug,
+      job_sha256: w.job_sha256,
+      title: w.title ?? null,
+      company: w.company ?? null,
+      stack: JSON.stringify([...(w.stack ?? [])]),
+      title_toks: JSON.stringify([...(w.title_toks ?? [])]),
+      updated_at: w.updated_at ?? new Date().toISOString(),
+    }).changes
 }
 
 export function readVerifications(db, slug = null) {

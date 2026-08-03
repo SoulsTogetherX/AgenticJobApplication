@@ -1,0 +1,15 @@
+{
+  "slug": "react-frontend",
+  "company": "Northwind UI",
+  "title": "Frontend Engineer",
+  "description": "Northwind UI builds design systems for retail. You will own the component library and the checkout surface.",
+  "requirements": [
+    "Strong React and TypeScript",
+    "Redux state management",
+    "Accessibility and responsive design",
+    "Vite build tooling"
+  ],
+  "source_url": "https://boards.example.test/react-frontend",
+  "captured_at": "2026-08-02",
+  "questions": []
+}

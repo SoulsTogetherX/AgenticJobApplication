@@ -1,0 +1,110 @@
+# Fake profile used ONLY by tests/documents/assemble-resume.test.mjs.
+#
+# Separate from tests/fixtures/profile.yaml on purpose. That one is qa's and is
+# deliberately thin (3 selectable bullets); the assembler's selection step only
+# becomes observable when there are more bullets than the length budget can
+# hold, across enough distinct stacks that six postings choose six different
+# subsets. Nothing here is the real fact base — the real profile/ is gitignored.
+meta:
+  version: 1
+  target_role: Full-Stack Developer
+  approved_by_user: true
+
+contact:
+  name: Jane Test
+  location: "Springfield, IL"
+  phone: "(555) 123-4567"
+  email: jane@test.example
+
+summary:
+  - id: summary-fs
+    text: Full-stack developer building web apps with React, Node.js and Python.
+
+experience:
+  - id: exp-acme
+    title: Full-Stack Developer
+    company: Acme Corp
+    dates: Jan 2024 – Present
+    bullets:
+      - id: exp-acme-b1
+        text: Built a customer portal in React and TypeScript serving 1,200 users with 99.9% uptime.
+      - id: exp-acme-b2
+        text: Reduced API latency by 42% by adding PostgreSQL query caching behind an Express service.
+      - id: exp-acme-b3
+        text: Containerised the deployment with Docker and wired a CI/CD pipeline that runs the suite on every push.
+      - id: exp-acme-b4
+        text: Designed a GraphQL layer over 9 REST APIs so the front end fetches one payload per screen.
+      - id: exp-acme-b5
+        text: Led incident response for the payments service and cut mean time to recovery from 55 to 18 minutes.
+  - id: exp-beta
+    title: Backend Engineer
+    company: Beta Systems
+    dates: Jun 2022 – Dec 2023
+    bullets:
+      - id: exp-beta-b1
+        text: Wrote Python services on Django that processed 4,000 orders a day against MySQL.
+      - id: exp-beta-b2
+        text: Moved batch jobs onto AWS Lambda and S3, removing 2 always-on EC2 instances.
+      - id: exp-beta-b3
+        text: Introduced Redis caching for the catalogue endpoint and halved its p95 response time.
+      - id: exp-beta-b4
+        text: Published an OpenAPI specification for 12 endpoints and generated the client from it.
+  - id: exp-tutor
+    title: Teaching Assistant
+    company: State University
+    dates: Sep 2021 – May 2022
+    bullets:
+      - id: exp-tutor-b1
+        text: Tutored 45 students in Data Structures and ran weekly code review sessions.
+
+projects:
+  - id: prj-dash
+    name: Demo Dashboard
+    tech: React, PostgreSQL
+    year: "2026"
+    bullets:
+      - id: prj-dash-b1
+        text: Shipped a metrics dashboard with 15 chart types in TypeScript.
+      - id: prj-dash-b2
+        text: Added WebSockets so the dashboard updates without a page reload.
+  - id: prj-atlas
+    name: Atlas Importer
+    tech: Python, MongoDB
+    year: "2025"
+    bullets:
+      - id: prj-atlas-b1
+        text: Imported 3 public datasets into MongoDB with Pandas on a nightly schedule.
+  - id: prj-kube
+    name: Cluster Playground
+    tech: Kubernetes, Terraform
+    year: "2025"
+    bullets:
+      - id: prj-kube-b1
+        text: Provisioned a 3-node Kubernetes cluster with Terraform and wrote the runbook.
+
+skills:
+  - id: skill-lang
+    group: Languages
+    items: [TypeScript, JavaScript, Python, SQL]
+  - id: skill-fw
+    group: Frameworks
+    items: [React, Node.js, Express, Django, GraphQL]
+  - id: skill-data
+    group: Data
+    items: [PostgreSQL, MySQL, MongoDB, Redis]
+  - id: skill-infra
+    group: Cloud and Infrastructure
+    items: [AWS, Docker, Kubernetes, Terraform, CI/CD, Git]
+
+education:
+  - id: edu-state
+    school: State University
+    degrees: B.S. Computer Science
+    graduated: Jun 2023
+    gpa: "3.50"
+    coursework: [Algorithms, Data Structures]
+
+organizations: []
+extras:
+  - id: extra-oss
+    text: Maintains two open-source libraries with 300 combined stars.

@@ -1,0 +1,15 @@
+{
+  "slug": "node-backend",
+  "company": "Harbor Logistics",
+  "title": "Backend Engineer",
+  "description": "Harbor Logistics moves freight. The platform team runs the shipment service.",
+  "requirements": [
+    "Node.js and Express in production",
+    "PostgreSQL schema design",
+    "REST APIs at scale",
+    "Docker for local development"
+  ],
+  "source_url": "https://boards.example.test/node-backend",
+  "captured_at": "2026-08-02",
+  "questions": []
+}

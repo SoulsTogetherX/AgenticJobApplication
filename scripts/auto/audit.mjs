@@ -59,6 +59,7 @@ import {
   assertInsideJobs,
   assertNotStopped,
   raiseStop,
+  raiseSecurityAlert,
 } from "./guard.mjs"
 import {
   openDb,
@@ -167,7 +168,15 @@ export function startRun({
     ...(meta ? { meta } : {}),
   }
 
-  const ctx = { dir, stop, jobsDir, dbFile, profileDir, jsonl }
+  const ctx = {
+    dir,
+    stop,
+    jobsDir,
+    dbFile,
+    profileDir,
+    jsonl,
+    inbox: path.join(autoDir, "INBOX.md"),
+  }
   appendEvent(ctx, {
     t: "run.start",
     run_id,
@@ -200,8 +209,10 @@ export function assertNoOrphanAttempts({
   dbFile = DB_PATH,
   stopPath = null,
   jobsDir = JOBS_DIR,
+  inboxPath = null,
 } = {}) {
   const stop = stopPath ?? STOP_PATH
+  const inbox = inboxPath ?? path.join(jobsDir, ".auto", "INBOX.md")
   const db = openDb(dbFile)
   let orphans
   try {
@@ -222,7 +233,12 @@ export function assertNoOrphanAttempts({
       )
       .join("\n") +
     `\nCheck each page, log or withdraw as appropriate, then delete STOP.`
-  raiseStop(reason, { stopPath: stop, jobsDir, meta: { orphans } })
+  raiseStop(reason, {
+    stopPath: stop,
+    jobsDir,
+    inboxPath: inbox,
+    meta: { orphans },
+  })
   throw new StopError(CHECKPOINTS.RUN_START, reason)
 }
 
@@ -267,6 +283,25 @@ function appendEvent(ctx, event) {
     line,
     "utf8",
   )
+
+  // Phase 4.3: the same finding also goes to the channel a human reads. It
+  // does NOT stop anything — rule 0's answer to hostile page text is
+  // sanitisation and deferral, not halting — but "a board tried to instruct
+  // the agent" is not a fact that should only exist inside a JSONL nobody
+  // opens. Kinds and counts travel; the payload never does.
+  if (scrubbed.findings.length)
+    raiseSecurityAlert(
+      {
+        summary:
+          `${scrubbed.findings.reduce((n, f) => n + f.count, 0)} instruction-shaped ` +
+          `finding(s) in a ${event?.t ?? "run"} event` +
+          (event?.slug ? ` on ${event.slug}` : ""),
+        slug: event?.slug ?? null,
+        event: event?.t ?? null,
+        findings: scrubbed.findings,
+      },
+      { inboxPath: ctx.inbox, jobsDir: ctx.jobsDir },
+    )
 }
 
 /**
@@ -641,6 +676,7 @@ function makeRun(ctx, state) {
       return raiseStop(safe, {
         stopPath: ctx.stop,
         jobsDir: ctx.jobsDir,
+        inboxPath: ctx.inbox,
         meta: scrubRecord(meta).value,
       })
     },

@@ -3,6 +3,47 @@
 **Capability:** the user can tell, in one command, whether the machine is working — and engineering
 effort is allocated by measured application-loss rather than intuition.
 
+> **STATUS 2026-08-03: 4.1, 4.2, 4.3, 4.4, 4.7 and 4.8 LANDED.** Every falsifiable check in this
+> phase is green and both halves of the CI-gate check were proved **by mutation**, not argued —
+> the numbers, the mutations and the four things this phase's own text got wrong are in
+> [`docs/measurements.md`](../measurements.md) **M9**.
+>
+> **What the plan got wrong, recorded where it said it rather than edited away:**
+>
+> - **4.7's `model_turns` definition is too broad and was narrowed.** "Process spawns plus outbound
+>   HTTP to any non-loopback host" is red on every run by construction: the plan leg spawns
+>   `node scripts/apply/fill-plan.mjs` once per application, which is a deterministic local script
+>   and the behaviour this plan wants MORE of. A hard gate that fires on the sanctioned behaviour
+>   acquires an override line within a week — the exact failure this document reasons about
+>   correctly for `wall_ms_p95` and then walks into here. `spawns_per_app` now counts every spawn as
+>   its own column; `model_turns` counts a spawn only when it is not this repo's own node running a
+>   file under `scripts/`.
+> - **The instrument the gate rests on cannot be built the obvious way.** An in-process monkeypatch
+>   of `child_process` counts **zero** — a module that did
+>   `import { execFileSync } from "node:child_process"` is bound to the export the builtin published
+>   at bootstrap. So does a preload in the parent alone, because the plan leg shells out and a model
+>   call added to the child is invisible. Both were measured. The working instrument is a `--require`
+>   preload propagated through `NODE_OPTIONS` with one exit-written row per process, and it costs
+>   **+18% on `wall_ms_p95`** (~1328 → ~1565 ms), which the baseline is taken with rather than
+>   against.
+> - **The gate's command needed widening.** `--board greenhouse` gives `defer_rate = 1.0` by
+>   construction — that fixture carries a consent tickbox — so `submitted_per_hour` is structurally
+>   zero and the defer-rate rule can never move. The gate runs
+>   `--board greenhouse,honest-greenhouse`, which splits 25/25.
+> - **4.2's paused-board list needed a durable record that did not exist.** A pause lives in the
+>   breaker's memory and `status.mjs` is a separate process, so "currently paused `board_key`s with
+>   their held counts" was unimplementable as specified. A `board_pauses` table now carries it,
+>   scoped by `run_id` so a fresh invocation inherits no brake and must re-probe.
+> - **4.2's `posted_at → submitted_at` needed a snapshot, not a join.** `auto_queue` gained
+>   `posted_at`, written at enqueue, because a join against `leads` silently loses its oldest rows to
+>   pruning — exactly the tail the latency distribution is about.
+>
+> **What is NOT done, and it is the same gap Phase 5 owns.** 4.4 aggregates challenge incidence per
+> board per run and exposes `newlyChallengedBoards()` as the anomaly input; **nothing consumes it,
+> because the breaker does not exist.** Likewise `recordBoardPause`/`strandPausedBoardJobs` are the
+> write path a breaker will call and nothing calls them outside tests. That is the honest state:
+> the observability half is built and the deciding half is Phase 5's.
+
 **Deferral-driven development.** Every deferral already carries a reason. Type those reasons,
 aggregate them across a campaign, and the defer log becomes the product's own backlog generator:
 _"`unprobed-dropdown` on Workday cost 61 applications this week; building the Workday option-probe

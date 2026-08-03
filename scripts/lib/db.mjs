@@ -293,6 +293,19 @@ CREATE INDEX IF NOT EXISTS idx_auto_subs_run ON auto_submissions(run_id);
 -- an application the runner declined to send must say WHY, in terms the user
 -- can act on, and a terminal 'deferred' row with no reason is exactly the
 -- silent skip the rule names.
+--
+-- posted_at is SNAPSHOTTED here rather than joined from leads, for the same
+-- reason origin is carried: the metric it feeds -- how long a posting waits
+-- between going up and being applied to -- must survive the lead being pruned
+-- or archived, and a join that silently loses its oldest rows reports a
+-- latency distribution missing exactly the tail anybody cares about.
+--
+-- reason_kind is a CLOSED type (AUTO_DEFER_KINDS / AUTO_FAILURE_KINDS below),
+-- not a sentence, and reason_stage says where in the state machine the job
+-- stopped. Together with board_key those three columns are what makes the
+-- defer log aggregable: "unprobed-dropdown at plan on greenhouse cost 61
+-- applications this week" is a GROUP BY, not a string match. reason_detail
+-- carries the sanitised human half, and only that half is free text.
 CREATE TABLE IF NOT EXISTS auto_queue (
   slug          TEXT PRIMARY KEY,
   run_id        TEXT,
@@ -302,12 +315,38 @@ CREATE TABLE IF NOT EXISTS auto_queue (
   attempt_no    INTEGER NOT NULL DEFAULT 0,
   plan_sha256   TEXT,
   reason_kind   TEXT,
+  reason_stage  TEXT,
   reason_detail TEXT,
+  posted_at     TEXT,
   claimed_at    TEXT,
   updated_at    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_auto_queue_state ON auto_queue(state);
 CREATE INDEX IF NOT EXISTS idx_auto_queue_run ON auto_queue(run_id);
+
+-- A board the breaker backed off from, made durable so the digest can report
+-- it. Paused boards and the jobs they hold are a FIRST-CLASS RUN OUTCOME
+-- reported as a number, not an absence: revision 1 of the plan left those jobs
+-- sitting in 'queued' with nothing recorded anywhere, so the largest loss
+-- bucket of a degraded run was indistinguishable from a run that simply had
+-- less to do.
+--
+-- SCOPED BY run_id ON PURPOSE. A pause is a timed backoff with probe
+-- re-admission, never terminal, and never inherited by the next invocation
+-- without re-probing -- so readers ask for one run's pauses and a fresh run
+-- starts with none. The row survives the process because the DIGEST needs it
+-- after the run is over, not because the next run should obey it.
+CREATE TABLE IF NOT EXISTS board_pauses (
+  board_key     TEXT NOT NULL,
+  run_id        TEXT NOT NULL,
+  paused_at     TEXT NOT NULL,
+  until         TEXT,           -- when the backoff expires and a probe may run
+  reason_kind   TEXT,           -- the kind whose signature tripped the breaker
+  reason_detail TEXT,
+  cleared_at    TEXT,           -- set when a probe job succeeded and re-admitted it
+  PRIMARY KEY (board_key, run_id, paused_at)
+);
+CREATE INDEX IF NOT EXISTS idx_board_pauses_run ON board_pauses(run_id);
 
 -- What verify-claims actually decided, made durable.
 --
@@ -391,6 +430,7 @@ export function openDb(file = DB_PATH) {
     // and that statement is itself what fails against the old shape.
     healScreens(db)
     healAutoSubmissions(db)
+    healAutoQueue(db)
     db.exec(SCHEMA)
   } catch (e) {
     // An open that throws must not leave the handle behind. On Windows a
@@ -466,6 +506,21 @@ function healAutoSubmissions(db) {
   if (keyCols.length === 2 && keyCols[0] === "slug" && keyCols[1] === "mode")
     return // already re-keyed
   rebuildAutoSubmissions(db)
+}
+
+// Phase 4.1 added reason_stage. Purely additive, so this is an ALTER and not a
+// rebuild: `CREATE TABLE IF NOT EXISTS` leaves an existing table alone, and
+// every database that predates the column has rows worth keeping in it.
+// Existing rows get NULL, which reads as "stage unknown" and is the truth —
+// they were written before anything recorded one.
+function healAutoQueue(db) {
+  const cols = db.prepare("PRAGMA table_info(auto_queue)").all()
+  if (!cols.length) return // fresh database — SCHEMA is about to create it
+  const have = new Set(cols.map((c) => c.name))
+  if (!have.has("reason_stage"))
+    db.exec("ALTER TABLE auto_queue ADD COLUMN reason_stage TEXT")
+  if (!have.has("posted_at"))
+    db.exec("ALTER TABLE auto_queue ADD COLUMN posted_at TEXT")
 }
 
 // How much a row looks like a real application, for the collision above.
@@ -1262,6 +1317,116 @@ export const AUTO_QUEUE_TERMINAL = new Set([
   "failed",
 ])
 
+// --- the closed reason taxonomy (Phase 4.1) ----------------------------------
+//
+// THE VALUE SET LIVES WITH THE COLUMN THAT STORES IT, for the same reason
+// AUTO_QUEUE_STATES does: a caller validates against ONE list rather than
+// re-typing a string, and a writer that cannot name a kind cannot write a row.
+// The POLICY on top of these — which stage produced a kind, which class it
+// aggregates into, which of several defers is the blocking one — is
+// scripts/auto/taxonomy.mjs's. This is only the vocabulary.
+//
+// WHY TYPED AND NOT FREE TEXT. Every deferral already carried a reason, as a
+// sentence. A sentence cannot be aggregated: "unprobed dropdown" and "dropdown
+// was not probed" are the same loss and two buckets, so the defer log could
+// never answer "what did NOT understanding this board cost us this week?" —
+// which is the one question that turns deferrals into a prioritised backlog.
+// Reworded strings would be matched by substring within a week, and that is
+// string matching where a type belongs.
+//
+// CLOSED IS THE POINT. An unknown kind is rejected at write time rather than
+// stored and counted under a name nobody chose, because a taxonomy that admits
+// new members silently is a free-text column with extra steps.
+
+// The machine did not understand something, or the environment declined.
+// NOT a malfunction, and never a reason to stop the run.
+export const AUTO_DEFER_KINDS = Object.freeze([
+  "confirm-field",
+  "confirm-widget",
+  "consent-tickbox",
+  "unknown-field",
+  "unprobed-dropdown",
+  "fill-failed",
+  "identity-verification",
+  "captcha",
+  "bot-challenge",
+  "email-code-challenge",
+  "multipage-unresolvable",
+  "freetext-disclosure",
+  "doc-unverified",
+  "fact-base-changed",
+  "board-untrusted",
+  "l3-rejected",
+  "cap-company",
+  "posting-gone",
+  // Written to every job a board pause STRANDS. Without it those jobs sit in
+  // 'queued' carrying no kind at all, so the largest single loss bucket in a
+  // degraded run is invisible to the digest and to the defer-rate gate.
+  "board-paused",
+])
+
+// The machine malfunctioned. These are the ones worth waking somebody for.
+export const AUTO_FAILURE_KINDS = Object.freeze([
+  "nav-timeout",
+  "browser-crash",
+  "token-refused",
+  "origin-mismatch",
+  "post-submit-unclassified",
+  "db-write-failed",
+  "plan-error",
+])
+
+// A click went out and the board answered with a challenge instead of a
+// confirmation. These are DEFER kinds — the machine did not malfunction, the
+// board defended itself — but they are the only kinds a 'challenged' row may
+// carry, because 'challenged' means "we do not know whether this landed".
+export const AUTO_CHALLENGE_KINDS = Object.freeze([
+  "captcha",
+  "bot-challenge",
+  "email-code-challenge",
+])
+
+const DEFER_KIND_SET = new Set(AUTO_DEFER_KINDS)
+const FAILURE_KIND_SET = new Set(AUTO_FAILURE_KINDS)
+const CHALLENGE_KIND_SET = new Set(AUTO_CHALLENGE_KINDS)
+
+// Which kinds each terminal state may carry. A state that is absent from this
+// map takes no reason at all — 'submitted' has nothing to explain.
+const KINDS_FOR_STATE = new Map([
+  ["deferred", DEFER_KIND_SET],
+  ["failed", FAILURE_KIND_SET],
+  ["challenged", CHALLENGE_KIND_SET],
+])
+
+export function autoReasonClass(kind) {
+  if (DEFER_KIND_SET.has(kind)) return "deferred"
+  if (FAILURE_KIND_SET.has(kind)) return "failed"
+  return null
+}
+
+/**
+ * The gate every terminal reason passes through.
+ *
+ * Hard rule 6 forbids a silent skip, so a deferral must say why; Phase 4.1
+ * adds that the why must be a value the digest can count. Both checks are here
+ * rather than at the call sites because there is no honest way to write this
+ * row without them.
+ */
+export function assertReasonKind(state, kind) {
+  const allowed = KINDS_FOR_STATE.get(state)
+  if (!allowed) return null
+  if (!kind)
+    throw new TypeError(
+      `a ${state} job requires a reason_kind — a silent skip is not a deferral (hard rule 6)`,
+    )
+  if (!allowed.has(kind))
+    throw new TypeError(
+      `unknown reason_kind ${JSON.stringify(kind)} for state "${state}" ` +
+        `(expected one of ${[...allowed].join(", ")})`,
+    )
+  return kind
+}
+
 // Not finished, and NO CLICK HAS BEEN ISSUED. This is the resume set: after a
 // process dies these are the jobs the next invocation may pick up, and
 // 'attempted' is excluded on purpose — that click may already be an
@@ -1273,6 +1438,14 @@ export const AUTO_QUEUE_RESUMABLE = new Set([
   "planned",
   "authorized",
 ])
+
+// The same set as a SQL literal list, built ONCE from the frozen array above.
+// Interpolating it is safe precisely because it never touches an argument: the
+// values are code-owned identifiers, and building the list here means a state
+// added to AUTO_QUEUE_RESUMABLE cannot be forgotten in a query that mixes named
+// and positional binds (node:sqlite takes named parameters FIRST, and a query
+// that does both is a bug waiting for the next person).
+const RESUMABLE_SQL = [...AUTO_QUEUE_RESUMABLE].map((s) => `'${s}'`).join(", ")
 
 const nowIso = (now) => (now instanceof Date ? now : new Date()).toISOString()
 
@@ -1291,8 +1464,8 @@ export function enqueueAutoJobs(db, jobs, { now = new Date() } = {}) {
   const at = nowIso(now)
   const stmt = db.prepare(
     `INSERT INTO auto_queue
-       (slug, run_id, board_key, origin, state, attempt_no, plan_sha256, updated_at)
-     VALUES ($slug, $run_id, $board_key, $origin, 'queued', 0, $plan_sha256, $updated_at)
+       (slug, run_id, board_key, origin, state, attempt_no, plan_sha256, posted_at, updated_at)
+     VALUES ($slug, $run_id, $board_key, $origin, 'queued', 0, $plan_sha256, $posted_at, $updated_at)
      ON CONFLICT(slug) DO NOTHING`,
   )
   let added = 0
@@ -1306,6 +1479,7 @@ export function enqueueAutoJobs(db, jobs, { now = new Date() } = {}) {
         board_key: j.board_key ?? null,
         origin: j.origin ?? null,
         plan_sha256: j.plan_sha256 ?? null,
+        posted_at: j.posted_at ?? null,
         updated_at: at,
       }).changes
     }
@@ -1359,6 +1533,7 @@ export function claimAutoJob(db, slug, opts = {}) {
          attempt_no = auto_queue.attempt_no + 1,
          plan_sha256 = excluded.plan_sha256,
          reason_kind = NULL,
+         reason_stage = NULL,
          reason_detail = NULL,
          claimed_at = excluded.claimed_at,
          updated_at = excluded.updated_at
@@ -1375,8 +1550,9 @@ export function claimAutoJob(db, slug, opts = {}) {
  * stale worker waking up after its claim was released cannot drive somebody
  * else's job to 'submitted'. Passing no run_id is the maintenance path.
  *
- * A 'deferred' state MUST carry a reason — hard rule 6 forbids a silent skip,
- * and a deferred row with no reason is one.
+ * A 'deferred', 'failed' or 'challenged' state MUST carry a reason_kind from
+ * the closed taxonomy — hard rule 6 forbids a silent skip, and Phase 4.1 adds
+ * that the reason must be countable. assertReasonKind is the single gate.
  */
 export function setAutoJobState(db, slug, state, opts = {}) {
   assertQueueState(state)
@@ -1384,19 +1560,18 @@ export function setAutoJobState(db, slug, state, opts = {}) {
     run_id = null,
     plan_sha256 = null,
     reason_kind = null,
+    reason_stage = null,
     reason_detail = null,
     now = new Date(),
   } = opts
-  if (state === "deferred" && !reason_kind)
-    throw new TypeError(
-      "a deferred job requires a reason_kind — a silent skip is not a deferral (hard rule 6)",
-    )
+  assertReasonKind(state, reason_kind)
   return db
     .prepare(
       `UPDATE auto_queue
           SET state = $state,
               plan_sha256 = COALESCE($plan_sha256, plan_sha256),
               reason_kind = $reason_kind,
+              reason_stage = $reason_stage,
               reason_detail = $reason_detail,
               updated_at = $at
         WHERE slug = $slug
@@ -1407,6 +1582,7 @@ export function setAutoJobState(db, slug, state, opts = {}) {
       state,
       plan_sha256,
       reason_kind,
+      reason_stage,
       reason_detail,
       at: nowIso(now),
       run_id,
@@ -1459,6 +1635,229 @@ export function readStrandedAutoJobs(db) {
       "SELECT * FROM auto_queue WHERE state = 'attempted' ORDER BY updated_at, slug",
     )
     .all()
+}
+
+// --- board pauses, and the jobs they strand ----------------------------------
+
+/**
+ * Record that the breaker backed off a board. Idempotent per (board, run,
+ * instant): a second call in the same millisecond is the same pause.
+ */
+export function recordBoardPause(db, pause) {
+  const at = nowIso(pause.paused_at ?? pause.now ?? new Date())
+  if (!pause.board_key)
+    throw new TypeError("recordBoardPause requires a board_key")
+  if (!pause.run_id) throw new TypeError("recordBoardPause requires a run_id")
+  return db
+    .prepare(
+      `INSERT INTO board_pauses
+         (board_key, run_id, paused_at, until, reason_kind, reason_detail)
+       VALUES ($board_key, $run_id, $paused_at, $until, $reason_kind, $reason_detail)
+       ON CONFLICT(board_key, run_id, paused_at) DO NOTHING`,
+    )
+    .run({
+      board_key: pause.board_key,
+      run_id: pause.run_id,
+      paused_at: at,
+      until: pause.until ? nowIso(pause.until) : null,
+      reason_kind: pause.reason_kind ?? null,
+      reason_detail: pause.reason_detail ?? null,
+    }).changes
+}
+
+/** A probe succeeded: the board is back in service. Returns rows cleared. */
+export function clearBoardPause(
+  db,
+  board_key,
+  { run_id, now = new Date() } = {},
+) {
+  return db
+    .prepare(
+      `UPDATE board_pauses SET cleared_at = $at
+        WHERE board_key = $board_key AND cleared_at IS NULL
+          AND ($run_id IS NULL OR run_id = $run_id)`,
+    )
+    .run({ board_key, run_id: run_id ?? null, at: nowIso(now) }).changes
+}
+
+/**
+ * The boards paused RIGHT NOW, with the number of jobs each is holding.
+ *
+ * "Holding" counts only jobs that could still have been done — the resumable
+ * states. A job that already reached a terminal state was not held by anything.
+ */
+export function readActiveBoardPauses(db, { run_id = null } = {}) {
+  return db
+    .prepare(
+      `SELECT p.board_key, p.run_id, p.paused_at, p.until, p.reason_kind, p.reason_detail,
+              (SELECT COUNT(*) FROM auto_queue q
+                WHERE q.board_key = p.board_key
+                  AND q.state IN (${RESUMABLE_SQL})) AS held
+         FROM board_pauses p
+        WHERE p.cleared_at IS NULL
+          AND ($run_id IS NULL OR p.run_id = $run_id)
+        ORDER BY p.board_key, p.paused_at`,
+    )
+    .all({ run_id: run_id ?? null })
+}
+
+/**
+ * Close out a run by naming what its pauses cost.
+ *
+ * Every job left undone on a paused board becomes a 'deferred' row carrying
+ * kind 'board-paused' — because a job that never ran, on a board the machine
+ * backed away from, is a deferral with a stated reason and not an absence. It
+ * is the difference between "we did 940 of 999" and "we did 940 of 999, and 47
+ * of the other 59 were greenhouse jobs we stopped touching at 02:14".
+ *
+ * Called at RUN END, not at pause time: a pause is a timed backoff, so a job
+ * held during one may still be done later in the same run.
+ */
+export function strandPausedBoardJobs(
+  db,
+  { run_id = null, board_keys = null, detail = null, now = new Date() } = {},
+) {
+  const keys =
+    board_keys ?? readActiveBoardPauses(db, { run_id }).map((p) => p.board_key)
+  if (!keys.length) return 0
+  const stmt = db.prepare(
+    `UPDATE auto_queue
+        SET state = 'deferred',
+            reason_kind = 'board-paused',
+            reason_stage = 'queue',
+            reason_detail = $detail,
+            updated_at = $at
+      WHERE board_key = $board_key
+        AND state IN (${RESUMABLE_SQL})
+        AND ($run_id IS NULL OR auto_queue.run_id IS NULL OR auto_queue.run_id = $run_id)`,
+  )
+  const at = nowIso(now)
+  let stranded = 0
+  db.exec("BEGIN IMMEDIATE")
+  try {
+    for (const board_key of keys)
+      stranded += stmt.run({
+        board_key,
+        detail: detail ?? `board ${board_key} was paused when the run ended`,
+        at,
+        run_id,
+      }).changes
+    db.exec("COMMIT")
+  } catch (e) {
+    db.exec("ROLLBACK")
+    throw e
+  }
+  return stranded
+}
+
+// --- what the defer log is FOR ------------------------------------------------
+
+/**
+ * Deferrals and failures grouped by (kind, stage, board_key).
+ *
+ * This is the query the whole typed-taxonomy argument exists to make possible:
+ * it is a GROUP BY, and it stays a GROUP BY however anybody rewords a message,
+ * because the thing being grouped is a value from a closed set rather than a
+ * sentence. Its output is the product's own backlog — the kinds at the top are
+ * the applications a deterministic understanding of a board would unlock.
+ */
+export function readReasonCounts(db, { run_id = null } = {}) {
+  return db
+    .prepare(
+      `SELECT state, reason_kind, reason_stage, board_key, COUNT(*) AS n
+         FROM auto_queue
+        WHERE reason_kind IS NOT NULL
+          AND ($run_id IS NULL OR run_id = $run_id)
+        GROUP BY state, reason_kind, reason_stage, board_key
+        ORDER BY n DESC, reason_kind, board_key`,
+    )
+    .all({ run_id: run_id ?? null })
+}
+
+/**
+ * Challenge incidence per board, split into this run and everything before it.
+ *
+ * Employer-side flagging is SILENT — nobody is told their application was
+ * scored down for looking automated — so a rising challenge rate is the only
+ * applicant-observable proxy for it. `prior` is what makes the interesting
+ * predicate expressible: a board with challenges now and none before has
+ * changed its behaviour toward us, and that is an anomaly input even when the
+ * absolute count is 1.
+ */
+export function readChallengeIncidence(db, { run_id = null } = {}) {
+  const kinds = AUTO_CHALLENGE_KINDS.map((k) => `'${k}'`).join(", ")
+  return db
+    .prepare(
+      `SELECT board_key,
+              SUM(CASE WHEN $run_id IS NULL OR run_id = $run_id THEN 1 ELSE 0 END) AS current,
+              SUM(CASE WHEN $run_id IS NOT NULL AND (run_id IS NULL OR run_id != $run_id) THEN 1 ELSE 0 END) AS prior
+         FROM auto_queue
+        WHERE reason_kind IN (${kinds})
+        GROUP BY board_key
+        ORDER BY current DESC, board_key`,
+    )
+    .all({ run_id: run_id ?? null })
+}
+
+/**
+ * Age in milliseconds of every job still waiting, by state.
+ *
+ * Age is measured from `claimed_at` where there is one and `updated_at`
+ * otherwise — the two are the same instant for a queued row and the claim is
+ * the more meaningful clock for a claimed one. Percentiles are the caller's:
+ * this returns the sample, so a digest and a benchmark compute the same number
+ * from the same rows.
+ */
+export function readQueueAges(db, { now = new Date() } = {}) {
+  const t = (now instanceof Date ? now : new Date()).getTime()
+  return db
+    .prepare(
+      `SELECT slug, state, board_key, COALESCE(claimed_at, updated_at) AS since
+         FROM auto_queue
+        WHERE state IN (${RESUMABLE_SQL})`,
+    )
+    .all()
+    .map((r) => ({
+      slug: r.slug,
+      state: r.state,
+      board_key: r.board_key,
+      since: r.since,
+      // A row with no timestamp at all has an UNKNOWN age, not an age of zero.
+      // Reporting it as fresh is how a stuck job hides in a p95.
+      age_ms: r.since ? Math.max(0, t - new Date(r.since).getTime()) : null,
+    }))
+}
+
+/**
+ * How long each submitted application waited between the posting going up and
+ * the click going out — the sample, in milliseconds.
+ *
+ * THIS IS THE NUMBER THE PRODUCT IS ACTUALLY FOR. Early applicants are read;
+ * a machine that applies to 999 jobs a week behind everyone else has bought
+ * volume and sold the only advantage volume was supposed to buy. Rows with no
+ * `posted_at` are EXCLUDED rather than counted as zero — a posting whose date
+ * nobody recorded has an unknown latency, and folding it in as instantaneous
+ * flatters exactly the statistic it belongs to.
+ */
+export function readSubmitLatencies(db, { run_id = null, mode = null } = {}) {
+  return db
+    .prepare(
+      `SELECT q.slug, q.board_key, q.posted_at, s.submitted_at, s.mode
+         FROM auto_queue q
+         JOIN auto_submissions s ON s.slug = q.slug
+        WHERE q.posted_at IS NOT NULL
+          AND s.submitted_at IS NOT NULL
+          AND ($mode IS NULL OR s.mode = $mode)
+          AND ($run_id IS NULL OR s.run_id = $run_id)`,
+    )
+    .all({ run_id: run_id ?? null, mode: mode ?? null })
+    .map((r) => ({
+      slug: r.slug,
+      board_key: r.board_key,
+      mode: r.mode,
+      ms: new Date(r.submitted_at).getTime() - new Date(r.posted_at).getTime(),
+    }))
+    .filter((r) => Number.isFinite(r.ms))
 }
 
 export function autoQueueCounts(db) {

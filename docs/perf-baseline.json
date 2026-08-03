@@ -1,0 +1,32 @@
+{
+  "taken_at": "2026-08-03T04:28:54.530Z",
+  "command": "node scripts/dev/bench-runner.mjs --apps 50 --concurrency 8 --board greenhouse,honest-greenhouse --runs 3 --json",
+  "runs": 3,
+  "statistic": {
+    "model_turns_per_app": "mean over the run",
+    "sleep_ms_per_app": "mean",
+    "round_trips_per_app": "mean",
+    "defer_rate": "mean",
+    "wall_ms_p95": "p95, compared on the median of the runs"
+  },
+  "columns": {
+    "model_turns_per_app": 0,
+    "sleep_ms_per_app": 450,
+    "round_trips_per_app": 60,
+    "defer_rate": 0.5,
+    "wall_ms_p95": 1565.31
+  },
+  "provenance": {
+    "sha": "9905681",
+    "dirty_measured_files": [],
+    "file_sha1": {
+      ".claude/skills/apply-job/scan-page.js": "eb26f79696a8",
+      ".claude/skills/apply-job/scan.driver.mjs": "548909071e69",
+      "scripts/apply/scan-engine.mjs": "35da2d57dc72",
+      "scripts/apply/fill-engine.mjs": "be3f14913628",
+      "scripts/apply/fill-plan.mjs": "0c948d57fbc4",
+      "scripts/apply/answer-bank.mjs": "893801e95d8d",
+      "scripts/apply/field-cache.mjs": "3f7055894985"
+    }
+  }
+}

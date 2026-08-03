@@ -63,6 +63,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { toast } from "./notify.mjs"
 
 export const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -226,14 +227,96 @@ export function assertNotStopped(checkpoint, { stopPath = STOP_PATH } = {}) {
   return true
 }
 
+// --- the alert channel -------------------------------------------------------
+//
+// THE BRAKE AND THE NOTIFICATION ARE DIFFERENT THINGS, and conflating them is
+// the defect this fixes. raiseStop's first-reason-wins rule is exactly right
+// for the brake: the first anomaly is the one that explains the run, and a
+// later blander one must not overwrite it. Applied to NOTIFICATION the same
+// rule is dangerous — a benign STOP at job 3 would swallow a credential
+// exposure at job 400, and the user would read the benign one and delete the
+// file.
+//
+// So INBOX.md is APPEND-ONLY and takes everything: every STOP, whether or not
+// a brake was already set, and every security-class finding, which never sets a
+// brake at all. It is a log a human reads top to bottom, not a state file, and
+// nothing in this repository ever truncates or rewrites it.
+
+const INBOX_HEADER =
+  "# Auto-path inbox\n\n" +
+  "Append-only. Every STOP and every security-class finding lands here, newest\n" +
+  "at the bottom. Deleting entries is safe — nothing reads this file — but the\n" +
+  "brake is `STOP`, not this, and clearing one does not clear the other.\n"
+
+/**
+ * Append one alert. Never throws: an alert channel that can break the caller is
+ * worse than no alert channel, because the caller is usually mid-anomaly.
+ *
+ * @returns true when the entry was written.
+ */
+export function appendInbox(
+  { kind, summary, detail = null, meta = null, at = new Date() } = {},
+  { inboxPath = INBOX_PATH, jobsDir = JOBS_DIR } = {},
+) {
+  try {
+    const target = assertInsideJobs(inboxPath, { jobsDir })
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    const fresh = !fs.existsSync(target)
+    const stamp = (at instanceof Date ? at : new Date()).toISOString()
+    const body =
+      (fresh ? INBOX_HEADER : "") +
+      `\n## ${stamp} — ${String(kind ?? "alert").toUpperCase()}\n\n` +
+      `${String(summary ?? "(no summary)")}\n` +
+      (detail ? `\n${detail}\n` : "") +
+      (meta ? `\n\`\`\`json\n${JSON.stringify(meta, null, 2)}\n\`\`\`\n` : "")
+    fs.appendFileSync(target, body, "utf8")
+    return true
+  } catch {
+    // Deliberately silent. The record that matters is already in the run JSONL
+    // and the auto_runs row; this is the copy a human happens to read.
+    return false
+  }
+}
+
+/**
+ * A security-class finding: instruction-shaped text, a label that addressed the
+ * agent, a hostile consent box. These do NOT stop the run — rule 0 says a
+ * posting is data, and the machinery for handling hostile data is deferral and
+ * sanitisation, not halting — but the user must be able to find out that a
+ * board tried something, without reading a JSONL.
+ */
+export function raiseSecurityAlert(
+  finding,
+  { inboxPath = INBOX_PATH, jobsDir = JOBS_DIR, at = new Date() } = {},
+) {
+  return appendInbox(
+    {
+      kind: "security",
+      at,
+      summary:
+        finding?.summary ??
+        `${finding?.findings?.length ?? 0} instruction-shaped finding(s) on ${finding?.slug ?? "an unnamed job"}`,
+      detail:
+        "Kinds and counts only — the payload itself is never copied here. " +
+        "Nothing was acted on; this is a report.",
+      meta: finding ?? null,
+    },
+    { inboxPath, jobsDir },
+  )
+}
+
 /**
  * The runner disabling itself. Called on anomaly: two job failures, a
  * post-submit page that is not a confirmation, or a submitReadiness failure
  * after a green classification.
  *
- * FIRST REASON WINS. An existing STOP is never overwritten, because the first
- * anomaly is the one that explains the run and a later, blander one would bury
- * it. Returns false when a STOP was already in place.
+ * FIRST REASON WINS FOR THE BRAKE. An existing STOP is never overwritten,
+ * because the first anomaly is the one that explains the run and a later,
+ * blander one would bury it. Returns false when a STOP was already in place.
+ *
+ * THE INBOX ENTRY AND THE TOAST ARE UNCONDITIONAL, and that asymmetry is the
+ * point — see the alert-channel note above. A second STOP changes nothing about
+ * the brake and is still news.
  *
  * THERE IS DELIBERATELY NO clearStop(). Self-disabling is the real rollback —
  * an application cannot be unsent — so re-enabling is the user's act, by
@@ -241,7 +324,13 @@ export function assertNotStopped(checkpoint, { stopPath = STOP_PATH } = {}) {
  */
 export function raiseStop(
   reason,
-  { stopPath = STOP_PATH, jobsDir = JOBS_DIR, meta = null } = {},
+  {
+    stopPath = STOP_PATH,
+    jobsDir = JOBS_DIR,
+    meta = null,
+    inboxPath = INBOX_PATH,
+    notify = toast,
+  } = {},
 ) {
   // `jobsDir` is a TESTABILITY seam and nothing else. Production callers pass
   // neither argument and get the real boundary. It is honest to say what that
@@ -251,10 +340,35 @@ export function raiseStop(
   // review, not this function.
   const target = assertInsideJobs(stopPath, { jobsDir })
   fs.mkdirSync(path.dirname(target), { recursive: true })
-  if (fs.existsSync(target)) return false
+  const already = fs.existsSync(target)
+  const text = String(reason ?? "unspecified anomaly")
+
+  // Notify FIRST, and notify whether or not the brake was already on. The
+  // second STOP of a run is the one most likely to be the serious one, and it
+  // is the one the brake file will never mention.
+  appendInbox(
+    {
+      kind: "stop",
+      summary: text,
+      detail: already
+        ? "A STOP was ALREADY set when this fired — the brake file names the " +
+          "earlier reason, not this one. Both are real."
+        : "The runner disabled itself. It will not run again until " +
+          `${target} is deleted.`,
+      meta,
+    },
+    { inboxPath, jobsDir },
+  )
+  try {
+    notify("Job runner stopped", text.slice(0, 200))
+  } catch {
+    /* a cosmetic notification must never be able to break the brake */
+  }
+
+  if (already) return false
   const body =
     `STOPPED ${new Date().toISOString()}\n` +
-    `${String(reason ?? "unspecified anomaly")}\n` +
+    `${text}\n` +
     (meta ? `${JSON.stringify(meta, null, 2)}\n` : "") +
     `\nThe unattended runner set this itself and will not run again until this file is deleted.\n`
   fs.writeFileSync(target, body, "utf8")

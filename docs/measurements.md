@@ -998,3 +998,161 @@ End to end (`node scripts/documents/reuse-check.mjs <slug> --dir <tmp> --json`),
 4. **The 3.3 cover-letter estimate is not in this ledger** because it is not a
    measurement: `scripts/documents/letter-plan.mjs --price-only` computes it from
    declared token counts, and no letter has been authored under that plan yet.
+---
+
+## M9 — Phase 4: the campaign harness, and both halves of the gate proved by mutation
+
+- agent: `implementer` (4.1–4.4, 4.7, 4.8)
+- harness: `node scripts/dev/bench-runner.mjs --apps 50 --concurrency 8 --board greenhouse,honest-greenhouse --runs 3 --json`
+- baseline: `9905681` — first measurement of this workload; there is nothing before it
+- after: `9905681` + the Phase 4 working tree — `MEASURED_FILES` untouched, `dirty=0`
+- budget: none declared; this entry IS the baseline
+- verdict: baseline established, and the gate demonstrated red in both directions
+- note: stable to ±2% across three runs; every column is labelled `measured` and none is derived.
+
+### The workload, and why it is a mix
+
+50 applications at concurrency 8 across 8 distinct loopback origins and 8
+`fixture-emp-<n>` tenants, three runs, `dry_run`, accounted (no browser).
+
+**`--board greenhouse` alone was rejected as the gate workload.** That fixture
+carries a consent tickbox, so every application defers on it: `defer_rate` is
+`1.0` **by construction**, `submitted_per_hour` is structurally `0`, and the
+gate's defer-rate rule can never move in either direction. That is a true fact
+about the fixture and not a harness defect — but a gate whose columns cannot
+move is not a gate. `greenhouse,honest-greenhouse` splits 25/25 and both
+throughput columns carry a number.
+
+### The nine columns, at `9905681`
+
+| column                    | value                 | method   | statistic             |
+| ------------------------- | --------------------- | -------- | --------------------- |
+| `submitted_per_hour`      | 12,400                | measured | mean over the run     |
+| `deferred_per_hour`       | 12,400                | measured | mean over the run     |
+| `defer_rate`              | 0.5                   | measured | mean                  |
+| `defer_rate_by_class`     | assent=0.5            | measured | mean                  |
+| `model_turns_per_app`     | 0                     | measured | mean                  |
+| `sleep_ms_per_app`        | 450                   | measured | mean                  |
+| `edge_spacing_ms_per_app` | 0                     | measured | mean                  |
+| `wall_ms_p95`             | 1565.31               | measured | p95, median of 3 runs |
+| `spawns_per_app`          | 1                     | measured | mean                  |
+| `round_trips_per_app`     | 60                    | measured | mean                  |
+| `failure_rate_p`          | 0 on all 8 board_keys | measured | mean per `board_key`  |
+
+**`edge_spacing_ms_per_app` is 0 because no spacing policy exists yet**, not
+because spacing is free. The harness clocks the wait it actually performed;
+inventing a number for a policy Phase 5 has not written would be the estimate
+this ledger exists to refuse. `--edge-spacing-ms N` makes the column non-zero.
+
+**`defer_rate_by_class` reads `assent=0.5`, and that split is the point.** Every
+deferral in this workload is a consent tickbox — the class that does **not**
+shrink with engineering and must not. Zero are `understanding`, so there is no
+backlog item here that would unlock an application. A single `defer_rate` number
+cannot say that.
+
+### The instrument, which was wrong twice before it was right
+
+`model_turns` is the gate's one hard, no-override column, so a counter that
+silently reports 0 turns that rule into a permanent green light. Two obvious
+implementations do exactly that, and both were measured rather than reasoned
+about:
+
+| approach                                              | counted |
+| ----------------------------------------------------- | ------- |
+| patch `child_process.execFileSync`, static import     | **0**   |
+| patch, then `await import()` the caller               | **0**   |
+| `--require` preload (`scripts/dev/spawn-counter.cjs`) | 1       |
+| preload in the parent only, model call in a child     | **0**   |
+| preload + `NODE_OPTIONS` + per-process exit rows      | 1       |
+
+The first three are one fact: a module that did
+`import { execFileSync } from "node:child_process"` is bound to the export the
+builtin published at bootstrap, and reassigning the property afterwards reaches
+nothing. The fourth is a second fact and the more dangerous one — the plan leg
+**shells out** to `scripts/apply/fill-plan.mjs` once per application, so a model
+call added there runs in a process the parent cannot see. Parent-only counting
+scored the plan's own falsifiable mutation as **zero**.
+
+`bench-runner` therefore re-execs itself with the preload, sets
+`NODE_OPTIONS=--require <preload>` plus `AJ_COUNTER_FILE` for the campaign, and
+sums one exit-written JSON row per descendant. **Cost, stated because it is
+real:** the preload adds startup to every child and moved `wall_ms_p95` from
+~1328 ms to ~1565 ms (+18%). The baseline above is taken **with** the instrument
+in place, so the two are never compared across it.
+
+**`model_turns` is narrowed from the plan's wording, deliberately.** §4.7 says
+"process spawns plus outbound HTTP to any non-loopback host". Taken literally
+that is red on every run by construction, because `benchPlan` spawns
+`node scripts/apply/fill-plan.mjs` — a deterministic local script, and the
+sanctioned behaviour. A gate that fires on the sanctioned behaviour acquires an
+override line within a week. So `spawns_per_app` counts **every** spawn as its
+own column, and `model_turns` counts a spawn only when it is not this repo's own
+node running a file under `scripts/`, plus every non-loopback request. A real
+model call is still caught either way it can arrive.
+
+### Both halves of the falsifiable check, proved by mutation
+
+Run with `--allow-dirty`, which exists for exactly this and prints numbers that
+are evidence about the **gate**, never numbers to bank.
+
+| mutation                                                                               | column                           | verdict                           |
+| -------------------------------------------------------------------------------------- | -------------------------------- | --------------------------------- |
+| `await page.waitForTimeout(200)` after the verify blur in `fill-engine.mjs`            | `sleep_ms_per_app` 450 → **650** | **FAIL** — "exceeds 495"          |
+| the same, with `perf-budget: sleep_ms +200` in the PR body                             | same 650                         | **PASS** — budget applied         |
+| `https.request("https://api.anthropic.com/v1/messages")` at the top of `fill-plan.mjs` | `model_turns_per_app` 0 → **1**  | **FAIL**                          |
+| the same, with `perf-budget: model_turns +99` in the PR body                           | same 1                           | **FAIL** — no override, by design |
+
+The first mutation was initially placed in `openCombo`, which **this workload
+does not reach**, and the gate stayed green — correctly. Recorded because it is
+the mistake to expect: a mutation proof on a code path the run does not take
+proves nothing, and reads exactly like a broken gate.
+
+Both files were restored byte-for-byte (`git status` clean on `scripts/apply/`)
+before the baseline was taken.
+
+### The ledger invariant, in its corrected form
+
+`durable_rows === reached_authorized` **and** `rows_in_state('attempted') === 0`
+at run end. Revision 1 of the plan asked for
+`durable_attempted_rows != apps_started` as a hard FAIL, which contradicts its
+own state machine — deferrals exit at `planned` or `authorized`, before any
+attempted row is written, and the taxonomy lists 14 pre-attempt kinds. On this
+workload 25 of 50 applications defer, so revision 1's gate would have been red
+on a completely healthy run, every run.
+
+### Provenance
+
+`9905681`, `dirty_measured_files: []`. The full `file_sha1` set is in
+`docs/perf-baseline.json`, written by
+`node .github/workflows/perf-gate.mjs --update` and read by CI on every PR.
+
+| file                                       | `file_sha1`    |
+| ------------------------------------------ | -------------- |
+| `.claude/skills/apply-job/scan-page.js`    | `eb26f79696a8` |
+| `.claude/skills/apply-job/scan.driver.mjs` | `548909071e69` |
+| `scripts/apply/scan-engine.mjs`            | `35da2d57dc72` |
+| `scripts/apply/fill-engine.mjs`            | `be3f14913628` |
+| `scripts/apply/fill-plan.mjs`              | `0c948d57fbc9` |
+
+### Limits — read before quoting any figure above
+
+1. **This is the ACCOUNTED path, not a browser.** Sleep is recorded as the
+   argument the engine passed on the branch it took, not slept. `--real-sleep`
+   makes wall absorb the same total; that equivalence is bench-apply's check and
+   it is unchanged here.
+2. **Loopback, not the modelled-latency arm.** The fixture supports `--latency`
+   and this baseline does not use it. A loopback number and a modelled number
+   are never merged.
+3. **`failure_rate_p` is 0 on every board, and that is a fixture fact.** The
+   whole anomaly-breaker calibration in §4.6 rests on `p`, and the only honest
+   thing this baseline says about it is that a healthy loopback run has none.
+   Nobody has measured `p` against a real board, and the fixture cannot produce
+   one.
+4. **`submitted_per_hour` ≈ 12,400 is a rate, not a plan.** Nothing upstream
+   produces 12,400 qualifying leads an hour, and 0.11 — the sweep number that
+   would say what the supply actually is — is still outstanding.
+5. **There is no runner.** `bench-runner` supplies its own ~40-line worker pool
+   and drives the shipped modules; it contains no click, no retry policy and no
+   trust decision. When Phase 5 lands, that pool is what it replaces, and this
+   baseline must be re-taken against the real runner rather than assumed to
+   carry over.

@@ -7,7 +7,7 @@ three of them, and that orientation tax was measured as the largest avoidable
 line item in a twelve-agent wave.
 
 `CLAUDE.md` keeps the index. This file keeps the detail. If you are looking
-for what a script *guarantees* rather than how to call it, the domain files
+for what a script _guarantees_ rather than how to call it, the domain files
 (`03-leads.md`, `04-documents.md`, `05-apply.md`, `06-record-and-feedback.md`)
 go deeper than either.
 
@@ -205,5 +205,22 @@ go deeper than either.
 - Record a model screening verdict (the expensive judgment pass, so it is never
   paid for twice): `node scripts/leads/screen.mjs record <lead-id> --verdict pass|caution|reject [--reason "..."] [--signals a,b]`
 - Whole-pipeline digest: `node scripts/status.mjs`
+  — includes the **auto section** (Phase 4.2): submissions in 24h, deferrals by
+  typed `reason_kind` and by class, orphan count, queue depth and age p95,
+  paused boards with the jobs they hold, `posted_at → submitted_at` p50/p95,
+  STOP state, and a WARN per thing a human should look at.
+  `--cadence-hours H` sets the staleness threshold; `--db` / `--stop-path` aim
+  it at a fixture instead of the real store.
+- Campaign benchmark (Phase 4.7): `node scripts/dev/bench-runner.mjs --apps 50 --concurrency 8 --board greenhouse,honest-greenhouse --runs 3 [--json|--ledger]`
+  — N applications at concurrency C against the loopback fixture only, never an
+  employer. Reports nine columns, each labelled `measured`/`derived`/`unmeasured`.
+  It **re-execs itself** with `scripts/dev/spawn-counter.cjs` preloaded; that is
+  not optional, and the reason is in that file's header. `--json` and `--ledger`
+  refuse a dirty `MEASURED_FILES` tree (`--allow-dirty` to override, and say so
+  wherever the number lands).
+- Performance gate (Phase 4.8): `node .github/workflows/perf-gate.mjs [--update|--json]`
+  — runs the above and compares five columns against `docs/perf-baseline.json`.
+  `--update` re-takes the baseline. A PR body line `perf-budget: <col> +N`
+  clears `sleep_ms` and `round_trips`; **`model_turns` has no override.**
 - All scripts print compact output to agents (non-TTY) and prose to humans;
   `--verbose` / `--quiet` override, `--json` where supported.

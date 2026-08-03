@@ -95,7 +95,11 @@ test("the resume set is read from the row, not re-derived: a finished slug stays
   const db = store(t).open()
   enqueueAutoJobs(db, slugs(4))
   claimAutoJob(db, "co-000", { run_id: "r" })
-  setAutoJobState(db, "co-000", "failed", { run_id: "r" })
+  setAutoJobState(db, "co-000", "failed", {
+    run_id: "r",
+    reason_kind: "nav-timeout",
+    reason_stage: "plan",
+  })
   claimAutoJob(db, "co-001", { run_id: "r" })
   setAutoJobState(db, "co-001", "deferred", {
     run_id: "r",
@@ -224,12 +228,16 @@ test("an unknown state is refused rather than written", (t) => {
     /unknown auto_queue state/,
   )
   assert.equal(readAutoQueue(db)[0].state, "queued")
-  // Every state the plan names is accepted.
+  // Every state the plan names is accepted. The three that end a job carry a
+  // kind from the closed taxonomy; the rest carry none.
+  const kindFor = {
+    deferred: "confirm-widget",
+    failed: "nav-timeout",
+    challenged: "bot-challenge",
+  }
   for (const s of AUTO_QUEUE_STATES)
     assert.equal(
-      setAutoJobState(db, "s", s, {
-        reason_kind: s === "deferred" ? "confirm-widget" : null,
-      }),
+      setAutoJobState(db, "s", s, { reason_kind: kindFor[s] ?? null }),
       1,
       s,
     )
@@ -243,15 +251,30 @@ test("a deferral without a reason is refused — a silent skip is not a deferral
     /requires a reason_kind/,
   )
   assert.equal(readAutoQueue(db)[0].state, "queued")
+  // Phase 4.1: the kind must also be one the digest can count. This test used
+  // to write `consent_tickbox` — the right concept spelled the wrong way, which
+  // is precisely the drift a free-text column cannot notice and this one now
+  // refuses.
+  assert.throws(
+    () =>
+      setAutoJobState(db, "s", "deferred", {
+        reason_kind: "consent_tickbox",
+        reason_detail: "underscores are not the taxonomy's spelling",
+      }),
+    /unknown reason_kind/,
+  )
+  assert.equal(readAutoQueue(db)[0].state, "queued")
   assert.equal(
     setAutoJobState(db, "s", "deferred", {
-      reason_kind: "consent_tickbox",
+      reason_kind: "consent-tickbox",
+      reason_stage: "plan",
       reason_detail: "the user ticks those, always",
     }),
     1,
   )
   const row = readAutoQueue(db)[0]
-  assert.equal(row.reason_kind, "consent_tickbox")
+  assert.equal(row.reason_kind, "consent-tickbox")
+  assert.equal(row.reason_stage, "plan")
   assert.match(row.reason_detail, /the user ticks/)
 })
 

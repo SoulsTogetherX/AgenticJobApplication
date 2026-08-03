@@ -167,6 +167,49 @@ jobs:
         run: npm run reap
 
   # ---------------------------------------------------------------------
+  # The Phase 4.8 performance gate.
+  #
+  # It runs bench-runner against the loopback fixture — 50 applications at
+  # concurrency 8 over 8 origins, three times — and compares five columns
+  # against docs/perf-baseline.json. No employer is ever contacted; the only
+  # board it can reach is tests/fixtures/boards/server.mjs, which binds
+  # loopback and refuses anything else.
+  #
+  # THE RULE STRENGTHS DIFFER ON PURPOSE and perf-gate.mjs's header says why
+  # for each one. The short version: model_turns is hard with NO override,
+  # because green tier is DEFINED as removing the model from the path;
+  # sleep_ms and round_trips are overridable by a `perf-budget: <col> +N` line
+  # in the PR body, so a deliberate rise is something somebody wrote down;
+  # wall_ms_p95 is WARN only, because hard-failing on the noisiest column
+  # teaches people to ignore red.
+  #
+  # Both halves of the plan's falsifiable check were proved by mutation before
+  # this was wired, not argued: a waitForTimeout(200) added to
+  # fill-engine.mjs's verify step turns sleep_ms red (and a matching budget
+  # line clears it), and an https.request to a provider added to
+  # fill-plan.mjs turns model_turns red AND is NOT cleared by
+  # `perf-budget: model_turns +99`. See docs/measurements.md M9.
+  #
+  # ubuntu-only: the numbers are compared against a baseline, and a baseline
+  # is only meaningful against one platform. The matrix proves the code runs
+  # everywhere; this proves it did not get slower.
+  # ---------------------------------------------------------------------
+  perf-gate:
+    name: Phase 4 performance gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefer-offline --no-audit --fund=false
+      - name: bench-runner vs docs/perf-baseline.json
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node .github/workflows/perf-gate.mjs
+
+  # ---------------------------------------------------------------------
   # NOT wired, on purpose — and stated here rather than wired vacuously,
   # because a job that always passes reads as coverage that does not exist:
   #
@@ -194,15 +237,16 @@ jobs:
   ci-gate:
     name: ci-gate
     if: always()
-    needs: [security-gate, test, scaffolding]
+    needs: [security-gate, test, scaffolding, perf-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require the security gate, the full matrix and the reaper to have passed
+      - name: Require the security gate, the matrix, the reaper and the perf gate
         run: |
           echo "security-gate: ${{ needs.security-gate.result }}"
           echo "test matrix:   ${{ needs.test.result }}"
           echo "scaffolding:   ${{ needs.scaffolding.result }}"
+          echo "perf-gate:     ${{ needs.perf-gate.result }}"
           fail=0
           if [ "${{ needs.security-gate.result }}" != "success" ]; then
             echo "::error::Phase 1 security gate did not pass"
@@ -214,6 +258,10 @@ jobs:
           fi
           if [ "${{ needs.scaffolding.result }}" != "success" ]; then
             echo "::error::a scaffolding artifact outlived its phase"
+            fail=1
+          fi
+          if [ "${{ needs.perf-gate.result }}" != "success" ]; then
+            echo "::error::the Phase 4 performance gate did not pass"
             fail=1
           fi
           exit $fail

@@ -12,7 +12,11 @@ import { capCheck } from "../../scripts/auto/caps.mjs"
 import { authorizeSubmit, planSha256 } from "../../scripts/auto/authorize.mjs"
 import { DatabaseSync } from "node:sqlite"
 import { openDb, upsertApplications } from "../../scripts/lib/db.mjs"
-import { StopError, readStop } from "../../scripts/auto/guard.mjs"
+import {
+  StopError,
+  readStop,
+  scopedStopPath,
+} from "../../scripts/auto/guard.mjs"
 
 function sandbox({ profile = "name: x\n", answers = "answers: []\n" } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aj-audit-"))
@@ -37,6 +41,14 @@ function sandbox({ profile = "name: x\n", answers = "answers: []\n" } = {}) {
     },
   }
 }
+
+// A scoped brake (§4.9). `stopsDir` defaults next to `stopPath`, so pointing
+// the sandbox's global switch at a temp tree points these at it too — a test
+// that read the real jobs/.auto/stops while claiming to be sandboxed is exactly
+// the failure that seam exists to prevent.
+const at = (s, scope, key) =>
+  scopedStopPath(scope, key, { stopPath: s.stopPath })
+const scopedStop = (s, scope, key) => readStop({ stopPath: at(s, scope, key) })
 
 const lines = (file) =>
   fs
@@ -348,19 +360,63 @@ test("a live run cannot write an intent against a dry-run authorisation", () => 
 
 // --- the click nobody accounted for ------------------------------------------
 
-test("an attempt from a run that never finished blocks the NEXT run", () => {
+test("an attempt from a run that never finished blocks that COMPANY, not the next run", () => {
+  // §4.9. This used to halt every future invocation until a human deleted a
+  // file. The protection it exists for — never send a second application to the
+  // employer that may already hold one — is unchanged; what changed is that it
+  // no longer takes the other 998 companies down with it.
   const s = sandbox()
   const first = startRun({ mode: "live", ...s.opts })
   attempt(first, s, { slug: "one", url: "https://boards.test/acme/one" })
   // The process dies here: no recordSubmission, no finish().
 
+  const second = startRun({ mode: "live", ...s.opts })
+  assert.ok(second.id, "the next run OPENS")
+  assert.equal(
+    readStop({ stopPath: s.stopPath }),
+    null,
+    "and nothing global was written",
+  )
+
+  const stop = scopedStop(s, "company", "Acme")
+  assert.match(stop, /one/, "the company brake names the slug")
+  assert.match(stop, /boards\.test\/acme\/one/, "and the URL")
+  assert.match(stop, /scope: company/, "and says what it is scoped to")
+})
+
+test("an orphan with no company recorded still stops everything", () => {
+  // The pessimistic fallback, and it is the half that keeps the narrowing
+  // honest: a brake has to be filed against something, and "an application may
+  // exist and we cannot say where" is not a case to be optimistic about.
+  const s = sandbox()
+  const first = startRun({ mode: "live", ...s.opts })
+  const token = tokenFor(s, { slug: "one", company: "Acme", mode: "live" })
+  // company omitted from the intent row on purpose — the attempt is recorded
+  // with nothing naming an employer.
+  first.beginSubmit({ slug: "one" }, PLAN_SHA, "https://b.test/one", token)
+
   assert.throws(
     () => startRun({ mode: "live", ...s.opts }),
     (e) => e instanceof StopError && e.checkpoint === "run-start",
   )
-  const stop = readStop({ stopPath: s.stopPath })
-  assert.match(stop, /one/, "STOP names the slug")
-  assert.match(stop, /boards\.test\/acme\/one/, "and the URL")
+  assert.match(
+    readStop({ stopPath: s.stopPath }),
+    /NOTHING RECORDS WHICH EMPLOYER/,
+  )
+})
+
+test("a company brake on one employer leaves the others runnable", () => {
+  const s = sandbox()
+  const first = startRun({ mode: "live", ...s.opts })
+  attempt(first, s, { slug: "one", company: "Acme" })
+
+  const second = startRun({ mode: "live", ...s.opts })
+  assert.deepEqual(
+    second.state?.blocked_companies ?? [],
+    ["acme"],
+    "the run reports what it is holding back as a NUMBER, not as an absence",
+  )
+  assert.equal(scopedStop(s, "company", "Globex"), null)
 })
 
 test("a resolved attempt does not block the next run", () => {
@@ -381,12 +437,13 @@ test("a run that finishes with an attempt still open stops itself", () => {
   const run = startRun({ mode: "live", ...s.opts })
   attempt(run, s, { slug: "one", url: "https://boards.test/acme/one" })
   const final = run.finish({ outcome: "ok" })
-  assert.equal(final.outcome, "stopped")
-  assert.match(readStop({ stopPath: s.stopPath }), /1 unresolved submit/)
+  assert.equal(final.outcome, "stopped", "THIS run still reports stopped")
   assert.match(
-    readStop({ stopPath: s.stopPath }),
-    /one at https:\/\/boards\.test/,
+    scopedStop(s, "company", "Acme"),
+    /without resolving a submit attempt for "one"/,
+    "and the durable brake is on the employer that may hold it",
   )
+  assert.match(scopedStop(s, "company", "Acme"), /boards\.test/)
 })
 
 test("an attempt the in-memory slot lost is still caught at finish()", () => {
@@ -409,13 +466,16 @@ test("an attempt the in-memory slot lost is still caught at finish()", () => {
     (e) => e instanceof StopError,
     "overwriting an unresolved attempt stops the runner",
   )
-  fs.rmSync(s.stopPath) // clear the brake so finish()'s own reason is the one under test
+  // Clear the brake so finish()'s own reason is the one under test. Both the
+  // slot-overwrite brake and finish()'s land on the same company file, and
+  // first-reason-wins would otherwise leave the earlier text in place.
+  fs.rmSync(at(s, "company", "Acme"))
 
   const final = run.finish({ outcome: "ok" })
   assert.equal(final.outcome, "stopped")
   assert.match(
-    readStop({ stopPath: s.stopPath }),
-    /three at https:\/\/boards\.test\/three/,
+    scopedStop(s, "company", "Acme"),
+    /"three" at https:\/\/boards\.test\/three/,
     "the slot had forgotten it; the ledger had not",
   )
 })
@@ -430,7 +490,7 @@ test("beginSubmit stops rather than overwriting an unresolved attempt", () => {
     (e) =>
       e instanceof StopError && /never resolved or abandoned/.test(e.message),
   )
-  const stop = readStop({ stopPath: s.stopPath })
+  const stop = scopedStop(s, "company", "Acme")
   assert.match(stop, /"three"/)
   assert.match(stop, /"four" is about to overwrite it/)
   assert.ok(
@@ -531,7 +591,10 @@ test("abandonAttempt makes the caller assert the click never happened", () => {
   )
   // None of those resolved it.
   run.finish()
-  assert.match(readStop({ stopPath: s.stopPath }), /unresolved submit/)
+  assert.match(
+    scopedStop(s, "company", "Acme"),
+    /without resolving a submit attempt/,
+  )
 })
 
 // --- the record itself -------------------------------------------------------
@@ -563,7 +626,7 @@ test("a submission missing audit fields is still recorded, and then stops the ru
     db.close()
   }
   assert.match(
-    readStop({ stopPath: s.stopPath }),
+    scopedStop(s, "company", "Acme"),
     /cannot support a manual withdrawal/,
   )
 })
@@ -624,7 +687,12 @@ test("hashProfile hashes both files and tolerates a missing one", () => {
   assert.equal(hashProfile({ profileDir: s.profileDir })["answers.yaml"], null)
 })
 
-test("profile/ changing during a run is an alarm, not a note", () => {
+test("profile/ changing during a run is an alarm, scoped to that RUN", () => {
+  // §4.6 classes `fact-base-changed` as a DEFERRAL, not a malfunction: the user
+  // answering a save-answer.mjs prompt at 21:40 is them using the system
+  // correctly. A global brake would halt every future night because of it. The
+  // next invocation reads the current fact base and is consistent with it by
+  // construction, so the brake belongs to the run whose snapshot went stale.
   const s = sandbox()
   const run = startRun({ mode: "dry_run", ...s.opts })
   fs.writeFileSync(
@@ -637,8 +705,17 @@ test("profile/ changing during a run is an alarm, not a note", () => {
   const ev = lines(run.jsonl).find((e) => e.t === "run.finish")
   assert.equal(ev.profile_mutated, true)
   assert.match(
-    readStop({ stopPath: s.stopPath }),
+    scopedStop(s, "run", run.id),
     /profile\/ changed during an unattended run/,
+  )
+  assert.equal(
+    readStop({ stopPath: s.stopPath }),
+    null,
+    "and the next run is not held hostage by the user editing their own file",
+  )
+  assert.ok(
+    startRun({ mode: "dry_run", ...s.opts }).id,
+    "which is checkable: the next run opens",
   )
 })
 
@@ -1018,6 +1095,7 @@ test("beginSubmit refuses a slug the ledger already holds, and stops the runner"
   attempt(first, s, { slug: "one", url: "https://board.test/apply/one" })
   first.recordSubmission(fullSubmission("one"))
   fs.rmSync(s.stopPath, { force: true })
+  fs.rmSync(at(s, "company", "Acme"), { force: true })
 
   // A LATER RUN, which under the old (run_id, slug) key would simply have
   // written a second row and clicked again.
@@ -1033,7 +1111,7 @@ test("beginSubmit refuses a slug the ledger already holds, and stops the runner"
       ),
     StopError,
   )
-  const stop = readStop({ stopPath: s.stopPath })
+  const stop = scopedStop(s, "company", "Acme")
   assert.match(stop, /already holds a live row for "one"/)
   assert.match(stop, /that application may already exist/)
 
@@ -1060,9 +1138,12 @@ test("a rehearsal does not consume the live claim for the same slug", () => {
     ...fullSubmission("one"),
     confirmation_url: null,
   })
-  fs.rmSync(s.stopPath, { force: true })
+  // A rehearsal has no confirmation_url, so recordSubmission brakes the company
+  // on the way past. Cleared here because THIS test is about the (slug, mode)
+  // claim key and nothing else; the brake has its own test.
+  fs.rmSync(at(s, "company", "Acme"), { force: true })
   rehearsal.finish()
-  fs.rmSync(s.stopPath, { force: true })
+  fs.rmSync(at(s, "company", "Acme"), { force: true })
 
   const live = startRun({ mode: "live", ...s.opts })
   assert.doesNotThrow(() => attempt(live, s, { slug: "one" }))

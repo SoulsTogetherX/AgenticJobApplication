@@ -93,6 +93,7 @@ export const REASON_CLASSES = Object.freeze({
     "identity-verification",
     "posting-gone",
     "board-paused",
+    "reconciled-not-sent",
   ]),
   policy: Object.freeze([
     "doc-unverified",
@@ -148,6 +149,7 @@ export const DEFER_PRIORITY = Object.freeze([
   "email-code-challenge",
   "posting-gone",
   "board-paused",
+  "reconciled-not-sent",
   // 3. policy
   "l3-rejected",
   "board-untrusted",

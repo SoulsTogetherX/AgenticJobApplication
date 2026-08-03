@@ -604,7 +604,16 @@ export function authorizeSubmit(input) {
   // This function never WRITES anything — no STOP is raised here, no ledger row
   // is added — so it needs no jobsDir boundary seam. Raising STOP on an anomaly
   // stays audit.mjs's, where the run state that explains it lives.
-  assertNotStopped(CHECKPOINTS.PRE_SUBMIT, { stopPath })
+  // Scoped (§4.9): a brake filed against this company or this run refuses to
+  // mint a token for it, while leaving every other company mintable. `board` is
+  // read from the lead when it carries one — the gate has the lead in hand,
+  // which the click site does not.
+  assertNotStopped(CHECKPOINTS.PRE_SUBMIT, {
+    stopPath,
+    company: lead.company ?? null,
+    board: lead.board_key ?? lead.board ?? null,
+    runId,
+  })
 
   const nonce = crypto.randomBytes(16).toString("hex")
   liveNonces.add(nonce)
@@ -752,7 +761,7 @@ export function assertPageOrigin(token, pageUrl) {
  */
 export function consumeSubmitToken(
   token,
-  { slug, planSha, mode, pageUrl, stopPath = STOP_PATH } = {},
+  { slug, planSha, mode, pageUrl, stopPath = STOP_PATH, board = null } = {},
 ) {
   assertTokenMatches(token, { slug, planSha, mode })
   // Phase 0.1. Before the switch read, so the switch stays the LAST thing that
@@ -763,7 +772,20 @@ export function consumeSubmitToken(
   // reason should say so rather than reporting the switch, and a token spent
   // and then refused by the switch would be lost for the retry that never
   // happens.
-  assertNotStopped(CHECKPOINTS.PRE_SUBMIT, { stopPath })
+  //
+  // THE SCOPES COME OFF THE TOKEN, not off a caller-supplied argument, for the
+  // company and the run: those two are frozen into the token at authorisation
+  // and a caller that could name a different company here could read a brake
+  // that does not apply to the click it is about to make. `board` has no place
+  // on the token — it is a property of the page, not of the authorisation — so
+  // it is the one the caller passes, and passing nothing means the board brake
+  // is simply not consulted rather than silently satisfied.
+  assertNotStopped(CHECKPOINTS.PRE_SUBMIT, {
+    stopPath,
+    company: token?.company ?? null,
+    runId: token?.runId ?? null,
+    board,
+  })
   liveNonces.delete(token.nonce)
   return token
 }

@@ -15,6 +15,7 @@ import {
   appendInbox,
   raiseSecurityAlert,
   readStop,
+  scopedStopPath,
 } from "../../scripts/auto/guard.mjs"
 import { toast } from "../../scripts/auto/notify.mjs"
 
@@ -63,7 +64,51 @@ test("a second STOP is invisible in the brake file and loud in the inbox", (t) =
     inbox.indexOf("benign timeout") < inbox.indexOf("CREDENTIAL EXPOSURE"),
     "append-only means oldest first",
   )
-  assert.match(inbox, /A STOP was ALREADY set when this fired/)
+  assert.match(inbox, /A global STOP was ALREADY set here when this fired/)
+})
+
+test("first-reason-wins is PER KEY — one company's brake never buries another's", (t) => {
+  // The suppression rule is right for the brake and would be a defect across
+  // scopes: a company-scoped stop on acme is not evidence about globex, so it
+  // must not be the reason globex's own brake goes unwritten.
+  const x = tree(t)
+  const opts = { ...x, notify: noToast }
+
+  assert.equal(
+    raiseStop("orphan at acme", { ...opts, scope: "company", key: "Acme" }),
+    true,
+  )
+  assert.equal(
+    raiseStop("orphan at globex", { ...opts, scope: "company", key: "Globex" }),
+    true,
+    "a different key is a different brake and gets written",
+  )
+  assert.equal(
+    raiseStop("a later, blander acme reason", {
+      ...opts,
+      scope: "company",
+      key: "acme",
+    }),
+    false,
+    "the SAME key still keeps its first reason",
+  )
+
+  const acme = readStop({
+    stopPath: scopedStopPath("company", "Acme", { stopPath: x.stopPath }),
+  })
+  assert.match(acme, /orphan at acme/)
+  assert.doesNotMatch(acme, /blander/)
+  assert.match(
+    readStop({
+      stopPath: scopedStopPath("company", "Globex", { stopPath: x.stopPath }),
+    }),
+    /orphan at globex/,
+  )
+  assert.equal(
+    readStop({ stopPath: x.stopPath }),
+    null,
+    "and none of it touched the global brake",
+  )
 })
 
 test("the inbox is append-only — nothing rewrites or truncates it", (t) => {

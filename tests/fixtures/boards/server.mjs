@@ -85,6 +85,27 @@ import { fileURLToPath } from "node:url"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PAGES = path.join(HERE, "pages")
+const POST_SUBMIT = path.join(PAGES, "post-submit")
+
+// The seven pages the post-click classifier is tested against (§4.10), in the
+// order they are worth reading. `not-a-confirmation` is the CONTROL and the
+// most important of them: a classifier tested only on pages it is meant to
+// recognise recognises everything, so one page here is deliberately warm,
+// thank-you-shaped and NOT an application receipt, and the corpus test asserts
+// it comes back `unclassified`.
+//
+// THESE ARE THE FIXTURE'S PAGES AND EVIDENCE ABOUT NOTHING ELSE. A classifier
+// rule citing one may fire on loopback only — see classify.mjs's `ruleApplies`
+// and this directory's README.
+export const POST_SUBMIT_KINDS = Object.freeze([
+  "confirmation",
+  "bot-challenge",
+  "email-code-challenge",
+  "identity-verification",
+  "posting-gone",
+  "error",
+  "not-a-confirmation",
+])
 const SCANS = path.join(HERE, "scans")
 const HOSTILE = path.resolve(HERE, "..", "hostile")
 
@@ -335,6 +356,27 @@ export const ROUTES = [
     proves:
       "shape E: <div role=checkbox> — the scanner emits no field at all, so the consent is neither ticked nor shown",
   },
+
+  // --- Phase 5 W2: the post-submit leg --------------------------------------
+  //
+  // One route per classification. A GET returns a clickable application form; a
+  // POST to the SAME url returns that kind's post-submit page — the fixture's
+  // existing `post:` mechanism, so the click navigates for real instead of
+  // being simulated.
+  //
+  // WHY EACH KIND IS ITS OWN ROUTE rather than one route with a query
+  // parameter: submit.mjs binds its token to the page's ORIGIN and refuses a
+  // click on any other, and a harness that had to rewrite the URL between
+  // authorisation and click would be exercising a path the runner does not
+  // have. Distinct paths on one origin exercise the real one.
+  ...POST_SUBMIT_KINDS.map((kind) => ({
+    name: `post-submit-${kind}`,
+    path: `/fixture-submit/${kind}`,
+    file: path.join(POST_SUBMIT, "submit-form.html"),
+    post: path.join(POST_SUBMIT, `${kind}.html`),
+    ats: "generic",
+    proves: `the click -> navigate -> classify leg, answering with the ${kind} shape`,
+  })),
 ]
 
 const byName = new Map(ROUTES.map((r) => [r.name, r]))

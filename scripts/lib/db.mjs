@@ -253,7 +253,7 @@ CREATE TABLE IF NOT EXISTS auto_submissions (
   mode             TEXT NOT NULL DEFAULT 'live',   -- 'dry_run' | 'live'
   plan_sha256      TEXT,
   confirmation_url TEXT,
-  outcome          TEXT,             -- 'attempted' | 'submitted' | 'abandoned'
+  outcome          TEXT,             -- 'attempted' | 'submitted' | 'abandoned' | 'reconciled-not-sent'
   apply_url        TEXT,             -- where the click was aimed, for an orphaned attempt
   doc              TEXT NOT NULL,    -- verify block, consent labels, screenshots
   PRIMARY KEY (slug, mode)
@@ -1135,24 +1135,62 @@ export function withBusyRetry(
   throw lastError
 }
 
+/**
+ * The terminal outcome reconcile.mjs writes when it has LOOKED at the board and
+ * the board says no application exists (§4.9).
+ *
+ * It is the only outcome that does not hold the (slug, mode) claim, and the
+ * only one besides 'abandoned' that does not count toward a cap. Both
+ * exceptions mean the same thing — nothing reached an employer — and both are
+ * written down here rather than as a bare string at three call sites, because a
+ * typo in one of them silently restores the bug each exception exists to fix.
+ */
+export const RECONCILED_NOT_SENT = "reconciled-not-sent"
+
 // THE CLAIM. Writes the intent row (outcome 'attempted', before the click) and
 // REFUSES to overwrite an existing one.
 //
 // Returns the number of rows written: 1 means this caller owns the submit, and
 // 0 MEANS THE SLUG ALREADY HAS A ROW IN THIS MODE AND THIS CALLER MUST NOT
-// CLICK. ON CONFLICT DO NOTHING rather than DO UPDATE, because a row whose job
-// is to be a claim must refuse rather than overwrite — DO UPDATE let a second
+// CLICK. The conflict handler refuses rather than overwrites, because a row
+// whose job is to be a claim must refuse — a plain DO UPDATE would let a second
 // caller quietly take a slug the first one had already attempted.
 //
 // The key is (slug, mode), so a dry-run rehearsal does not consume the live
 // claim: `dry_run` and `live` are two different rows for one slug, and the
 // caps count both on purpose.
+//
+// THE ONE OUTCOME THAT DOES NOT HOLD THE CLAIM is `reconciled-not-sent`, and
+// §4.9 requires the exception in as many words. The failure it fixes: the
+// reconciler proves an orphaned attempt never reached the employer, but under a
+// plain DO NOTHING the row still occupies (slug, mode) forever — so that slug
+// reports 0 changes on every future run, fails as `db-write-failed` each time,
+// and after two in a row pauses the board. A posting nobody applied to would
+// become permanently unappliable, loudly, for the rest of the machine's life.
+//
+// The critic's alternative — DELETE the row — is rejected and stays rejected:
+// `auto_submissions` is the store of record for what was AIMED at an employer,
+// and deleting evidence to unblock a retry is the shape hard rule 2 forbids for
+// applications. A terminal outcome unblocks the retry and keeps the history.
+//
+// The WHERE clause is what keeps this narrow. Every other outcome —
+// 'attempted', 'submitted', 'abandoned' — still hits it and reports 0.
 export function recordAutoSubmission(db, sub, retry = {}) {
   const stmt = db.prepare(
     `INSERT INTO auto_submissions
        (run_id, slug, company, title, submitted_at, mode, plan_sha256, confirmation_url, outcome, apply_url, doc)
      VALUES ($run_id, $slug, $company, $title, $submitted_at, $mode, $plan_sha256, $confirmation_url, $outcome, $apply_url, $doc)
-     ON CONFLICT(slug, mode) DO NOTHING`,
+     ON CONFLICT(slug, mode) DO UPDATE SET
+       run_id = excluded.run_id,
+       company = excluded.company,
+       title = excluded.title,
+       submitted_at = excluded.submitted_at,
+       plan_sha256 = excluded.plan_sha256,
+       confirmation_url = excluded.confirmation_url,
+       outcome = excluded.outcome,
+       apply_url = excluded.apply_url,
+       doc = excluded.doc
+     WHERE auto_submissions.outcome = '${RECONCILED_NOT_SENT}'`,
   )
   const row = {
     run_id: sub.run_id,
@@ -1239,10 +1277,19 @@ export function readAutoSubmission(db, slug, mode = "live") {
 // point of the outcome column: a run killed between the click and the
 // acknowledgement has still put an application in front of an employer.
 //
-// 'abandoned' is the one outcome that does NOT count. It means the runner
-// asserted the click was never issued, so there is no application to count —
-// and if abandonments consumed cap budget, a run of hundreds of jobs would
-// exhaust the caps on transient click-site failures alone.
+// TWO outcomes do not count, and both mean the same thing: no application
+// reached an employer.
+//
+//   'abandoned'            — the runner asserted the click was never issued.
+//                            If these consumed cap budget, a run of hundreds of
+//                            jobs would exhaust the caps on transient
+//                            click-site failures alone.
+//   'reconciled-not-sent'  — reconcile.mjs went and LOOKED, and the board says
+//                            no application exists (§4.9). Counting it would
+//                            spend the user's daily budget on an application
+//                            that provably never happened, which is the same
+//                            error as 'abandoned' with better evidence behind
+//                            it.
 //
 // IS NOT, not !=. `NULL != 'abandoned'` is NULL, which is falsy, so a row
 // written before the outcome column existed would silently stop counting.
@@ -1251,7 +1298,7 @@ export function readAutoSubmission(db, slug, mode = "live") {
 export function countAutoSubmissions(db, sinceIso) {
   return db
     .prepare(
-      "SELECT COUNT(*) c FROM auto_submissions WHERE submitted_at >= ? AND outcome IS NOT 'abandoned'",
+      "SELECT COUNT(*) c FROM auto_submissions WHERE submitted_at >= ? AND outcome IS NOT 'abandoned' AND outcome IS NOT 'reconciled-not-sent'",
     )
     .get(sinceIso).c
 }
@@ -1363,6 +1410,18 @@ export const AUTO_DEFER_KINDS = Object.freeze([
   // 'queued' carrying no kind at all, so the largest single loss bucket in a
   // degraded run is invisible to the digest and to the defer-rate gate.
   "board-paused",
+  // reconcile.mjs went and LOOKED at an orphaned attempt's board, and the board
+  // says no application exists (§4.9). A DEFERRAL rather than a failure: the
+  // machine did not malfunction, it recovered — and the honest reading is that
+  // this posting was never applied to and may be applied to again.
+  //
+  // ITS OWN KIND rather than folded into `posting-gone`, which was the first
+  // thing tried and is a different event with a different meaning. A posting
+  // that vanished says NOTHING about whether the application landed; this kind
+  // says the board was asked and answered. Reporting one as the other would put
+  // the reconciler's only positive result in a bucket the digest reads as
+  // "boards taking their listings down".
+  "reconciled-not-sent",
 ])
 
 // The machine malfunctioned. These are the ones worth waking somebody for.
@@ -2077,7 +2136,7 @@ export function companySubmissionBreakdown(db, company, sinceIso) {
     .prepare(
       // Same IS NOT as countAutoSubmissions, for the same two reasons: an
       // abandoned attempt is not an application, and a legacy NULL outcome is.
-      "SELECT company, mode FROM auto_submissions WHERE submitted_at >= ? AND outcome IS NOT 'abandoned'",
+      "SELECT company, mode FROM auto_submissions WHERE submitted_at >= ? AND outcome IS NOT 'abandoned' AND outcome IS NOT 'reconciled-not-sent'",
     )
     .all(sinceIso)
   const manual = db

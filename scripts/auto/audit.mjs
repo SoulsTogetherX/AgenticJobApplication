@@ -60,6 +60,7 @@ import {
   assertNotStopped,
   raiseStop,
   raiseSecurityAlert,
+  stopKey,
 } from "./guard.mjs"
 import {
   openDb,
@@ -81,6 +82,22 @@ import { safeText, scrubRecord } from "./untrusted-text.mjs"
 export const PROFILE_FILES = ["profile.yaml", "answers.yaml"]
 
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex")
+
+/**
+ * raiseStop options braking ONE COMPANY, or the global brake when nothing names
+ * one (§4.9).
+ *
+ * The fallback is the whole point of the helper and it is deliberately the
+ * pessimistic direction: a company-scoped brake filed under a guessed or empty
+ * key would read as "handled" while braking nothing, which is strictly worse
+ * than the halt it replaced. If we cannot say which employer may be holding an
+ * application, the honest answer is that we do not know, and not knowing stops
+ * everything.
+ */
+function companyScope(company) {
+  const name = typeof company === "string" ? company.trim() : ""
+  return name ? { scope: "company", key: name } : {}
+}
 
 /**
  * Hash both fact-base files. A missing file hashes to null rather than
@@ -144,7 +161,17 @@ export function startRun({
   // Then: did the LAST run leave a click unaccounted for? Second, not first,
   // because an already-set STOP is the more specific answer and raiseStop keeps
   // the first reason.
-  assertNoOrphanAttempts({ dbFile, stopPath: stop, jobsDir })
+  //
+  // This no longer halts the run — it brakes the affected COMPANIES (§4.9) and
+  // returns their keys. The brake FILES are the enforcement, read per job by
+  // assertNotStopped({ company }); this list is carried on the run state so the
+  // report can say "3 companies held back" as a number rather than as a
+  // silence. An orphan with no company attached still throws.
+  const orphanScope = assertNoOrphanAttempts({
+    dbFile,
+    stopPath: stop,
+    jobsDir,
+  })
 
   const run_id = newRunId(now)
   fs.mkdirSync(assertInsideJobs(dir, { jobsDir }), { recursive: true })
@@ -164,6 +191,9 @@ export function startRun({
     stop_reason: null,
     profile_sha_start: profile_start,
     profile_sha_end: null,
+    // Companies this run may not touch because a previous run left an
+    // unaccounted-for click there. A NUMBER in the report, never an absence.
+    blocked_companies: orphanScope.blocked,
     jsonl,
     ...(meta ? { meta } : {}),
   }
@@ -190,7 +220,7 @@ export function startRun({
 }
 
 /**
- * Refuse to open a run while a previous one has an unaccounted-for click.
+ * Refuse to run the COMPANIES that have an unaccounted-for click.
  *
  * THE SCENARIO, so this is testable rather than decorative: Task Scheduler's
  * ExecutionTimeLimit (01:00) kills the process one second after a submit click.
@@ -200,16 +230,32 @@ export function startRun({
  * the reputational damage that actually costs the user something, and it would
  * have arrived through a crash rather than through a bug in the caps.
  *
- * STOP names the slug and the URL because the only person who can resolve this
- * is the user, by opening the page and looking.
+ * SCOPED TO THE COMPANY (§4.9), AND THIS IS A DELIBERATE NARROWING OF WHAT USED
+ * TO HAPPEN HERE. It used to raise a global STOP and throw, so one undecidable
+ * orphan on one employer halted every future invocation until a human deleted a
+ * file — right at N=3 and wrong at N=999, because the blast radius of the halt
+ * scaled with the run and the trigger did not.
  *
- * @throws {StopError}
+ * NOTHING ABOUT THE ACTUAL PROTECTION IS WEAKER. The damage this exists to
+ * prevent is a second application to THE SAME employer, and a company-scoped
+ * brake blocks exactly that, for as long as the global one did — it is durable
+ * and there is no code path that clears it. What it stops doing is taking the
+ * other 998 companies down with it.
+ *
+ * AN ORPHAN WITH NO COMPANY STILL GOES GLOBAL, because a brake has to be filed
+ * against something and "we do not know which employer may hold an application"
+ * is not a case to be optimistic about.
+ *
+ * @returns {{ok: boolean, blocked: string[]}} — `blocked` is the company keys
+ *   now braked, so a caller can exclude them and run everything else.
+ * @throws {StopError} only when an orphan could not be attributed to a company.
  */
 export function assertNoOrphanAttempts({
   dbFile = DB_PATH,
   stopPath = null,
   jobsDir = JOBS_DIR,
   inboxPath = null,
+  stopsDir = null,
 } = {}) {
   const stop = stopPath ?? STOP_PATH
   const inbox = inboxPath ?? path.join(jobsDir, ".auto", "INBOX.md")
@@ -220,26 +266,56 @@ export function assertNoOrphanAttempts({
   } finally {
     db.close()
   }
-  if (!orphans.length) return true
+  if (!orphans.length) return { ok: true, blocked: [] }
 
-  const reason =
-    `${orphans.length} submit attempt(s) from a run that never finished — ` +
-    `each one may already be an application in the employer's ATS:\n` +
-    orphans
-      .map(
-        (o) =>
-          `  - ${o.slug} (${o.company ?? "company unknown"}, ${o.mode ?? "mode unknown"}) ` +
-          `attempted ${o.submitted_at} at ${o.apply_url ?? "url not recorded"}`,
-      )
-      .join("\n") +
-    `\nCheck each page, log or withdraw as appropriate, then delete STOP.`
-  raiseStop(reason, {
-    stopPath: stop,
-    jobsDir,
-    inboxPath: inbox,
-    meta: { orphans },
-  })
-  throw new StopError(CHECKPOINTS.RUN_START, reason)
+  const describe = (o) =>
+    `${o.slug} (${o.company ?? "company unknown"}, ${o.mode ?? "mode unknown"}) ` +
+    `attempted ${o.submitted_at} at ${o.apply_url ?? "url not recorded"}`
+
+  const blocked = []
+  const unattributed = []
+  for (const o of orphans) {
+    const company = typeof o.company === "string" ? o.company.trim() : ""
+    if (!company) {
+      unattributed.push(o)
+      continue
+    }
+    raiseStop(
+      `a submit attempt from a run that never finished may already be an ` +
+        `application at ${company}:\n  - ${describe(o)}\n` +
+        `Check that page, log or withdraw as appropriate, then delete this file. ` +
+        `Other companies are unaffected and will keep running.`,
+      {
+        scope: "company",
+        key: company,
+        stopPath: stop,
+        stopsDir,
+        jobsDir,
+        inboxPath: inbox,
+        meta: { orphan: o },
+      },
+    )
+    blocked.push(stopKey(company))
+  }
+
+  if (unattributed.length) {
+    const reason =
+      `${unattributed.length} submit attempt(s) from a run that never finished, ` +
+      `and NOTHING RECORDS WHICH EMPLOYER they were aimed at — so there is no ` +
+      `company to brake and this has to stop everything:\n` +
+      unattributed.map((o) => `  - ${describe(o)}`).join("\n") +
+      `\nCheck each page, log or withdraw as appropriate, then delete STOP.`
+    raiseStop(reason, {
+      stopPath: stop,
+      stopsDir,
+      jobsDir,
+      inboxPath: inbox,
+      meta: { orphans: unattributed },
+    })
+    throw new StopError(CHECKPOINTS.RUN_START, reason)
+  }
+
+  return { ok: false, blocked }
 }
 
 // Append-only, one JSON object per line, flushed per event. Not batched: a run
@@ -351,9 +427,19 @@ function makeRun(ctx, state) {
     jsonl: ctx.jsonl,
     event,
 
-    /** CHECKPOINT 2 of 3: between every job. */
+    /** CHECKPOINT 2 of 3: between every job.
+     *
+     *  SCOPED (§4.9), and this is where a company or board brake is actually
+     *  ENFORCED. The brake FILES are the source of truth — not a list carried
+     *  in run state — so a brake raised by a worker mid-run is seen by the next
+     *  job without anything having to pass it along. */
     beginJob(job) {
-      assertNotStopped(CHECKPOINTS.BETWEEN_JOBS, { stopPath: ctx.stop })
+      assertNotStopped(CHECKPOINTS.BETWEEN_JOBS, {
+        stopPath: ctx.stop,
+        company: job?.company ?? null,
+        board: job?.board_key ?? job?.board ?? null,
+        runId: state.run_id,
+      })
       state.planned += 1
       event("job.begin", {
         slug: job?.slug ?? null,
@@ -441,7 +527,20 @@ function makeRun(ctx, state) {
           `was never resolved or abandoned, and "${slug}" is about to overwrite it — ` +
           `the first one may already be an application`
         event("submit.unresolved", { slug: stale.slug, next: slug })
+        // TWO SEPARATE HALTS, and they are separate because they have
+        // different evidence behind them.
+        //
+        // The DURABLE brake is company-scoped, on the STALE attempt's company:
+        // the thing that may already be an application is at that employer, and
+        // that is the whole of what this proves about future runs.
+        //
+        // The thrown StopError halts THIS run in-process, which it must —
+        // pendingAttempt is a single slot and the bookkeeping that was supposed
+        // to protect it just failed, so continuing would mean trusting the same
+        // slot again. It writes no file, so the next invocation starts clean
+        // and only the braked company is held back.
         raiseStop(reason, {
+          ...companyScope(stale.company),
           stopPath: ctx.stop,
           jobsDir: ctx.jobsDir,
           meta: { run_id: state.run_id, attempt: stale },
@@ -503,7 +602,13 @@ function makeRun(ctx, state) {
           `${existing?.submitted_at ?? "time unknown"} at ${existing?.apply_url ?? "url not recorded"}) — ` +
           `this submit was refused because that application may already exist`
         event("submit.refused", { slug, existing })
+        // COMPANY-SCOPED: the evidence is "this slug may already be an
+        // application", and a slug belongs to one employer. The collision says
+        // nothing about the other 998 leads, and the damage it exists to
+        // prevent — a second application to this employer — is prevented in
+        // full by braking this employer.
         raiseStop(reason, {
+          ...companyScope(job?.company ?? existing?.company),
           stopPath: ctx.stop,
           jobsDir: ctx.jobsDir,
           meta: { run_id: state.run_id, slug, existing },
@@ -579,6 +684,68 @@ function makeRun(ctx, state) {
     },
 
     /**
+     * Resolve a DRY-RUN attempt that passed every precondition and stopped.
+     *
+     * WHY THIS IS ITS OWN VERB AND NOT recordSubmission. recordSubmission
+     * requires a confirmation_url — and raises STOP without one, correctly,
+     * because a live submission with nothing to point at is a record that
+     * cannot support a manual withdrawal. A rehearsal has no confirmation to
+     * record and never will, so routing it through that verb leaves exactly two
+     * options: STOP on every dry run, or invent a URL. Both are worse than a
+     * second verb.
+     *
+     * WHY NOT abandonAttempt EITHER, which is the other obvious reading. An
+     * abandoned row does not count toward any cap (db.mjs's `outcome IS NOT
+     * 'abandoned'`), and the schema is explicit that dry-run rows count on
+     * purpose: the rehearsal has to exercise the same cap arithmetic the live
+     * run will, or the first live night meets caps it has never once tested.
+     * So the row is resolved as 'submitted' — meaning "this rehearsal reached
+     * the submit", which is exactly what it did.
+     *
+     * It refuses in a live run. A live run that rehearsed a slug would consume
+     * that slug's live claim without sending anything.
+     */
+    recordRehearsal(sub) {
+      if (state.mode === "live")
+        throw new TypeError(
+          "recordRehearsal is for dry runs only — a live run that rehearsed a " +
+            "slug would consume its (slug, 'live') claim without submitting anything",
+        )
+      const attempt = pendingAttempt
+      if (!attempt || attempt.slug !== (sub?.slug ?? null))
+        throw new TypeError(
+          `recordRehearsal: no open attempt for "${sub?.slug ?? "(no slug)"}"` +
+            (attempt ? ` (the open one is "${attempt.slug}")` : ""),
+        )
+      pendingAttempt = null
+
+      const row = scrubbed({
+        run_id: state.run_id,
+        mode: state.mode,
+        submitted_at: new Date().toISOString(),
+        apply_url: attempt.apply_url ?? null,
+        attempted_at: attempt.submitted_at ?? null,
+        ...sub,
+        // A rehearsal, stated in the row itself. `outcome: 'submitted'` is what
+        // the caps read; `rehearsal: true` is what a human reads.
+        rehearsal: true,
+        confirmation_url: null,
+        outcome: "submitted",
+      })
+      state.submitted += 1
+      event("submit.rehearsed", row)
+
+      const db = openDb(ctx.dbFile)
+      try {
+        acknowledgeAutoSubmission(db, row)
+        upsertAutoRun(db, state)
+      } finally {
+        db.close()
+      }
+      return row
+    },
+
+    /**
      * Record a submission that has ALREADY happened.
      *
      * This never refuses to record. An application cannot be unsent, so losing
@@ -595,6 +762,12 @@ function makeRun(ctx, state) {
         // already happened, and nothing recorded afterwards can prevent it.
         // Prevention is authorize.mjs's token; this stops the NEXT one.
         event("submit.unchecked", { slug: sub?.slug ?? null })
+        // GLOBAL, and it is one of the few things that should be. §4.6 reserves
+        // global for a broken invariant, and this is the durable-attempt
+        // invariant broken from the other end: a click reached an employer
+        // without the row that was supposed to exist BEFORE it. That says the
+        // submit path itself is not the shape this directory believes it is,
+        // which is not a fact about one company or one board.
         raiseStop(
           `a submission for "${sub?.slug}" was recorded without a matching pre-submit intent row`,
           {
@@ -648,10 +821,17 @@ function makeRun(ctx, state) {
       }
 
       if (missing.length) {
+        // COMPANY-SCOPED. The application went out and the record cannot
+        // support a withdrawal — a fact about THIS employer, and the user's
+        // action is to go and look at this employer's page. If the omission is
+        // systemic it fires again on the next company, and N inbox entries
+        // naming N employers is a clearer signal than one global brake that
+        // names the first.
         raiseStop(
           `submission "${sub?.slug}" was recorded without: ${missing.join(", ")}` +
             ` — the record cannot support a manual withdrawal`,
           {
+            ...companyScope(row.company ?? attempt?.company),
             stopPath: ctx.stop,
             jobsDir: ctx.jobsDir,
             meta: { run_id: state.run_id },
@@ -664,16 +844,28 @@ function makeRun(ctx, state) {
     /**
      * The runner disabling itself on an anomaly. Records first, stops second,
      * so the reason is in the durable copy even if the STOP write fails.
+     *
+     * @param scope §4.9's blast radius. Defaults to `global`, which is right
+     *   for the four §4.6 invariant breaches this verb was written for and
+     *   wrong for anything else — a caller with evidence about one board or one
+     *   company should say so and pass a `key`, because global is the scope
+     *   that costs a night.
      */
-    stop(reason, meta = null) {
+    stop(reason, meta = null, { scope = "global", key = null } = {}) {
       // The STOP file's own text is scrubbed too. It is the shortest path from
       // a hostile page to a human's screen — the user opens it to find out why
       // the runner disabled itself — and the reason usually quotes the page.
       const safe = safeText(reason, 400)
-      state.stop_reason = safe
-      event("run.stop", { reason: safe, meta })
+      // Only a run-wide halt is the RUN's outcome. A board or company brake
+      // leaves the run running and reporting `ok`, which is the entire point of
+      // scoping — writing stop_reason here would make a 998-application success
+      // read as a stopped run.
+      if (scope === "global" || scope === "run") state.stop_reason = safe
+      event("run.stop", { reason: safe, scope, key, meta })
       persist(ctx, state)
       return raiseStop(safe, {
+        scope,
+        key,
         stopPath: ctx.stop,
         jobsDir: ctx.jobsDir,
         inboxPath: ctx.inbox,
@@ -743,17 +935,39 @@ function makeRun(ctx, state) {
         profile_mutated: mutated,
       })
       persist(ctx, state)
-      if (unresolved.length) {
-        raiseStop(state.stop_reason, {
-          stopPath: ctx.stop,
-          jobsDir: ctx.jobsDir,
-          meta: { run_id: state.run_id, attempts: unresolved },
-        })
+      // ONE BRAKE PER UNRESOLVED ATTEMPT, on its own company — the same
+      // narrowing as assertNoOrphanAttempts and for the same reason. An attempt
+      // with no company recorded falls back to global (companyScope), because
+      // "an application may exist somewhere and we cannot say where" is not a
+      // case to be optimistic about.
+      for (const a of unresolved) {
+        raiseStop(
+          `this run finished without resolving a submit attempt for "${a.slug}" ` +
+            `at ${a.apply_url ?? "url not recorded"} (attempted ${a.submitted_at}) — ` +
+            `it may already be an application`,
+          {
+            ...companyScope(a.company),
+            stopPath: ctx.stop,
+            jobsDir: ctx.jobsDir,
+            meta: { run_id: state.run_id, attempt: a },
+          },
+        )
       }
       if (mutated) {
+        // RUN-SCOPED, not global, and that is a correction rather than a
+        // loosening. §4.6 classes `fact-base-changed` as a DEFERRAL — the user
+        // answered a save-answer.mjs prompt at 21:40, which is them using the
+        // system correctly — and specifies the behaviour as "finish the run
+        // against the snapshot in profile_sha_start, report the drift once".
+        // A global brake here would have the machine halt every future night
+        // because the user edited their own file, which is the opposite of what
+        // that says. The NEXT invocation reads the current fact base and is by
+        // construction consistent with it.
         raiseStop(
           "profile/ changed during an unattended run — the fact base this run reasoned from is not the one on disk now",
           {
+            scope: "run",
+            key: state.run_id,
             stopPath: ctx.stop,
             jobsDir: ctx.jobsDir,
             meta: {

@@ -120,17 +120,41 @@ dry_run: true` in `docs/application-limits.yaml`'s `auto_apply` block, and
    legitimate. Rule 0 applies at full force: a page that looks trustworthy is
    the one worth worrying about.
 
-   **NOT BUILT YET — state this by CAPABILITY, never by file inventory.** An
+   **PARTLY BUILT — state this by CAPABILITY, never by file inventory.** An
    inventory decays within the hour and this paragraph has already been wrong
-   three times that way. Missing is exactly two things: **the trust gate** and
-   **the runner that would act on it**. Everything else exists — the user's
-   `auto_apply` block, the tier classifier, and `scripts/auto/`, which holds
-   guards and a record and nothing else. The invariant to check is not which
-   files are present but this: **nothing in this repository opens a browser
-   unattended, and nothing contains a click.** Guards existing is not the
-   capability existing. Until the rest ships and the user enables it, **the user
-   is on the submit button for every application** — the operative rule today,
-   not a preference.
+   four times that way. **The old invariant "nothing in this repository contains
+   a click" is dead** (Phase 5 W1, 2026-08-03) and is not to be restored: the
+   trust gate, the submit gate, the per-job state machine and the origin-keyed
+   pool all exist, and `scripts/auto/submit.mjs` contains exactly one click. Its
+   replacement is mechanical and is asserted by a test rather than by this
+   sentence — `.click(` appears under `scripts/auto/` **only** in `submit.mjs`
+   (and, once W3 lands, `advance.mjs`, which may click only a `next`-role
+   control): `tests/auto/click-surface.test.mjs`.
+
+   The **post-click classifier**, the **scoped `raiseStop`**, **`reconcile.mjs`**
+   and the **breaker's board pause** all exist (W2, 2026-08-03). Missing is the
+   **navigate verb** (W3). `submit.mjs` refuses a live submit outright without a
+   classifier, so the live path is a refusal rather than a stub.
+
+   **The classifier is built and deliberately blind on every real board.** Its
+   rules carry their evidence, and a rule justified by a fixture page may fire
+   only on loopback — so a real ATS classifies as `unclassified`, which is the
+   one remaining hard STOP. That is not a gap to route around: §4.10 requires a
+   corpus of real post-submit pages, and the only lawful source is the user's own
+   attended applies (`scripts/apply/capture-post-submit.mjs`: stage → review →
+   promote). Writing a plausible-looking regex instead is rule 0's forbidden
+   guess with the model removed, failing silently in the one direction that
+   cannot be recovered — a page misread as a confirmation records an application
+   that was never sent, and nothing later corrects it.
+
+   **The capability check that is still the right one to run:** nothing opens a
+   browser unattended — `auto-apply.mjs` does not launch Chromium, its stages
+   are injected, and the only caller supplying real ones is a fixture harness.
+   And the click is reachable only in `mode === 'live'`, which needs
+   `auto_apply.enabled: true` **and** a `board_allowlist` naming the board;
+   the user's file has neither, so the trust gate refuses every board today.
+   Until the user sets both, **the user is on the submit button for every
+   application** — the operative rule today, not a preference.
 
 7. **Git: `dev` branch only.** Never switch to, commit on, or push to
    `main`/`master` or anything else (`git checkout -b dev` if it doesn't exist).
@@ -251,12 +275,25 @@ reasoning, and the reasoning is what stops you re-introducing the bug — so
   be submitted once per run, `(slug)` alone lets a dry run eat the live claim.
 - A **0** from `claimAutoJob`/`recordAutoSubmission` means another worker owns
   the slug and this one must not click. Not an error; the normal fan-out result.
+  The **one** outcome that does not hold that claim is `reconciled-not-sent`;
+  every other outcome still refuses, and widening that list re-opens §4.9's
+  permanent-deadlock bug.
+- A **scoped STOP is not the breaker's board pause.** The pause is a timed
+  backoff cleared by one success; a board-scoped STOP is a durable brake only a
+  human clears. `raiseStop` **throws** on a non-global scope with no key rather
+  than widening to global — that refusal is the load-bearing half.
+- The classifier's rules are bounded by their **evidence**: a fixture-sourced
+  rule fires on loopback only. Do not "fix" a real board reading `unclassified`.
 
 ### B. Mechanical — these bite any agent, in any area
 
 - `node --test <dir>` does not recurse on Node 24; the quoted glob does.
 - **A parse is not a run** — `node --check` passes on a scope error, and a **NUL
-  byte** passes both prettier and `--check`; only a byte scan finds it.
+  byte** passes both prettier and `--check`; only a byte scan finds it. Two had
+  reached `scripts/` (`pool.mjs`, `untrusted.mjs`), making ripgrep call both
+  files binary and silently skip their contents;
+  `tests/security/source-bytes.test.mjs` is now the standing check. Write a
+  control character as an escape, never as a raw byte.
 - `db.mjs`'s `SCHEMA` is a template literal; a backtick in its SQL ends it.
 - SQLite permits **NULLs in a non-INTEGER primary key's columns**, so a nullable
   key column silently un-enforces the key (`auto_submissions.mode`).

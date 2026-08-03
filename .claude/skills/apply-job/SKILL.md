@@ -445,6 +445,33 @@ node scripts/applications/log-application.mjs <slug> --company "<Company>" --tit
 
 Update `context.json` statuses and confirm the log entry.
 
+### Then capture the post-submit page (Phase 5 W2, §4.10)
+
+**This is the only lawful source for the post-click classifier's corpus, and
+this step is the only place in the whole system where it can happen.** The
+unattended runner has to be able to tell a confirmation from a bot challenge
+from an error page, and it may only learn that from pages a real board actually
+returned. A rule written from an idea of what Greenhouse says after a submit is
+rule 0's forbidden guess with the model removed — and it fails in the direction
+that records an application that was never sent.
+
+So, while the post-submit page is still on screen: save its HTML to a temp file
+(`browser_evaluate` returning `document.documentElement.outerHTML`), then
+
+```bash
+node scripts/apply/capture-post-submit.mjs stage --url "<the post-submit url>" --html-file <temp> --board <greenhouse|lever|ashby> --slug <slug>
+```
+
+It redacts against `profile/` plus generic identifier patterns and **refuses to
+write anything if an identifier survives**. Tell the user it is staged and how
+to review and promote it — `review <id>` prints the redacted text, `promote <id>
+--kind <classification> --user-approved` puts it in the corpus. **Do not promote
+it yourself, and never pick the `--kind`:** what a page means is the user's
+judgement, and promoting copies bytes from a real employer's page into git.
+
+If the capture fails, say so and move on. A missed capture costs a thin corpus;
+it never costs an application.
+
 ## Cost expectations
 
 Per page, on a recognised ATS: **4 browser calls** — scan, write the scan to

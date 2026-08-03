@@ -476,7 +476,13 @@ function makeFinding(kind, matched, count = 1) {
 function mergeFindings(list) {
   const byKey = new Map()
   for (const f of list) {
-    const key = `${f.kind} ${f.fingerprint}`
+    // NUL as the field separator, because neither a kind nor a fingerprint can
+    // contain one, so two different pairs can never collide into one key.
+    // WRITTEN AS AN ESCAPE, never as a raw byte: a literal NUL here made
+    // ripgrep classify this whole file as binary and skip its contents, so a
+    // codebase-wide search of the rule-0 sanitiser silently returned nothing.
+    // tests/security/source-bytes.test.mjs is the standing check.
+    const key = `${f.kind}\u0000${f.fingerprint}`
     const seen = byKey.get(key)
     if (seen) seen.count += f.count
     else byKey.set(key, { ...f })

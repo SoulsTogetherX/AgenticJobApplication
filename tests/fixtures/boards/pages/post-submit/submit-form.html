@@ -1,0 +1,60 @@
+<!--
+  The form W2's live-against-fixture leg actually clicks.
+
+  DELIBERATELY THE SIMPLEST FORM IN THIS DIRECTORY. Everything that makes an
+  application hard — combos, uploads, remounts, consent boxes, hostile labels —
+  already has its own fixture and its own tests. What is under test HERE is only
+  the leg nothing has ever exercised: a real click, a real navigation, and a
+  real classification of what comes back. A field that could defer would just
+  stop the run before it reached the part being tested.
+
+  NO CONSENT TICKBOX, and that absence is load-bearing rather than an oversight.
+  Phase 4 measured that the greenhouse fixture carries one, which makes its
+  defer rate 1.0 BY CONSTRUCTION — so W1's own falsifiable check ("--board
+  greenhouse leaves one row in submitted") was unsatisfiable as written. This
+  page exists so the submit path has a form that can legitimately reach green.
+
+  SAME URL, TWO RESPONSES. A GET returns this form; a POST returns the
+  post-submit page for whichever kind the route names. That is the fixture's
+  existing `post:` mechanism, reused — it is how the Greenhouse two-step and the
+  Ashby remount are already modelled, and it means the click navigates for real
+  rather than being simulated.
+-->
+<meta charset="utf-8" />
+<title>Apply — Full-Stack Developer — Fixture Widgets</title>
+<main>
+  <h1>Full-Stack Developer</h1>
+  <p>Fixture Widgets — Remote</p>
+
+  <form method="POST" enctype="multipart/form-data">
+    <label for="first_name">First name</label>
+    <input
+      id="first_name"
+      name="first_name"
+      type="text"
+      autocomplete="given-name"
+    />
+
+    <label for="last_name">Last name</label>
+    <input
+      id="last_name"
+      name="last_name"
+      type="text"
+      autocomplete="family-name"
+    />
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="email" />
+
+    <label for="phone">Phone</label>
+    <input id="phone" name="phone" type="tel" autocomplete="tel" />
+
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" />
+
+    <!-- The one control submit.mjs is allowed to actuate. It is located by the
+         scanner's own data-aj stamp and never by this label's text: a fuzzy
+         match to a submit button is a fuzzy match to an irreversible act. -->
+    <button type="submit">Submit application</button>
+  </form>
+</main>

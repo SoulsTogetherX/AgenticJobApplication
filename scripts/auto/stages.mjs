@@ -113,6 +113,28 @@ export function makeStages({
   const vouchOf = new WeakMap()
 
   async function scan(page, { url } = {}) {
+    // WAIT FOR A CONTROL TO EXIST BEFORE SCANNING, because the runner navigates
+    // with `domcontentloaded` and every board this repo adapts renders its form
+    // client-side. MEASURED on a live Ashby application: the scan ran before
+    // hydration, came back with buttons but no fields, and the job deferred
+    // "nothing to fill" — a SHORT SCAN reported as an empty form, which is the
+    // failure mode this pipeline treats as the worst kind because it looks
+    // exactly like a page with nothing on it.
+    //
+    // A SELECTOR WAIT, NOT A SLEEP. It returns the moment a control appears, so
+    // a fast board pays nothing; a flat delay would tax every application to
+    // cover the slowest one. And it is deliberately NOT fatal on timeout: a page
+    // that genuinely has no controls is a real answer (a login wall, a posting
+    // that closed), and the scan that follows reports it honestly rather than
+    // this throwing and losing the reason.
+    try {
+      await page.waitForSelector(
+        "input,select,textarea,[contenteditable='true']",
+        { timeout: 10_000, state: "attached" },
+      )
+    } catch {
+      /* no control appeared; let the scan say so */
+    }
     const result = await scanPage(page, {
       ...(scannerSrc === undefined ? {} : { scannerSrc }),
       url,

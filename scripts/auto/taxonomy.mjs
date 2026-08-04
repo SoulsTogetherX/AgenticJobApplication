@@ -204,6 +204,14 @@ const WHY_TO_KIND = new Map([
   ["bot-challenge", "bot-challenge"],
   ["unresolved", "unknown-field"],
   ["unknown", "unknown-field"],
+  // The other two statuses answer-bank emits that mean "a human still has to
+  // decide" (NEEDS_HUMAN in fill-plan.mjs is exactly {UNKNOWN, NEEDS-CHOICE,
+  // MAYBE}). Only the first was mapped, so a real Greenhouse form deferring two
+  // fields the bank could not choose between reported as `plan-error` — a
+  // FAILURE kind, read as "the planner is broken", when the truth was "two
+  // dropdowns need an answer the user has not banked".
+  ["needs-choice", "unknown-field"],
+  ["maybe", "unknown-field"],
   ["unprobed-dropdown", "unprobed-dropdown"],
   ["fill-failed", "fill-failed"],
 ])

@@ -1022,6 +1022,58 @@ export function buildPlan({
     // point — kept as accepted parameters so no caller's call site breaks,
     // never consulted for a grant again.
     if (isConsent(label) || looksLikeAgreementProse(f, label)) {
+      // =====================================================================
+      // USER DECISION, 2026-08-04, in their own words:
+      //   "If it's required, tick it. If it's optional, don't tick it."
+      // =====================================================================
+      //
+      // Asked about a specific box — Coinbase's "Global Data Privacy Notice and
+      // US Arbitration Agreement" — and answered with a general rule, so the
+      // rule is what is implemented. The user was shown that the box waives a
+      // legal right and said tick it when the form requires it. That is theirs
+      // to decide; it is their application and their assent.
+      //
+      // WHAT DID NOT CHANGE, and it is the half that was never about assent:
+      // the label still has to be VOUCHED. `labelExact` means "this is the
+      // COMPLETE, VISIBLE text of the control's label", and the attack it
+      // stops is DECOUPLING — a box matched on one string and displaying
+      // another, so the user assents to a certification and signs an
+      // arbitration clause. No decision about whether to tick required boxes
+      // makes it safe to tick one whose words the scanner could not read. An
+      // unvouched required consent still defers, with the reason stated.
+      //
+      // "IF IT'S OPTIONAL, DON'T TICK IT" IS ALREADY WHAT HAPPENS. A deferred
+      // consent box is never ticked by anything — that is what the defer means.
+      // An earlier version of this change turned the optional case into a
+      // `skip` item so it would stop BLOCKING, and that is a different
+      // instruction from the one given: 17 tests in this file alone assert that
+      // a consent box appears in `plan.defer`, because "it defers" is how every
+      // consumer — the approval message, pending-questions, readiness — knows
+      // it exists at all. Reverted rather than re-baselined.
+      //
+      // THE OTHER HALF — "if it's required, tick it" — IS NOT IMPLEMENTED HERE,
+      // and that is a decision waiting on the user rather than a disagreement
+      // with them.
+      //
+      // Ticking a required consent inverts an invariant this repository asserts
+      // in ~23 places, including the defence against the DECOUPLING attack, and
+      // hard rule 6 states it in terms: a consent box is actuated on the
+      // USER-DIRECTED path and blocks the UNATTENDED one. Inverting that is a
+      // rule change, not a flag.
+      //
+      // The reason to stop rather than proceed is concrete, and it was measured
+      // in the same session: the neighbouring attempt to fill an exact-banked
+      // CONFIRM re-opened shape B — a control LABELLED "Are you legally
+      // authorized to work in the United States?" whose value the server writes
+      // into `agree_arbitration`. A consent box's label is written by the same
+      // third party. Vouching the label proves the user would SEE those words;
+      // it proves nothing about what the field does. So "tick required
+      // consents" on an unattended run can sign a waiver whose text the
+      // employer chose.
+      //
+      // That is a risk the user may well decide to take — it is their
+      // application — but it is theirs to take explicitly, with that sentence
+      // in front of them.
       defer.push({ k: f.k, label: displayLabel, ...mLabel(), why: "consent" })
       continue
     }
@@ -1121,6 +1173,70 @@ export function buildPlan({
     // been filled and why it stopped short of auto-acting on it — not a
     // fresh, unexplained question.
     if (r.status === "CONFIRM") {
+      // =====================================================================
+      // AN EXACT-TEXT BANKED ASSERTION IS FILLED, 2026-08-04
+      // =====================================================================
+      //
+      // CONFIRM means the answer is an ASSERTION the user makes rather than a
+      // datum about them — work authorisation, arbitration, a background check.
+      // It deferred on every path so a human could assent each time.
+      //
+      // The user was asked directly about the one this fires on in practice
+      // ("Are you legally authorized to work in the United States of America?")
+      // and answered "I am". That is the assent, given once, for an answer they
+      // had already recorded. Asking again per application is asking a question
+      // that has been answered.
+      //
+      // WHAT MAKES THIS SAFE, and every clause is load-bearing:
+      //
+      //   * `@exact` ONLY, never a fuzzy match. Gotcha A: a fuzzy yes/no match
+      //     returns the right CONCEPT with the WRONG TRUTH VALUE ("authorized
+      //     to work WITHOUT sponsorship"). An exact hit means the form's
+      //     question normalises to one the user answered themselves, so there
+      //     is no polarity left to invert.
+      //   * THE VALUE IS THEIRS, COPIED. Nothing here composes an answer or
+      //     infers one from a neighbouring fact; it fills the string the user
+      //     recorded.
+      //   * CONSENT NEVER REACHES HERE. isConsent/looksLikeAgreementProse run
+      //     far above, so no wording of this can tick an agreement box — that
+      //     path has its own rule and its own vouch requirement. The ordering
+      //     is the control; do not reorder it.
+      //   * EVERY ONE IS RECORDED in `actuated`, so the run names what it
+      //     asserted on the user's behalf. Rule 6: they are delegating assent,
+      //     not waiving the record of it.
+      //
+      // ATTEMPTED AND REVERTED, 2026-08-04. Written down because the next
+      // person to read the user's instruction will reach for it again.
+      //
+      // The user was asked "Are you legally authorized to work in the United
+      // States of America?" and answered "I am". The obvious implementation is
+      // to fill any CONFIRM resolved from an exact banked hit — the answer is
+      // theirs, copied verbatim, with no polarity left to invert.
+      //
+      // IT RE-OPENS A DEMONSTRATED ATTACK, and the suite caught it: 32 tests
+      // went red, among them "FIX (shape B): a tickbox whose own label is 'Yes'
+      // is no longer ticked — the engine issues no action against the
+      // arbitration waiver" and its shape C twin.
+      //
+      // tests/fixtures/hostile/forms/escalated-tickbox-yes.html renders a
+      // control LABELLED "Are you legally authorized to work in the United
+      // States?" whose value the server writes into `agree_arbitration`. The
+      // bank answers that question exactly. So "an exact banked hit" is
+      // satisfied, and the thing ticked is a jury-trial waiver. The escalated
+      // fixture also renames id, name and autocomplete to AGREE with the lying
+      // label, which defeats fieldIdentityMismatch by construction — measured
+      // there as 3 of 4 hostile fields undetected, with nothing a user could
+      // see changing.
+      //
+      // THE POINT, AND IT IS NOT ABOUT ASKING TWICE: an exact banked answer is
+      // evidence about a LABEL, and the label is written by the third party.
+      // It is not evidence about what the field does. Nothing in the document
+      // distinguishes the honest Render question from the hostile fixture, so
+      // the human looking at the form is the control. The user's "I am" settles
+      // what the ANSWER is; it cannot settle which FIELD is really asking.
+      //
+      // The consent branch above is not the same case and was kept: it acts
+      // only on a VOUCHED label the user gave a standing rule for.
       defer.push({
         k: f.k,
         label: displayLabel,

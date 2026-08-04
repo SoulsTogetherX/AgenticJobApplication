@@ -56,6 +56,7 @@ import {
   JOBS_DIR as VERIFY_JOBS_DIR,
 } from "../lib/verification.mjs"
 import { boardKey } from "../apply/automatability.mjs"
+import { detectAts } from "../apply/ats/index.mjs"
 import { submitOrigin } from "./authorize.mjs"
 import { trustBoard, allowlistProblems, readLimits } from "./trust.mjs"
 import { preflight, EXIT, DEFAULT_LIMITS } from "./preflight.mjs"
@@ -215,7 +216,23 @@ export function selectEligible({
   for (const [url, slug] of urls) {
     if (out.length >= limit) break
     const lead = bySlugUrl.get(url) ?? { slug, apply_url: url, url }
-    const applyUrl = lead.apply_url ?? url
+    // THE POSTING AND THE FORM ARE DIFFERENT PAGES on every board this repo
+    // adapts, and the runner was being handed the posting. It scanned a job ad,
+    // found no fields, and deferred "nothing to fill" — measured on a real lead
+    // 2026-08-03. The adapter knows the mapping; it is knowledge, not
+    // behaviour, and an unrecognised URL comes back unchanged.
+    //
+    // RESOLVED HERE, ONCE, so the trust gate, the board key, the submit token's
+    // origin binding and the navigation all agree on ONE url. Resolving it
+    // later would leave the token bound to the posting's origin while the page
+    // sat on the form's, which on Greenhouse is exactly the mismatch that
+    // silently made a filled form unsubmittable.
+    const posted = lead.apply_url ?? url
+    const adapter = detectAts(posted)
+    const applyUrl =
+      typeof adapter?.applicationUrl === "function"
+        ? adapter.applicationUrl(posted)
+        : posted
     const origin = submitOrigin(applyUrl)
     const screening = screeningFor(lead)
     const verdict = trustBoard({

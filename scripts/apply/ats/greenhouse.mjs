@@ -32,4 +32,43 @@ export default {
       accept: /\+1|united states/i,
     },
   ],
+
+  // WHERE THE FORM IS, and on Greenhouse this fixes TWO separate failures.
+  //
+  // 1. THE BOARD URL CAN REDIRECT OFF THE BOARD. Measured on a real lead
+  //    (2026-08-03): job-boards.greenhouse.io/coinbase/jobs/8022068 answered
+  //    with a 30x to www.coinbase.com/careers/positions/..., the company's own
+  //    site. The runner scanned a job ad, found no fields and deferred with
+  //    "nothing to fill". Worse, the page it had landed on was a DIFFERENT
+  //    ORIGIN from the one the submit token was bound to, so even a filled form
+  //    could not have been submitted.
+  // 2. THE AD AND THE FORM ARE DIFFERENT PAGES. The embed endpoint serves the
+  //    raw application form — 35 fields and a Submit control on the Coinbase
+  //    posting above — and it does NOT redirect, so the runner stays on the
+  //    allowlisted origin the token was minted against.
+  //
+  // Knowledge, not behaviour: a string in, a string out, nothing opened, and a
+  // URL whose shape is not recognised is returned untouched rather than
+  // rewritten on a guess.
+  applicationUrl(url) {
+    try {
+      const u = new URL(String(url))
+      if (!/greenhouse\.io$/i.test(u.hostname)) return String(url)
+      if (/\/embed\/job_app/i.test(u.pathname)) return u.toString()
+      const m = /^\/([^/]+)\/jobs\/(\d+)\/?$/.exec(u.pathname)
+      if (!m) return String(url)
+      // THE HOST IS PRESERVED, and that is load-bearing rather than tidy. An
+      // earlier version hardcoded job-boards.greenhouse.io, which silently
+      // moved a posting served from boards.greenhouse.io onto a DIFFERENT
+      // ORIGIN — so the trust gate refused a board the user had allowlisted,
+      // and a submit token minted against the posting could never have been
+      // spent on the form. Caught by the existing suite, whose fixtures use
+      // the other host. The embed endpoint exists on whichever Greenhouse host
+      // served the posting, so keeping it is both correct and the only way
+      // this function keeps the promise its comment makes.
+      return `${u.origin}/embed/job_app?for=${encodeURIComponent(m[1])}&token=${encodeURIComponent(m[2])}`
+    } catch {
+      return String(url)
+    }
+  },
 }

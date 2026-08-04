@@ -20,6 +20,7 @@ import {
   recordScreens,
   DB_PATH,
 } from "../../scripts/lib/db.mjs"
+import { detectAts } from "../../scripts/apply/ats/index.mjs"
 
 // --- the refusal ------------------------------------------------------------
 
@@ -255,8 +256,60 @@ test("selection uses the lead's apply_url, never the aggregator link", (t) => {
   const out = selectEligible({ db, limits: LIMITS, jobsDir: w.jobsDir })
   db.close()
   assert.equal(out.jobs.length, 1)
-  assert.equal(out.jobs[0].apply_url, "https://boards.greenhouse.io/a/jobs/9")
+  // UPDATED 2026-08-03, and the ORIGINAL PROPERTY IS UNCHANGED: the queued URL
+  // is still derived from `apply_url` and never from the adzuna `url`, which is
+  // what Phase 0.13 is about. What is new is that the adapter now resolves the
+  // POSTING to the FORM — the runner used to be handed the ad, scan it, find no
+  // fields and defer "nothing to fill" on every board.
+  //
+  // THE ORIGIN ASSERTION IS THE ONE THAT MATTERS and it is deliberately kept
+  // byte-identical: the submit token is bound to this origin and the page must
+  // load on it. An earlier version of the mapping hardcoded a different
+  // Greenhouse host and moved the job off the allowlisted origin — this line is
+  // what caught it.
+  assert.equal(
+    out.jobs[0].apply_url,
+    "https://boards.greenhouse.io/embed/job_app?for=a&token=9",
+  )
   assert.equal(out.jobs[0].origin, "https://boards.greenhouse.io")
+})
+
+test("resolving the posting to the form NEVER changes the origin", () => {
+  // The invariant behind the assertion above, checked directly across every
+  // adapter rather than incidentally through one fixture. The submit token is
+  // bound to the posting's origin; a mapping that moves the page to another
+  // host produces a token that can never be spent, and a board the user
+  // allowlisted that the trust gate then refuses.
+  for (const posting of [
+    "https://boards.greenhouse.io/acme/jobs/9",
+    "https://job-boards.greenhouse.io/coinbase/jobs/8022068",
+    "https://jobs.ashbyhq.com/render/88cb74a4-bc28-40b1-b792-d3041e3e17d3",
+    "https://jobs.lever.co/acme/abc-123",
+  ]) {
+    const adapter = detectAts(posting)
+    const form = adapter.applicationUrl(posting)
+    assert.notEqual(form, posting, `${posting} must resolve to a form URL`)
+    assert.equal(
+      new URL(form).origin,
+      new URL(posting).origin,
+      `${adapter.id} moved the application off the posting's origin`,
+    )
+  }
+})
+
+test("an unrecognised URL shape is returned untouched, never guessed at", () => {
+  // Knowledge, not behaviour: an adapter that cannot recognise a path must hand
+  // it back rather than invent one. A rewritten URL that 404s is worse than the
+  // original, because the runner reports "no fields" instead of "wrong page".
+  for (const url of [
+    "https://boards.greenhouse.io/acme/jobs/9/extra/segments",
+    "https://jobs.ashbyhq.com/render",
+    "https://example.com/careers/apply",
+  ]) {
+    const adapter = detectAts(url)
+    const mapped = adapter.applicationUrl ? adapter.applicationUrl(url) : url
+    assert.equal(mapped, url)
+  }
 })
 
 // ---------------------------------------------------------------------------

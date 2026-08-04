@@ -217,6 +217,25 @@ const WHY_TO_KIND = new Map([
 const WHY_PREFIXES = [
   ["unsupported field type", "unknown-field"],
   ["optional and not in the fact base", "unknown-field"],
+  // buildPlan writes "no rendered resume" / "no rendered cover" when the
+  // attachment slot has no PDF behind it, and "unrecognised attachment slot"
+  // when it cannot tell which document a file input wants.
+  //
+  // ADDED after a real run, where their absence had a consequence worth
+  // stating: an unclassified `why` becomes a loud `plan-error`, which is a
+  // FAILURE kind. So a workspace that simply had not been rendered to PDF yet
+  // reported as a code fault — "3 deferred field(s) carry a reason the taxonomy
+  // does not classify" — and the honest reading of that message is "something
+  // is broken", which sends the next reader into the planner instead of into
+  // the jobs/ directory where the missing file is.
+  //
+  // `doc-unverified` is the closest EXISTING kind and the mapping is a
+  // deliberate aggregation, not a shrug: both mean "the document this
+  // application needs is not ready", both are cleared the same way (render it,
+  // verify it, run again), and both are the user's own pipeline lagging rather
+  // than anything the board did.
+  ["no rendered", "doc-unverified"],
+  ["unrecognised attachment slot", "doc-unverified"],
 ]
 
 /**

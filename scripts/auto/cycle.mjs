@@ -195,6 +195,28 @@ export function prepareDocuments(slug, lead, { jobsDir }) {
   )
     return { slug, ok: false, stages }
 
+  // THE COVER LETTER TOO, WHEN THERE IS ONE. Measured on a real run: a
+  // workspace holding resume.md and cover-letter.md but only resume.pdf made
+  // buildPlan defer BOTH attachment slots with "no rendered cover", and the
+  // whole application failed on a document that was sitting right there in
+  // markdown. Rendering only the resume is the kind of gap that looks like it
+  // works, because the stage it skips is the one nothing asserts on.
+  //
+  // NOT FATAL when it fails. A missing cover letter defers one attachment
+  // slot; a missing resume defers the application. Treating them the same
+  // would throw away every application to a board that asks for an optional
+  // cover letter this pipeline could not render.
+  const coverMd = path.join(dir, "cover-letter.md")
+  if (fs.existsSync(coverMd)) {
+    record(
+      "render-cover-pdf",
+      step("scripts/documents/render-pdf.mjs", [
+        coverMd,
+        path.join(dir, "cover-letter.pdf"),
+      ]),
+    )
+  }
+
   return { slug, ok: true, stages }
 }
 

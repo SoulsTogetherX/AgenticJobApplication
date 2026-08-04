@@ -1182,9 +1182,38 @@ window.__ajScan = async (PROBE = true) => {
     slider: 1,
     menuitemcheckbox: 1,
     menuitemradio: 1,
-    tab: 1,
     treeitem: 1,
   }
+  // `tab` USED TO BE IN THE LIST ABOVE, AND TAKING IT OUT IS THE POINT.
+  //
+  // MEASURED ON A LIVE ASHBY APPLICATION (2026-08-03): every posting renders an
+  // "Overview" / "Application" tab strip, both `role="tab"`, so every scan
+  // emitted two `aria-tab` fields. fill-plan.mjs's VERB map has no entry for
+  // that type, so both landed in `unsupported field type` — and submitReadiness
+  // blocks on ANY defer. The result was an application that could never be
+  // submitted unattended, on every Ashby posting, forever, because of the
+  // page's own navigation.
+  //
+  // WHY THIS IS NOT "WEAKENING THE SWEEP TO GET A GREEN RUN", which is exactly
+  // the pressure this file warns about: a tab is an ACTION, and the distinction
+  // is real rather than convenient. `aria-selected` on a tab says WHICH PANEL
+  // IS SHOWING — it changes what the user SEES, not what the form SENDS. No
+  // value in a tab strip is submitted with the application. That is the same
+  // property that puts button, link and menuitem in ACTION_ROLE below.
+  //
+  // AND IT IS NOT COVERED BY THE STATEFUL ESCAPE HATCH, deliberately. That
+  // hatch exists so a board rendering a CONSENT TICK as role="button" is still
+  // seen, because there the state IS the value. A tab carries aria-selected by
+  // specification, so leaving it to the hatch would put every tab strip
+  // straight back into `fields`. So `tab` is excluded whether or not it
+  // declares state — the one role in this file for which that is true, and it
+  // is true because its state is not a value.
+  //
+  // WHAT THIS COSTS, stated rather than glossed: a board that renders a real
+  // yes/no answer as a tab strip is now invisible to the sweep. Nothing in this
+  // repo has ever seen one, and the button-pair detector above already covers
+  // the shape it would most likely take.
+  const NAVIGATION_ROLE = { tab: 1, tablist: 1, tabpanel: 1 }
   // NATIVE ELEMENTS THAT ARE FOCUSABLE BUT ARE NOT FORM CONTROLS. `a[href]`,
   // <summary>, <iframe> and the media elements are all tab stops with an
   // implicit role no page had to declare, and every board has policy links. A
@@ -1296,6 +1325,9 @@ window.__ajScan = async (PROBE = true) => {
     } catch {}
     if (hasControl) continue
     if (ACTION_ROLE[role] && !stateful) continue
+    // Navigation, whatever state it declares — see NAVIGATION_ROLE above for
+    // why this one ignores the stateful hatch that every other skip honours.
+    if (NAVIGATION_ROLE[role]) continue
     widgetCut++
     if (widgetCut > MAX_WIDGET) continue
     const da = labelDetail(el)

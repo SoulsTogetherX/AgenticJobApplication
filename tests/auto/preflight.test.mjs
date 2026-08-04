@@ -525,9 +525,57 @@ test("CLI --json against fixtures reports clear to run", () => {
   assert.ok(report.limits.length > 0)
 })
 
-test("CLI --mode live exits non-zero while auto_apply ships disabled", () => {
-  cli(
-    [
+test("CLI --mode live exits non-zero when auto_apply is disabled", () => {
+  // POINTED AT A FIXTURE, NOT AT docs/application-limits.yaml.
+  //
+  // This test used to read the USER'S OWN limits file and assert the refusal,
+  // which silently made it a test of their configuration rather than of this
+  // code. It went red the day they set `auto_apply.enabled: true` — a change
+  // that is theirs to make and that broke nothing. A test whose verdict depends
+  // on a user-owned file cannot tell "the refusal stopped working" from "the
+  // user changed their mind", and only one of those is a bug.
+  //
+  // The fixture pins the CONDITION the test is named for.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-preflight-"))
+  const limits = path.join(dir, "limits.yaml")
+  fs.writeFileSync(limits, "auto_apply:\n  enabled: false\n  dry_run: true\n")
+  try {
+    cli(
+      [
+        "--mode",
+        "live",
+        "--answers",
+        path.join(FIXTURES, "answers-bank.yaml"),
+        "--profile",
+        path.join(FIXTURES, "profile.yaml"),
+        "--limits",
+        limits,
+      ],
+      { expectExit: EXIT.REFUSED },
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("CLI --mode live is permitted once the user has enabled auto_apply", () => {
+  // The other half, so the refusal above is proved to be about `enabled` and
+  // not about `--mode live` being rejected unconditionally. Without this, the
+  // test above passes just as well against a CLI that refuses everything.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-preflight-on-"))
+  const limits = path.join(dir, "limits.yaml")
+  fs.writeFileSync(
+    limits,
+    "auto_apply:\n" +
+      "  enabled: true\n" +
+      "  dry_run: false\n" +
+      "  per_run_max: 10\n" +
+      "  per_day_max: 10\n" +
+      "  per_company_max_per_week: 5\n",
+  )
+  try {
+    const { out } = cli([
+      "--json",
       "--mode",
       "live",
       "--answers",
@@ -535,10 +583,20 @@ test("CLI --mode live exits non-zero while auto_apply ships disabled", () => {
       "--profile",
       path.join(FIXTURES, "profile.yaml"),
       "--limits",
-      path.join(ROOT, "docs", "application-limits.yaml"),
-    ],
-    { expectExit: EXIT.REFUSED },
-  )
+      limits,
+    ])
+    const report = JSON.parse(out)
+    assert.equal(report.mode, "live")
+    // The named check, not the overall verdict. Asserting `ok` would couple
+    // this to every OTHER preflight check — which is how the test above ended
+    // up depending on the user's config in the first place.
+    const authorised = report.checks.find(
+      (c) => c.id === "auto_submit_authorised",
+    )
+    assert.equal(authorised?.verdict, "pass", JSON.stringify(authorised))
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("CLI refuses to read the real profile/ from a test context", () => {

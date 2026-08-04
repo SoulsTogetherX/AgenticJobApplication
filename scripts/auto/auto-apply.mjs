@@ -64,6 +64,11 @@ import { runJob } from "./job.mjs"
 import { makeBreaker } from "./breaker.mjs"
 import { StopError, ROOT } from "./guard.mjs"
 import { safeText } from "./untrusted-text.mjs"
+// The browser leg. `launchBrowser` loads playwright-core lazily (see
+// loadChromium), so importing it here costs nothing on the --enqueue path or
+// on any invocation that refuses before a run starts.
+import { launchBrowser } from "../apply/browser.mjs"
+import { makeStages } from "./stages.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -602,19 +607,80 @@ async function main(argv) {
     return EXIT.OK
   }
 
-  // W1 ships without a browser leg wired into the CLI on purpose: the stages
-  // are injected (see runCampaign) and the only caller that supplies real ones
-  // today is the bench harness, which drives them against the loopback fixture.
-  // Wiring Chromium in here before W2 has a post-click classifier would give
-  // this command a live path nobody has exercised — the exact shape §0.1 says
-  // to write as "shall" rather than to imply.
-  process.stderr.write(
-    `auto-apply: the browser leg is Phase 5 W2, so this invocation wrote nothing. ` +
-      `${selection.jobs.length} job(s) would be eligible (${selection.considered} ` +
-      `considered, ${selection.rejected.length} rejected). Run with --enqueue to ` +
-      `queue them, or drive runCampaign() from a harness against the loopback fixture.\n`,
+  // THE BROWSER LEG. W1-W3 built the runner and left this unwired, so every
+  // invocation returned REFUSED and the whole machine — state machine, trust
+  // gate, caps, breaker, pool, classifier — was complete and unreachable. The
+  // stages are the SAME in-process code the attended path uses (see
+  // stages.mjs); nothing here is a second implementation of the rules.
+  //
+  // The gates that decide whether anything is actually sent are unchanged and
+  // upstream of this line: `mode` is "dry_run" unless the user's own
+  // `auto_apply.dry_run` is false, preflight has already refused a run the fact
+  // base cannot support, and the trust gate has already emptied the queue of
+  // any board that is not on the user's allowlist.
+  if (!selection.jobs.length) {
+    process.stderr.write(
+      `auto-apply: nothing eligible (${selection.considered} considered, ` +
+        `${selection.rejected.length} rejected). Nothing to do.\n`,
+    )
+    return EXIT.OK
+  }
+
+  const profileDoc = readYamlIfPresent(
+    path.join(ROOT, "profile", "profile.yaml"),
   )
-  return EXIT.REFUSED
+  const stages = makeStages({ jobsDir })
+
+  // AUTO_PROFILE selects the persistent lane — one shared context, for boards
+  // that need a logged-in session. Unset (the default) is the per-job
+  // non-persistent lane: a fresh context per job, no cookies, nothing on disk.
+  // See makeOpenPage for why that choice is the pool's and not job.mjs's.
+  const userDataDir = process.env.AUTO_PROFILE || null
+  let session
+  try {
+    session = await launchBrowser({
+      userDataDir,
+      headless: process.env.AUTO_HEADED ? false : true,
+      localOnly: !!args.fixture,
+    })
+  } catch (e) {
+    process.stderr.write(
+      `auto-apply: could not start a browser — ${e.message}\n`,
+    )
+    return EXIT.REFUSED
+  }
+
+  try {
+    const result = await runCampaign({
+      dbFile,
+      limits,
+      mode,
+      concurrency: args.concurrency ?? 1,
+      limit: args.limit,
+      jobs: selection.jobs,
+      jobsDir,
+      allowLoopbackHttp: args.fixture,
+      openPage: makeOpenPage(session, { localOnly: !!args.fixture }),
+      ...stages,
+      profileApproved: profileDoc?.meta?.approved_by_user === true,
+      onResult: args.json
+        ? null
+        : (r) =>
+            process.stderr.write(
+              `  ${r.slug}: ${r.state}${r.reason_kind ? ` (${r.reason_kind})` : ""}\n`,
+            ),
+    })
+    process.stdout.write(
+      args.json
+        ? `${JSON.stringify(result)}\n`
+        : `run=${result.run_id} mode=${result.mode} outcome=${result.outcome} ` +
+            `submitted=${result.submitted ?? 0} deferred=${result.deferred ?? 0} ` +
+            `failed=${result.failed ?? 0}\n`,
+    )
+    return EXIT.OK
+  } finally {
+    await session.close()
+  }
 }
 
 function readYamlIfPresent(file) {

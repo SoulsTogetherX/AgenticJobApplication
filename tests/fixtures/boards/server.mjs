@@ -284,6 +284,18 @@ export const ROUTES = [
       "an ordinary application form with no custom questions reaches ready:true — the fast path, demonstrated firing",
   },
   {
+    // ALSO HONEST, and deliberately not carrying a board token in its path:
+    // Oracle has no adapter, so this page exercises `generic` — which is the
+    // adapter whose fileFields pattern the defect was found in. See the page's
+    // own header.
+    name: "oracle-import-parse",
+    path: "/fixture-casinos/careers/job/87550",
+    file: path.join(PAGES, "oracle-import-parse.html"),
+    ats: "generic",
+    proves:
+      "a file input that is an ACTION, not a slot: 'Import your profile from resume' fires the board's parser and must never be uploaded to",
+  },
+  {
     name: "hostile-fillsrc",
     path: "/hostile/fillsrc-getter",
     file: path.join(HOSTILE, "forms", "fillsrc-getter.html"),

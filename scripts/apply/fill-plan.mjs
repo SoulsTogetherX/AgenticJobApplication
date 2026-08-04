@@ -626,6 +626,51 @@ export function labelHazard(...texts) {
   return bad.length ? describeFindings(bad) : undefined
 }
 
+// A file input that is an ACTION, not an attachment slot.
+//
+// FINDING (Oracle Recruiting Cloud, Caesars job/87550, 2026-08-04). Oracle
+// renders TWO controls that both say "resume", and adapter.fileFields matched
+// `resume|\bcv\b` against both:
+//
+//   f5   "Import your profile from resume"   input[type=file], no id, no name
+//   f19  "Upload Resume"                     the real attachment slot
+//
+// f5 is not a slot. Attaching to it fires Oracle's resume PARSER: the page
+// answered "Profile successfully imported.", auto-populated Experience and
+// Education from the PDF's text, and remounted the whole form — invalidating
+// every data-aj stamp mid-run. The parsed Education row was also WRONG
+// ("University of Nevada" for "University of Nevada, Las Vegas", the
+// Mathematics degree dropped).
+//
+// WHY THIS IS A RULE 1 CONCERN AND NOT A COSMETIC ONE. The wrong row is the
+// visible symptom; the defect is the mechanism. Firing an import control puts
+// PARSER-DERIVED TEXT into the application under the user's name — text that
+// came from a PDF re-read by the employer's own code, not from profile/, and
+// that the fact base never approved. It also arrives in fields buildPlan has
+// already decided about, so the plan's account of what was filled and the
+// page's contents stop agreeing. "It happened to parse correctly this time"
+// would not make it allowed.
+//
+// THE MATCH IS ON THE FIELD'S OWN LABEL ONLY, and unlike the fileFields
+// lookup below there is deliberately no `f.section` fallback: a section
+// heading covers every control under it, so an "Import your profile" heading
+// above BOTH controls would suppress the real attachment slot too — trading
+// this bug for a silently unattached résumé, which is worse and quieter.
+// A file input with no label at all is not detectable here and still falls
+// through to the document-order fallback, exactly as before.
+const PROFILE_IMPORT_PATTERNS = [
+  /import/i,
+  /parse/i,
+  /autofill/i,
+  /fill (in|out)/i,
+  /populate/i,
+]
+export function isProfileImportControl(label) {
+  const text = String(label ?? "").trim()
+  if (!text) return false
+  return PROFILE_IMPORT_PATTERNS.some((re) => re.test(text))
+}
+
 // Pure core (exported for tests).
 // A small set of CSS selectors, drawn from the scan's own REQUIRED fields,
 // that fill-engine.mjs checks before it fills anything — each must resolve
@@ -1104,6 +1149,33 @@ export function buildPlan({
     }
 
     if (f.t === "file") {
+      // BEFORE anything below reads adapter.fileFields: an import/parse
+      // control is not an attachment slot at all, so it never reaches the
+      // matcher and — this is the half that is easy to leave out — never
+      // consumes a `fileIndex`.
+      //
+      // BOTH HALVES ARE LOAD-BEARING, and they fail on different pages.
+      // Narrowing only the LABEL patterns would still upload to the import
+      // control on any board that labels its real slots uninformatively
+      // ("Attach"), because the doc-order fallback below would hand slot 0 —
+      // the résumé — to whichever file input comes first, and Oracle renders
+      // the import control first. Skipping without `continue`-ing past
+      // `fileIndex++` is the mirror-image bug: the import control would eat
+      // slot 0 and the real résumé field would be offered slot 1 and get the
+      // COVER LETTER, an attachment mix-up with no error anywhere. On Oracle
+      // itself the informative labels ("Upload Resume") mask the second
+      // failure; the test pins both paths. See isProfileImportControl above.
+      if (isProfileImportControl(label)) {
+        items.push({
+          k: f.k,
+          how: "skip",
+          label: displayLabel,
+          ...mLabel(),
+          why: "profile-import control, not an attachment slot: uploading here runs the board's resume parser and writes fields the fact base never approved",
+        })
+        continue
+      }
+
       // Greenhouse labels both attachment inputs just "Attach" — the real
       // heading sits outside the element the scanner reads, which is exactly
       // what scan-page.js's `section` now carries (see that file's own

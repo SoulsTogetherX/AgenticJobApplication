@@ -516,9 +516,19 @@ file.
    selector, which then fails every strategy and reports a bogus failure. The
    picker is marked `skip` so it stays visible in the plan rather than silently
    vanishing.
-3. file field → match `adapter.fileFields` by label, else fall back to
-   `adapter.fileOrder` by document order. Greenhouse labels both attachment inputs
-   just "Attach" — the real heading sits outside the element the scanner reads.
+3. file field → `isProfileImportControl(label)` first: a file input whose label
+   reads as a verb (`import`, `parse`, `autofill`, `fill in/out`, `populate`) is
+   an **action**, not an attachment slot, and is marked `skip` **without**
+   consuming a document-order slot. Oracle Recruiting Cloud renders "Import your
+   profile from resume" beside "Upload Resume", and `resume|\bcv\b` matched both:
+   uploading to it fired the board's résumé parser, which rewrote Experience and
+   Education from the PDF's text and remounted the form mid-run. That is a rule 1
+   breach — parser-derived text reaching the application without coming from
+   `profile/` — independent of whether the parse happens to be accurate.
+   Otherwise → match `adapter.fileFields` by label, else by the field's `section`
+   heading, else fall back to `adapter.fileOrder` by document order. Greenhouse
+   labels both attachment inputs just "Attach" — the real heading sits outside the
+   element the scanner reads.
 4. unsupported type → defer.
 5. `fieldIdentityMismatch(f)` → defer. A field whose own exposed identity (from
    `sel`) contradicts what its label claims is never auto-filled or auto-checked,

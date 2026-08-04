@@ -289,7 +289,17 @@ export default async function scanPage(page, opts = {}) {
   for (const f of todo) {
     const loc = page.locator('[data-aj="' + f.k + '"]')
     try {
-      await loc.scrollIntoViewIfNeeded({ timeout: 2000 })
+      // NON-FATAL, AND THAT IS THE FIX. Measured on Oracle Recruiting Cloud
+      // 2026-08-04: every required picker on the form came back with
+      //   probe_error: "locator.scrollIntoViewIfNeeded: Timeout 2000ms exceeded"
+      // and no options at all, because this call threw before the click was
+      // ever attempted. Scrolling is preparation, not the probe: a control
+      // already in view needs none, and one that genuinely cannot be reached
+      // fails the CLICK below, which is the honest error and the one whose
+      // message tells a reader what actually went wrong. Swallowing it here
+      // costs nothing and stops a scroll quirk from reading as "this board
+      // refuses to open its menus".
+      await loc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {})
       // NOT force:true. A forced click skips every actionability check —
       // "is it visible", "is it covered by an overlay", "does it receive
       // pointer events" — which is precisely "click something the user could
@@ -298,15 +308,26 @@ export default async function scanPage(page, opts = {}) {
       // is caught below as probe_error, and defers to the user, which is the
       // designed failure mode for a probe.
       await loc.click({ timeout: 2000 })
-      // Wait for the menu to RENDER, not for 300ms. react-select's own class
-      // first: a bare [role=option] also matches the phone country-code
-      // widget, which is always in the DOM — so waiting on that would return
-      // instantly on every form with a phone field, and reading it would hand
-      // every dropdown the same list of countries.
+      // Wait for the menu to RENDER, not for 300ms. When the control NAMES its
+      // menu, wait for that element to be visible — that is this control's own
+      // menu rather than a guess, so the wait ends when the thing about to be
+      // read is actually on screen. Otherwise react-select's own class: a bare
+      // [role=option] also matches the phone country-code widget, which is
+      // always in the DOM — so waiting on that would return instantly on every
+      // form with a phone field, and reading it would hand every dropdown the
+      // same list of countries.
+      const menuId = await loc.getAttribute("aria-controls").catch(() => null)
+      const menuSel = menuId
+        ? '[id="' +
+          String(menuId)
+            .split(/\s+/)[0]
+            .replace(/(["\\])/g, "\\$1") +
+          '"]'
+        : "[class*='__option']"
       await page
-        .locator("[class*='__option']")
+        .locator(menuSel)
         .first()
-        .waitFor({ state: "attached", timeout: 300 })
+        .waitFor({ state: menuId ? "visible" : "attached", timeout: 300 })
         .catch(() => {})
       // THE CUT IS STATED, NOT SILENT. A 200-option country list came back as
       // 40 with nothing recording that anything was dropped, so the field
@@ -314,15 +335,111 @@ export default async function scanPage(page, opts = {}) {
       // really does offer — past the cut — resolved as "not on offer" and was
       // deferred to the user for no reason. `total` is what the menu actually
       // rendered; the caller flags the field when it exceeds what we kept.
-      const raw = await page.evaluate(() => {
-        const pick = (sel) =>
-          [...document.querySelectorAll(sel)]
-            .map((e) => (e.innerText || "").replace(/\s+/g, " ").trim())
-            .filter(Boolean)
-        const a = pick("[class*='__option']")
-        const all = a.length ? a : pick("[role='option']")
+      // READ THE MENU THIS CONTROL NAMES, AND TAKE ITS LEAVES.
+      //
+      // MIRRORS scan-page.js's optionTexts()/rowsIn() — that file is the
+      // canonical statement of the rule and carries the full reasoning; this
+      // runs in page context and cannot import it. The two are pinned against
+      // each other BEHAVIOURALLY rather than by source text, in
+      // tests/apply/oracle-orc.test.mjs: both paths read the same ORC fixture
+      // and must return the same list, so a change to one that does not reach
+      // the other goes red.
+      //
+      // WHAT THE OLD VERSION DID ON ORC (measured 2026-08-04): nothing. The
+      // rows are not [class*='__option'] and not [role='option'], so `all` was
+      // empty and three required pickers were reported with no options —
+      // silently, since an empty list is indistinguishable from a menu that
+      // did not open.
+      const raw = await page.evaluate((ajKey) => {
+        const norm = (s) =>
+          String(s == null ? "" : s)
+            .replace(/\s+/g, " ")
+            .trim()
+        const el = document.querySelector('[data-aj="' + ajKey + '"]')
+        const vis = (n) => {
+          if (!n || !n.isConnected) return false
+          const r = n.getBoundingClientRect()
+          const st = getComputedStyle(n)
+          return (
+            (r.width > 0 || r.height > 0) &&
+            st.visibility !== "hidden" &&
+            st.display !== "none" &&
+            st.opacity !== "0"
+          )
+        }
+        // A container is not a row.
+        const leavesOnly = (list) =>
+          list.filter(
+            (n) => !list.some((o) => o !== n && n.contains && n.contains(o)),
+          )
+        const menuOf = (c) => {
+          if (!c || !c.getAttribute) return null
+          const ids = norm(
+            c.getAttribute("aria-controls") ||
+              c.getAttribute("aria-owns") ||
+              "",
+          ).split(/\s+/)
+          for (const id of ids) {
+            if (!id) continue
+            let m = null
+            try {
+              m = document.getElementById(id)
+            } catch {}
+            if (m && vis(m)) return m
+          }
+          return null
+        }
+        const rowsIn = (menu) => {
+          const declared = [...menu.querySelectorAll("[role='option']")]
+          if (declared.length) return declared
+          const nodes = [...menu.querySelectorAll("*")]
+          if (nodes.length > 400) return leavesOnly(nodes.filter(vis))
+          const out = []
+          const seen = new Set()
+          for (const n of nodes) {
+            const t = norm(n.innerText)
+            if (!t) continue
+            let leaf = true
+            for (const c of n.querySelectorAll("*")) {
+              if (norm(c.innerText)) {
+                leaf = false
+                break
+              }
+            }
+            if (!leaf) continue
+            let best = n
+            for (
+              let p = n.parentElement;
+              p && p !== menu;
+              p = p.parentElement
+            ) {
+              if (norm(p.innerText) !== t) break
+              best = p
+            }
+            if (seen.has(best)) continue
+            seen.add(best)
+            out.push(best)
+          }
+          return out
+        }
+        const menu = menuOf(el)
+        const rows = menu
+          ? rowsIn(menu)
+          : leavesOnly([
+              ...document.querySelectorAll(
+                "[role='option'],[role='listbox'] li,[class*='__option'],[class*='menu'] li",
+              ),
+            ])
+        const all = [
+          ...new Set(
+            rows
+              .filter(vis)
+              .map((e) => norm(e.innerText).slice(0, 60))
+              .filter(Boolean),
+          ),
+        ]
         return { opts: all.slice(0, 40), total: all.length }
-      })
+      }, f.k)
       // A page.evaluate return is DATA FROM THE PAGE and its shape is never
       // assumed: an unexpected one used to become `probe_error` on every
       // dropdown at once, which reads as "this board refuses to open its

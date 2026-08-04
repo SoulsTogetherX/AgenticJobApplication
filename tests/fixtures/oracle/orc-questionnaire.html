@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply — Questionnaire</title>
+  </head>
+  <body>
+    <!--
+      ORACLE RECRUITING CLOUD, PAGE 2: THE QUESTIONNAIRE.
+      Three of the four defects from the 2026-08-04 run live here. See
+      tests/fixtures/oracle/README.md for the table.
+
+      DEFECT 2 — THE MANGLED LABEL, AND THE DANGEROUS ONE. The sponsorship
+      question below is reproduced with its real wording because THE WORDING IS
+      THE DEFECT. scan-page.js's questionIn() finds the last "?" and then walks
+      back to the previous ". " to find the sentence start — and "(e.g. " ends
+      in ". ". So the group came back labelled
+
+          "H-1B status, etc) to work legally for our Company in the United States?"
+
+      which reads as an AUTHORISATION question (correct answer: Yes) while the
+      real question asks about REQUIRING SPONSORSHIP (correct answer: No). A
+      fuzzy match on the fragment returns the right concept with the wrong truth
+      value — docs/reference/09-gotchas.md gotcha A, live. The unmatched ")" in
+      the fragment is the tell that the cut landed inside a parenthetical.
+
+      DEFECT 3 — THE COMBOBOXES. Three of them, and every part of the shape
+      matters:
+        * role="combobox" is on the <input> ITSELF, not on a wrapper div. On
+          react-select it is on a div and the input is a descendant, which is
+          why the combo loop's "claim my descendants" was enough there and is
+          not enough here — the same control was reported TWICE, once as a
+          combo and once as a plain text field with a fill verb.
+        * the menu is named through aria-controls, and is NOT a descendant of
+          the control.
+        * the rows are NOT role="option". They are plain divs inside one
+          scroller <li>, so the probe's "[role='listbox'] li" matched the
+          SCROLLER and returned every option as one 60-character blob:
+          "Billboard Built In Facebook Indeed LinkedIn Radio Ad Referra".
+          The Playwright-side probe, which looks for [class*='__option'] then
+          [role='option'], found nothing at all.
+        * Veteran Status is here because a substring match on its options put
+          "Protected Veteran" on a real application — a materially false claim
+          about the user. "I am not a protected veteran" CONTAINS neither, and
+          "Protected Veteran" is a substring of the third option. Any matcher
+          that is not exact picks the wrong row on this list.
+
+      DEFECT 4 — NO RADIO INPUTS ANYWHERE, AND ~15 PHANTOM FIELDS. The age
+      question's answers are focusable <li>s: no <input type=radio>, no
+      aria-checked / aria-pressed / aria-selected. Each row is a leaf focusable
+      element, so the widget sweep reports EACH ONE as its own unfillable
+      field — and the QUESTION ITSELF is reported nowhere, because the pair
+      detector only ever looked at <button>. Twelve loose answers and no
+      question is worse than either half: the defer list is inflated to the
+      point of being skimmed, and the thing that needed answering is missing
+      from it.
+
+      The "Have you worked here before?" trio is the same question shape
+      rendered with <button>s, which the pair detector DOES see. It is here as
+      the control: whatever the fix does to the <li> shape, this one must keep
+      coming back as one group with three options.
+    -->
+    <h1>Application Questionnaire</h1>
+
+    <form id="questionnaire">
+      <div class="oj-flex oj-form-control">
+        <label class="oj-label" for="first-name">First Name</label>
+        <input
+          type="text"
+          id="first-name"
+          name="firstName"
+          class="oj-inputtext-input"
+          required
+        />
+      </div>
+
+      <!-- ============ combobox 1: required, and the blob ============ -->
+      <div class="oj-select oj-form-control" data-combo="source">
+        <label class="oj-label" id="lbl-source" for="source-input"
+          >How did you hear about us?</label
+        >
+        <div class="oj-select-choice">
+          <input
+            type="text"
+            id="source-input"
+            class="oj-select-input"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="source-listbox"
+            aria-labelledby="lbl-source"
+            aria-required="true"
+            autocomplete="off"
+          />
+        </div>
+        <input type="hidden" id="source-model" name="sourceCode" />
+        <div id="source-drop" class="oj-listbox-drop" style="display: none">
+          <ul id="source-listbox" class="oj-listbox-results" role="listbox">
+            <li class="oj-listbox-results-scroller" role="presentation">
+              <div class="oj-listbox-result" data-value="Billboard">
+                <span class="oj-listbox-result-label">Billboard</span>
+              </div>
+              <div class="oj-listbox-result" data-value="Built In">
+                <span class="oj-listbox-result-label">Built In</span>
+              </div>
+              <div class="oj-listbox-result" data-value="Facebook">
+                <span class="oj-listbox-result-label">Facebook</span>
+              </div>
+              <div class="oj-listbox-result" data-value="Indeed">
+                <span class="oj-listbox-result-label">Indeed</span>
+              </div>
+              <div class="oj-listbox-result" data-value="LinkedIn">
+                <span class="oj-listbox-result-label">LinkedIn</span>
+              </div>
+              <div class="oj-listbox-result" data-value="Radio Ad">
+                <span class="oj-listbox-result-label">Radio Ad</span>
+              </div>
+              <div class="oj-listbox-result" data-value="Referral">
+                <span class="oj-listbox-result-label">Referral</span>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ============ the sponsorship question ============ -->
+      <div class="questionnaire-question" data-question="sponsorship">
+        <span class="question-label"
+          >WILL YOU NOW OR IN THE FUTURE REQUIRE SPONSORSHIP for employment visa
+          status (e.g. H-1B status, etc) to work legally for our Company in the
+          United States?</span
+        >
+        <div class="oj-buttonset answer-set">
+          <button type="button" class="answer-option" data-value="Yes">
+            Yes
+          </button>
+          <button type="button" class="answer-option" data-value="No">
+            No
+          </button>
+        </div>
+      </div>
+
+      <!-- ============ the control: a question the detector already sees ==== -->
+      <div class="questionnaire-question" data-question="rehire">
+        <span class="question-label">Have you worked here before?</span>
+        <div class="oj-buttonset answer-set">
+          <button type="button" class="answer-option" data-value="Yes">
+            Yes
+          </button>
+          <button type="button" class="answer-option" data-value="No">
+            No
+          </button>
+          <button type="button" class="answer-option" data-value="Maybe">
+            Prefer not to say
+          </button>
+        </div>
+      </div>
+
+      <!-- ============ defect 4: twelve answers, no question ============ -->
+      <div class="questionnaire-question" data-question="age">
+        <span class="question-label"
+          >Which of the following age brackets do you fall into?</span
+        >
+        <ul class="oj-choice-list answer-set" role="presentation">
+          <li class="oj-choice-item" tabindex="0" data-value="18-24">18-24</li>
+          <li class="oj-choice-item" tabindex="0" data-value="25-34">25-34</li>
+          <li class="oj-choice-item" tabindex="0" data-value="35-44">35-44</li>
+          <li class="oj-choice-item" tabindex="0" data-value="45-54">45-54</li>
+          <li class="oj-choice-item" tabindex="0" data-value="55-64">55-64</li>
+          <li class="oj-choice-item" tabindex="0" data-value="65+">
+            65 or over
+          </li>
+          <li class="oj-choice-item" tabindex="0" data-value="decline">
+            I decline to answer
+          </li>
+        </ul>
+      </div>
+
+      <!-- ============ combobox 2: required ============ -->
+      <div class="oj-select oj-form-control" data-combo="gender">
+        <label class="oj-label" id="lbl-gender" for="gender-input"
+          >Gender</label
+        >
+        <div class="oj-select-choice">
+          <input
+            type="text"
+            id="gender-input"
+            class="oj-select-input"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="gender-listbox"
+            aria-labelledby="lbl-gender"
+            aria-required="true"
+            autocomplete="off"
+          />
+        </div>
+        <input type="hidden" id="gender-model" name="genderCode" />
+        <div id="gender-drop" class="oj-listbox-drop" style="display: none">
+          <ul id="gender-listbox" class="oj-listbox-results" role="listbox">
+            <li class="oj-listbox-results-scroller" role="presentation">
+              <div class="oj-listbox-result" data-value="Female">
+                <span class="oj-listbox-result-label">Female</span>
+              </div>
+              <div class="oj-listbox-result" data-value="Male">
+                <span class="oj-listbox-result-label">Male</span>
+              </div>
+              <div class="oj-listbox-result" data-value="Non-binary">
+                <span class="oj-listbox-result-label">Non-binary</span>
+              </div>
+              <div
+                class="oj-listbox-result"
+                data-value="I do not wish to answer"
+              >
+                <span class="oj-listbox-result-label"
+                  >I do not wish to answer</span
+                >
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ============ combobox 3: the substring trap ============ -->
+      <div class="oj-select oj-form-control" data-combo="veteran">
+        <label class="oj-label" id="lbl-veteran" for="veteran-input"
+          >Veteran Status</label
+        >
+        <div class="oj-select-choice">
+          <input
+            type="text"
+            id="veteran-input"
+            class="oj-select-input"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="veteran-listbox"
+            aria-labelledby="lbl-veteran"
+            autocomplete="off"
+          />
+        </div>
+        <input type="hidden" id="veteran-model" name="veteranCode" />
+        <div id="veteran-drop" class="oj-listbox-drop" style="display: none">
+          <ul id="veteran-listbox" class="oj-listbox-results" role="listbox">
+            <li class="oj-listbox-results-scroller" role="presentation">
+              <div
+                class="oj-listbox-result"
+                data-value="I am not a protected veteran"
+              >
+                <span class="oj-listbox-result-label"
+                  >I am not a protected veteran</span
+                >
+              </div>
+              <div class="oj-listbox-result" data-value="Protected Veteran">
+                <span class="oj-listbox-result-label">Protected Veteran</span>
+              </div>
+              <div
+                class="oj-listbox-result"
+                data-value="I do not wish to identify my protected veteran status"
+              >
+                <span class="oj-listbox-result-label"
+                  >I do not wish to identify my protected veteran status</span
+                >
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="oj-applyflow-actions">
+        <button type="button" id="back-btn" class="oj-button">Back</button>
+        <button type="submit" id="submit-btn" class="oj-button">
+          Submit Application
+        </button>
+      </div>
+    </form>
+
+    <script>
+      // THE ORC COMBOBOX, BEHAVING THE WAY THE REAL ONE DOES. Read by the
+      // browser leg only — tests/fixtures/boards/dom.mjs ignores <script>, so
+      // the DOM-harness tests read the shapes above and nothing here.
+      //
+      // The rule that matters, and the one that made the old fill path lie:
+      // TYPING IS NOT COMMITTING. Text typed into the visible input is a
+      // FILTER. The value the form submits lives in the hidden model input and
+      // changes only when a row is clicked or Enter is pressed on the
+      // highlighted row. Blur without a commit reverts the visible text to
+      // whatever the model holds — so a readback taken immediately after
+      // typing sees the typed string, and the same readback taken one blur
+      // later sees "".
+      for (const box of document.querySelectorAll("[data-combo]")) {
+        const name = box.getAttribute("data-combo")
+        const input = box.querySelector("input[role='combobox']")
+        const model = box.querySelector("input[type='hidden']")
+        const drop = document.getElementById(name + "-drop")
+        const rows = [...box.querySelectorAll(".oj-listbox-result")]
+        let hi = 0
+
+        const paint = () => {
+          for (let i = 0; i < rows.length; i++) {
+            rows[i].classList.toggle("is-highlighted", i === hi)
+          }
+        }
+        const shown = () => rows.filter((r) => r.style.display !== "none")
+        const open = () => {
+          drop.style.display = "block"
+          input.setAttribute("aria-expanded", "true")
+          paint()
+        }
+        const close = () => {
+          drop.style.display = "none"
+          input.setAttribute("aria-expanded", "false")
+        }
+        // The commit. Nothing else writes `model`.
+        const commit = (row) => {
+          if (!row) return
+          model.value = row.getAttribute("data-value")
+          input.value = model.value
+          close()
+        }
+
+        input.addEventListener("mousedown", open)
+        input.addEventListener("focus", open)
+        input.addEventListener("input", () => {
+          open()
+          const q = input.value.trim().toLowerCase()
+          for (const r of rows) {
+            const t = r.textContent.replace(/\s+/g, " ").trim().toLowerCase()
+            r.style.display = !q || t.indexOf(q) >= 0 ? "" : "none"
+          }
+          hi = 0
+          paint()
+        })
+        input.addEventListener("keydown", (e) => {
+          const list = shown()
+          if (e.key === "ArrowDown") hi = Math.min(hi + 1, list.length - 1)
+          else if (e.key === "ArrowUp") hi = Math.max(hi - 1, 0)
+          else if (e.key === "Enter") {
+            e.preventDefault()
+            // Commits the HIGHLIGHTED row, which on a list that has not
+            // finished filtering is not the row anybody asked for.
+            commit(list[hi])
+            return
+          } else if (e.key === "Escape") {
+            close()
+            return
+          }
+          paint()
+        })
+        input.addEventListener("blur", () => {
+          // The revert. A typed-but-uncommitted value does not survive it.
+          setTimeout(() => {
+            input.value = model.value || ""
+            close()
+          }, 0)
+        })
+        for (const r of rows) {
+          r.addEventListener("mousedown", (e) => {
+            e.preventDefault()
+            commit(r)
+          })
+        }
+      }
+
+      // The answer sets. Selection is a class, exactly as on the real page:
+      // no aria-checked, no aria-pressed, no aria-selected, and no
+      // input[type=radio] anywhere in the document. There is no honest way to
+      // read back which answer registered.
+      for (const set of document.querySelectorAll(".answer-set")) {
+        for (const opt of set.querySelectorAll(
+          ".answer-option, .oj-choice-item",
+        )) {
+          opt.addEventListener("click", () => {
+            for (const sib of set.querySelectorAll(
+              ".answer-option, .oj-choice-item",
+            )) {
+              sib.classList.remove("is-selected")
+            }
+            opt.classList.add("is-selected")
+          })
+        }
+      }
+    </script>
+  </body>
+</html>

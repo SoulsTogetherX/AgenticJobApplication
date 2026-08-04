@@ -132,9 +132,30 @@ function fakePage({ url = "https://ats.test/apply", elements = {} } = {}) {
           ? (spec && spec.kind) || "input"
           : (spec && spec.value) || ""
       },
+      // A ROW LOCATOR IS A WHOLE LOCATOR. It used to be a stub carrying only
+      // first(), which was enough while the engine's only move was
+      // `.filter().first().click()`. It now asks whether the exact row exists
+      // before clicking it (`.count()`), because a substring match picked the
+      // wrong option on a real form — so a stub that cannot be counted reads as
+      // "no such row" and sends every combo down the fallback path.
       filter() {
-        return { first: () => mk(sel + " >> option") }
+        return mk(sel + " >> option")
       },
+      first() {
+        return loc
+      },
+      // The engine asks the CONTROL which menu is its own (aria-controls)
+      // instead of searching the page. A fixture declares it per element:
+      // elements["#c"] = { kind: "combo", attrs: { "aria-controls": "m1" } }.
+      async getAttribute(name) {
+        log.push(["getAttribute", sel, name])
+        const attrs = (spec && spec.attrs) || {}
+        return attrs[name] == null ? null : String(attrs[name])
+      },
+      locator: (sub) => mk(sub),
+      // The last resort for a menu whose rows declare neither an option role
+      // nor an option class — which is what an ORC listbox is.
+      getByText: () => mk(sel + " >> text"),
     }
     return loc
   }
@@ -143,6 +164,7 @@ function fakePage({ url = "https://ats.test/apply", elements = {} } = {}) {
     log,
     url: () => url,
     locator: (sel) => mk(sel),
+    getByText: () => mk("[role='listbox'] >> text"),
     keyboard: {
       async type(t) {
         log.push(["type", t])
@@ -1462,6 +1484,12 @@ function fakeScanPage({
   pageScan = null,
   installed = true,
   options = ["Yes", "No"],
+  // Attributes the probe can read off a control, keyed by selector. The probe
+  // asks a combobox which menu is its own (aria-controls) before it guesses,
+  // so a board that names its menu — every Oracle Recruiting Cloud form does —
+  // is modelled by declaring it here. Empty means "names nothing", which is
+  // react-select and is what every test written before this assumed.
+  attrs = {},
 } = {}) {
   const log = []
   const page = {
@@ -1521,6 +1549,11 @@ function fakeScanPage({
         async scrollIntoViewIfNeeded() {},
         async click() {
           log.push(["click", sel])
+        },
+        async getAttribute(name) {
+          log.push(["getAttribute", sel, name])
+          const a = attrs[sel] || {}
+          return a[name] == null ? null : String(a[name])
         },
       }
       return loc
@@ -1820,6 +1853,12 @@ const driverCode = DRIVER.split(/\r?\n/)
   .filter((l) => !/^\s*\/\//.test(l))
   .join("\n")
 
+// The probe's menu wait, pinned once and asserted of BOTH page-side scanners
+// below. One string in one place, because two copies of it drifting apart is
+// exactly the failure these assertions exist to catch.
+const MENU_WAIT =
+  'waitFor({ state: menuId ? "visible" : "attached", timeout: 300 })'
+
 test("the scan driver is still a bare async function expression", () => {
   // It is eval'd as `(<contents>)`, not imported. An `export`, an `import` or
   // a leading semicolon would break it in the browser, in production only.
@@ -1834,7 +1873,12 @@ test("the scan driver has no unconditional sleeps left", () => {
   const sleeps = driverCode.match(/waitForTimeout\(\s*\d+/g) ?? []
   assert.deepEqual(sleeps, [], `still sleeping: ${sleeps.join(", ")}`)
   // and what replaced them: every wait is now a condition with a ceiling.
-  assert.ok(driverCode.includes('waitFor({ state: "attached", timeout: 300 })'))
+  // The menu wait's STATE is chosen at run time — a control that names its own
+  // menu (aria-controls, which is every Oracle Recruiting Cloud picker) is
+  // waited on until VISIBLE, because that element is the menu itself rather
+  // than a class-name guess about what a menu looks like. The ceiling is what
+  // this test is about and it is unchanged.
+  assert.ok(driverCode.includes(MENU_WAIT))
   assert.ok(driverCode.includes('waitFor({ state: "detached", timeout: 80 })'))
   assert.ok(
     driverCode.includes('waitFor({ state: "attached", timeout: 1500 })'),
@@ -2029,7 +2073,7 @@ test("the scan driver and the scan engine agree on their ceilings", () => {
     "utf8",
   )
   for (const ceiling of [
-    'waitFor({ state: "attached", timeout: 300 })',
+    MENU_WAIT,
     'waitFor({ state: "detached", timeout: 80 })',
     'waitFor({ state: "attached", timeout: 1500 })',
   ]) {

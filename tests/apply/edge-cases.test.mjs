@@ -803,6 +803,138 @@ test("E7 HANDLED [w3-resolution]: the control — an ordinary form with the same
 })
 
 // ---------------------------------------------------------------------------
+// E7b — a CAPTCHA VENDOR is not a CAPTCHA CHALLENGE (narrowed 2026-08-03)
+// ---------------------------------------------------------------------------
+// Greenhouse, Lever and Ashby all embed reCAPTCHA in its `size=invisible`
+// score-based form — a corner badge a human never interacts with. Blocking on
+// the vendor name deferred every page on every adapter board at `items: 0`,
+// including the ATTENDED path, which is the only lawful source of the
+// post-submit corpus (§4.10). Measured that day: GitLab/Affirm/Reddit all
+// `size=invisible` with `.grecaptcha-badge`; Map SSG an hCaptcha
+// `#frame=checkbox` titled "...checkbox for hCaptcha security challenge".
+//
+// The pair below is the whole point and neither half stands alone: the first
+// proves the gate OPENS for a passive widget, the second that it stays SHUT
+// for a real challenge. A fix that only satisfied the first would be the
+// forbidden guess with the model removed.
+for (const c of [
+  {
+    name: "a passive invisible score-based widget does NOT block",
+    signals: [
+      "captcha passive: invisible score-based widget, no challenge shown",
+    ],
+    blocked: false,
+  },
+  {
+    name: "a real challenge still blocks",
+    signals: ["CAPTCHA present — hand off to the user"],
+    blocked: true,
+  },
+  {
+    name: "an UNRECOGNISED captcha signal fails closed",
+    // The load-bearing case. A new vendor, a reworded signal or an escalated
+    // challenge must block by DEFAULT — the exception is a named allow, not a
+    // relaxed pattern. Invert this and an unknown signal walks straight
+    // through onto a live submit.
+    signals: ["hcaptcha challenge visible"],
+    blocked: true,
+  },
+  {
+    name: "a passive marker does not launder a challenge alongside it",
+    signals: [
+      "captcha passive: invisible score-based widget, no challenge shown",
+      "CAPTCHA present — hand off to the user",
+    ],
+    blocked: true,
+  },
+]) {
+  test(`E7b: ${c.name}`, () => {
+    const scan = {
+      url: "https://job-boards.greenhouse.io/x/jobs/1",
+      kind: "form",
+      heading: "Apply",
+      signals: c.signals,
+      fields: [
+        { k: "f1", sel: "#e", n: "email", t: "text", l: "Email", req: true },
+      ],
+    }
+    const resolved = resolveFields(scan.fields, {
+      profile: path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+      answers: path.join(ROOT, "tests", "fixtures", "answers.yaml"),
+    })
+    const plan = buildPlan({
+      scan,
+      resolved,
+      adapter: LOGIN_ADAPTER,
+      url: scan.url,
+    })
+    if (c.blocked) {
+      assert.deepEqual(plan.items, [], "a challenge must hand off, not fill")
+      assert.equal(plan.defer.length, 1)
+      assert.match(plan.defer[0].why, /captcha/i)
+      assert.equal(submitReadiness(plan).ready, false)
+    } else {
+      assert.deepEqual(
+        plan.items.map((i) => i.k),
+        ["f1"],
+        "a passive widget must leave the page fillable — this is the " +
+          "assertion that was impossible to satisfy before the narrowing",
+      )
+      assert.deepEqual(plan.defer, [])
+      assert.equal(readiness(plan).ready, true)
+    }
+  })
+}
+
+// GREP, DELIBERATELY: the scanner's classification is computed from a live DOM
+// and cannot be executed here, so the shape of the discriminator is asserted
+// against its source — the same method the E7 grep above already uses. What
+// this pins is that `passive` requires a POSITIVE `size=invisible` match, i.e.
+// that the scanner also fails closed rather than treating "not obviously a
+// challenge" as safe.
+test("E7b: the scanner's passive branch requires a positive size=invisible match", () => {
+  const scanner = src(".claude/skills/apply-job/scan-page.js")
+  assert.match(scanner, /size=invisible/)
+  assert.match(scanner, /captcha passive:/)
+  assert.match(scanner, /CAPTCHA present — hand off to the user/)
+  // The challenge-frame list must still name the shapes that block.
+  assert.match(scanner, /bframe/)
+  assert.match(scanner, /frame=checkbox/)
+})
+
+// THE BUG THIS FIX SHIPPED WITH, kept as a test because the first attempt was
+// green everywhere and still blocked every board. `iframes` is truncated to
+// 160 chars for REPORTING; on a real Greenhouse anchor `size=invisible` sits
+// past that cut, so classifying off the truncated copy silently never matched.
+// The behavioural tests above could not catch it — they feed signal strings to
+// the planner and never build one from a DOM — so the trap is pinned two ways:
+// the real URL's own geometry, and the source reading the raw elements.
+test("E7b: the 160-char report truncation destroys size=invisible — classify from the raw element", () => {
+  // Captured live from GitLab's Greenhouse board 2026-08-03. `k=` is a public
+  // reCAPTCHA site key, visible in any visitor's page source.
+  const REAL_ANCHOR =
+    "https://www.recaptcha.net/recaptcha/enterprise/anchor?ar=1&k=6LfmcbcpAAAAAChNTbhUShzUOAMj_wY9LQIvLFX0&co=aHR0cHM6Ly9qb2ItYm9hcmRzLmdyZWVuaG91c2UuaW86NDQz&hl=en&v=w_Yb7dGGXaKesJ7BMiqFJqBG&size=invisible&anchor-ms=20000&execute-ms=30000&cb=iahyxioo8qgv"
+  assert.ok(
+    REAL_ANCHOR.indexOf("size=invisible") > 160,
+    "precondition: the marker really does sit past the truncation point",
+  )
+  assert.equal(
+    /[?&#]size=invisible\b/i.test(REAL_ANCHOR.slice(0, 160)),
+    false,
+    "this is the bug: the truncated copy cannot be classified",
+  )
+  assert.equal(/[?&#]size=invisible\b/i.test(REAL_ANCHOR), true)
+
+  const scanner = src(".claude/skills/apply-job/scan-page.js")
+  assert.match(
+    scanner,
+    /captchaFrames\s*=\s*iframeEls\.filter/,
+    "the captcha classification must read the RAW elements, not the " +
+      "truncated report copy — the whole failure mode of the first attempt",
+  )
+})
+
+// ---------------------------------------------------------------------------
 // 0.6 — identity-verification wall: a named defer kind, distinct from CAPTCHA
 // and from a failed fill, and explicitly NOT a malfunction.
 // ---------------------------------------------------------------------------

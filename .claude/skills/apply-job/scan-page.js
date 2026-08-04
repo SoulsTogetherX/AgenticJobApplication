@@ -37,8 +37,12 @@
 //               pipeline can operate any of them; see the block that collects
 //               them for why that is deliberate, and for why the DETECTOR is
 //               reachability and state rather than a list of roles.
-//               "buttons" on a QUESTION ANSWERED BY A PAIR OF <button>s — see
-//               the block that collects those. Same meaning, and it is set
+//               "buttons" on a QUESTION ANSWERED BY A ROW OF CUSTOM OPTION
+//               CONTROLS — <button>s, or the focusable role-less leaves an ORC
+//               form uses — see the block that collects those. The key keeps
+//               the name it was given for the <button> case because its MEANING
+//               is unchanged and consumers read it: no verb in this pipeline
+//               operates any of them. Same meaning, and it is set
 //               whether or not the answer set was recognised, because the
 //               fill engine refuses to touch a <button> either way. What the
 //               recognition changes is `t`, and through it whether the answer
@@ -605,6 +609,98 @@ window.__ajScan = async (PROBE = true) => {
       /\*\s*$|\(required\)/i.test(label)
     )
 
+  // REQUIRED-NESS CAN LIVE ON A WRAPPER THE CONTROL DOES NOT OWN.
+  //
+  // MEASURED on Oracle Recruiting Cloud, 2026-08-04: the consent gate is
+  //   <oj-checkboxset id="legal-disclaimer-checkbox" aria-required="true">
+  //     <input type="checkbox">           <- bare: no required, no id
+  // so a scanner reading only the control's own attributes reports an optional
+  // field that the form refuses to submit without. That is the wrong direction
+  // for a `req` to be wrong in: an unrequired-looking blocker is skipped
+  // silently, and the submit fails with nothing in the run saying why.
+  //
+  // TWO BOUNDS, because "an ancestor said required" is otherwise a licence to
+  // mark every field on a form required:
+  //   1. FOUR ANCESTORS, stopping at the <form> — a marker further out is a
+  //      statement about the page, not about this control.
+  //   2. THE ANCESTOR MUST SPEAK FOR THIS CONTROL ALONE. A required marker on
+  //      a container holding several controls says which SECTION is required
+  //      and cannot say which box, so it is ignored. A radio group of five
+  //      therefore does NOT inherit its fieldset's marker, which under-reports
+  //      rather than over-reports and is the direction this file always takes.
+  const GROUP_CTRL =
+    "input,select,textarea,[contenteditable],[role='checkbox'],[role='radio']"
+  const groupRequired = (el) => {
+    if (!el || !el.parentElement) return false
+    for (let p = el.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) {
+      if (p.tagName === "BODY" || p.tagName === "HTML" || p.tagName === "FORM")
+        break
+      if (!p.getAttribute) continue
+      const marked =
+        p.getAttribute("aria-required") === "true" ||
+        (p.hasAttribute && p.hasAttribute("required"))
+      if (!marked) continue
+      let n = 0
+      try {
+        n = p.querySelectorAll(GROUP_CTRL).length
+      } catch {
+        return false
+      }
+      return n === 1
+    }
+    return false
+  }
+
+  // A CONTROL THE USER CAN SEE AND REACH WHOSE OWN BOX IS NOT PAINTED.
+  //
+  // The field loop drops anything that fails vis(), and that rule is right and
+  // is NOT being relaxed: an invisible <input> is usually a board's own backing
+  // store, and reporting one as a field would put a control the user is not
+  // looking at into the approval message. Ashby's is the canonical example —
+  // <input type="checkbox" tabindex="-1" name="question_7097054005"> at
+  // display:none, which pages/ashby-buttons.html reproduces verbatim and which
+  // must keep being dropped.
+  //
+  // But the SAME test also dropped Oracle's consent checkbox, which is painted
+  // by CSS on its <label> with the input parked at opacity: 0 — the ordinary
+  // accessible custom-checkbox idiom, used by every component library. That
+  // control is on screen, is a tab stop, and is REQUIRED. It was reported
+  // nowhere at all: not a field, not a widget, not a button, so fill-plan.mjs
+  // named two decorative page-progress widgets as the reason the form was not
+  // ready and never mentioned the one control that actually blocked it.
+  //
+  // WHAT SEPARATES THE TWO IS PRESENTATION, NOT PAINT, and every clause is
+  // load-bearing:
+  //   * CHECKBOX/RADIO ONLY. These are the controls a library restyles by
+  //     hiding the native box. A hidden text input is a backing store; there is
+  //     no idiom in which the user types into something they cannot see.
+  //   * A VISIBLE LABEL FROM A DECLARED SOURCE. The words have to be on screen
+  //     and the control has to own them (aria-labelledby / <label for> / an
+  //     enclosing <label>) — the same VOUCHABLE sources and the same
+  //     visibleToEye test the consent vouch already requires. Ashby's backing
+  //     checkbox has no label by any route, so it fails here.
+  //   * NOT REMOVED FROM THE TAB ORDER. tabindex="-1" is the page saying this
+  //     control is for its own code, not for the user. Ashby's says exactly
+  //     that, and it is the second independent reason that one stays dropped.
+  //   * NOT aria-hidden.
+  //
+  // STATED LIMIT: reporting it does not make it clickable. Playwright's
+  // actionability checks refuse a zero-opacity target, so a plan that tried to
+  // tick this would FAIL VISIBLY rather than silently — which is the designed
+  // direction, and in practice every check-verb field defers to the user
+  // anyway (fill-plan.mjs's confirm-widget gate).
+  const CHOICE_TYPE = { checkbox: 1, radio: 1 }
+  const presentedUnpainted = (el, type) => {
+    if (!CHOICE_TYPE[type]) return false
+    if (el.getAttribute("aria-hidden") === "true") return false
+    const ti = el.getAttribute("tabindex")
+    if (ti !== null && !/^\s*\d+\s*$/.test(ti)) return false
+    const d = labelDetail(el)
+    if (!VOUCHABLE[d.src] || !d.nodes.length) return false
+    if (!WORDY.test(d.text)) return false
+    return d.nodes.every(visibleToEye)
+  }
+
   // --- custom dropdown containers claim their descendants -----------------
   const COMBO_SEL = [
     "[role='combobox']",
@@ -627,10 +723,32 @@ window.__ajScan = async (PROBE = true) => {
       t: "combo",
       l: label,
       lSeen: seenOf(el, dc),
-      req: isReq(el, label) || undefined,
+      req: isReq(el, label) || groupRequired(el) || undefined,
       v: txt(el.value || el.innerText, 60) || undefined,
       h: helpOf(el) || undefined,
     })
+    // THE CONTROL CLAIMS ITSELF, NOT ONLY ITS DESCENDANTS.
+    //
+    // MEASURED on Oracle Recruiting Cloud, 2026-08-04: ORC puts
+    // role="combobox" ON THE <input>, not on a wrapper div. react-select puts
+    // it on a div and the input is a DESCENDANT, so claiming descendants alone
+    // was enough there — and on ORC it claimed nothing at all, because there
+    // is no descendant input. The same element then came back TWICE:
+    //   {"k":"f5","t":"text","l":"How did you hear about us?"}   <- fill
+    //   {"k":"f1","t":"combo","l":"How did you hear about us?"}  <- combo
+    // and that is not merely a duplicate row in a report. fill-plan.mjs's
+    // duplicateCombo() exists for the intl-tel-input shape — a country PICKER
+    // beside a separate phone TEXT INPUT under one label — and resolves it by
+    // keeping the typable half and skipping the picker. Handed two reports of
+    // ONE element it did exactly that, so the plan issued `fill` against a
+    // combobox: the text landed in the visible input, the widget never
+    // committed it to its form model, and the value reverted on blur. The
+    // application went out with the field empty and the run reported it filled.
+    //
+    // One element, one field. intl-tel-input is untouched, because there the
+    // picker and the text input are genuinely two different elements and only
+    // one of them matches COMBO_SEL.
+    claimed.add(el)
     for (const d of el.querySelectorAll("input,select,textarea,button"))
       claimed.add(d)
   }
@@ -650,7 +768,11 @@ window.__ajScan = async (PROBE = true) => {
       signals.push("password field — login wall, hand off to the user")
       continue
     }
-    if (!vis(el) && type !== "file") continue
+    // `type !== "file"` because a file input is routinely covered by a styled
+    // button and is collected whatever its visibility; presentedUnpainted() is
+    // the same allowance for the restyled tick, granted on evidence rather than
+    // on the type alone. See its own comment for what the evidence is.
+    if (!vis(el) && type !== "file" && !presentedUnpainted(el, type)) continue
     const dg = labelDetail(el)
     const label = txt(dg.text)
 
@@ -675,7 +797,7 @@ window.__ajScan = async (PROBE = true) => {
           t: type,
           l: fromFieldset ? heading : own || heading,
           lSeen: fromFieldset ? undefined : seenOf(el, d),
-          req: isReq(el, own) || undefined,
+          req: isReq(el, own) || groupRequired(el) || undefined,
           o: [],
         }
         if (fromFieldset) g.labelWhy = "label source is fieldset legend"
@@ -709,7 +831,7 @@ window.__ajScan = async (PROBE = true) => {
       t: tag === "select" ? "select" : tag === "textarea" ? "textarea" : type,
       l: label,
       lSeen: seenOf(el, dg),
-      req: isReq(el, label) || undefined,
+      req: isReq(el, label) || groupRequired(el) || undefined,
       v: txt(el.value, 60) || undefined,
       h: helpOf(el) || undefined,
     }
@@ -853,6 +975,25 @@ window.__ajScan = async (PROBE = true) => {
   // real `on`, because then the page has stated it.
   const PAIR_OPT_MAX = 40
   const PAIR_OPT_COUNT_MAX = 4
+  // A ROW OF SIBLINGS IS ONE ANSWER SET, so it may be longer than four.
+  //
+  // The count cap above is a backstop against adopting one question's text for
+  // another's options — a container holding several questions has many
+  // unnamed controls in it, and questionIn() would stamp the LAST question on
+  // all of them (the E8 trap: a wrong label is worse than an empty one). Four
+  // is the right bound when the only thing known about the candidates is that
+  // they share an ancestor.
+  //
+  // When they share a PARENT, more is known: two questions cannot both own one
+  // parent element's direct children, so the shape itself rules out the merge
+  // the cap defends against. That buys the real-world answer sets a Yes/No cap
+  // excludes — age brackets, ethnicity, titles, seven to a dozen rows — which
+  // on the ORC form measured here were 7 rows reported as 7 unfillable fields
+  // with the question attached to none of them.
+  //
+  // This WIDENS and never narrows: nothing that grouped before stops grouping,
+  // because the sibling test only ever raises the cap.
+  const PAIR_LIST_COUNT_MAX = 12
   const PAIR_QUESTION_MAX = 300
   const MAX_PAIRS = 8
   // Containers holding one of these are somebody else's question, so the walk
@@ -901,6 +1042,68 @@ window.__ajScan = async (PROBE = true) => {
   // group, and its state is reported as `on`. Order does the work — this runs
   // first and stamps what it takes, and the sweep skips anything stamped.
   const PAIR_STATE = ["aria-checked", "aria-pressed", "aria-selected"]
+
+  // AN ANSWER THAT IS NOT A <button>, AND THE HOLE THAT LEFT.
+  //
+  // MEASURED on Oracle Recruiting Cloud, 2026-08-04. ORC renders a single-
+  // select question as focusable <li>s: no <input type="radio"> anywhere in the
+  // document, no aria-checked / -pressed / -selected, no role. This detector
+  // only ever looked at <button>, so the question was not grouped and was not
+  // reported AT ALL — while each of its seven answers WAS reported, separately,
+  // by the widget sweep below, as its own unfillable `t:"widget"` field with no
+  // question attached. Across the form that was ~15 phantom entries in the
+  // defer list and not one of the questions they belonged to.
+  //
+  // That is both failure modes at once: the thing that needed answering is a
+  // silence, and the noise around it is loud enough to make the whole list get
+  // skimmed. The sweep is not the place to fix it — the sweep sees one control
+  // at a time and cannot know a neighbouring row is the same question.
+  //
+  // THE PREDICATE IS THE SWEEP'S OWN LEFTOVERS, deliberately. It matches
+  // exactly what would otherwise arrive as a loose `t:"widget"` phantom: a
+  // focusable LEAF that declares NO role. An element that declares any role at
+  // all is left alone — `role="radio"`, `role="option"`, `role="button"` and
+  // the rest already have settled handling below, and quietly re-routing them
+  // through here would change behaviour this repo has fixtures for. So this
+  // takes only what nothing else was doing anything useful with.
+  const NATIVE_TAG = {
+    INPUT: 1,
+    SELECT: 1,
+    TEXTAREA: 1,
+    BUTTON: 1,
+    OPTION: 1,
+    A: 1,
+    IFRAME: 1,
+    SUMMARY: 1,
+    DETAILS: 1,
+  }
+  const LOOSE_CHILD =
+    "input,select,textarea,button,[tabindex],[contenteditable],[role]"
+  const isLooseOption = (el) => {
+    if (NATIVE_TAG[el.tagName]) return false
+    if (full(el.getAttribute("role"))) return false
+    const ti = el.getAttribute("tabindex")
+    if (ti === null || !/^\s*\d+\s*$/.test(ti)) return false
+    // Not a leaf: a focusable element CONTAINING a control is a wrapper, which
+    // is the same exclusion the sweep makes for the same reason.
+    try {
+      if (el.querySelector(LOOSE_CHILD)) return false
+    } catch {
+      return false
+    }
+    return true
+  }
+  // Every candidate under `root`, in document order. null when the selector
+  // throws, which callers treat as "give up on this container".
+  const pairElements = (root) => {
+    let all = []
+    try {
+      all = [...root.querySelectorAll("button,[tabindex]")]
+    } catch {
+      return null
+    }
+    return all.filter((e) => e.tagName === "BUTTON" || isLooseOption(e))
+  }
   const pairOptionLabel = (el) => {
     if (!vis(el) || el.disabled || claimedNow(el)) return ""
     const l = txt(el.innerText || el.value || labelOf(el), 60)
@@ -929,19 +1132,95 @@ window.__ajScan = async (PROBE = true) => {
     }
     return full(s)
   }
+  // WHEN A SENTENCE BREAK IS NOT A SENTENCE BREAK.
+  //
+  // MEASURED on Oracle Recruiting Cloud, 2026-08-04, and it is the worst thing
+  // this file has ever done. The question was
+  //
+  //   "WILL YOU NOW OR IN THE FUTURE REQUIRE SPONSORSHIP for employment visa
+  //    status (e.g. H-1B status, etc) to work legally for our Company in the
+  //    United States?"
+  //
+  // "(e.g. " ends in ". ", so the walk back below started there and the group
+  // was labelled
+  //
+  //   "H-1B status, etc) to work legally for our Company in the United States?"
+  //
+  // which is not a truncation — it is a DIFFERENT QUESTION. The real one asks
+  // whether the user REQUIRES SPONSORSHIP (correct answer: No); the fragment
+  // reads as an authorisation question (correct answer: Yes). A fuzzy match
+  // returns the right concept with the wrong truth value, which is exactly the
+  // inversion docs/reference/09-gotchas.md gotcha A warns about, and the answer
+  // that inversion produces is a false statement on a submitted application.
+  //
+  // SO THE BIAS IS EXPLICIT: WHEN A BOUNDARY IS AMBIGUOUS, KEEP MORE TEXT. An
+  // over-long label is a question that fails to match the bank and defers to
+  // the user — one extra decision. A short label is a question that matches the
+  // wrong answer silently. Those costs are not comparable, and every rule below
+  // exists to move the failure into the first column.
+  //
+  // TWO STRUCTURAL REJECTIONS AND ONE ORTHOGRAPHIC, none of them a word list —
+  // a list of abbreviations would be the same defect one wording later, which
+  // is the lesson the pair detector above already paid for:
+  //   1. INSIDE A PARENTHETICAL. A sentence cannot end between "(" and ")".
+  //      This is the one that fires here, and the unmatched ")" left in the
+  //      fragment is the tell.
+  //   2. AFTER A DOTTED INITIALISM. "e.g", "i.e", "U.S" — single-letter
+  //      segments separated by dots are an abbreviation, not a sentence.
+  //   3. BEFORE A LOWERCASE CONTINUATION. A new sentence does not start with a
+  //      lowercase letter. Rejecting keeps more text, so this one is free.
+  // Anything that survives all three is taken as a boundary, so a container
+  // holding real prose before its question still trims that prose away.
+  const openParenAt = (s) => {
+    let n = 0
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] === "(") n++
+      else if (s[i] === ")" && n > 0) n--
+    }
+    return n > 0
+  }
+  const INITIALISM = /(?:^|[\s("'[])(?:\p{L}\.)+\p{L}$/u
+  const isBoundary = (head, j, mark) => {
+    const before = head.slice(0, j)
+    if (openParenAt(before)) return false
+    if (mark === ". " && INITIALISM.test(before)) return false
+    const next = head.slice(j + mark.length, j + mark.length + 1)
+    if (next && next.toLowerCase() === next && next.toUpperCase() !== next) {
+      return false
+    }
+    return true
+  }
   // The LAST sentence ending in a question mark. "" when the text asks
   // nothing, which is what keeps a toolbar of short unnamed buttons — Bold,
   // Italic, Underline — out of `fields` entirely.
+  //
+  // Cut at PAIR_QUESTION_MAX rather than the 120 every other label takes. The
+  // container's text was already bounded by that constant before this is
+  // called, so nothing longer can arrive; what the wider cut buys is that a
+  // 154-character sponsorship question survives WHOLE. A truncated question is
+  // the other half of the same defect — this file's own labelExact block
+  // records two consent strings that sliced to identical 120 chars — and the
+  // answer bank matches on exact text, so a cut tail is a question the user
+  // answered that no longer matches what they answered.
   const questionIn = (t) => {
     const i = t.lastIndexOf("?")
     if (i < 0) return ""
     const head = t.slice(0, i + 1)
     let start = 0
     for (const mark of [". ", "? ", "! "]) {
-      const j = head.lastIndexOf(mark, head.length - 2)
-      if (j >= 0 && j + mark.length > start) start = j + mark.length
+      // Walk back from the LAST occurrence, skipping the ones that are not
+      // sentence ends, so a rejected "(e.g. " does not hide a real boundary
+      // earlier in the text.
+      let j = head.lastIndexOf(mark, head.length - 2)
+      while (j >= 0) {
+        if (isBoundary(head, j, mark)) {
+          if (j + mark.length > start) start = j + mark.length
+          break
+        }
+        j = head.lastIndexOf(mark, j - 1)
+      }
     }
-    return txt(head.slice(start))
+    return txt(head.slice(start), PAIR_QUESTION_MAX)
   }
   // Sorted, because the comparison sorts. One entry today.
   const CLOSED_SETS = [["no", "yes"]]
@@ -965,7 +1244,7 @@ window.__ajScan = async (PROBE = true) => {
     /\b(withdraw|delete|deactivate|revoke|erase)\b|\bclose (my )?(account|profile)\b|\bsubmit\b/i
 
   const pairCands = new Map()
-  for (const el of document.querySelectorAll("button")) {
+  for (const el of pairElements(document) ?? []) {
     const l = pairOptionLabel(el)
     if (l) pairCands.set(el, l)
   }
@@ -982,12 +1261,8 @@ window.__ajScan = async (PROBE = true) => {
       // board for a reason that has nothing to do with the question.
       for (let a = el.parentElement, i = 0; a && i < 5; a = a.parentElement, i++) {
         if (a.tagName === "BODY" || a.tagName === "HTML") break
-        let all = []
-        try {
-          all = [...a.querySelectorAll("button")]
-        } catch {
-          break
-        }
+        const all = pairElements(a)
+        if (!all) break
         // A button ANOTHER pair already owns means this container spans two
         // questions; stop rather than merge them under one label.
         if (all.some((b) => pairTaken.has(b))) break
@@ -998,7 +1273,15 @@ window.__ajScan = async (PROBE = true) => {
         // adopting its text would stamp the wrong question on the group — the
         // E8 trap the widget sweep records ("a wrong label is worse than an
         // empty one"). Stop; those buttons reach `btns` exactly as today.
-        if (mine.length > PAIR_OPT_COUNT_MAX) break
+        //
+        // UNLESS THEY ARE ALL SIBLINGS, in which case the shape itself says
+        // they are one answer list and the longer cap applies — see
+        // PAIR_LIST_COUNT_MAX for why that is a widening and not a hole.
+        const listShaped = mine.every(
+          (b) => b.parentElement === mine[0].parentElement,
+        )
+        if (mine.length > (listShaped ? PAIR_LIST_COUNT_MAX : PAIR_OPT_COUNT_MAX))
+          break
         // An action sharing the container — a compact row of Yes / No /
         // Submit — is NOT a reason to give up on the question: giving up is
         // the silent miss this block exists to end. Its words come out of the
@@ -1471,6 +1754,128 @@ window.__ajScan = async (PROBE = true) => {
       : 1
   })
 
+  // --- reading a custom dropdown's options ---------------------------------
+  // A MENU IS AN ELEMENT THE CONTROL NAMES, AND ITS ROWS ARE ITS LEAVES.
+  //
+  // MEASURED on Oracle Recruiting Cloud, 2026-08-04. Three required pickers —
+  // "How did you hear about us?", "Gender", "Veteran Status" — came back with
+  // ONE option each, and that option was every option run together and cut at
+  // 60 characters:
+  //
+  //   "Billboard Built In Facebook Indeed LinkedIn Radio Ad Referra"
+  //
+  // Two independent causes, both of them the old selector list:
+  //   * THE ROWS ARE NOT role="option". ORC's rows are plain divs, so
+  //     [role='option'] matched nothing.
+  //   * "[role='listbox'] li" MATCHED A CONTAINER. The only <li> inside the
+  //     listbox is the scroller that holds every row, so its innerText IS the
+  //     whole menu. A container's text is not an option and never was; the
+  //     selector list simply had no way to say so.
+  //
+  // A blob is worse than nothing. `opts` is what answer-bank.mjs matches the
+  // user's answer against and what the field cache stores as this form's
+  // option list, so one 60-character non-answer means every real answer
+  // resolves "not on offer" — and the cache then says so again on every future
+  // application to this board.
+  //
+  // WHAT REPLACES IT, in order:
+  //   1. THE MENU THE CONTROL NAMES. aria-controls / aria-owns points at the
+  //      listbox from the combobox. That is the page telling us which element
+  //      is this control's menu, which is strictly better evidence than any
+  //      class-name guess, and it also scopes the read: a page-wide selector
+  //      hands every dropdown the same list (the phone country-code widget is
+  //      always in the DOM, which scan-engine.mjs's probe already records).
+  //   2. INSIDE IT, role="option" rows when the page declares them.
+  //   3. OTHERWISE ITS TEXT LEAVES — elements holding text with no descendant
+  //      that holds text — each climbed back out to the outermost ancestor
+  //      whose text is still the SAME string, so <li><span>X</span></li>
+  //      yields the <li> once rather than the span and the li twice.
+  // Only when the control names no menu does it fall back to the old
+  // page-wide selector list, and even then containers are dropped: a candidate
+  // that contains another candidate is not a row.
+  //
+  // STATED LIMIT: a row built from two text nodes that are NOT one string —
+  // <li><span>Billboard</span><span>(offline)</span></li> — yields two rows.
+  // The dominant shape is one label per row; a page like that reads as two
+  // options rather than one, which is a visible wrong list, not a silent one.
+  const OPTION_SEL =
+    "[role='option'],[role='listbox'] li,[class*='__option'],[class*='menu'] li"
+  // Guards the leaf walk, which costs an innerText per node. A menu with more
+  // nodes than this is not a menu; fall back rather than pay for it.
+  const MENU_NODES_MAX = 400
+  const menuOf = (el) => {
+    const ids = full(
+      (el.getAttribute && (el.getAttribute("aria-controls") || el.getAttribute("aria-owns"))) || "",
+    ).split(/\s+/)
+    for (const id of ids) {
+      const m = byId(id)
+      if (m && vis(m)) return m
+    }
+    return null
+  }
+  // Drop any candidate that contains another candidate: a container is not a
+  // row, and this is what turns the blob back into a list even on the
+  // page-wide fallback path.
+  const leavesOnly = (list) =>
+    list.filter((n) => !list.some((o) => o !== n && n.contains && n.contains(o)))
+  const rowsIn = (menu) => {
+    let declared = []
+    try {
+      declared = [...menu.querySelectorAll("[role='option']")]
+    } catch {}
+    if (declared.length) return declared
+    let nodes = []
+    try {
+      nodes = [...menu.querySelectorAll("*")]
+    } catch {
+      return []
+    }
+    if (nodes.length > MENU_NODES_MAX) return leavesOnly(nodes.filter(vis))
+    const out = []
+    const seen = new Set()
+    for (const n of nodes) {
+      const t = full(n.innerText)
+      if (!t) continue
+      let leaf = true
+      try {
+        for (const c of n.querySelectorAll("*")) {
+          if (full(c.innerText)) {
+            leaf = false
+            break
+          }
+        }
+      } catch {
+        continue
+      }
+      if (!leaf) continue
+      // Climb back out while the text is unchanged, so the row rather than the
+      // span inside it is what gets reported.
+      let best = n
+      for (let p = n.parentElement; p && p !== menu; p = p.parentElement) {
+        if (full(p.innerText) !== t) break
+        best = p
+      }
+      if (seen.has(best)) continue
+      seen.add(best)
+      out.push(best)
+    }
+    return out
+  }
+  const optionTexts = (el) => {
+    const menu = menuOf(el)
+    let rows
+    if (menu) {
+      rows = rowsIn(menu)
+    } else {
+      let wide = []
+      try {
+        wide = [...document.querySelectorAll(OPTION_SEL)]
+      } catch {}
+      rows = leavesOnly(wide)
+    }
+    return rows.filter(vis).map((o) => txt(o.innerText, 60))
+  }
+
   // --- probe custom dropdowns (batched) -----------------------------------
   if (PROBE) {
     // WHAT THE PROBE IS ALLOWED TO CLICK. Mirrored from
@@ -1515,14 +1920,7 @@ window.__ajScan = async (PROBE = true) => {
       try {
         el.click()
         await sleep(200)
-        const opts = [
-          ...document.querySelectorAll(
-            "[role='option'],[role='listbox'] li,[class*='__option'],[class*='menu'] li",
-          ),
-        ]
-          .filter(vis)
-          .map((o) => txt(o.innerText, 60))
-        const all = uniq(opts)
+        const all = uniq(optionTexts(el))
         f.opts = all.slice(0, MAX_OPTS)
         // Same silent cut as the <select> branch above, same consequence.
         if (all.length > MAX_OPTS) {
@@ -1546,12 +1944,58 @@ window.__ajScan = async (PROBE = true) => {
   }
 
   // --- page-level context -------------------------------------------------
-  const iframes = [...document.querySelectorAll("iframe")]
-    .filter(vis)
-    .slice(0, 6)
-    .map((f) => ({ src: txt(f.src, 160), title: txt(f.title, 60) }))
-  if (iframes.some((f) => /recaptcha|hcaptcha|turnstile/i.test(f.src)))
+  const iframeEls = [...document.querySelectorAll("iframe")].filter(vis).slice(0, 6)
+  const iframes = iframeEls.map((f) => ({
+    src: txt(f.src, 160),
+    title: txt(f.title, 60),
+  }))
+  // A CAPTCHA VENDOR IS NOT A CAPTCHA CHALLENGE. Matching the vendor name
+  // alone shut the entire pipeline, and the failure was invisible because it
+  // looked like the guardrail working. Greenhouse, Lever and Ashby all embed
+  // reCAPTCHA in its `size=invisible` score-based form: it renders a corner
+  // badge, asks the user nothing, and a human fills those forms without ever
+  // interacting with it. So every board with an adapter — every board on the
+  // trust allowlist — deferred its whole page at `items: 0`. That took the
+  // ATTENDED path down too, and the attended path is the only lawful source
+  // of the post-submit corpus (§4.10), so both paths were gated shut at once
+  // and neither could bootstrap the other. Measured 2026-08-03 on GitLab,
+  // Affirm and Reddit: `size=invisible`, `.grecaptcha-badge` present, no
+  // challenge rendered.
+  //
+  // FAIL CLOSED, AND THAT IS THE LOAD-BEARING HALF. A frame is passive ONLY
+  // when it positively identifies itself as invisible AND does not look like
+  // a challenge frame. Everything else still hands off: an hCaptcha
+  // `frame=checkbox` (Map SSG, same day), a reCAPTCHA v2 anchor with
+  // `size=normal`, a Turnstile widget, and a `bframe` that an invisible flow
+  // ESCALATED into a real challenge. `vis` above is the other half of that
+  // guarantee — an unshown challenge frame is `display:none` and never
+  // reaches this list, so a challenge that appears later appears here.
+  //
+  // This narrows what counts as a challenge; it does not defeat, solve or
+  // forge one. The score check still runs and still judges the session, and
+  // a score low enough to fail still fails the submit visibly.
+  // CLASSIFY FROM `iframeEls`, THE RAW ELEMENTS — NOT from `iframes` above.
+  // That copy is truncated to 160 chars for reporting, and on a real
+  // Greenhouse anchor the `size=invisible` parameter sits PAST the cut: the
+  // first attempt at this fix read the truncated string, never matched, and
+  // every board stayed blocked while the tests passed. The tests could not
+  // catch it because they feed signal strings to the planner and never build
+  // one from a live DOM. Read the full src here; truncate only for output.
+  const CAPTCHA_VENDOR = /recaptcha|hcaptcha|turnstile/i
+  const CAPTCHA_CHALLENGE = /bframe|frame=challenge|frame=checkbox|checkbox/i
+  const captchaFrames = iframeEls.filter((f) => CAPTCHA_VENDOR.test(f.src))
+  const captchaPassive = (f) =>
+    /[?&#]size=invisible\b/i.test(String(f.src || "")) &&
+    !CAPTCHA_CHALLENGE.test(String(f.src || "")) &&
+    !CAPTCHA_CHALLENGE.test(String(f.title || ""))
+  if (captchaFrames.some((f) => !captchaPassive(f)))
     signals.push("CAPTCHA present — hand off to the user")
+  else if (captchaFrames.length)
+    // Prefix pinned: fill-plan.mjs treats any OTHER captcha signal as blocking,
+    // so a new or unrecognised one fails closed rather than opening the gate.
+    signals.push(
+      "captcha passive: invisible score-based widget, no challenge shown",
+    )
   const embedded = iframes.find((f) =>
     /greenhouse|lever|ashby|workday|smartrecruiters|jobvite|icims/i.test(
       f.src,

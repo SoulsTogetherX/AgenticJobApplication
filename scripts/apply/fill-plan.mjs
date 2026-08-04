@@ -726,9 +726,23 @@ export function buildPlan({
   // page-shape refusal is not a field a user ticks in the browser, it is
   // "this is not the form", and it must block both `readiness()` and
   // `submitReadiness()` unconditionally.
-  const captchaSignal = (scan.signals ?? []).some((s) =>
-    /captcha/i.test(String(s ?? "")),
-  )
+  // NARROWED 2026-08-03, and the direction of the exception is the point.
+  // scan-page.js now distinguishes a passive `size=invisible` score-based
+  // widget (Greenhouse/Lever/Ashby embed one on every form; a human never
+  // touches it) from a real challenge, and marks the passive case with a
+  // pinned `captcha passive:` prefix. Matching bare /captcha/i here treated
+  // both as a hand-off, which deferred every page on every adapter board.
+  //
+  // The exception is a NAMED ALLOW, not a relaxed pattern: any captcha signal
+  // that is not exactly that marker still blocks, so a new vendor, a reworded
+  // signal or an escalated challenge fails closed. Do not rewrite this as
+  // "block only when the signal says challenge" — that inverts the default
+  // and an unrecognised signal would then walk straight through.
+  const PASSIVE_CAPTCHA = /^\s*captcha passive:/i
+  const captchaSignal = (scan.signals ?? []).some((s) => {
+    const t = String(s ?? "")
+    return /captcha/i.test(t) && !PASSIVE_CAPTCHA.test(t)
+  })
   // FIX (0.6, w3-resolution): a Real Talent / CLEAR selfie or liveness check
   // (or an equivalent identity-verification / "quality tier" challenge) is a
   // NAMED DEFER KIND of its own — `why: "identity-verification"` — kept

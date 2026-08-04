@@ -301,15 +301,69 @@ export default async function fillPage(page, plan) {
   // Ordered per-ATS by the planner. Every one of these drives the widget with
   // real input events, which is the whole point.
   const openCombo = async (loc) => {
-    await loc.scrollIntoViewIfNeeded({ timeout: 2500 })
+    await loc.scrollIntoViewIfNeeded({ timeout: 2500 }).catch(() => {})
     await loc.click({ timeout: 2500 })
     await page.waitForTimeout(220)
   }
-  const optionLocator = (value) =>
-    page
-      .locator("[class*='__option'], [role='option']")
-      .filter({ hasText: value })
-      .first()
+
+  // --- picking the RIGHT row -----------------------------------------------
+  // TWO DEFECTS, MEASURED ON A REAL ORACLE RECRUITING CLOUD APPLICATION
+  // (2026-08-04). Between them they put a materially false claim about the user
+  // on a submitted form: "Veteran Status" ended up holding "Protected Veteran".
+  //
+  //   1. THE MATCH WAS A SUBSTRING. `filter({ hasText: value })` is Playwright's
+  //      "contains", so on a list reading
+  //         I am not a protected veteran
+  //         Protected Veteran
+  //         I do not wish to identify my protected veteran status
+  //      more than one row matches almost anything, and `.first()` picks
+  //      whichever the board happened to render first. A near-miss on a
+  //      dropdown is not a near-miss in meaning: these three options are three
+  //      different statements and two of them are untrue.
+  //   2. THE SEARCH WAS PAGE-WIDE. Every open menu, every closed-but-attached
+  //      menu, and the phone country-code widget were all in scope, so a row
+  //      belonging to a DIFFERENT question could win.
+  //
+  // Both are fixed by asking the control which menu is its own — aria-controls
+  // is the page's own statement, read off the element at fill time rather than
+  // carried through the plan, so it works on a cached scan too — and then
+  // matching the row's WHOLE text. Where a control names no menu the behaviour
+  // is unchanged except for exactness.
+  const rxEsc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  // Whole-string, whitespace-tolerant, case-insensitive. Case is the one
+  // liberty taken: boards routinely upper-case option text in CSS and in
+  // markup, and no two options on a real list differ only by case.
+  const exactRe = (value) =>
+    new RegExp(
+      "^\\s*" + rxEsc(norm(value)).replace(/ /g, "\\s+") + "\\s*$",
+      "i",
+    )
+  const menuScope = async (loc) => {
+    let id = null
+    try {
+      id = await loc.getAttribute("aria-controls")
+    } catch {}
+    id = String(id || "").split(/\s+/)[0]
+    if (!id) return null
+    const scope = page.locator('[id="' + id.replace(/(["\\])/g, "\\$1") + '"]')
+    try {
+      if ((await scope.count()) === 1) return scope
+    } catch {}
+    return null
+  }
+  const optionLocator = async (loc, value) => {
+    const scope = (await menuScope(loc)) ?? page
+    const rows = scope.locator("[class*='__option'], [role='option']")
+    try {
+      const exact = rows.filter({ hasText: exactRe(value) })
+      if ((await exact.count()) > 0) return exact.first()
+    } catch {}
+    // No declared option rows, or none of them says this: fall back to the
+    // text itself, still whole-string. getByText returns the innermost element
+    // holding it, and a click on that bubbles to whatever the widget listens
+    // on, so nothing needs to know how the row is built.
+    return scope.getByText(exactRe(value)).first()
+  }
 
   const strategies = {
     // Typeahead: filter the list, then commit the highlighted row.
@@ -335,15 +389,61 @@ export default async function fillPage(page, plan) {
     "type-click": async (loc, value) => {
       await openCombo(loc)
       await page.keyboard.type(String(value).slice(0, 40), { delay: 20 })
-      const row = optionLocator(value)
+      const row = await optionLocator(loc, value)
       await row.waitFor({ state: "attached", timeout: 500 }).catch(() => {})
       await row.click({ timeout: 2500 })
     },
     // Short lists that do not filter at all.
     "click-option": async (loc, value) => {
       await openCombo(loc)
-      await optionLocator(value).click({ timeout: 2500 })
+      const row = await optionLocator(loc, value)
+      await row.click({ timeout: 2500 })
     },
+  }
+
+  // WHAT THE FORM WILL SEND, NOT WHAT THE BOX IS SHOWING.
+  //
+  // MEASURED ON ORACLE RECRUITING CLOUD, 2026-08-04, and this is the half of
+  // the dropdown defect that made the other half INVISIBLE. On ORC the visible
+  // input is a FILTER: text typed into it is not an answer, and the value the
+  // form submits lives in the widget's own model. Reading the control straight
+  // after typing therefore reads back the string we just typed — the check
+  // passed, the strategy was recorded as the one that worked, and the field
+  // reverted to empty the moment focus left it. The application was submitted
+  // with three required pickers empty and the run reported every one filled.
+  //
+  // A readback that can be satisfied by the act of typing is not a readback.
+  // Blurring first is what separates "the widget accepted this" from "the box
+  // is showing what I typed": a widget that committed keeps its value, and one
+  // that did not reverts, which is exactly the distinction being measured. It
+  // costs one CDP call and 150ms per attempt, and it also leaves the menu shut
+  // before the next strategy runs.
+  const committedValue = async (loc) => {
+    try {
+      await loc.evaluate((el) => el.blur && el.blur())
+      await page.waitForTimeout(150)
+    } catch (e) {
+      if (isStaleError(e)) throw e
+    }
+    return await shownValue(loc)
+  }
+
+  // A LONGER SPELLING OF THE ANSWER IS ACCEPTED; A DIFFERENT ANSWER THAT
+  // HAPPENS TO CONTAIN IT IS NOT.
+  //
+  // This used to be `got.includes(want)`, which accepts any superstring in any
+  // position — so "Protected Veteran" satisfied a request for "Veteran", and a
+  // wrong, materially false selection was reported as a success. Containment
+  // was there for the real case where a widget renders a fuller form of what
+  // was asked for ("United States" -> "United States of America"), and a PREFIX
+  // at a word boundary keeps exactly that case and drops the rest: an option
+  // that merely mentions the words later in its text is a different option.
+  const accepts = (got, want) => {
+    const g = norm(got)
+    const w = norm(want)
+    if (!g || !w) return false
+    if (g === w) return true
+    return g.startsWith(w) && /[\s(,\-:/]/.test(g.charAt(w.length))
   }
 
   const setCombo = async (loc, item) => {
@@ -359,14 +459,8 @@ export default async function fillPage(page, plan) {
       try {
         await run(loc, item.value)
         await page.waitForTimeout(200)
-        const got = await shownValue(loc)
-        if (
-          got &&
-          (norm(got) === norm(item.value) ||
-            norm(got).includes(norm(item.value)))
-        ) {
-          return { ok: true, via: name }
-        }
+        const got = await committedValue(loc)
+        if (accepts(got, item.value)) return { ok: true, via: name }
         last = "after " + name + ' the field reads "' + got + '"'
       } catch (e) {
         last = name + ": " + e.message

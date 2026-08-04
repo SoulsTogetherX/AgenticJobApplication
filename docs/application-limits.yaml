@@ -149,6 +149,20 @@ roles:
     # that is the gate working, not a regression.
     - product engineer
     - forward deployed engineer
+    # Added 2026-08-03 at the user's request: QA-automation / SDET as a second
+    # searched role family (evidenced by the SightX QA internship, Python test
+    # scripting, and this repo's Playwright automation). The soft_filter's
+    # "qa" / "test" / "automation" entries are kept deliberately: they flag
+    # these leads "title_watch" so screening reads the body and keeps
+    # automation-engineering roles while dropping manual-testing ones.
+    - qa engineer
+    - qa automation
+    - sdet
+    - software development engineer in test
+    - test engineer
+    - test automation
+    - automation engineer
+    - quality engineer
 
   # ===========================================================================
   # HARD FILTER — a title containing any of these is rejected at ingest.
@@ -297,8 +311,8 @@ roles:
     - part-time
 
 auto_apply:
-  enabled: false
-  dry_run: true
+  enabled: true
+  dry_run: false
   per_run_max: 10
   per_day_max: 10
   per_company_max_per_week: 5

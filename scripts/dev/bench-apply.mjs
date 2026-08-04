@@ -339,6 +339,22 @@ export function instrumentedPage(spec = {}) {
 
   const el = (sel) => elements[sel] || null
 
+  // THE ROW MATCHER IS A RegExp NOW, and the double needs the literal it
+  // stands for. fill-engine.mjs matches an option row on its WHOLE text
+  // (`^\s*value\s*$`, case-insensitive) rather than on containment, because a
+  // substring match put "Protected Veteran" into a real Veteran Status field.
+  // What this model has to reproduce is "clicking this row commits THAT
+  // value", so it unpicks the pattern back into the value it was built from.
+  // A plain string still passes straight through.
+  const matcherText = (m) =>
+    m instanceof RegExp
+      ? String(m.source)
+          .replace(/^\^\\s\*/, "")
+          .replace(/\\s\*\$$/, "")
+          .replace(/\\s\+/g, " ")
+          .replace(/\\(.)/g, "$1")
+      : m
+
   // --- inferring which combo strategy is running ---------------------------
   //
   // setCombo() never tells the page which strategy it is trying, so the double
@@ -370,8 +386,26 @@ export function instrumentedPage(spec = {}) {
       first() {
         return loc
       },
+      // A menu scoped to the control that named it: page.locator(menu).locator(rows).
+      locator(sub) {
+        note("locator.locator", sel, sub)
+        return makeLocator(sub)
+      },
+      getByText(matcher) {
+        note("locator.getByText", sel)
+        return makeLocator(sel + " :text", matcherText(matcher))
+      },
       filter({ hasText }) {
-        return makeLocator(sel, hasText)
+        return makeLocator(sel, matcherText(hasText))
+      },
+      // The engines now ask the CONTROL which menu is its own (aria-controls)
+      // instead of searching the page, so the double has to be able to answer.
+      // A fixture declares them per element: elements["#x"] = { attrs: {...} }.
+      async getAttribute(name) {
+        note("getAttribute", sel, name)
+        if (staleForever) throw stale()
+        const attrs = (el(sel) || {}).attrs || {}
+        return attrs[name] == null ? null : String(attrs[name])
       },
       async waitFor(o = {}) {
         // The two conditional waits the engines use: "an option appeared" and
@@ -462,6 +496,13 @@ export function instrumentedPage(spec = {}) {
     locator(sel) {
       note("locator", sel)
       return makeLocator(sel)
+    },
+    // The fallback row lookup, for a menu whose rows declare no option role or
+    // class — which is what an ORC listbox is. Same commit behaviour as a
+    // filtered row locator: this IS a row, identified by its whole text.
+    getByText(matcher) {
+      note("getByText", String(matcher))
+      return makeLocator("[role='listbox'] :text", matcherText(matcher))
     },
     async waitForTimeout(ms) {
       await waitForTimeout(ms)

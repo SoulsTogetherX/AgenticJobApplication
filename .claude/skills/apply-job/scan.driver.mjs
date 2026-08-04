@@ -121,34 +121,125 @@ async (page) => {
   for (const f of todo) {
     const loc = page.locator('[data-aj="' + f.k + '"]')
     try {
-      await loc.scrollIntoViewIfNeeded({ timeout: 2000 })
+      // NON-FATAL — mirrored from scan-engine.mjs, which carries the
+      // measurement: on Oracle Recruiting Cloud this threw before the click was
+      // ever attempted and every required picker came back as a probe_error
+      // with no options. Scrolling is preparation, not the probe.
+      await loc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {})
       // NOT force:true — a forced click skips every actionability check, which
       // is "click something the user could not have clicked". See the engine.
       await loc.click({ timeout: 2000 })
-      // Wait for the menu to RENDER, not for a flat 300ms. react-select's own
-      // class first: a bare [role=option] also matches the phone country-code
-      // widget, which is always in the DOM — so waiting on that would return
+      // Wait for the menu to RENDER, not for a flat 300ms. When the control
+      // NAMES its menu (aria-controls), wait for that element: it is this
+      // control's own menu rather than a guess. Otherwise react-select's own
+      // class — a bare [role=option] also matches the phone country-code
+      // widget, which is always in the DOM, so waiting on that would return
       // instantly on every form with a phone field, and reading it would hand
       // every dropdown the same list of countries.
+      const menuId = await loc.getAttribute("aria-controls").catch(() => null)
+      const menuSel = menuId
+        ? '[id="' + String(menuId).split(/\s+/)[0].replace(/(["\\])/g, "\\$1") + '"]'
+        : "[class*='__option']"
       await page
-        .locator("[class*='__option']")
+        .locator(menuSel)
         .first()
-        .waitFor({ state: "attached", timeout: 300 })
+        .waitFor({ state: menuId ? "visible" : "attached", timeout: 300 })
         .catch(() => {})
       // THE CUT IS STATED, NOT SILENT — mirrored from scan-engine.mjs, which
       // carries the reasoning: 40 survivors of a 200-option country list are
       // indistinguishable from a genuine 40-option list, so the cache stores
       // the short list as complete and an answer past the cut is deferred as
       // unofferable.
-      const raw = await page.evaluate(() => {
-        const pick = (sel) =>
-          [...document.querySelectorAll(sel)]
-            .map((e) => (e.innerText || "").replace(/\s+/g, " ").trim())
-            .filter(Boolean)
-        const a = pick("[class*='__option']")
-        const all = a.length ? a : pick("[role='option']")
+      //
+      // SO IS THE OPTION READ ITSELF, mirrored from the same file and from
+      // scan-page.js's optionTexts(): read the menu the control NAMES and take
+      // its LEAVES. The old page-wide selector list returned every ORC option
+      // as one 60-character blob, because the only <li> inside the listbox is
+      // the scroller that holds them all and a container's text is not an
+      // option.
+      const raw = await page.evaluate((ajKey) => {
+        const norm = (s) =>
+          String(s == null ? "" : s)
+            .replace(/\s+/g, " ")
+            .trim()
+        const el = document.querySelector('[data-aj="' + ajKey + '"]')
+        const vis = (n) => {
+          if (!n || !n.isConnected) return false
+          const r = n.getBoundingClientRect()
+          const st = getComputedStyle(n)
+          return (
+            (r.width > 0 || r.height > 0) &&
+            st.visibility !== "hidden" &&
+            st.display !== "none" &&
+            st.opacity !== "0"
+          )
+        }
+        const leavesOnly = (list) =>
+          list.filter(
+            (n) => !list.some((o) => o !== n && n.contains && n.contains(o)),
+          )
+        const menuOf = (c) => {
+          if (!c || !c.getAttribute) return null
+          const ids = norm(
+            c.getAttribute("aria-controls") || c.getAttribute("aria-owns") || "",
+          ).split(/\s+/)
+          for (const id of ids) {
+            if (!id) continue
+            let m = null
+            try {
+              m = document.getElementById(id)
+            } catch {}
+            if (m && vis(m)) return m
+          }
+          return null
+        }
+        const rowsIn = (menu) => {
+          const declared = [...menu.querySelectorAll("[role='option']")]
+          if (declared.length) return declared
+          const nodes = [...menu.querySelectorAll("*")]
+          if (nodes.length > 400) return leavesOnly(nodes.filter(vis))
+          const out = []
+          const seen = new Set()
+          for (const n of nodes) {
+            const t = norm(n.innerText)
+            if (!t) continue
+            let leaf = true
+            for (const c of n.querySelectorAll("*")) {
+              if (norm(c.innerText)) {
+                leaf = false
+                break
+              }
+            }
+            if (!leaf) continue
+            let best = n
+            for (let p = n.parentElement; p && p !== menu; p = p.parentElement) {
+              if (norm(p.innerText) !== t) break
+              best = p
+            }
+            if (seen.has(best)) continue
+            seen.add(best)
+            out.push(best)
+          }
+          return out
+        }
+        const menu = menuOf(el)
+        const rows = menu
+          ? rowsIn(menu)
+          : leavesOnly([
+              ...document.querySelectorAll(
+                "[role='option'],[role='listbox'] li,[class*='__option'],[class*='menu'] li",
+              ),
+            ])
+        const all = [
+          ...new Set(
+            rows
+              .filter(vis)
+              .map((e) => norm(e.innerText).slice(0, 60))
+              .filter(Boolean),
+          ),
+        ]
         return { opts: all.slice(0, 40), total: all.length }
-      })
+      }, f.k)
       const opts = Array.isArray(raw) ? raw : (raw && raw.opts) || []
       const total = Array.isArray(raw) ? raw.length : Number((raw && raw.total) || 0)
       if (opts.length) f.opts = opts

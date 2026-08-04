@@ -56,3 +56,6 @@ node_modules/
 # tests/hooks/repo-hygiene.test.mjs fails the build if this ever regresses.
 !tests/fixtures/**/*.html
 !tests/fixtures/**/*.pdf
+
+# Unattended cycle logs (scripts/auto/cycle.cmd) — machine-local run records.
+logs/

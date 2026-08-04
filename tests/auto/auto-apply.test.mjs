@@ -17,6 +17,7 @@ import {
   openDb,
   recordVerification,
   upsertLeads,
+  recordScreens,
   DB_PATH,
 } from "../../scripts/lib/db.mjs"
 
@@ -256,4 +257,130 @@ test("selection uses the lead's apply_url, never the aggregator link", (t) => {
   assert.equal(out.jobs.length, 1)
   assert.equal(out.jobs[0].apply_url, "https://boards.greenhouse.io/a/jobs/9")
   assert.equal(out.jobs[0].origin, "https://boards.greenhouse.io")
+})
+
+// ---------------------------------------------------------------------------
+// WHERE A SCREENING VERDICT ACTUALLY LIVES
+//
+// THE DEFECT, MEASURED ON THE REAL STORE 2026-08-03. `selectEligible` read the
+// verdict as `lead.screening ?? lead.screen` — off the lead's own JSON doc.
+// `screen.mjs` does not write it there. It writes to the `screens` TABLE, keyed
+// by (lead_id, source). So on the user's real store every lead looked
+// unscreened, the trust gate refused all of them, and `auto-apply` reported
+// "nothing eligible (10 considered, 10 rejected)" minutes after screening had
+// written 27 verdicts. Eligible went 0 -> 3 when the lookup was corrected.
+//
+// WHY THE SUITE WAS GREEN THROUGH ALL OF IT, and this is the part worth
+// remembering: the `lead()` helper above puts `screening` INSIDE the lead doc.
+// That is a shape the production writer never produces, so every test here was
+// asserting against a fiction — a fixture is an assertion about the code,
+// written in data, and this one had been wrong since the check was added.
+//
+// These tests therefore use the REAL writer, `recordScreens`, and never the
+// helper. If someone "simplifies" them back onto the helper, the bug returns
+// and the suite goes green again.
+// ---------------------------------------------------------------------------
+
+function screenedLead(w, slug, applyUrl, verdict = "pass", extra = {}) {
+  const db = openDb(w.dbFile)
+  upsertLeads(db, [
+    {
+      id: slug,
+      slug,
+      url: applyUrl,
+      apply_url: applyUrl,
+      company: "Acme",
+      title: "Full-Stack Engineer",
+      // DELIBERATELY ABSENT: no `screening` key on the doc. That is the whole
+      // point — this is what a lead written by the real ingest looks like.
+    },
+  ])
+  recordScreens(db, [
+    { lead_id: slug, source: "mechanical", verdict, ...extra },
+  ])
+  db.close()
+}
+
+test("a verdict in the screens TABLE makes a lead eligible — the doc key is not where it lives", (t) => {
+  const w = world(t)
+  workspace(w, "screened-job", "https://boards.greenhouse.io/a/jobs/1")
+  screenedLead(w, "screened-job", "https://boards.greenhouse.io/a/jobs/1")
+
+  const db = openDb(w.dbFile)
+  const out = selectEligible({ db, limits: LIMITS, jobsDir: w.jobsDir })
+  db.close()
+
+  assert.deepEqual(
+    out.jobs.map((j) => j.slug),
+    ["screened-job"],
+    `the verdict is in the screens table and must be found there. ` +
+      `Rejections: ${JSON.stringify(out.rejected)}`,
+  )
+})
+
+test("the verdict RIDES ONTO the job, because authorizeSubmit refuses an unscreened lead", (t) => {
+  // Finding the verdict is only half of it. runCampaign seeds its per-job
+  // context from exactly these objects and hands `screening` to
+  // authorizeSubmit, which refuses outright when it is null — so a job that
+  // cleared the trust gate here would have been refused one stage later, for
+  // the same wrong reason, with a different message.
+  const w = world(t)
+  workspace(w, "screened-job", "https://boards.greenhouse.io/a/jobs/1")
+  screenedLead(w, "screened-job", "https://boards.greenhouse.io/a/jobs/1")
+
+  const db = openDb(w.dbFile)
+  const out = selectEligible({ db, limits: LIMITS, jobsDir: w.jobsDir })
+  db.close()
+  assert.equal(out.jobs[0]?.screening?.verdict, "pass")
+})
+
+test("a REJECT verdict in the table still rejects — the lookup did not become a rubber stamp", (t) => {
+  // The failure mode of "find the verdict" is finding one and not reading it.
+  const w = world(t)
+  workspace(w, "bad-job", "https://boards.greenhouse.io/a/jobs/1")
+  screenedLead(w, "bad-job", "https://boards.greenhouse.io/a/jobs/1", "reject")
+
+  const db = openDb(w.dbFile)
+  const out = selectEligible({ db, limits: LIMITS, jobsDir: w.jobsDir })
+  db.close()
+  assert.deepEqual(out.jobs, [])
+  assert.match(out.rejected[0].reason, /screening rejected/i)
+})
+
+test("a lead with NO row in the screens table is still refused", (t) => {
+  // The safe direction, and the one the fix must not have widened: an
+  // unscreened posting is exactly what hard rule 0 is about, and "we could not
+  // find a verdict" must never read as "there was nothing to find".
+  const w = world(t)
+  workspace(w, "unscreened", "https://boards.greenhouse.io/a/jobs/1")
+  const db = openDb(w.dbFile)
+  upsertLeads(db, [
+    {
+      id: "unscreened",
+      slug: "unscreened",
+      url: "https://boards.greenhouse.io/a/jobs/1",
+      apply_url: "https://boards.greenhouse.io/a/jobs/1",
+      company: "Acme",
+      title: "Full-Stack Engineer",
+    },
+  ])
+  const out = selectEligible({ db, limits: LIMITS, jobsDir: w.jobsDir })
+  db.close()
+  assert.deepEqual(out.jobs, [])
+  assert.match(out.rejected[0].reason, /no stored screening verdict/)
+})
+
+test("a MODEL verdict wins over the mechanical one", (t) => {
+  // Both are legitimate inputs — risk.mjs records a disqualifying finding as an
+  // `injection_attempt:<kind>` reason in either — but the model screen fetched
+  // the live posting and judged ghost/scam signals the regex pass cannot see.
+  // When both exist, the expensive one is the answer.
+  const w = world(t)
+  workspace(w, "both", "https://boards.greenhouse.io/a/jobs/1")
+  screenedLead(w, "both", "https://boards.greenhouse.io/a/jobs/1", "pass")
+  const db = openDb(w.dbFile)
+  recordScreens(db, [{ lead_id: "both", source: "model", verdict: "reject" }])
+  const out = selectEligible({ db, limits: LIMITS, jobsDir: w.jobsDir })
+  db.close()
+  assert.deepEqual(out.jobs, [], "the model verdict must decide")
 })

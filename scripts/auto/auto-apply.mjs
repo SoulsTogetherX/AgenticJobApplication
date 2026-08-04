@@ -46,6 +46,7 @@ import {
   hasPassingVerification,
   releaseStaleAutoClaims,
   rowToLead,
+  screenIndex,
 } from "../lib/db.mjs"
 import { loadYamlFile } from "../lib/lib.mjs"
 import {
@@ -183,6 +184,32 @@ export function selectEligible({
     }
   }
 
+  // WHERE A SCREENING VERDICT ACTUALLY LIVES, and this was a real defect: the
+  // `screens` TABLE, keyed by (lead_id, source) — never on the lead's own JSON
+  // doc. This function read `lead.screening ?? lead.screen`, which is a key
+  // `rowToLead` essentially never produces, so EVERY lead looked unscreened,
+  // the trust gate refused all of them, and the runner reported "nothing
+  // eligible" on a store whose leads had all been screened. Measured
+  // 2026-08-03: 12 of 14 leads carrying a usable apply_url were rejected for
+  // "no stored screening verdict" minutes after screen.mjs had written 27 of
+  // them.
+  //
+  // MODEL FIRST, MECHANICAL AS THE FALLBACK. The model screen (pipeline-jobs
+  // Stage A) fetches the live posting and judges ghost/scam/culture signals;
+  // the mechanical one is regex over stored text. Both carry the half that
+  // matters for hard rule 0 — risk.mjs records a disqualifying finding as an
+  // `injection_attempt:<kind>` REASON, which is one of the carriers
+  // screeningFindingKinds reads — so a mechanical verdict is a legitimate
+  // input here and not a vacuous pass. A lead with neither is still refused.
+  const modelScreens = screenIndex(db, "model")
+  const mechScreens = screenIndex(db, "mechanical")
+  const screeningFor = (lead) =>
+    modelScreens.get(lead?.id) ??
+    mechScreens.get(lead?.id) ??
+    lead?.screening ??
+    lead?.screen ??
+    null
+
   const out = []
   const rejected = []
   for (const [url, slug] of urls) {
@@ -190,10 +217,11 @@ export function selectEligible({
     const lead = bySlugUrl.get(url) ?? { slug, apply_url: url, url }
     const applyUrl = lead.apply_url ?? url
     const origin = submitOrigin(applyUrl)
+    const screening = screeningFor(lead)
     const verdict = trustBoard({
       lead: { ...lead, apply_url: applyUrl },
       limits,
-      screening: lead.screening ?? lead.screen ?? null,
+      screening,
       recordedOrigin: origin,
       allowLoopbackHttp,
     })
@@ -209,6 +237,11 @@ export function selectEligible({
       posted_at: lead.posted_at ?? null,
       company: lead.company ?? null,
       title: lead.title ?? null,
+      // Carried onto the job, because runCampaign seeds `byUrl` from these and
+      // runJob hands it to authorizeSubmit — which refuses an UNSCREENED lead
+      // outright. Omitting it here meant a lead that had just cleared the trust
+      // gate was then refused one stage later for having no verdict.
+      screening,
     })
   }
   return { jobs: out, rejected, considered: urls.size, at: now.toISOString() }

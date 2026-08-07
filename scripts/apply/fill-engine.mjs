@@ -99,6 +99,11 @@
 //     plan never contained — a conditional reveal ("if yes, explain") is
 //     created BY the fill, so it is in no scan and no plan. They come back in
 //     `revealed`, as data for the caller to defer on. Nothing is filled.
+//   - setInputFiles not throwing is not evidence a file attached. The DOM is
+//     asked afterwards, and a file input STILL ON THE PAGE holding zero files
+//     (`seen: "empty"`) is a failure, not an ok — that exact shape shipped an
+//     application with no resume while the report read ok=4 failed=0. An input
+//     that is GONE is the opposite case and stays a success; see that pass.
 //
 // SAFETY: there is deliberately no verb that clicks a button. "Never click
 // submit" is not a rule this engine follows — it is a thing it cannot express.
@@ -190,11 +195,150 @@ export default async function fillPage(page, plan) {
       return "forbidden:" + tag
     })
 
+  // A COMBOBOX INPUT'S OWN `value` IS THE SEARCH FILTER, NOT THE ANSWER.
+  //
+  // MEASURED on Affirm's Greenhouse form, 2026-08-04, and this is the same
+  // defect the Oracle note at committedValue() describes — reopened on a board
+  // where blurring does NOT clear the box. All ten dropdowns were reported
+  // `verify.landed`, `comboVia: type-enter`, no failures; every backing input
+  // (#question_*) was still EMPTY and the page itself rendered "This field is
+  // required." The application could not have been submitted, and nothing in
+  // the run said so: reading `el.value` off a role=combobox input reads back
+  // the string we just typed, so the check was satisfied by the act of typing.
+  //
+  // Blurring first (committedValue) is necessary but NOT sufficient. It only
+  // catches widgets that revert on blur; one that leaves its filter text
+  // sitting in the box defeats it completely. The reliable question is not
+  // "what does the box show" but "what would this form SEND", so where the
+  // widget has a committed store, that store is the answer and the filter text
+  // stops counting as evidence at all.
+  //
+  // WHERE THE STORE IS LOOKED FOR, and why each bound is here:
+  //   1. A rendered selection node ([class*='single-value']) FIRST. react-select
+  //      clears its search input on a successful commit, so the box is empty and
+  //      only this node holds the choice — checking the input first would read
+  //      "" and fail a fill that actually worked.
+  //   2. Otherwise a NON-VISIBLE input/select in the same field wrapper: that is
+  //      a backing store, which is exactly what gets submitted. VISIBLE inputs
+  //      are excluded deliberately — a neighbouring visible textbox belongs to a
+  //      different question (intl-tel-input's number sits beside its country
+  //      picker), and reading one would answer this field from another's value.
+  //   3. FOUR ANCESTORS, stopping at the form, matching every other bounded
+  //      ancestor walk in this pipeline.
+  //
+  // A widget with NO store falls through to `el.value` unchanged, which is the
+  // right reading for a plain typeahead that commits into its own box (Ashby's
+  // Location). So this can only ever make the check STRICTER, never looser, and
+  // its failure mode is a fill reported failed that actually worked — which
+  // defers. The failure mode it removes is an empty required field reported
+  // filled, which submits.
   const shownValue = (loc) =>
     loc.evaluate((el) => {
+      const txt = (s) =>
+        String(s == null ? "" : s)
+          .replace(/\s+/g, " ")
+          .trim()
       const tag = el.tagName.toLowerCase()
       if (tag === "input" && (el.type === "checkbox" || el.type === "radio")) {
         return el.checked ? "true" : ""
+      }
+      // BY SHAPE, NOT BY TAG. MEASURED on Affirm 2026-08-04: the element the
+      // scanner stamps for a Greenhouse dropdown is the react-select CONTROL,
+      // a <div class="select__control"> — role and aria-* live on an inner
+      // node, not on it. An input-only test therefore skipped the widget that
+      // motivated this whole fix and fell through to reading the control's
+      // innerText, which contains the typed text. Same list kindOf() uses.
+      const isCombo =
+        el.getAttribute("role") === "combobox" ||
+        el.getAttribute("aria-autocomplete") === "list" ||
+        el.getAttribute("aria-haspopup") === "listbox" ||
+        /select__control|Select__control/.test(String(el.className || ""))
+      if (isCombo) {
+        // WHAT COUNTS AS "NOT PAINTED" IS WIDER THAN display:none.
+        //
+        // Greenhouse's required store is a real, laid-out text input rendered
+        // with `opacity:0; pointer-events:none; position:absolute` and about
+        // 3px of width — visibility:visible, display:block, non-zero rect. It
+        // exists so the browser can raise "please fill in this field" on a
+        // custom widget. Every one of the obvious tests says it is visible, so
+        // the first version of this fix walked straight past the only element
+        // that holds the answer.
+        const unpainted = (n) => {
+          if (n.type === "hidden") return true
+          const r = n.getBoundingClientRect()
+          if (r.width < 5 || r.height < 5) return true
+          const st = getComputedStyle(n)
+          return (
+            st.visibility === "hidden" ||
+            st.display === "none" ||
+            st.opacity === "0" ||
+            st.pointerEvents === "none"
+          )
+        }
+        // AN EMPTY STORE IS STILL A STORE, and this is the whole fix.
+        //
+        // Returning only NON-EMPTY findings and otherwise falling through to
+        // el.value reproduces the defect exactly: an uncommitted widget has an
+        // empty store, so it falls through and answers with the filter text
+        // again. Once a store has been found, it is the authority whether or
+        // not it holds anything — "this widget has somewhere to put an answer
+        // and there is nothing in it" is precisely the observation that was
+        // missing.
+        let sawStore = false
+        // STARTS AT `el`, NOT AT ITS PARENT: when the stamped element is the
+        // react-select CONTROL, the store and the rendered selection are its
+        // own descendants. For an <input> this costs nothing, since an input
+        // has none.
+        for (let p = el, i = 0; p && i < 5; p = p.parentElement) {
+          // THE CONTAINER MUST SPEAK FOR THIS CONTROL ALONE — the same bound
+          // the scanner's groupRequired() applies, and it is load-bearing here
+          // for a reason found by test: without it the walk reaches the <form>,
+          // where EVERY other question's hidden store is in scope. A plain
+          // typeahead that has no store of its own then "finds" a neighbour's,
+          // reads it empty, and a fill that worked is reported failed.
+          //
+          // Stopping at the form/body is not enough on a single-question form,
+          // where the form level would still hand over unrelated hidden inputs
+          // (CSRF tokens and the like). Counting comboboxes is the precise
+          // test: a container holding two of them cannot say which store
+          // belongs to which. On the real Affirm page this is what stops the
+          // walk at `field-wrapper`, one level below `application--questions`,
+          // which holds six of them.
+          if (
+            p.tagName === "FORM" ||
+            p.tagName === "BODY" ||
+            p.tagName === "HTML"
+          ) {
+            break
+          }
+          if (
+            p !== el &&
+            p.querySelectorAll(
+              "[role='combobox'], [aria-autocomplete='list'], [class*='select__control']",
+            ).length > 1
+          ) {
+            break
+          }
+          const sv = p.querySelector(
+            "[class*='single-value'], [class*='singleValue']",
+          )
+          if (sv) {
+            sawStore = true
+            if (txt(sv.innerText)) return txt(sv.innerText)
+          }
+          for (const n of p.querySelectorAll("input, select")) {
+            if (n === el) continue
+            if (!unpainted(n)) continue
+            sawStore = true
+            if (txt(n.value)) return txt(n.value)
+          }
+          i++
+        }
+        // A store exists and every one of them is empty: nothing committed.
+        // Never el.value / innerText here — that is the filter text.
+        if (sawStore) return ""
+        // No store anywhere: the box IS the value (plain typeahead, Ashby).
+        return tag === "input" ? el.value || "" : txt(el.innerText)
       }
       if (tag === "input" || tag === "textarea" || tag === "select") {
         return el.value || ""
@@ -352,8 +496,24 @@ export default async function fillPage(page, plan) {
     return null
   }
   const optionLocator = async (loc, value) => {
-    const scope = (await menuScope(loc)) ?? page
-    const rows = scope.locator("[class*='__option'], [role='option']")
+    const named = await menuScope(loc)
+    const scope = named ?? page
+    // A PAGE-WIDE SEARCH MUST AT LEAST BE RESTRICTED TO ROWS A HUMAN COULD
+    // CLICK. Defect 2 above says the search was page-wide; this is the case it
+    // could not fix, because a control that names no menu has no scope to
+    // narrow to.
+    //
+    // MEASURED on Affirm's Greenhouse form, 2026-08-04: that page holds exactly
+    // ONE [role=listbox] at all times — intl-tel-input's country list, 244 rows,
+    // permanently attached and usually hidden. So an unfiltered page-wide
+    // search answers every unnamed dropdown out of a list of countries, which
+    // is how "Afghanistan+93" becomes the first candidate row for a question
+    // about pronouns. Visibility is the honest discriminator: a menu the user
+    // could choose from is on screen, and a detached-but-attached one is not.
+    const rowSel = named
+      ? "[class*='__option'], [role='option']"
+      : "[class*='__option']:visible, [role='option']:visible"
+    const rows = scope.locator(rowSel)
     try {
       const exact = rows.filter({ hasText: exactRe(value) })
       if ((await exact.count()) > 0) return exact.first()
@@ -361,8 +521,10 @@ export default async function fillPage(page, plan) {
     // No declared option rows, or none of them says this: fall back to the
     // text itself, still whole-string. getByText returns the innermost element
     // holding it, and a click on that bubbles to whatever the widget listens
-    // on, so nothing needs to know how the row is built.
-    return scope.getByText(exactRe(value)).first()
+    // on, so nothing needs to know how the row is built. Same visibility bound
+    // when the search is page-wide, and for the same reason.
+    const byText = scope.getByText(exactRe(value))
+    return named ? byText.first() : byText.locator("visible=true").first()
   }
 
   const strategies = {
@@ -687,6 +849,11 @@ export default async function fillPage(page, plan) {
   }
 
   let uploadN = 0
+  // Which plan item each stamp belongs to. The DOM readback below runs after
+  // this loop and only holds the RECORD, but fail() takes the item — so the
+  // link is kept here rather than rediscovered by matching `k`, which assumes
+  // keys are unique across the plan.
+  const itemByTag = new Map()
   for (const item of uploadItems) {
     const tag = "u" + ++uploadN
     const pattern = patternOf(item)
@@ -740,6 +907,7 @@ export default async function fillPage(page, plan) {
       attached: false,
     }
     out.uploads.push(record)
+    itemByTag.set(tag, item)
     try {
       await page
         .locator('[data-ajup="' + tag + '"]')
@@ -781,10 +949,60 @@ export default async function fillPage(page, plan) {
   // the report carried a count, and a count cannot be wrong about which file
   // is on which input.
   //
-  // Reported as data, never promoted to a failure on its own: a board that
-  // swaps the input for an attached-file view (Greenhouse does) legitimately
-  // has no input left to read, and calling that a failure would break a
-  // working upload. `seen: "gone"` is that case and it is normal.
+  // ONE of the three answers is promoted to a failure, and only one:
+  //
+  //   "gone"     — the input is no longer in the DOM. A board that swaps it for
+  //                an attached-file view (Greenhouse does) legitimately has
+  //                nothing left to read, so this is a WORKING upload and
+  //                calling it a failure would break every Greenhouse run. Data,
+  //                never a failure. Do not "fix" this one.
+  //   "attached" — the file is on the input. Success, and `seenFile` says which.
+  //   "empty"    — the input is STILL ON THE PAGE and holds ZERO files. That is
+  //                not "nothing observed", it is positive evidence that the file
+  //                did not land, and until 2026-08-05 nothing in this repository
+  //                read the field: 7/7 runs at 0b6db30 reported
+  //                `fill: ok=4 failed=0 deferred=2` with `_systemfield_resume`
+  //                holding no file (tests/dev/b1-browser-fill.test.mjs), i.e. an
+  //                application submitted with no resume and a report saying
+  //                everything succeeded. `fail()` is the only vocabulary this
+  //                engine has for "this did not happen and a human has to look",
+  //                and hard rule 6 routes a failed fill to a blocked submit — so
+  //                that is what an empty input gets.
+  //
+  // `attached` is corrected to false along with it, because that key is what a
+  // caller reads to say "the file is on the field" and the DOM has just said it
+  // is not. Only a record we counted (`attached === true`) is demoted: an
+  // upload whose setInputFiles threw already went through fail(), and failing
+  // it twice would double-count one document.
+  //
+  // THE KNOWN FALSE POSITIVE, AND WHY IT IS NOT A REASON TO WEAKEN THIS.
+  // Some boards read the file out of the input into their own XHR uploader and
+  // then reset `input.value`. On such a board a WORKING upload reads `empty`
+  // here, and this demotes it. The DOM cannot tell that page apart from a board
+  // that simply dropped the file — both leave an input that is present and
+  // holds nothing — so there is no reading of the evidence that gets both cases
+  // right, and the choice is only which way to be wrong:
+  //
+  //   wrong here   -> a stated deferral. The user is told which document did
+  //                   not appear to attach and can attach it by hand. One
+  //                   question, recoverable, visible.
+  //   wrong the
+  //   other way    -> an application submitted in their name with no résumé,
+  //                   reported as `ok`. That is the exact shape that shipped 7
+  //                   runs out of 7 at 0b6db30, and nothing downstream corrects
+  //                   it.
+  //
+  // So this fails CLOSED and stays that way. Do not "fix" it by trusting
+  // setInputFiles, by demoting only when the board is unknown, or by
+  // enumerating the boards that reset the input — a denylist over third-party
+  // markup is exactly how the failure comes back.
+  //
+  // What IS owed to the false-positive case is legibility, and that is what the
+  // `upload-readback-empty` tag in the reason below buys: a board that always
+  // reset its inputs would produce that same tag on every application to it,
+  // and a run log full of one tag on one board is a board behaviour the user
+  // can see and act on (an adapter, §4.2's deterministic route), not a mystery
+  // about their own file. One tag on one job is the ordinary failure.
   if (out.uploads.length) {
     try {
       const seen = await page.evaluate(() =>
@@ -804,6 +1022,69 @@ export default async function fillPage(page, plan) {
           }
           rec.seen = hit.names.length ? "attached" : "empty"
           rec.seenFile = hit.names[0] || null
+          // THE PAGE'S OWN REPORT OF *WHICH* FILE LANDED, CHECKED RATHER THAN
+          // MERELY RECORDED.
+          //
+          // `seenFile` has been written here for as long as this readback has
+          // existed and was read by no code at all. The only thing comparing it
+          // to `rec.file` was a sentence in SKILL.md asking the agent to eyeball
+          // the two — which is not a control, and is not even present on the
+          // unattended path, where nothing reads `uploads`.
+          //
+          // MEASURED 2026-08-06, on three live Ashby applications: those forms
+          // carry a THIRD file input labelled "Name" that matches neither
+          // `fileFields` regex, so it fell to the positional fallback, consumed
+          // `fileOrder[0]` and was planned the resume — which planned the resume
+          // TWICE. A document landing in a slot the user never meant it for was
+          // counted `attached: true`, `ok++`, and reported as a clean fill.
+          // `seen: "attached"` only ever meant "some file is here".
+          //
+          // MEMBERSHIP, NOT EQUALITY. A board that APPENDS to an input it had
+          // already populated leaves our file present beside another one, which
+          // is not a mis-target. Our file being ABSENT is the defect, and that
+          // is the only thing this fires on.
+          if (
+            rec.seen === "attached" &&
+            rec.attached &&
+            rec.file &&
+            !hit.names.some(
+              (n) =>
+                String(n).trim().toLowerCase() ===
+                String(rec.file).trim().toLowerCase(),
+            )
+          ) {
+            rec.attached = false
+            out.ok--
+            // Same 140-char discipline as the sibling below, and the same
+            // reason for the tag going first. Nothing page-derived is quoted
+            // into it: `seenFile` is the PAGE'S string, so it is recorded on
+            // the record for the report and kept out of this sentence.
+            fail(
+              itemByTag.get(rec.tag) || { k: rec.k, how: "upload" },
+              "upload-wrong-file: the input holds a file this run did not " +
+                "send it — " +
+                (rec.file || "the document") +
+                " is not attached here; attach it by hand",
+            )
+          }
+          if (rec.seen === "empty" && rec.attached) {
+            rec.attached = false
+            out.ok--
+            // Under fail()'s 140-char cap: this reaches the user verbatim.
+            // `rec.file` is the basename of a path WE chose off our own disk —
+            // no page-derived text goes into a sentence addressed to a reader.
+            //
+            // THE TAG COMES FIRST so the 140-char cap can never eat it: it is
+            // the one part of this sentence that has to survive to make a
+            // board-wide pattern countable (see the false-positive note above).
+            fail(
+              itemByTag.get(rec.tag) || { k: rec.k, how: "upload" },
+              "upload-readback-empty: the file input is still on the page " +
+                "holding no file — " +
+                (rec.file || "the document") +
+                " did not attach; attach it by hand",
+            )
+          }
         }
       }
     } catch {}
@@ -1027,11 +1308,78 @@ export default async function fillPage(page, plan) {
         .replace(/\s+/g, " ")
         .trim()
         .toLowerCase()
+    // MIRRORED FROM shownValue(), which carries the full reasoning: a combobox
+    // input's own `value` is the SEARCH FILTER, not the answer, and where the
+    // widget has a committed store that store is the answer EVEN WHEN EMPTY.
+    //
+    // This pass reads the DOM directly inside one page.evaluate — that is what
+    // makes it unraceable — so it cannot call shownValue through a locator and
+    // has to carry its own copy. It had the identical bug, and that is why
+    // Affirm's ten empty dropdowns came back in `landed` even once the fill
+    // itself had started failing them correctly. Two readbacks, one rule:
+    // tests/apply/combo-commit.test.mjs pins them to the same answers.
+    const comboValue = (el) => {
+      const tag = el.tagName.toLowerCase()
+      const unpainted = (x) => {
+        if (x.type === "hidden") return true
+        const r = x.getBoundingClientRect()
+        if (r.width < 5 || r.height < 5) return true
+        const st = getComputedStyle(x)
+        return (
+          st.visibility === "hidden" ||
+          st.display === "none" ||
+          st.opacity === "0" ||
+          st.pointerEvents === "none"
+        )
+      }
+      let sawStore = false
+      for (let p = el, i = 0; p && i < 5; p = p.parentElement) {
+        if (
+          p.tagName === "FORM" ||
+          p.tagName === "BODY" ||
+          p.tagName === "HTML"
+        ) {
+          break
+        }
+        if (
+          p !== el &&
+          p.querySelectorAll(
+            "[role='combobox'], [aria-autocomplete='list'], [class*='select__control']",
+          ).length > 1
+        ) {
+          break
+        }
+        const sv = p.querySelector(
+          "[class*='single-value'], [class*='singleValue']",
+        )
+        if (sv) {
+          sawStore = true
+          if (n(sv.innerText)) return String(sv.innerText).trim()
+        }
+        for (const x of p.querySelectorAll("input, select")) {
+          if (x === el) continue
+          if (!unpainted(x)) continue
+          sawStore = true
+          if (n(x.value)) return String(x.value).trim()
+        }
+        i++
+      }
+      if (sawStore) return ""
+      return tag === "input"
+        ? el.value || ""
+        : String(el.innerText || "").trim()
+    }
     const read = (el) => {
       const tag = el.tagName.toLowerCase()
       if (tag === "input" && (el.type === "checkbox" || el.type === "radio")) {
         return el.checked ? "true" : ""
       }
+      const isCombo =
+        el.getAttribute("role") === "combobox" ||
+        el.getAttribute("aria-autocomplete") === "list" ||
+        el.getAttribute("aria-haspopup") === "listbox" ||
+        /select__control|Select__control/.test(String(el.className || ""))
+      if (isCombo) return comboValue(el)
       if (tag === "input" || tag === "textarea" || tag === "select")
         return el.value || ""
       const sv = el.querySelector(

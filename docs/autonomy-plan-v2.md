@@ -1,5 +1,23 @@
 # Autonomy plan v2 — unlimited volume
 
+> **HISTORICAL. Its companion directory `docs/autonomy/` was deleted on
+> 2026-08-06, so every `autonomy/…` link below is dead.** This file is kept only
+> because test and code comments cite it by name for the reasoning behind
+> specific decisions (for example `tests/security/fixture-origins.test.mjs`,
+> which cites §4.2 correction C9 for why the in-flight exclusion key is the
+> registrable origin of `apply_url` rather than `board_key`).
+>
+> It is a **plan**, not a description of the system, and much of what it plans
+> has since shipped or changed. For how the code actually works today, read
+> [`docs/README.md`](README.md) — in particular
+> [the architecture](guide/05-architecture.md),
+> [the safety model](guide/07-safety-model.md), and
+> [the unattended runner](code/09-auto-runner.md) and
+> [its gates](code/10-auto-safety.md), which cover the same ground from the
+> code rather than from the intention.
+>
+> The deleted planning set is recoverable from git history if it is ever needed.
+
 **Supersedes phases 3 and 4 of [`docs/autonomy-plan.md`](autonomy-plan.md).** Everything in
 that document before `## Phase 3 — Autonomy` (context, decisions taken, the design principle,
 the team, the rewrite backlog, phases 1 and 2) still stands. Where this document contradicts

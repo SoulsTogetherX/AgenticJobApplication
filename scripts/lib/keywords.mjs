@@ -16,14 +16,38 @@
 // The two consumers genuinely need different things, which is why an entry
 // carries two different name fields:
 //
-//   surface   LITERAL strings watched inside the user's OWN documents. R6 asks
-//             "does this exact string appear in a fact source?", so a surface
-//             form must be something a resume would really write. Abstractions
+//   surface   strings watched inside the user's OWN documents. A surface form
+//             must be something a resume would really write. Abstractions
 //             ("Testing", "Auth") have none, and entries without one simply do
 //             not participate in R6 — exactly as before.
 //   aliases   what the same skill looks like in SOMEONE ELSE'S job posting,
 //             matched loosely and case-insensitively. "k8s" belongs here, never
 //             in surface: a posting may say it, a truthful resume would not.
+//
+// SURFACE MATCHING IS NO LONGER "THIS EXACT STRING" (2026-08-05). It used to
+// be, and that wording survived here for a while after it stopped being true;
+// two audit findings are why it changed, and both are worth knowing because
+// each looks like the other's opposite:
+//
+//   - R6 was CASE-SENSITIVE, so a document claiming "kubernetes" and
+//     "terraform" in lowercase produced zero violations and exited 0. The
+//     load-bearing truthfulness gate was blind to any invention that simply
+//     used the wrong case. Matching is now case-insensitive by default, and
+//     CASE_SENSITIVE_SURFACE below is the deliberate exception list: terms that
+//     are ordinary English words ("Go", "R", "C") still require exact case,
+//     because "go to the store" is not a technology claim.
+//   - R6 treated two SPELLINGS OF ONE SKILL as two different skills, so a
+//     profile saying "Postgres" plus a resume saying "PostgreSQL" was a
+//     violation and a blocked render — while docs/tailoring-rules.md §8
+//     instructs the writer to use "PostgreSQL not Postgres". SURFACE_SPELLINGS
+//     below folds such siblings to one canonical form on BOTH sides of the
+//     comparison, which tightens nothing and loosens nothing.
+//
+// The folding uses `surface` and never `aliases`, and that distinction is the
+// load-bearing half. `surface` means "the same skill, written differently by
+// the same honest person". `aliases` means "how a stranger's job ad refers to
+// it" — folding those in would let a posting's vocabulary vouch for a claim the
+// fact base cannot back, which is the exact hole R6 exists to close.
 //
 // ats is the third: the form(s) to actually place in a tailored resume. ATS
 // keyword matching is frequently literal, and some systems index the acronym
@@ -235,6 +259,138 @@ const escLiteral = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 // documents (verify-claims R6). Longest-first ordering is applied by
 // techTermsIn, not here.
 export const TECH_TERMS = [...new Set(SKILLS.flatMap((s) => s.surface ?? []))]
+
+// ---------------------------------------------------------------------------
+// How R6 is allowed to compare two spellings — casing, then siblings.
+// Both lists below are hand-enumerated, like WRITTEN_FORM and `adjacent`, and
+// for the same reason: a mechanical rule would have to guess, and the thing
+// being guessed at is a truthfulness gate.
+// ---------------------------------------------------------------------------
+
+// Surface forms matched EXACTLY. Everything else matches case-insensitively.
+//
+// techTermsIn used to have no "i" flag at all, so R6 could not see a lowercase
+// invention: `techTermsIn("Built with kubernetes and terraform")` returned []
+// — zero violations on a claim the fact base cannot back (AUDIT C4). A
+// lowercase lie is still a lie, so the default is now case-insensitive.
+//
+// It is NOT a blanket "i", because the lexicon's short surface forms are
+// ordinary English words, and a blanket flag reads honest prose as technology
+// claims: "go through legal", "the rest of the team", "react to feedback", "a
+// spring internship", "express approval", "off the rails", "made it prettier".
+// TECH_LEXICON's own header records six such false positives out of nine probes
+// when `surface` was folded into the posting-side matcher; the same trap is
+// here, and worse, because R6 FAILS the document. A gate that cries wolf on
+// truthful resumes gets muted, and then it protects nothing.
+//
+// So a term is listed here when its lowercase form is an ordinary English word
+// a truthful resume or cover letter might really contain. Terms whose lowercase
+// form the project ALREADY treats as a mis-spelled claim are deliberately NOT
+// listed — "docker", "python", "java", "linux", "html", "css", "sql", "json",
+// "kubernetes", "tailwind", "javascript", "typescript", "c#", "c++" all appear
+// in WRITTEN_FORM's `wrong` lists below, which is this repository saying they
+// name a technology however they are cased.
+//
+// Listing a term here preserves EXACTLY the pre-2026-08-05 behaviour for it, so
+// the safe direction when in doubt is to add it: the cost is a miss, and the
+// cost of the other mistake is failing an honest document.
+export const CASE_SENSITIVE_SURFACE = new Set([
+  "Agile",
+  "Angular",
+  "ARIA",
+  "Azure",
+  "Babel",
+  "Bash",
+  "Bootstrap",
+  "Bun",
+  "Codex",
+  "Cypress",
+  "Express",
+  "Flask",
+  "Flutter",
+  "Git",
+  "Go",
+  "Jest",
+  "Lambda",
+  "Mocha",
+  "Pandas",
+  "Pinecone",
+  "Playwright",
+  "Postman",
+  "Prettier",
+  "Puppeteer",
+  "RAG",
+  "Rails",
+  "React",
+  "Redux",
+  "Remix",
+  "REST",
+  "RESTful",
+  "Ruby",
+  "Rust",
+  "S3",
+  "Sass",
+  "Scrum",
+  "Selenium",
+  "Sentry",
+  "Shell",
+  "Spark",
+  "Spring",
+  "Storybook",
+  "Svelte",
+  "Swagger",
+  "Swift",
+  "Unity",
+  "Unreal",
+])
+
+// Surface forms that are ONE artifact spelled two ways. R6 compares a
+// document's tech terms against the fact base's, and these must compare equal.
+//
+// The eight groups are exactly the false failures AUDIT C3 reproduced: a
+// profile saying "Postgres" and a resume saying "PostgreSQL" failed R6 and
+// exited 1, while docs/tailoring-rules.md §8 instructs "PostgreSQL not
+// Postgres" and checkWrittenForm() below tells the writer to make that same
+// edit. The gate, the rules document and the linter were fighting each other,
+// and each round cost a model turn plus a re-verify.
+//
+// NOT derived from `surface`, and that refusal is the load-bearing half. A
+// skill's surface list is "literal strings watched for this skill", which for an
+// ABSTRACTION groups genuinely different products: Testing's surface is
+// Jest/Vitest/Mocha/Cypress/Playwright/Selenium/Puppeteer/pytest,
+// Observability's is Datadog/Grafana/Prometheus/Sentry, Auth's is
+// OAuth/JWT/SSO/OIDC/RBAC, AI/LLM integration's is Claude/ChatGPT/OpenAI.
+// Folding a whole surface list would make a profile that mentions Jest into
+// evidence for a resume claiming Selenium — an invention rule 1 forbids,
+// arriving through the truthfulness gate itself. So equivalence is enumerated,
+// one group per artifact, and a group earns its place only when a reader would
+// call the two strings the same thing spelled two ways.
+//
+// OAuth/OAuth2 is deliberately absent for the same reason: that is a protocol
+// version, not a spelling.
+export const SURFACE_SPELLINGS = [
+  ["PostgreSQL", "Postgres"],
+  ["Go", "Golang"],
+  ["REST", "RESTful"],
+  ["WebSockets", "WebSocket"],
+  ["Sass", "SCSS"],
+  ["Linux", "Unix"],
+  ["Bash", "Shell"],
+  ["OpenAPI", "Swagger"],
+]
+
+const SPELLING_CANONICAL = new Map(
+  SURFACE_SPELLINGS.flatMap(([first, ...rest]) =>
+    rest.map((alt) => [alt, first]),
+  ),
+)
+
+// The representative spelling of `term`, or `term` itself when it has no
+// sibling. Identity for everything outside SURFACE_SPELLINGS, so a caller can
+// map both sides of a comparison through it unconditionally.
+export function canonicalSurface(term) {
+  return SPELLING_CANONICAL.get(term) ?? term
+}
 
 // TECH_LEXICON: canonical name + a loose alias regex, for reading SOMEONE
 // ELSE'S posting.

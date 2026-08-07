@@ -250,7 +250,41 @@ export default async function scanPage(page, opts = {}) {
     Object.entries(opts.knownOpts || {}).map(([k, v]) => [key(k), v]),
   )
   const skip = new Set((opts.skipProbe || []).map(key))
-  const probeMax = opts.probeMax === undefined ? 18 : opts.probeMax
+  // RAISED 18 -> 24, measured on Coinbase's Greenhouse form 2026-08-07: it has
+  // 23 comboboxes, so the old cap skipped 5 of them outright and each one came
+  // back NEEDS-CHOICE with no options — a deferral caused by the cap rather
+  // than by anything the form did. The cap exists so a long form cannot spend a
+  // minute in here; 24 is the smallest number that clears the largest real
+  // form measured to date, which is the right way to move it. It is still a
+  // cap, and a form past it still states `probe_skipped: "probe cap"`.
+  const probeMax = opts.probeMax === undefined ? 24 : opts.probeMax
+  // AND THE BOUND THAT WAS ACTUALLY MEANT IS TIME, NOT COUNT.
+  //
+  // The line above has always said "a long form should not spend a minute in
+  // here", and a COUNT only stands in for that while the per-control ceilings
+  // are small. This change moved both in the expensive direction at once — 18
+  // -> 24 controls, and 2s -> 6s of click patience plus 5s of scroll — so the
+  // pathological form (every control times out) went from ~72s to ~264s. That
+  // is a latency regression hiding inside a coverage fix, and it would only
+  // ever show up on the slowest boards, which are the ones already hurting.
+  //
+  // So the stated intent is now enforced directly: the probe stops when the
+  // budget is gone, whatever the count. The worst case is back to ~60s plus
+  // one in-flight control — what it was before this change — while a HEALTHY
+  // 24-combo form (~0.5s each) never approaches the budget and so gains the
+  // full coverage the raised cap was for.
+  //
+  // A field cut by the budget states its own reason rather than looking like a
+  // field that was probed and found empty — same rule as the cap.
+  const probeBudgetMs =
+    opts.probeBudgetMs === undefined ? 60000 : opts.probeBudgetMs
+  // The clock is injectable ONLY so the bound is testable. A test that sets a
+  // 1ms budget and hopes the loop is slower than that is a coin flip — the
+  // stub page probes 26 controls inside a single millisecond on a fast box and
+  // inside two on a slow one, which is exactly the flake it produced first
+  // time. Nothing in production passes this, so the default is the real clock.
+  const nowMs = typeof opts.now === "function" ? opts.now : Date.now
+  const probeStart = nowMs()
 
   const stats = { probed: 0, cached: 0, skipped: 0, capped: 0, refused: 0 }
   const todo = []
@@ -286,7 +320,59 @@ export default async function scanPage(page, opts = {}) {
     todo.push(f)
   }
 
+  // THE ELEMENT WE STAMPED IS NOT ALWAYS THE ELEMENT THAT CARRIES THE ARIA.
+  //
+  // MEASURED on Coinbase's Greenhouse form (job-boards.greenhouse.io,
+  // token 8113286), 2026-08-07: 13 of 19 required combos failed to probe.
+  //
+  // react-select renders
+  //   <div class="select__control">                 <- matches COMBO_SEL, STAMPED
+  //     <div class="select__value-container">
+  //       <input class="select__input" role="combobox"
+  //              aria-controls="react-select-3-listbox" aria-expanded="false">
+  // and the wrapper carries NO aria attributes at all. Reading `aria-controls`
+  // off the stamped element therefore returned null, so:
+  //   * menuOf() found no ids and fell back to a class-name guess;
+  //   * `aria-expanded` read null rather than "false", so the chevron-toggle
+  //     fallback — the whole Ashby fix above — never fired either.
+  // Both halves of the probe were reading the shell and finding nothing.
+  //
+  // Identity MUST stay on the shell: it is what a human clicks, what
+  // scan-page.js stamps, and what every `data-aj` selector resolves to. So the
+  // element is not re-chosen — only the ATTRIBUTE READ is redirected, and only
+  // when the shell itself is silent. A shell that states its own aria-controls
+  // (every Oracle Recruiting Cloud picker, where role=combobox is on the input
+  // and the input IS the stamped element) is unaffected: it answers first and
+  // the inner lookup never runs.
+  const ariaOf = (k, attr) =>
+    page
+      .evaluate(
+        ([ajKey, a]) => {
+          const el = document.querySelector('[data-aj="' + ajKey + '"]')
+          if (!el || !el.getAttribute) return null
+          const own = el.getAttribute(a)
+          if (own != null) return own
+          const inner =
+            el.querySelector &&
+            el.querySelector(
+              "input[role='combobox'],input[aria-controls],input[aria-expanded]," +
+                "[role='combobox'][aria-controls],[role='combobox'][aria-expanded]",
+            )
+          return inner ? inner.getAttribute(a) : null
+        },
+        [k, attr],
+      )
+      .catch(() => null)
+
   for (const f of todo) {
+    // Checked BEFORE the control is touched, so the budget can only stop work
+    // that has not started — never abandon a control mid-probe with a menu
+    // left open for the next one to read.
+    if (probeBudgetMs > 0 && nowMs() - probeStart > probeBudgetMs) {
+      f.probe_skipped = "probe budget"
+      stats.capped++
+      continue
+    }
     const loc = page.locator('[data-aj="' + f.k + '"]')
     try {
       // NON-FATAL, AND THAT IS THE FIX. Measured on Oracle Recruiting Cloud
@@ -299,7 +385,12 @@ export default async function scanPage(page, opts = {}) {
       // message tells a reader what actually went wrong. Swallowing it here
       // costs nothing and stops a scroll quirk from reading as "this board
       // refuses to open its menus".
-      await loc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {})
+      //
+      // 2000 -> 5000, measured on the same Coinbase form: the page is heavy
+      // enough that the scroll itself did not settle inside 2s on a control
+      // low in a 23-combo form. Non-fatal either way, so the only cost of the
+      // old ceiling was arriving at the click before the control was in view.
+      await loc.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {})
       // NOT force:true. A forced click skips every actionability check —
       // "is it visible", "is it covered by an overlay", "does it receive
       // pointer events" — which is precisely "click something the user could
@@ -307,7 +398,14 @@ export default async function scanPage(page, opts = {}) {
       // plan exists. A control that is genuinely unclickable now fails here,
       // is caught below as probe_error, and defers to the user, which is the
       // designed failure mode for a probe.
-      await loc.click({ timeout: 2000 })
+      //
+      // 2000 -> 6000, measured on Coinbase's Greenhouse form 2026-08-07, where
+      // the 2s ceiling produced `locator.click: Timeout 2000ms exceeded` on
+      // control after control that a human clicks without noticing a delay. A
+      // timeout that fires on a clickable control is not a safety property —
+      // it defers a field that would have answered. The actionability checks,
+      // which ARE the safety property, are unchanged; only the patience is.
+      await loc.click({ timeout: 6000 })
       // Wait for the menu to RENDER, not for 300ms. When the control NAMES its
       // menu, wait for that element to be visible — that is this control's own
       // menu rather than a guess, so the wait ends when the thing about to be
@@ -316,7 +414,7 @@ export default async function scanPage(page, opts = {}) {
       // always in the DOM — so waiting on that would return instantly on every
       // form with a phone field, and reading it would hand every dropdown the
       // same list of countries.
-      const menuId = await loc.getAttribute("aria-controls").catch(() => null)
+      const menuId = await ariaOf(f.k, "aria-controls")
       const menuSel = menuId
         ? '[id="' +
           String(menuId)
@@ -329,6 +427,66 @@ export default async function scanPage(page, opts = {}) {
         .first()
         .waitFor({ state: menuId ? "visible" : "attached", timeout: 300 })
         .catch(() => {})
+      // THE BOX IS NOT ALWAYS WHAT OPENS THE MENU.
+      //
+      // MEASURED on Ashby (jobs.ashbyhq.com), 2026-08-04, on a live Render
+      // application. Its dropdowns are
+      //   <div class="_inputContainer_">
+      //     <input role="combobox" aria-expanded="false">
+      //     <button class="_toggleButton_"><svg chevron/></button>
+      // and clicking the INPUT only focuses it — the menu opens from the
+      // button beside it. So every Ashby dropdown probed as zero options and
+      // came back NEEDS-CHOICE, blocking the submit on a form whose lists are
+      // perfectly readable: an 11-option "How did you hear about us?" was
+      // deferred to a human for no reason at all.
+      //
+      // aria-expanded is the PAGE'S OWN report of whether it opened, which is
+      // why it is the trigger rather than "no options were found" — that is
+      // also what a genuinely empty menu looks like, and retrying on it would
+      // add a click to every empty dropdown on every board.
+      //
+      // WHAT MAY BE CLICKED IS BOUNDED HARD: a <button> inside the control's
+      // OWN container with NO NAME OF ITS OWN. A chevron has none; "Withdraw
+      // my application" has plenty. That is exactly the distinction
+      // probeRefusal() draws above — a picker is named from outside itself, an
+      // action names itself — applied to the toggle instead of to the box, so
+      // this can never become a click on a labelled action button.
+      const shut = await ariaOf(f.k, "aria-expanded")
+      if (shut === "false") {
+        const toggleSel = await page.evaluate((k) => {
+          const el = document.querySelector('[data-aj="' + k + '"]')
+          const box = el && el.parentElement
+          if (!box) return null
+          const norm = (s) =>
+            String(s == null ? "" : s)
+              .replace(/\s+/g, " ")
+              .trim()
+          const cand = [...box.querySelectorAll("button")].find(
+            (b) => !norm(b.innerText) && !norm(b.getAttribute("aria-label")),
+          )
+          if (!cand) return null
+          cand.setAttribute("data-aj-toggle", k)
+          return '[data-aj-toggle="' + k + '"]'
+        }, f.k)
+        if (toggleSel) {
+          await page.locator(toggleSel).click({ timeout: 6000 })
+          // Re-read: a control that was closed may only NAME its menu once it
+          // has one.
+          const openedId = await ariaOf(f.k, "aria-controls")
+          const openedSel = openedId
+            ? '[id="' +
+              String(openedId)
+                .split(/\s+/)[0]
+                .replace(/(["\\])/g, "\\$1") +
+              '"]'
+            : menuSel
+          await page
+            .locator(openedSel)
+            .first()
+            .waitFor({ state: openedId ? "visible" : "attached", timeout: 300 })
+            .catch(() => {})
+        }
+      }
       // THE CUT IS STATED, NOT SILENT. A 200-option country list came back as
       // 40 with nothing recording that anything was dropped, so the field
       // cache stored the short list as the whole list and an answer the form
@@ -372,12 +530,26 @@ export default async function scanPage(page, opts = {}) {
           list.filter(
             (n) => !list.some((o) => o !== n && n.contains && n.contains(o)),
           )
+        // Same redirection as ariaOf() above, for the same measured reason:
+        // react-select's stamped shell carries no aria, and the ids live on the
+        // inner input. The shell is asked first, so a control that names its
+        // own menu is untouched.
+        const ariaAttr = (c, a) => {
+          if (!c || !c.getAttribute) return ""
+          const own = c.getAttribute(a)
+          if (own != null) return own
+          const inner =
+            c.querySelector &&
+            c.querySelector(
+              "input[role='combobox'],input[aria-controls],input[aria-owns]," +
+                "[role='combobox'][aria-controls],[role='combobox'][aria-owns]",
+            )
+          return (inner && inner.getAttribute(a)) || ""
+        }
         const menuOf = (c) => {
           if (!c || !c.getAttribute) return null
           const ids = norm(
-            c.getAttribute("aria-controls") ||
-              c.getAttribute("aria-owns") ||
-              "",
+            ariaAttr(c, "aria-controls") || ariaAttr(c, "aria-owns") || "",
           ).split(/\s+/)
           for (const id of ids) {
             if (!id) continue
@@ -388,6 +560,34 @@ export default async function scanPage(page, opts = {}) {
             if (m && vis(m)) return m
           }
           return null
+        }
+        // THE MENU IS NOT ALWAYS INSIDE THE CONTROL.
+        //
+        // MEASURED on the same Coinbase form: react-select renders
+        // `.select__menu` in a PORTAL — a sibling of <body>, not a descendant
+        // of the control's container — so every container-scoped lookup misses
+        // it, and when the control names no menu there is nothing left to read
+        // but the page-wide selector list.
+        //
+        // ONLY ONE MENU IS OPEN AT A TIME. That is what makes this safe rather
+        // than a guess: the probe opens exactly one control, reads it, and
+        // presses Escape before the next. So a SINGLE visible menu-list on the
+        // page is unambiguously the one just opened. Two or more visible means
+        // the assumption does not hold — a stale menu, or a board that renders
+        // several at once — and this declines to choose between them and falls
+        // through to the existing page-wide read, which is what happens today.
+        const portalMenu = () => {
+          let found = []
+          try {
+            found = [
+              ...document.querySelectorAll(
+                "[class*='select__menu-list'],[class*='Select__menu-list']",
+              ),
+            ].filter(vis)
+          } catch {
+            return null
+          }
+          return found.length === 1 ? found[0] : null
         }
         const rowsIn = (menu) => {
           const declared = [...menu.querySelectorAll("[role='option']")]
@@ -422,7 +622,7 @@ export default async function scanPage(page, opts = {}) {
           }
           return out
         }
-        const menu = menuOf(el)
+        const menu = menuOf(el) || portalMenu()
         const rows = menu
           ? rowsIn(menu)
           : leavesOnly([
@@ -430,12 +630,32 @@ export default async function scanPage(page, opts = {}) {
                 "[role='option'],[role='listbox'] li,[class*='__option'],[class*='menu'] li",
               ),
             ])
+        // AN EMPTY-STATE MESSAGE IS NOT AN OPTION.
+        //
+        // MEASURED on Ashby, 2026-08-04. An async Location typeahead opened
+        // with no query renders
+        //   <div role="listbox"><div class="_noResults_"><p>No results</p>
+        // and declares NO [role=option] at all — so the leaf fallback above,
+        // which exists for menus that genuinely do not use role=option, read
+        // the decoration and returned ["No results"] AS THE OPTION LIST.
+        //
+        // That is worse than returning nothing. The field cache stores a
+        // returned list as the COMPLETE one, so the real answer then resolves
+        // as "not on offer" and the field defers on every future application
+        // to this board — the same silent-wrongness the truncation note below
+        // is about, arrived at from the other end.
+        //
+        // The filter only ever REMOVES, so its failure mode is a field that
+        // defers rather than one filled with a wrong value, which is the
+        // direction this pipeline always errs in.
+        const EMPTY_STATE =
+          /^(no results?|no options?|no matches?|nothing found|start typing|type to search)\b/i
         const all = [
           ...new Set(
             rows
               .filter(vis)
               .map((e) => norm(e.innerText).slice(0, 60))
-              .filter(Boolean),
+              .filter((t) => t && !EMPTY_STATE.test(t)),
           ),
         ]
         return { opts: all.slice(0, 40), total: all.length }

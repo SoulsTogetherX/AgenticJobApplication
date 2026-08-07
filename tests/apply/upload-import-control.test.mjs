@@ -34,6 +34,7 @@ import {
   resolveFields,
   readiness,
   isProfileImportControl,
+  isUninformativeFileLabel,
 } from "../../scripts/apply/fill-plan.mjs"
 import { detectAts } from "../../scripts/apply/ats/index.mjs"
 import fillPage from "../../scripts/apply/fill-engine.mjs"
@@ -254,5 +255,143 @@ test("isProfileImportControl matches import/parse verbs and leaves ordinary atta
   // skipped attachment slot means no résumé is sent at all.
   for (const empty of ["", "   ", null, undefined]) {
     assert.equal(isProfileImportControl(empty), false)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// A FILE INPUT CAN ALSO BE A SLOT NOBODY NAMED.
+//
+// THE DEFECT (Ashby, jobs.ashbyhq.com, three live Render applications,
+// 2026-08-06). Those forms render THREE file inputs. The first is labelled
+// "Name", carries no id and no name, and matches neither `resume|\bcv\b` nor
+// `cover letter`. It is not an import control either — `isProfileImportControl`
+// looks for a VERB and "Name" has none — so it fell through to the document
+// order fallback, took `fileOrder[0]`, and was planned the résumé.
+//
+// The résumé was therefore planned TWICE: two upload items carrying the same
+// document with the same `labelMatch`. Downstream the engine cannot tell the
+// two apart, so on the three-input shape it refused every upload on the form,
+// and on the two-input variant of the same shape it attached the résumé to the
+// phantom and reported ok.
+//
+// The rule this pins: the doc-order fallback resolves an UNINFORMATIVE label,
+// never merely an unmatched one. A label with real words in it that no spec
+// matches is a slot the adapter does not know, and an unknown slot defers.
+// ---------------------------------------------------------------------------
+const planFor = (fields, url = "https://jobs.ashbyhq.com/acme/abc") => {
+  const hand = { url, fields }
+  return buildPlan({
+    scan: hand,
+    resolved: resolveFields(fields, { profile: PROFILE, answers: ANSWERS }),
+    adapter: detectAts(url),
+    url,
+    files: FILES,
+  })
+}
+
+test("an unrecognised file slot is never handed the resume by document order", () => {
+  // The live Render/Ashby shape, field-for-field.
+  const plan = planFor([
+    { k: "f3", t: "file", l: "Name", req: true },
+    { k: "f10", t: "file", l: "Resume", sel: "#_systemfield_resume", req: true },
+    { k: "f11", t: "file", l: "Cover Letter", sel: "#cover" },
+  ])
+  const uploads = plan.items.filter((i) => i.how === "upload")
+  assert.deepEqual(
+    uploads.map((i) => [i.k, i.paths.map((p) => path.basename(p))]),
+    [
+      ["f10", ["resume.md"]],
+      ["f11", ["cover-letter.md"]],
+    ],
+    "the phantom slot was planned an attachment",
+  )
+  // The résumé is planned exactly ONCE. This is the assertion that would have
+  // caught the live defect: pre-fix this count was 2.
+  assert.equal(
+    uploads.filter((i) => i.paths.some((p) => path.basename(p) === "resume.md"))
+      .length,
+    1,
+    "the resume was planned more than once",
+  )
+  // And the unknown slot is reported, not silently dropped.
+  assert.ok(
+    plan.defer.some((d) => d.k === "f3"),
+    "the unrecognised slot vanished instead of deferring",
+  )
+})
+
+test("an unrecognised file slot does not consume a document-order position", () => {
+  // The mirror-image half, the same one the import-control skip needs. If the
+  // phantom advanced `fileIndex`, the real "Attach" after it would be offered
+  // slot 1 and would receive the COVER LETTER with the resume never attached.
+  const plan = planFor([
+    { k: "f1", t: "file", l: "Name" },
+    { k: "f2", t: "file", l: "Attach", sel: "#a1", req: true },
+    { k: "f3", t: "file", l: "Attach", sel: "#a2" },
+  ])
+  assert.deepEqual(
+    plan.items
+      .filter((i) => i.how === "upload")
+      .map((i) => [i.k, i.paths.map((p) => path.basename(p))]),
+    [
+      ["f2", ["resume.md"]],
+      ["f3", ["cover-letter.md"]],
+    ],
+    "an unrecognised slot shifted the real attachment slots",
+  )
+})
+
+test("BOUNDARY: two uninformative 'Attach' inputs still route by document order", () => {
+  // The behaviour the fallback exists for, unchanged. A fix that bought its
+  // correctness by disabling document order would break every Greenhouse form.
+  const plan = planFor([
+    { k: "f1", t: "file", l: "Attach", sel: "#a1", req: true },
+    { k: "f2", t: "file", l: "Attach", sel: "#a2" },
+  ])
+  assert.deepEqual(
+    plan.items
+      .filter((i) => i.how === "upload")
+      .map((i) => i.paths.map((p) => path.basename(p))),
+    [["resume.md"], ["cover-letter.md"]],
+  )
+})
+
+test("isUninformativeFileLabel: the vocabulary, listed rather than sampled", () => {
+  // Widening this is a visible edit here. Both columns matter — a false
+  // POSITIVE re-opens the defect above, a false NEGATIVE costs a Greenhouse
+  // user an unattached résumé.
+  for (const l of [
+    "",
+    "   ",
+    "Attach",
+    "Attach file",
+    "Upload",
+    "Upload a file",
+    "Choose file",
+    "Add file",
+    "Drag and drop your file here",
+    "Select a document",
+    "Attachment (optional)",
+    "File",
+    "PDF or DOCX",
+  ]) {
+    assert.equal(isUninformativeFileLabel(l), true, `"${l}" read as evidence`)
+  }
+  for (const l of [
+    "Name",
+    "Legal Name",
+    "Portfolio",
+    "Transcript",
+    "Writing sample",
+    "References",
+    "Photo",
+    "Resume",
+    "Cover Letter",
+  ]) {
+    assert.equal(
+      isUninformativeFileLabel(l),
+      false,
+      `"${l}" read as carrying no evidence`,
+    )
   }
 })

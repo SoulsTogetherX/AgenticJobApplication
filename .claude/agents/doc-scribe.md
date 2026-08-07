@@ -1,6 +1,6 @@
 ---
 name: doc-scribe
-description: Documentation role — owns CLAUDE.md, docs/reference/, the skill
+description: Documentation role — owns CLAUDE.md, docs/guide|code|operate/, the skill
   files and schemas, and the quality of code comments across the repo. Splits
   the oversized CLAUDE.md, keeps docs from claiming capabilities that moved, and
   protects the comments that record why something is the way it is. Not a
@@ -18,7 +18,7 @@ you change what it says, and you may never do the first while doing the second.
 ## Your exclusive files
 
 - `CLAUDE.md`, `README.md`
-- `docs/reference/*`
+- `docs/guide/*`, `docs/code/*`, `docs/operate/*`
 - `docs/*.md` **except** `docs/measurements.md` (innov-perf),
   `docs/team-roster.md` and `docs/agent-protocol.md` (build-manager), and
   `docs/candidates/*` (w5-leads)
@@ -71,17 +71,20 @@ return value carries `code_touched: false` and it must be true.
 **1. Split `CLAUDE.md` (R6, your biggest job).** ~500 lines re-read on every turn
 of every session — a standing latency and token tax on all work, this build
 included. Keep a short operational core: commands, hard rules, structure. Move
-the gotchas into `docs/reference/` to load on demand.
+the gotchas into `docs/operate/03-troubleshooting.md` to load on demand.
 
 Two constraints. The **hard rules stay in the core, in full** — they are the
 guardrails and cannot be a click away. And every gotcha you move keeps a
 one-line pointer from the core, or you have deleted institutional knowledge
 rather than relocating it.
 
-**2. Fix the stale reference docs.** `docs/reference/05-apply.md` still describes
-the old `addScriptTag` bootstrap that was replaced. Sweep for others — a
-reference doc describing code that changed is actively misleading, worse than
-absent.
+**2. Keep the reference set true to the code.** The whole of `docs/reference/`
+and `docs/autonomy/` was DELETED on 2026-08-06 and rewritten as `docs/guide/`
+(concepts and architecture), `docs/code/` (file by file) and `docs/operate/`
+(commands, recipes, troubleshooting) — 28 documents, written for an owner who is
+new to coding. Sweep them after any behaviour change: a reference doc describing
+code that changed is actively misleading, worse than absent. Cite by SYMBOL and
+file path, never by line number.
 
 **3. Shrink the skill files as R1 lands.** `.claude/skills/apply-job/SKILL.md` is
 a ~330-line program written in English and interpreted by a model at runtime,

@@ -2348,6 +2348,296 @@ test("a REAL built plan from the hostile scan is refused by submitReadiness", ()
   assert.match(state.reason, /attempted to instruct the agent/)
 })
 
+// --- submitReadiness reads the FILL REPORT, not just the plan (2026-08-05) --
+//
+// THE DEFECT THESE CLOSE. This function read exactly one key off the report —
+// `revealed` — so `failed`, `failures` and `verify` reached no gate anywhere in
+// the repository. The engine had already been taught that an upload whose input
+// the DOM shows still on the page holding zero files did NOT attach, and
+// demoted it to a fill failure; that failure was then invisible to every gate,
+// and the unattended path submitted the application anyway. authorize.mjs's
+// check 9 called itself "the live-scan gate: zero failures, zero verify
+// mismatches, zero required-empty" while delegating all three here, where none
+// of them were checked.
+//
+// EVERY TEST BELOW HAS ITS OPPOSITE. A gate that always refused would pass all
+// the refusal assertions, so each block also asserts the clean shape still
+// reaches ready:true. That is not padding — the fix ships on the path where
+// nobody is watching either outcome.
+
+const CLEAN_PLAN = {
+  items: [
+    { k: "f1", how: "fill", value: "Jane", label: "First name" },
+    { k: "f3", how: "upload", value: "resume.pdf", label: "Résumé" },
+  ],
+  defer: [],
+}
+const CLEAN_REPORT = {
+  ok: 2,
+  failed: 0,
+  failures: [],
+  uploads: [],
+  revealed: [],
+  verify: { mismatch: [], errors: [], requiredEmpty: [], landed: [] },
+}
+
+test("a failed fill refuses the submit, and the reason names the field", () => {
+  // The exact shape the upload readback produces. Before this, ready:true.
+  const state = submitReadiness(CLEAN_PLAN, {
+    ...CLEAN_REPORT,
+    ok: 1,
+    failed: 1,
+    failures: [
+      {
+        k: "f3",
+        how: "upload",
+        why: "upload-readback-empty: the file input is still on the page holding no file — resume.pdf did not attach; attach it by hand",
+      },
+    ],
+  })
+  assert.equal(state.ready, false)
+  assert.match(state.reason, /1 field\(s\) failed to fill/)
+  // Actionable, not "submit refused": WHICH field, by the label the user read
+  // on the form rather than by its data-aj stamp, and WHAT went wrong.
+  assert.match(state.reason, /Résumé \(f3\)/)
+  assert.match(state.reason, /upload-readback-empty/)
+  assert.match(state.reason, /resume\.pdf/)
+})
+
+test("a verify MISMATCH refuses, naming the field and both values", () => {
+  const state = submitReadiness(CLEAN_PLAN, {
+    ...CLEAN_REPORT,
+    verify: {
+      mismatch: [{ k: "f1", want: "Jane", got: "Jan" }],
+      errors: [],
+      requiredEmpty: [],
+    },
+  })
+  assert.equal(state.ready, false)
+  assert.match(state.reason, /did not hold the value that was typed/)
+  assert.match(state.reason, /First name \(f1\)/)
+  assert.match(state.reason, /wanted "Jane"/)
+  assert.match(state.reason, /the page shows "Jan"/)
+})
+
+test("a REQUIRED-EMPTY field refuses, naming it", () => {
+  const state = submitReadiness(CLEAN_PLAN, {
+    ...CLEAN_REPORT,
+    verify: { mismatch: [], errors: [], requiredEmpty: ["f1"] },
+  })
+  assert.equal(state.ready, false)
+  assert.match(state.reason, /required and still empty/)
+  assert.match(state.reason, /First name \(f1\)/)
+})
+
+test("a failure COUNT with no list still refuses — both keys are checked", () => {
+  // They agree in everything fillPage emits. Checking the number as well as the
+  // list means a report where they DISAGREE refuses, rather than being quietly
+  // resolved in favour of whichever one looks clean.
+  const bare = submitReadiness(CLEAN_PLAN, { ...CLEAN_REPORT, failed: 2 })
+  assert.equal(bare.ready, false)
+  assert.match(bare.reason, /2 field\(s\) failed to fill/)
+  assert.match(bare.reason, /counted them but listed none/)
+
+  const listOnly = submitReadiness(CLEAN_PLAN, {
+    ...CLEAN_REPORT,
+    failed: 0,
+    failures: [{ k: "f1", how: "fill", why: "boom" }],
+  })
+  assert.equal(listOnly.ready, false, "a list with a zero count still refuses")
+})
+
+test("an ABSENT verify is 'nobody measured this', never a failure", () => {
+  // The compatibility half, and getting it wrong would refuse every submit ever
+  // attempted — the same outage as a broken gate and far harder to see. A
+  // single-page fill that never ran a verify pass has no `verify` key at all.
+  const noVerify = { ok: 2, failed: 0, failures: [], uploads: [], revealed: [] }
+  assert.equal(submitReadiness(CLEAN_PLAN, noVerify).ready, true)
+  assert.equal(submitReadiness(CLEAN_PLAN, { ...noVerify }).ready, true)
+  // `undefined` is the same statement as the key being missing.
+  assert.equal(
+    submitReadiness(CLEAN_PLAN, { ...noVerify, verify: undefined }).ready,
+    true,
+  )
+  // And no report at all — the CLI's normal case, which runs before any fill.
+  assert.equal(submitReadiness(CLEAN_PLAN).ready, true)
+  assert.equal(submitReadiness(CLEAN_PLAN, null).ready, true)
+})
+
+test("a PRESENT verify measuring zero is ready — measured-clean is still clean", () => {
+  // The other side of the same distinction. "Not measured" must not refuse, and
+  // "measured, and it was zero" must not either. Only a non-zero count does.
+  const state = submitReadiness(CLEAN_PLAN, CLEAN_REPORT)
+  assert.equal(state.ready, true)
+  assert.equal(state.reason, null)
+})
+
+test("a count or list that is PRESENT and unreadable is not a zero one", () => {
+  // Fail closed on positive evidence: every branch asks "is this measurably
+  // clean?" rather than enumerating bad shapes. `report.verify` is literally
+  // whatever the page handed back from the verify pass's evaluate, so a value
+  // nothing can read is the page declining to answer, not the page saying yes.
+  for (const [over, pattern] of [
+    [{ failed: "two" }, /count is the string "two"/],
+    [{ failures: "none" }, /failure list is not a list/],
+    [{ verify: null }, /not a result object/],
+    [{ verify: [] }, /not a result object/],
+    [{ verify: "clean" }, /not a result object/],
+    [
+      { verify: { mismatch: "none", errors: [], requiredEmpty: [] } },
+      /mismatch is not a list/,
+    ],
+    [
+      { verify: { mismatch: [], errors: [], requiredEmpty: 0 } },
+      /requiredEmpty is not a list/,
+    ],
+    [
+      { verify: { mismatch: [], errors: "boom", requiredEmpty: [] } },
+      /errors is not a list/,
+    ],
+  ]) {
+    const state = submitReadiness(CLEAN_PLAN, { ...CLEAN_REPORT, ...over })
+    assert.equal(
+      state.ready,
+      false,
+      `${JSON.stringify(over)} must not read as clean`,
+    )
+    assert.match(state.reason, pattern)
+  }
+})
+
+test("the report checks never fire on a field the plan does not name", () => {
+  // A verify result for a key the plan never had still refuses, and still says
+  // something rather than throwing on the missing label lookup.
+  const state = submitReadiness(CLEAN_PLAN, {
+    ...CLEAN_REPORT,
+    verify: { mismatch: [], errors: [], requiredEmpty: ["f99"] },
+  })
+  assert.equal(state.ready, false)
+  assert.match(state.reason, /f99/)
+})
+
+// --- four holes around the same gate (2026-08-06) ---------------------------
+//
+// The gate itself was sound — an upload failure, a verify mismatch and a
+// required-empty field all block. These are the edges of it: a signal that
+// reached no branch, a report shape that reached no branch, and a refusal whose
+// sentence said nothing. Each has its opposite asserted beside it, because a
+// gate that refused everything would satisfy every refusal test in this file.
+
+test("the FORM'S OWN validation messages block, and the reason QUOTES them", () => {
+  // `verify.errors` reached no gate anywhere. fill-engine.mjs collected the
+  // board's rendered validation text, mergePages carried it, and this function
+  // looped over `mismatch` and `requiredEmpty` only — so a report whose only
+  // finding was `errors` came back ready:true. These are the board's own words
+  // for "this is not ready to submit", which is at least as strong as a
+  // mismatch our own readback computed: one is the form's verdict, the other is
+  // ours.
+  const state = submitReadiness(CLEAN_PLAN, {
+    ...CLEAN_REPORT,
+    verify: {
+      mismatch: [],
+      requiredEmpty: [],
+      errors: [
+        { text: "This field is required." },
+        { text: "Please select an option" },
+      ],
+    },
+  })
+  assert.equal(state.ready, false)
+  assert.match(state.reason, /2 validation message\(s\)/)
+  // QUOTED, not counted. "2 messages" is not something a user can act on, and
+  // the message is the only part that says which control the board is unhappy
+  // about — an error node carries no field key.
+  assert.match(state.reason, /"This field is required\."/)
+  assert.match(state.reason, /"Please select an option"/)
+  // And never counted as FIELDS: an error row is a sentence the board rendered,
+  // not an input, so the count must not read as a number of controls.
+  assert.doesNotMatch(state.reason, /field\(s\)/)
+})
+
+test("an error row that is a bare string is quoted too, not [object Object]", () => {
+  // The engine emits `{text}`, but this list is whatever the page handed back
+  // through the verify evaluate, and a renderer that assumed the shape would
+  // print a refusal nobody can read.
+  const state = submitReadiness(CLEAN_PLAN, {
+    ...CLEAN_REPORT,
+    verify: { mismatch: [], errors: ["Resume is required"], requiredEmpty: [] },
+  })
+  assert.equal(state.ready, false)
+  assert.match(state.reason, /"Resume is required"/)
+})
+
+test("an EMPTY errors list is still ready — measured-clean stays clean", () => {
+  // The direction that would be invisible if it broke: every honest fillPage
+  // emits `errors: []`, so a gate that refused on the key's PRESENCE rather
+  // than its contents would refuse every submit the engine has ever produced.
+  const state = submitReadiness(CLEAN_PLAN, {
+    ...CLEAN_REPORT,
+    verify: { mismatch: [], errors: [], requiredEmpty: [] },
+  })
+  assert.equal(state.ready, true)
+  assert.equal(state.reason, null)
+})
+
+test("an UNREADABLE report refuses, the way an unreadable verify already did", () => {
+  // FAIL-OPEN BEFORE TODAY, in two different ways.
+  //   `[]` is truthy, so it walked into the report section — and `.revealed`,
+  //   `.failed` and `.failures` are all `undefined` on an array while
+  //   `"verify" in []` is false, so every branch skipped and this returned
+  //   ready:true having read not one key of what it was handed.
+  //   A truthy primitive was worse: `"verify" in 'x'` throws a TypeError, so
+  //   the gate did not answer at all and whatever caught it decided instead.
+  for (const bad of [[], [{ k: "f1" }], "clean", 42, true, 0, ""]) {
+    let state
+    assert.doesNotThrow(
+      () => {
+        state = submitReadiness(CLEAN_PLAN, bad)
+      },
+      `submitReadiness must answer for ${JSON.stringify(bad) ?? String(bad)}, not throw`,
+    )
+    assert.equal(
+      state.ready,
+      false,
+      `${JSON.stringify(bad) ?? String(bad)} must not read as clean`,
+    )
+    assert.match(state.reason, /not a result object/)
+  }
+  // ABSENT IS STILL ABSENT, and it is the CLI's normal state: `null` and
+  // `undefined` are the only two shapes that mean "no fill ran, nobody measured
+  // this". Reading them as unreadable would refuse every submit ever attempted.
+  assert.equal(submitReadiness(CLEAN_PLAN, null).ready, true)
+  assert.equal(submitReadiness(CLEAN_PLAN, undefined).ready, true)
+})
+
+test("a refusal names the OFFENDING VALUE, never just its type", () => {
+  // `NaN` and `-1` are both `typeof "number"`, so the old sentence rendered as
+  // "the fill report's failure count is a number, not a number". It refused
+  // correctly and explained nothing — and a reason that reads as gibberish gets
+  // read as a broken gate rather than as a fact about the report.
+  for (const [failed, shown] of [
+    [NaN, /count is NaN/],
+    [-1, /count is -1/],
+    [Infinity, /count is Infinity/],
+    ["two", /count is the string "two"/],
+    [{ n: 1 }, /count is an object/],
+  ]) {
+    const state = submitReadiness(CLEAN_PLAN, { ...CLEAN_REPORT, failed })
+    assert.equal(state.ready, false, `${String(failed)} must not read as clean`)
+    assert.match(state.reason, shown)
+    assert.doesNotMatch(
+      state.reason,
+      /is a number, not a number/,
+      "a refusal must not say a value is the type it is",
+    )
+  }
+  // And a real count still passes, which is the whole point of the branch.
+  assert.equal(
+    submitReadiness(CLEAN_PLAN, { ...CLEAN_REPORT, failed: 0 }).ready,
+    true,
+  )
+})
+
 // ---------------------------------------------------------------------------
 // THE BLAST-RADIUS LEDGER FOR THE ASSERTION GATE (qa-breaker, 2026-07-31).
 //

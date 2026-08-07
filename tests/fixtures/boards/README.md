@@ -247,7 +247,7 @@ Filed by `innov-resilience` (verdict: **patch**) against the previous
 `hostile-forms.test.mjs` (the test now named `NOT A CONTROL:`), in
 `mislabelled-escalated.scan.json`'s `_note`, and in the page's own header
 comment. `doc-scribe` holds the two documentation instances
-(`docs/reference/01-control-flow.md`, `docs/reference/05-apply.md`).
+(`docs/guide/05-architecture.md`, `docs/code/08-apply-filling.md`).
 
 **Where the escalated attack IS actually bounded.** At the value side: a field's
 meaning is decided server-side, so the blast radius of a label-lie routing attack

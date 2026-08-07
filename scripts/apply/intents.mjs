@@ -112,6 +112,275 @@ const NEGATION_MARKER =
   /\b(?:not|never|without|unable|unwilling|cannot|can'?t|won'?t|don'?t|doesn'?t|didn'?t|isn'?t|aren'?t|no|nor|neither|none|decline[sd]?|refuse[sd]?|except|lack(?:s|ing)?)\b|\bopt[\s-]?out\b|\bfree\s+of\b|\bother\s+than\b/i
 
 // ---------------------------------------------------------------------------
+// placeholder subjects — the parameter of a parameterised intent
+// ---------------------------------------------------------------------------
+// WHAT THIS IS FOR NOW, AND WHAT IT IS NO LONGER FOR (2026-08-06). Everything
+// below was written while this test was the thing standing between the owner
+// and a fabricated "No" on a prior-employment question. IT IS NOT THAT ANY
+// MORE. answer-bank.mjs's priorEmployment() now defers on BOTH branches —
+// matched employer and unmatched alike — because the rule it fed was unsound
+// however good this extractor got: `profile.yaml` is a distilled resume, not
+// an exhaustive employment record, so absence from it never meant "never
+// worked there". Read the comment block at priorEmployment() for the full
+// argument and for the three rounds of extractor patching that failed before
+// the design changed.
+//
+// This function survives for two smaller jobs and is kept because it does them
+// well: it decides WHICH deferral reason the owner reads ("the question names
+// no company" vs. "the fact base cannot establish absence"), and it keeps the
+// parameterised-intent matching honest — an entry banked about a NAMED
+// employer must not be voted onto a question that named nobody. Both of those
+// fail soft. If the vocabulary below misses a phrase now, the cost is a
+// slightly wrong sentence in a question put to the owner, not a false
+// statement on a submitted form.
+//
+// The history, kept because it is the argument for the shape of the test:
+//
+// "Have you ever worked for our company before?" names no employer. The
+// extractor below captured the literal "our company", answer-bank.mjs's
+// priorEmployment() looked that up in profile.experience, found nothing, and
+// concluded the proposition was FALSE — a flat "No" with status OK, typed onto
+// a form and submitted with nobody reading it (found 2026-08-05). If the user
+// HAS worked there, that is a false statement on a signed application.
+//
+// The rule's own justification is what fails here: the profile can prove
+// someone is ABSENT from a complete employment history, but it cannot prove
+// absence from a company the question never identified. So a placeholder
+// subject yields `null` — the same result as no match at all, which routes the
+// field to a stated defer.
+//
+// THE FIRST VERSION OF THIS TEST WAS A DENYLIST AND FAILED OPEN (proved by
+// execution 2026-08-05). It called a phrase a placeholder only when EVERY
+// token was in the hand-written vocabulary below, so ONE token nobody had
+// enumerated turned a placeholder back into a "company name" and re-enabled
+// the fabricated "No":
+//
+//   "Have you ever worked for this employer or its related entities?"
+//     -> {"status":"OK","value":"No","param":"this employer or its related
+//         entities"}          ("related" was the only unlisted token)
+//
+// and the near-identical real label "...our organization, its subsidiaries or
+// affiliates" fails the same way the moment one qualifier is reworded. A
+// denylist over third-party label text is unbounded by construction.
+//
+// SO THE TEST IS INVERTED: a phrase counts as a company NAME only when it
+// carries positive evidence of naming one, and is a placeholder otherwise.
+// Three mechanical conditions make it a placeholder, any one of them enough:
+//
+//   1. it carries a pronoun or possessive that names nobody — our, us, we,
+//      your, its, their, my. "our organization, its subsidiaries or
+//      affiliates" is caught by "our" AND by "its", whatever the qualifiers.
+//   2. a demonstrative or article and a generic organisation noun both appear
+//      in it — "this employer", "the company", "a related company", "this or
+//      any related employer". ADJACENT, that is enough on its own; at any
+//      other distance it counts only while nothing else in the phrase names
+//      anybody, which is what keeps "The Walt Disney Company" a name.
+//   3. every token is generic: no token carries positive evidence of a name.
+//      Tokens are split on every non-alphanumeric run, so a hyphenated
+//      qualifier cannot fuse into one unenumerated word and smuggle the
+//      phrase back onto the name path.
+//
+// CONDITION 2 USED TO REQUIRE ADJACENCY, AND ONE WORD DEFEATED IT (proved by
+// execution 2026-08-06). The test was `words[i]` demonstrative AND `words[i+1]`
+// a generic organisation noun, so every one of these read as a company NAME
+// and earned a fabricated "No" through buildPlan, status OK, how:"fill":
+//
+//   "Have you ever worked for this or any related employer?"   -> OK "No"
+//   "...for a related company?"                                -> OK "No"
+//   "...for the successor entity?"                             -> OK "No"
+//   "...for any predecessor or successor organisation?"        -> OK "No"
+//   "...for an affiliated entity?"                             -> OK "No"
+//
+// Two things were wrong and both are fixed here. The adjacency requirement is
+// gone — an intervening qualifier is how a real ATS words this, not evidence
+// that the phrase names anybody — and the vocabulary was missing the relation
+// forms an intervening qualifier is made of (`affiliated`, `related`,
+// `associated`, `successor`, `predecessor`, `sibling`, `wholly`, `owned`
+// beside the `affiliate`/`subsidiary`/`parent` that were already there).
+//
+// THE GUARD THAT MAKES NON-ADJACENCY SAFE, STATED RATHER THAN ACCIDENTAL.
+// Dropping adjacency on its own would have turned "The Walt Disney Company"
+// into a placeholder — an article, a generic noun, and now no distance
+// requirement between them. What still distinguishes it from "the successor
+// entity" is that it CARRIES A TOKEN THAT IS NOT GENERIC ("walt", "disney"),
+// and that is now the explicit rule: condition 2's non-adjacent half fires only
+// when nothing in the phrase names anybody. Adjacency survives as its own
+// UNGUARDED half, because an article sitting immediately in front of a generic
+// organisation noun is a determiner phrase whatever else the label contains —
+// that is what still catches "the company named in this posting", where
+// "posting" is a token no vocabulary lists.
+//
+// Mechanically the guarded half IS the every-token-generic test, because
+// PLACEHOLDER_TOKENS is BUILT from DEMONSTRATIVES ∪ GENERIC_ORG_NOUNS ∪ the
+// rest below rather than spelled out a second time. That union is the point:
+// it is what makes "an article and a generic noun are never naming evidence"
+// true by construction instead of true because two hand-written lists happened
+// to agree. tests/apply/intents.test.mjs asserts the containment directly, so
+// a word added to either sub-set can never go missing from the other.
+//
+// THE EDGE CASE THIS MUST NOT BREAK, and it is asserted in both directions in
+// tests/apply/intents.test.mjs: "The Home Depot", "The Walt Disney Company",
+// "The Boeing Company", "The Coca-Cola Company", "The New York Times Company",
+// "The Kroger Co" and "The Goldman Sachs Group" are genuine names that begin
+// with an article. Every one of them carries a non-generic token, so every one
+// stays a name and the named-company path runs exactly as it did before.
+//
+// WHAT THIS COSTS, stated rather than hidden: a real company name whose own
+// tokens include one of the pronouns defers instead of resolving — "US Foods",
+// "US Bank", "The Company Store" — and so does one built entirely from the
+// relation vocabulary, "The Related Companies" being the real example. That is
+// one question to the owner. The failure it replaces is a false statement
+// about their employment history on a submitted application, which nothing
+// downstream corrects.
+//
+// A CORRECTION TO THE RECORD, because the old version of this comment (and a
+// test name in tests/apply/intents.test.mjs) asserted an IMPOSSIBILITY that is
+// not true. It said the residual could not be closed because "the parameter
+// reaches this function already lowercased, so the evidence is gone". The case
+// evidence is NOT gone: param() below captures `m[1]` in its original case and
+// only lowercases it on the line before the call, so passing the untouched
+// string here is a one-word change.
+//
+// It is not used, and the reason is that capitalisation is not evidence of a
+// proper noun in THIS input. Boards render field labels in Title Case and in
+// ALL CAPS as a matter of house style, and "Have You Ever Worked For Our
+// Company?" capitalises "Company" exactly as "The Walt Disney Company"
+// capitalises "Disney". Reading a capital as proof of a name would therefore
+// fail OPEN on the most common rendering of the very shape this function
+// exists to catch — a fabricated "No" restored by a stylesheet. Case could
+// only ever be used in the deferring direction (an all-lowercase interior as
+// evidence AGAINST a name), and that buys nothing: the phrases it would catch
+// are already caught by the vocabulary. So the claim was wrong and the
+// decision it justified is still right, for a different reason.
+
+// Condition 1. A phrase carrying one of these identifies nobody, however many
+// other tokens surround it. "me"/"mine"/"i" are deliberately ABSENT: they
+// never appear as the subject of an ATS prior-employment question, and they
+// collide with real names ("Mine Safety Appliances").
+const NON_NAMING_PRONOUNS = new Set(
+  "we us our ours you your yours my they them their theirs it its".split(" "),
+)
+
+// Condition 2. Article/demonstrative + generic organisation noun. Both halves
+// are required: the article alone is how a third of the S&P 500 spells its
+// own name.
+const DEMONSTRATIVES = new Set([
+  "the",
+  "a",
+  "an",
+  "this",
+  "that",
+  "these",
+  "those",
+])
+const GENERIC_ORG_NOUNS = new Set(
+  (
+    "company companies organization organizations organisation organisations employer employers " +
+    "firm firms business businesses agency agencies team teams entity entities institution institutions " +
+    "group groups corporation corporations affiliate affiliates subsidiary subsidiaries " +
+    "division divisions department departments unit units co"
+  ).split(" "),
+)
+
+// The qualifiers a placeholder hangs off an organisation noun. Every one of
+// them describes a RELATIONSHIP to a company rather than naming one, so none
+// of them is evidence of a name. The five shapes at the top of this block were
+// each one missing word away from resolving; `co` sits in GENERIC_ORG_NOUNS
+// above for the same reason and closes "the co-employer", which was recorded
+// as an open residual until now.
+const RELATION_QUALIFIERS = new Set(
+  (
+    "parent subsidiary sibling affiliated affiliate associated related successor successors " +
+    "predecessor predecessors wholly owned acquiring acquired surviving merged employing " +
+    "current former formerly previous prior past present new prospective own hiring " +
+    "above below named listed mentioned said aforementioned respective"
+  ).split(" "),
+)
+
+// Pure function words. They join a placeholder together and never name one.
+const GENERIC_FILLER = new Set(
+  "of and or any all each either some other others various in at for to".split(
+    " ",
+  ),
+)
+
+// Condition 3's vocabulary, and the guard on condition 2's non-adjacent half.
+// A UNION rather than a fourth hand-written list — see the block above for why
+// that containment is load-bearing.
+const PLACEHOLDER_TOKENS = new Set([
+  ...NON_NAMING_PRONOUNS,
+  ...DEMONSTRATIVES,
+  ...GENERIC_ORG_NOUNS,
+  ...RELATION_QUALIFIERS,
+  ...GENERIC_FILLER,
+  // Pronouns the naming test does not use as evidence but that are still not
+  // names: NON_NAMING_PRONOUNS deliberately omits these (see its comment).
+  ...["them", "mine", "me", "i"],
+  ...["client", "clients", "brand", "brands", "office", "offices"],
+  ...["location", "locations", "store", "stores", "site", "sites"],
+])
+
+// Exported for tests ONLY: the containment above is asserted directly rather
+// than inferred from a phrase that happens to exercise it.
+export const PLACEHOLDER_VOCABULARY = {
+  NON_NAMING_PRONOUNS,
+  DEMONSTRATIVES,
+  GENERIC_ORG_NOUNS,
+  RELATION_QUALIFIERS,
+  GENERIC_FILLER,
+  PLACEHOLDER_TOKENS,
+}
+
+// DEFENSIVE ABOUT ITS OWN INPUT. It lowercases first, which it did not do
+// before: the non-alphanumeric normalisation alone turned "ACME" into "" and
+// the empty-token filter then made the phrase read as "no tokens". That was
+// safe only because the single caller lowercased first, which is not a
+// property a second caller would know to preserve. A phrase with nothing left
+// after normalisation now returns TRUE (placeholder) — no surviving token is
+// no evidence of a name, and this function's whole job is to withhold the
+// confident path without positive evidence.
+// Exported for tests ONLY, and specifically so the defensive-input behaviour
+// above is assertable directly rather than inferred from a caller that already
+// lowercases.
+export function isPlaceholderSubject(phrase) {
+  const words = String(phrase ?? "")
+    .toLowerCase()
+    // "company's" is the same word as "company"; the possessive must not be
+    // what makes a placeholder read as a name.
+    .replace(/['’]s\b/g, "")
+    // SPLIT on every non-alphanumeric run rather than deleting it inside a
+    // token. Deleting it FUSED a hyphenated qualifier into one word nobody had
+    // enumerated, and condition 3 then read the fused word as evidence of a
+    // name: "the above-named company" became ["the","abovenamed","company"],
+    // failed "every token generic", and came back a NAME. Splitting gives
+    // ["the","above","named","company"] — all generic, correctly a placeholder.
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+  if (!words.length) return true
+  // 1 — a pronoun that names nobody.
+  if (words.some((w) => NON_NAMING_PRONOUNS.has(w))) return true
+  // 2a — ADJACENT determiner + generic organisation noun, UNGUARDED. "the
+  // company", "this employer". A determiner sitting immediately in front of a
+  // generic organisation noun is a determiner phrase however unfamiliar the
+  // rest of the label is, so this still fires on "the company named in this
+  // posting", where "posting" is in no vocabulary.
+  for (let i = 0; i < words.length - 1; i++) {
+    if (DEMONSTRATIVES.has(words[i]) && GENERIC_ORG_NOUNS.has(words[i + 1])) {
+      return true
+    }
+  }
+  // 2b + 3 — POSITIVE EVIDENCE OF A NAME is a token outside the generic
+  // vocabulary, and there is none here. This one expression carries both
+  // remaining conditions and that is deliberate, not an accident of factoring:
+  // PLACEHOLDER_TOKENS is the union that CONTAINS DEMONSTRATIVES and
+  // GENERIC_ORG_NOUNS, so "an article anywhere plus a generic organisation
+  // noun anywhere, with nothing naming anybody" (2b, non-adjacent) cannot be
+  // anything other than "every token is generic" (3). Writing 2b as a separate
+  // branch would add a test that can never be the reason this returns.
+  return words.every((w) => PLACEHOLDER_TOKENS.has(w))
+}
+
+// ---------------------------------------------------------------------------
 // the closed set
 // ---------------------------------------------------------------------------
 // CLOSED means: a question that matches no `concept` below is not typed, and
@@ -260,9 +529,15 @@ export const INTENTS = [
     concept: "prior_employment",
     type: "boolean",
     // A datum, not an assertion: whether someone worked somewhere is a fact
-    // about their history, and profile.yaml already carries the employment
-    // list. It is still parameterised, because the fact is about a SPECIFIC
-    // employer.
+    // about their history rather than a permission they grant. It is still
+    // parameterised, because the fact is about a SPECIFIC employer.
+    //
+    // `datum` DOES NOT MEAN "profile.yaml can settle it". profile.yaml carries
+    // an employment list, but a DISTILLED one — a resume, not an exhaustive
+    // record — so it can never establish the negative ("I have never worked
+    // there"). answer-bank.mjs's priorEmployment() therefore defers on every
+    // branch; the only things that can answer this concept are the owner and
+    // an answer they banked about the same named employer.
     class: "datum",
     proposition: "the user has previously been employed at the named company",
     match:
@@ -277,16 +552,43 @@ export const INTENTS = [
       /\b(?:not|have\s+not|haven'?t)\s+(?:previously\s+)?(?:been\s+)?(?:employed|worked)\s+(?:at|by|for)\b/i,
     ],
     param(text) {
-      const m = String(text).match(
+      const s = String(text)
+      const m = s.match(
         /(?:(?:employed|worked)\s+(?:at|by|for)|former\s+employee\s+of)\s+([A-Za-z0-9&.'\- ]{2,40})/i,
       )
       if (!m) return null
+      // A CAPTURE CUT OFF MID-WORD IS NOT A SUBJECT, IT IS HALF OF ONE, and
+      // the half fabricated a "No" (proved by execution 2026-08-06). The
+      // {2,40} cap is greedy with nothing after it, so the only way the next
+      // character can still be alphanumeric is that the cap — not the phrasing
+      // — ended the match. "Have you ever worked for any predecessor or
+      // successor organisation?" is 41 characters of subject, so it captured
+      // "...successor organisatio": a stub in no vocabulary, which read as
+      // positive evidence of a NAME and earned OK "No" about nobody. Whatever
+      // the question named, this run did not see all of it, so it defers.
+      const after = s[m.index + m[0].length]
+      if (after && /[A-Za-z0-9]/.test(after)) return null
       const co = m[1]
         .replace(/\s+(?:for|in|at|during|before|previously)\b.*$/i, "")
         .replace(/[?*.,].*$/, "")
         .trim()
         .toLowerCase()
-      return co || null
+      if (!co) return null
+      // "our company", "this organisation", "us", "a related company" — a
+      // subject the question never named. See isPlaceholderSubject() above:
+      // null here selects the "named no company" deferral reason and keeps a
+      // banked answer about a NAMED employer from being voted onto a question
+      // that named nobody. It is NO LONGER what prevents a fabricated "No" —
+      // priorEmployment() defers on every branch now.
+      //
+      // `co` is deliberately the LOWERCASED form even though `m[1]` still
+      // holds the original case one line up. That is a decision, not a
+      // limitation — see "A CORRECTION TO THE RECORD" above: an ATS renders
+      // "Our Company" and "Walt Disney" with identical capitalisation, so
+      // treating a capital as proof of a proper noun fails open on exactly the
+      // labels this call is here to catch.
+      if (isPlaceholderSubject(co)) return null
+      return co
     },
   },
   {

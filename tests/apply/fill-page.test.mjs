@@ -877,6 +877,118 @@ test("an input swapped out by the remount is 'gone', never a failure", async () 
   )
 })
 
+// --- 'empty' is the one readback answer that is a FAILURE -------------------
+//
+// setInputFiles not throwing was the entire evidence for `ok`, and on Ashby it
+// was wrong 7 runs out of 7 at 0b6db30: `fill: ok=4 failed=0 deferred=2` with
+// `_systemfield_resume` holding zero files (tests/dev/b1-browser-fill.test.mjs
+// records the observation). The engine already read the DOM afterwards and
+// wrote `seen: "empty"` — nothing anywhere read it, so the application went out
+// with no resume and the report said everything succeeded.
+
+test("an input still on the page holding no file is a failure, not an ok", async () => {
+  // The board took the call and kept the input, empty. That is not "nothing
+  // observed" — it is positive evidence the file did not land, and it is the
+  // only readback answer that is.
+  const page = domPage(GREENHOUSE_HTML, {
+    onUpload: (el) => {
+      el.files = []
+    },
+  })
+  const out = await fillPage(page, uploadPlan())
+  assert.equal(out.ok, 0, "a file that is not on the input is not an ok")
+  assert.equal(out.failed, 2)
+  assert.deepEqual(
+    out.uploads.map((u) => [u.target, u.seen, u.attached]),
+    [
+      // `attached` is what a caller reads to say "the file is on the field",
+      // so it is corrected too — the record must not contradict itself.
+      ["resume", "empty", false],
+      ["cover_letter", "empty", false],
+    ],
+  )
+  assert.deepEqual(
+    out.failures.map((f) => [f.k, f.how]),
+    [
+      ["f1", "upload"],
+      ["f2", "upload"],
+    ],
+  )
+  for (const f of out.failures) {
+    assert.match(f.why, /still on the page holding no file/)
+    assert.ok(
+      f.why.length <= 140,
+      "the reason reaches the user verbatim; a sentence cut mid-word is not " +
+        "something anyone can act on",
+    )
+  }
+  // The filename comes off OUR disk, so naming it costs nothing and tells the
+  // user which document to attach by hand.
+  assert.match(out.failures[0].why, /resume\.pdf/)
+  assert.match(out.failures[1].why, /cover-letter\.pdf/)
+})
+
+test("only the EMPTY input is demoted — a 'gone' one beside it stays ok", async () => {
+  // The boundary that matters. `gone` is a WORKING Greenhouse upload, so a rule
+  // that demoted "not attached" as a class would fail every real run on that
+  // board. One page, one of each.
+  const page = domPage(GREENHOUSE_HTML, {
+    onUpload: (el) => {
+      if (el.id === "cover_letter") {
+        el.files = []
+        return
+      }
+      const p = el.parentElement
+      p.childNodes = p.childNodes.filter((n) => n !== el)
+      el.parentElement = null
+    },
+  })
+  const out = await fillPage(page, uploadPlan())
+  assert.equal(out.ok, 1)
+  assert.equal(out.failed, 1)
+  assert.deepEqual(
+    out.uploads.map((u) => [u.target, u.seen, u.attached]),
+    [
+      ["resume", "gone", true],
+      ["cover_letter", "empty", false],
+    ],
+  )
+  assert.deepEqual(
+    out.failures.map((f) => f.k),
+    ["f2"],
+  )
+})
+
+test("an upload that already failed is not failed a second time", async () => {
+  // A board that REJECTS the file rejects the call too. `fail()` has already
+  // run by the time the readback sees the empty input, and one document that
+  // did not attach must produce exactly one failure — a demotion that did not
+  // check `attached` would count it twice and leave `ok` at -1.
+  const page = domPage(
+    `<html><body><form>
+      <div><label>Resume</label><input type="file" id="only" /></div>
+    </form></body></html>`,
+    {
+      onUpload: (el) => {
+        el.files = []
+        throw new Error("File type not allowed")
+      },
+    },
+  )
+  const out = await fillPage(
+    page,
+    plan([
+      { k: "f1", how: "upload", labelMatch: "resume", paths: ["resume.pdf"] },
+    ]),
+  )
+  assert.equal(out.ok, 0)
+  assert.equal(out.failed, 1)
+  assert.equal(out.failures.length, 1)
+  assert.match(out.failures[0].why, /File type not allowed/)
+  assert.equal(out.uploads[0].seen, "empty")
+  assert.equal(out.uploads[0].attached, false)
+})
+
 test("a missing file input is reported, not silently skipped", async () => {
   const page = fakePage({ elements: {} })
   const out = await fillPage(
@@ -1374,7 +1486,7 @@ test("the combo strategy that worked is reported, not thrown away", async () => 
   const page = fakePage({
     elements: {
       "#c": { kind: "combo", value: "" },
-      "[class*='__option'], [role='option'] >> option": {
+      "[class*='__option']:visible, [role='option']:visible >> option": {
         setsOnClick: ["#c", "United States"],
       },
     },
@@ -1399,7 +1511,7 @@ test("comboStrategy is the strategy that won for the most fields", async () => {
     elements: {
       "#a": { kind: "combo", value: "" },
       "#b": { kind: "combo", value: "" },
-      "[class*='__option'], [role='option'] >> option": {
+      "[class*='__option']:visible, [role='option']:visible >> option": {
         setsOnClick: ["#a", "Yes"],
       },
     },
@@ -1425,7 +1537,7 @@ test("type-click waits for its row; type-enter keeps its sleep on purpose", asyn
   // is highlighted, and "the list finished filtering" is not observable —
   // pressing Enter early would commit the wrong option, which is worth far
   // more than the 400ms it would save.
-  const opt = "[class*='__option'], [role='option'] >> option"
+  const opt = "[class*='__option']:visible, [role='option']:visible >> option"
   const clickPage = fakePage({
     elements: {
       "#c": { kind: "combo", value: "" },
@@ -1797,11 +1909,78 @@ test("probing waits for the menu to render, not for a flat 300ms", async () => {
 })
 
 test("the probe cap still bounds a long form", async () => {
-  const page = fakeScanPage({ scan: comboScan(20) })
+  // The cap is 24 since 2026-08-07 (was 18 — Coinbase's Greenhouse form has 23
+  // combos and the old ceiling skipped 5 of them). It is still a CAP, which is
+  // what this pins: a form past it is bounded and says so.
+  const page = fakeScanPage({ scan: comboScan(26) })
   const { scan } = await scanPage(page, { scannerSrc: "" })
-  assert.equal(scan.probe.probed, 18)
+  assert.equal(scan.probe.probed, 24)
   assert.equal(scan.probe.capped, 2)
-  assert.equal(page.log.filter((e) => e[0] === "click").length, 18)
+  assert.equal(page.log.filter((e) => e[0] === "click").length, 24)
+})
+
+test("the probe stops when its TIME budget is gone, not only its count", async () => {
+  // THE COUNT WAS ONLY EVER A PROXY. The cap's comment has always said "a long
+  // form should not spend a minute in here", and that held while a control cost
+  // at most ~4s. Raising the cap 18 -> 24 alongside 2s -> 6s of click patience
+  // took the pathological form — every control timing out — from ~72s to ~264s,
+  // which is a latency regression smuggled in behind a coverage fix.
+  //
+  // THE CLOCK IS INJECTED, and that is not incidental. The first version of
+  // this test set a 1ms budget and trusted the loop to be slower than that; it
+  // passed in a worktree and FAILED in the main repo, because the stub page
+  // probes 26 controls inside a single millisecond on a fast box. A bound
+  // asserted by racing the clock is not asserted at all.
+  //
+  // Here the clock jumps past the budget after the loop has started, so what
+  // is pinned is the BEHAVIOUR — stop, and say which bound stopped you — with
+  // no dependence on how fast the machine is.
+  let ticks = 0
+  const page = fakeScanPage({ scan: comboScan(26) })
+  const { scan } = await scanPage(page, {
+    scannerSrc: "",
+    probeBudgetMs: 1000,
+    probeMax: 26,
+    now: () => (ticks++ === 0 ? 0 : 999_999),
+  })
+  assert.equal(
+    scan.probe.probed,
+    0,
+    "the budget was already gone at the first control, so none is opened",
+  )
+  assert.equal(
+    page.log.filter((e) => e[0] === "click").length,
+    0,
+    "a budget that is gone must stop CLICKS, not merely stop recording them",
+  )
+  const cut = scan.fields.filter((f) => f.probe_skipped === "probe budget")
+  assert.ok(cut.length > 0, "a field cut by the budget must say which bound")
+  for (const f of cut) {
+    assert.equal(
+      f.opts,
+      undefined,
+      "a field the budget skipped has no options at all — it must not read " +
+        "as a field that was probed and found empty",
+    )
+  }
+  assert.equal(
+    scan.probe.probed + scan.probe.capped,
+    26,
+    "every combo is accounted for as either probed or stopped",
+  )
+})
+
+test("a healthy form is never cut by the time budget", async () => {
+  // The budget must not become a second cap. 24 fast controls finish nowhere
+  // near 60s, so the coverage the raised cap bought is actually delivered.
+  const page = fakeScanPage({ scan: comboScan(24) })
+  const { scan } = await scanPage(page, { scannerSrc: "" })
+  assert.equal(scan.probe.probed, 24)
+  assert.equal(scan.probe.capped, 0)
+  assert.equal(
+    scan.fields.filter((f) => f.probe_skipped === "probe budget").length,
+    0,
+  )
 })
 
 test("an unhydrated page waits for a button to exist, not for 1.5s", async () => {
@@ -2080,9 +2259,32 @@ test("the scan driver and the scan engine agree on their ceilings", () => {
     assert.ok(engine.includes(ceiling), `engine lost: ${ceiling}`)
     assert.ok(driverCode.includes(ceiling), `driver lost: ${ceiling}`)
   }
-  // Both cap the probe at the same number of dropdowns.
-  assert.ok(driverCode.includes("todo.length >= 18"))
-  assert.ok(engine.includes("opts.probeMax === undefined ? 18"))
+  // Both cap the probe at the same number of dropdowns. Raised 18 -> 24 on
+  // 2026-08-07: Coinbase's Greenhouse form carries 23 combos, so the old cap
+  // skipped 5 and deferred them for a reason the form was not responsible for.
+  assert.ok(driverCode.includes("todo.length >= 24"))
+  assert.ok(engine.includes("opts.probeMax === undefined ? 24"))
+  // Both are patient enough for a heavy form. Same measurement: the 2s click
+  // ceiling fired on controls a human clicks without noticing a delay.
+  for (const ceiling of [
+    "click({ timeout: 6000 })",
+    "scrollIntoViewIfNeeded({ timeout: 5000 })",
+  ]) {
+    assert.ok(engine.includes(ceiling), `engine lost: ${ceiling}`)
+    assert.ok(driverCode.includes(ceiling), `driver lost: ${ceiling}`)
+  }
+  // And both redirect the aria read to the inner combobox when the stamped
+  // shell is silent, which is the react-select shape. A copy that loses this
+  // reads null and probes nothing, which is what it did before the fix.
+  for (const src of [engine, driverCode]) {
+    assert.ok(/ariaOf\(f\.k, "aria-controls"\)/.test(src))
+    assert.ok(/ariaOf\(f\.k, "aria-expanded"\)/.test(src))
+    assert.ok(/menuOf\(el\) \|\| portalMenu\(\)/.test(src))
+    // The time budget is the bound that keeps the raised cap honest. A copy
+    // that carries the cap but not the budget is the ~264s worst case.
+    assert.ok(/probe_skipped = "probe budget"/.test(src))
+    assert.ok(/60000/.test(src), "the one-minute budget must be in both")
+  }
 })
 
 test("neither engine has a verb that clicks a button", () => {
@@ -2983,4 +3185,104 @@ test("nothing in the browser leg can reach a real employer", async (t) => {
   } finally {
     await s.close()
   }
+})
+
+// --- the readback says WHICH file, so check WHICH file ----------------------
+//
+// `seenFile` — the name the PAGE reports for the file sitting on the input —
+// has been recorded here for as long as this readback has existed, and was read
+// by no code at all. The only thing comparing it to the file we sent was a
+// sentence in SKILL.md asking the agent to eyeball the two, which is not a
+// control and is absent entirely on the unattended path, where nothing reads
+// `uploads`.
+//
+// MEASURED 2026-08-06 on three live Ashby applications: a third file input
+// labelled "Name" consumed the document-order slot and the résumé was planned
+// twice, so a document could land in a slot the user never chose while `seen:
+// "attached"` — which only ever meant "some file is here" — counted it ok.
+
+test("a file the page reports under another name is a failure, not an ok", async () => {
+  // The board accepted the call and kept an input holding a DIFFERENT document.
+  // Nothing about "a file is present" distinguishes this from success, which
+  // is exactly why presence was the wrong question.
+  const page = domPage(GREENHOUSE_HTML, {
+    onUpload: (el) => {
+      if (el.id === "cover_letter") el.files = [{ name: "resume.pdf" }]
+    },
+  })
+  const out = await fillPage(page, uploadPlan())
+  assert.equal(out.ok, 1, "the mis-targeted upload was still counted ok")
+  assert.equal(out.failed, 1)
+  assert.deepEqual(
+    out.uploads.map((u) => [u.target, u.seen, u.seenFile, u.attached]),
+    [
+      ["resume", "attached", "resume.pdf", true],
+      // Present, and wrong. `attached` is corrected so the record cannot
+      // contradict itself.
+      ["cover_letter", "attached", "resume.pdf", false],
+    ],
+  )
+  assert.deepEqual(
+    out.failures.map((f) => [f.k, f.how]),
+    [["f2", "upload"]],
+  )
+  const why = out.failures[0].why
+  assert.match(why, /upload-wrong-file/)
+  // Our own basename, so naming it tells the user which document to attach.
+  assert.match(why, /cover-letter\.pdf/)
+  assert.ok(
+    why.length <= 140,
+    "the reason reaches the user verbatim; a sentence cut mid-word is not " +
+      "something anyone can act on",
+  )
+})
+
+test("BOUNDARY: a board that APPENDS beside our file has not mis-targeted it", async () => {
+  // Membership, not equality. Our file is present; something else is too. That
+  // is not a document in the wrong slot, and failing it would cost the user a
+  // working upload on every board that behaves this way.
+  const page = domPage(GREENHOUSE_HTML, {
+    onUpload: (el) => {
+      if (el.id === "cover_letter") {
+        el.files = [{ name: "cover-letter.pdf" }, { name: "extra.pdf" }]
+      }
+    },
+  })
+  const out = await fillPage(page, uploadPlan())
+  assert.equal(out.ok, 2)
+  assert.equal(out.failed, 0)
+  assert.equal(out.failures.length, 0)
+})
+
+test("BOUNDARY: the filename check is case- and whitespace-insensitive", async () => {
+  // A board that echoes the name back with different casing has not swapped
+  // the document, and Windows paths make that a real possibility.
+  const page = domPage(GREENHOUSE_HTML, {
+    onUpload: (el) => {
+      if (el.id === "cover_letter") el.files = [{ name: " Cover-Letter.PDF " }]
+    },
+  })
+  const out = await fillPage(page, uploadPlan())
+  assert.equal(out.ok, 2, "a case difference was read as the wrong document")
+  assert.equal(out.failed, 0)
+})
+
+test("BOUNDARY: a 'gone' input is still not subject to the filename check", async () => {
+  // `gone` means the board swapped the input for its attached-file view — the
+  // normal Greenhouse success — and there is no name to read. The check must
+  // not turn the absence of evidence into evidence of the wrong file.
+  const page = domPage(GREENHOUSE_HTML, {
+    onUpload: (el) => {
+      const p = el.parentElement
+      p.childNodes = p.childNodes.filter((n) => n !== el)
+      el.parentElement = null
+    },
+  })
+  const out = await fillPage(page, uploadPlan())
+  assert.equal(out.ok, 2)
+  assert.equal(out.failed, 0)
+  assert.deepEqual(
+    out.uploads.map((u) => u.seen),
+    ["gone", "gone"],
+  )
 })

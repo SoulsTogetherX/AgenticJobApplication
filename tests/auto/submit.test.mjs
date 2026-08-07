@@ -343,6 +343,24 @@ test("8. plan_clean — a field the FILL revealed defeats submitReadiness", asyn
   )
 })
 
+test("8c. plan_clean — an UNREADABLE fill report refuses at the real gate", async (t) => {
+  // `[]` is the shape that fooled submitReadiness into ready:true: truthy, so
+  // it entered the report checks, and every key it looks for is `undefined` on
+  // an array. Asserted THROUGH submitOnce rather than only against the gate
+  // function, because the precondition is what decides the click — and the
+  // refusal must happen before it, which `refuses` checks.
+  const r = rig(t)
+  await refuses(t, fakePage(), r.base({ report: [] }), /not a result object/i)
+  // A truthy primitive used to throw a raw TypeError out of the gate instead of
+  // refusing, which is a different (and worse) failure: the caller decides.
+  await refuses(
+    t,
+    fakePage(),
+    r.base({ report: "clean" }),
+    /not a result object/i,
+  )
+})
+
 test("8b. the plan clauses of precondition 8 are defence behind the gate", async (t) => {
   // Not reachable through submitOnce, and that is the correct shape rather
   // than a gap: authorizeSubmit refuses a deferred or label-flagged plan and

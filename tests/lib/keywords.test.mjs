@@ -9,6 +9,9 @@ import {
   TECH_TERMS,
   TECH_LEXICON,
   SKILL_BY_NAME,
+  CASE_SENSITIVE_SURFACE,
+  SURFACE_SPELLINGS,
+  canonicalSurface,
   extractTech,
   atsFormsFor,
   adjacentTo,
@@ -190,6 +193,101 @@ test("detection does not fire on ambiguous prose", () => {
   }
 })
 
+// --- what R6 is allowed to treat as the same claim ---------------------------
+//
+// Both lists feed the truthfulness gate, so both are tested for the same thing:
+// that they say what they look like they say, and that neither has quietly
+// widened into equating two different technologies.
+
+test("every case-sensitive surface form is a real watchlist term", () => {
+  // A typo here fails open — the term silently reverts to case-insensitive and
+  // nobody finds out until an honest document is rejected.
+  const have = new Set(TECH_TERMS)
+  const unknown = [...CASE_SENSITIVE_SURFACE].filter((t) => !have.has(t))
+  assert.deepEqual(
+    unknown,
+    [],
+    `CASE_SENSITIVE_SURFACE names terms that are not in TECH_TERMS: ${unknown.join(", ")}`,
+  )
+})
+
+test("a spelling group is one skill's surface forms, never two skills", () => {
+  // The mechanical guard on the equivalence list. Every member must be a real
+  // watchlist term AND all members must come from a SINGLE skill's surface
+  // list, so ["React", "Vue"] cannot be added by hand and quietly make one
+  // framework evidence for another.
+  const have = new Set(TECH_TERMS)
+  for (const group of SURFACE_SPELLINGS) {
+    assert.ok(group.length >= 2, `a spelling group needs 2+ forms: ${group}`)
+    for (const term of group) {
+      assert.ok(have.has(term), `"${term}" is not in TECH_TERMS`)
+    }
+    const owners = SKILLS.filter((s) =>
+      group.every((t) => (s.surface ?? []).includes(t)),
+    )
+    assert.equal(
+      owners.length,
+      1,
+      `[${group.join(", ")}] is not one skill's surface list (${owners.length} owners)`,
+    )
+  }
+  // No form may belong to two groups, or canonicalSurface would depend on order.
+  const seen = SURFACE_SPELLINGS.flat()
+  assert.equal(new Set(seen).size, seen.length)
+})
+
+test("canonicalSurface folds sibling spellings and nothing else", () => {
+  // AUDIT C3's eight false failures: the profile's spelling and the resume's
+  // spelling are the same skill, and docs/tailoring-rules.md §8 plus
+  // checkWrittenForm both push the writer from the first to the second.
+  for (const [a, b] of [
+    ["Postgres", "PostgreSQL"],
+    ["Golang", "Go"],
+    ["WebSocket", "WebSockets"],
+    ["REST", "RESTful"],
+    ["SCSS", "Sass"],
+    ["Unix", "Linux"],
+    ["Shell", "Bash"],
+    ["Swagger", "OpenAPI"],
+  ]) {
+    assert.equal(
+      canonicalSurface(a),
+      canonicalSurface(b),
+      `${a} and ${b} are the same skill spelled two ways`,
+    )
+  }
+
+  // And the thing folding a whole `surface` list would have broken. An
+  // abstraction groups genuinely different products, so these must stay
+  // distinct or a profile mentioning Jest becomes evidence for a resume
+  // claiming Selenium.
+  for (const [a, b] of [
+    ["Jest", "Selenium"],
+    ["Datadog", "Grafana"],
+    ["Claude", "OpenAI"],
+    ["OAuth", "RBAC"],
+    ["OAuth", "OAuth2"],
+    ["Jenkins", "CircleCI"],
+    ["SSR", "SSG"],
+    ["HTML", "CSS"],
+    ["Pinecone", "Weaviate"],
+    ["TensorFlow", "PyTorch"],
+    ["ESLint", "Prettier"],
+    ["WCAG", "ARIA"],
+  ]) {
+    assert.notEqual(
+      canonicalSurface(a),
+      canonicalSurface(b),
+      `${a} and ${b} are different technologies and must not compare equal`,
+    )
+  }
+
+  // Identity for anything with no sibling, so a caller can map both sides of a
+  // comparison through it unconditionally.
+  assert.equal(canonicalSurface("Kubernetes"), "Kubernetes")
+  assert.equal(canonicalSurface("not a skill"), "not a skill")
+})
+
 // A negative corpus: text where NO software skill should be detected at all.
 // Half of it is real hospitality/facilities prose, because the local Las Vegas
 // boards are overwhelmingly casino postings and those are what actually reach
@@ -338,7 +436,10 @@ test("an expansion used without its acronym is flagged too", () => {
 })
 
 test("pairing them satisfies the check", () => {
-  assert.deepEqual(checkWrittenForm("Deployed to AWS (Amazon Web Services)."), [])
+  assert.deepEqual(
+    checkWrittenForm("Deployed to AWS (Amazon Web Services)."),
+    [],
+  )
 })
 
 test("the pair list stays short enough not to cry wolf", () => {

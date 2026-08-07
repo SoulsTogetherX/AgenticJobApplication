@@ -148,6 +148,99 @@ test("coverageFor reports placement without ever failing a document", () => {
   assert.equal(r.coverage.placed, 1)
 })
 
+// --- R6: what counts as the same claim --------------------------------------
+//
+// Two changes to the gate itself, and each has to be shown in BOTH directions,
+// because R6 is the control hard rules 1 and 4 rest on.
+
+/** A fact base whose only content is one sentence. */
+const factBase = (text) =>
+  factContextFrom({
+    profileRaw: `summary:\n  - id: s1\n    text: ${text}\n`,
+    profile: { summary: [{ id: "s1", text }] },
+    answers: { answers: [] },
+  })
+
+const verdict = (profileText, docText) =>
+  verifyDocument({
+    doc: `- ${docText} <!-- fact:s1 -->`,
+    mode: "resume",
+    ctx: factBase(profileText),
+  })
+
+test("R6 accepts a sibling spelling of a skill the fact base evidences", () => {
+  // AUDIT C3. docs/tailoring-rules.md §8 instructs "PostgreSQL not Postgres"
+  // and checkWrittenForm() flags "Postgres" as a spelling to fix — so the rules
+  // document, the linter and the plan all pushed the writer toward a spelling
+  // the verifier then rejected with exit 1.
+  for (const [profileForm, docForm] of [
+    ["Postgres", "PostgreSQL"],
+    ["Golang", "Go"],
+    ["WebSocket", "WebSockets"],
+    ["REST", "RESTful"],
+    ["SCSS", "Sass"],
+    ["Unix", "Linux"],
+    ["Shell", "Bash"],
+    ["Swagger", "OpenAPI"],
+  ]) {
+    const r = verdict(`Uses ${profileForm}.`, `Uses ${docForm}.`)
+    assert.equal(
+      r.ok,
+      true,
+      `profile "${profileForm}" + resume "${docForm}": ${JSON.stringify(r.violations)}`,
+    )
+  }
+})
+
+test("R6 still rejects a different technology under the same abstraction", () => {
+  // The direction the obvious fix would have broken. Mapping every term through
+  // its canonical SKILL would fold Testing's whole surface list — Jest, Vitest,
+  // Mocha, Cypress, Playwright, Selenium, Puppeteer, pytest — into one claim, so
+  // a profile mentioning Jest would evidence a resume claiming Selenium. That is
+  // the invention rule 1 forbids, arriving through the truthfulness gate itself.
+  for (const [profileForm, docForm] of [
+    ["Jest", "Selenium"],
+    ["Grafana", "Datadog"],
+    ["Claude", "OpenAI"],
+    ["OAuth", "RBAC"],
+    ["Jenkins", "CircleCI"],
+    ["Pinecone", "Weaviate"],
+    ["TensorFlow", "PyTorch"],
+  ]) {
+    const r = verdict(`Uses ${profileForm}.`, `Uses ${docForm}.`)
+    assert.equal(r.ok, false, `"${profileForm}" evidenced "${docForm}"`)
+    assert.ok(
+      r.violations.some((v) => v.rule === "R6" && v.detail.includes(docForm)),
+      JSON.stringify(r.violations),
+    )
+  }
+})
+
+test("R6 catches an invented claim written in lowercase", () => {
+  // The case-shaped hole: techTermsIn had no "i" flag, so a bullet claiming
+  // lowercase "kubernetes" produced zero violations and the document passed.
+  const r = verdict("Uses React.", "Deployed on kubernetes with terraform.")
+  assert.equal(r.ok, false)
+  for (const term of ["Kubernetes", "Terraform"]) {
+    assert.ok(
+      r.violations.some((v) => v.rule === "R6" && v.detail.includes(term)),
+      `lowercase ${term} passed R6: ${JSON.stringify(r.violations)}`,
+    )
+  }
+})
+
+test("R6 does not fail an honest document over ordinary English", () => {
+  // The cost of closing the hole carelessly. "go", "rest", "react", "spring",
+  // "express" and "rails" are all surface forms in the lexicon and all everyday
+  // words; a blanket case-insensitive match reads them as claims and fails a
+  // truthful resume, which is how a guardrail gets muted.
+  const r = verdict(
+    "Coordinated releases.",
+    "Had to go through legal, so the rest of the team could react to feedback in the spring without express approval, and nothing went off the rails.",
+  )
+  assert.equal(r.ok, true, JSON.stringify(r.violations))
+})
+
 test("a missing answers.yaml is a legitimate fact base, not an error", () => {
   const c = loadFactContext({
     profilePath: PROFILE,

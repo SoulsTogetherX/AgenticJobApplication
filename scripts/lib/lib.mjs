@@ -52,29 +52,78 @@ export function dumpYaml(obj) {
 
 export const UA = "agentic-job-application/0.1 (personal job search tool)"
 
-export async function fetchJson(url, body = null) {
-  const res = await fetch(url, {
-    method: body ? "POST" : "GET",
-    headers: {
-      "user-agent": UA,
-      accept: "application/json",
-      ...(body ? { "content-type": "application/json" } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
-  return res.json()
+// Every fetch is bounded. Neither of these carried a signal, so a board that
+// accepted the connection and never answered held one of mapPool's eight
+// workers until the OS gave up on the TCP connection — minutes, for one dead
+// board, on the wall clock the user benchmarks against Jobright. Measured
+// before this: a loopback server that accepts and never replies was STILL
+// HANGING after 8s with no sign of stopping.
+//
+// 15s is far past a healthy ATS list endpoint and far short of the OS timeout.
+// Per-call override via the options bag, because a probe wants to give up
+// sooner than a paged sweep.
+export const FETCH_TIMEOUT_MS = 15000
+
+// A timeout is reported as the SAME shape as an HTTP failure — a thrown Error
+// carrying the URL — because that is what every caller already handles.
+// find-jobs.mjs catches per board and stores `e.message` as that board's
+// failure; enrich.mjs catches per lead and flags it `no_description`. So a slow
+// board costs one board, never the sweep. Raw, the abort surfaces as a
+// DOMException named TimeoutError whose message ("The operation was aborted due
+// to timeout") names neither the URL nor the budget, which is the difference
+// between a warn line a human can act on and one they cannot.
+//
+// AbortSignal.timeout covers the body read as well as the headers, so a server
+// that sends "200 OK" and then stalls mid-JSON is bounded too — verified, not
+// assumed.
+async function withTimeout(url, timeoutMs, fn) {
+  try {
+    return await fn(AbortSignal.timeout(timeoutMs))
+  } catch (e) {
+    // The abort can arrive raw or wrapped in a TypeError by fetch, so check the
+    // cause as well as the error itself.
+    const timedOut = [e?.name, e?.cause?.name].some(
+      (n) => n === "TimeoutError" || n === "AbortError",
+    )
+    if (timedOut) throw new Error(`timeout after ${timeoutMs}ms for ${url}`)
+    throw e
+  }
 }
 
-export async function fetchText(url) {
-  const res = await fetch(url, {
-    headers: {
-      "user-agent": UA,
-      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
+export async function fetchJson(
+  url,
+  body = null,
+  { timeoutMs = FETCH_TIMEOUT_MS } = {},
+) {
+  return withTimeout(url, timeoutMs, async (signal) => {
+    const res = await fetch(url, {
+      method: body ? "POST" : "GET",
+      headers: {
+        "user-agent": UA,
+        accept: "application/json",
+        ...(body ? { "content-type": "application/json" } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal,
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
+    return res.json()
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
-  return res.text()
+}
+
+export async function fetchText(url, { timeoutMs = FETCH_TIMEOUT_MS } = {}) {
+  return withTimeout(url, timeoutMs, async (signal) => {
+    const res = await fetch(url, {
+      headers: {
+        "user-agent": UA,
+        accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      signal,
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
+    return res.text()
+  })
 }
 
 // Out-of-range numeric entities are left as written rather than crashing the
@@ -287,7 +336,7 @@ export function yearsOfExperience(profile, now = new Date()) {
 // one knew Cognito and EventBridge, that one knew Svelte and Kafka. Re-exported
 // rather than moved outright so every existing importer keeps working.
 export { TECH_TERMS } from "./keywords.mjs"
-import { TECH_TERMS } from "./keywords.mjs"
+import { TECH_TERMS, CASE_SENSITIVE_SURFACE } from "./keywords.mjs"
 
 // The text that may be treated as EVIDENCE of the user's experience.
 //
@@ -390,10 +439,18 @@ export function evidenceText(profileRaw, answersDoc) {
   return parts.join("\n")
 }
 
-function termRegex(term) {
+// Case-insensitive by default, exact for the terms keywords.mjs lists as
+// ordinary English words. This used to have no "i" flag at all, which left the
+// truthfulness gate a case-shaped hole — see CASE_SENSITIVE_SURFACE for what
+// the flag costs when applied to "Go", "REST" or "Spring", and why the answer is
+// an enumerated exception list rather than either extreme.
+function termRegex(term, flags = "") {
   const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   // Boundaries that tolerate ".", "+", "#" inside terms (C++, Node.js, C#).
-  return new RegExp(`(?<![A-Za-z0-9+#.])${escaped}(?![A-Za-z0-9+#])`)
+  return new RegExp(
+    `(?<![A-Za-z0-9+#.])${escaped}(?![A-Za-z0-9+#])`,
+    CASE_SENSITIVE_SURFACE.has(term) ? flags : `${flags}i`,
+  )
 }
 
 // Which TECH_TERMS appear in `text`? Longest-first so "React Native" wins and
@@ -404,7 +461,11 @@ export function techTermsIn(text) {
   for (const term of [...TECH_TERMS].sort((a, b) => b.length - a.length)) {
     if (termRegex(term).test(remaining)) {
       found.push(term)
-      remaining = remaining.replaceAll(term, " ")
+      // Blank what matched, using the SAME regex rather than a literal
+      // replaceAll: a term matched case-insensitively is not removed by a
+      // literal replace, so "react native" would report "React Native" and then
+      // "React" as well. The longest-first suppression has to survive casing.
+      remaining = remaining.replace(termRegex(term, "g"), " ")
     }
   }
   return found

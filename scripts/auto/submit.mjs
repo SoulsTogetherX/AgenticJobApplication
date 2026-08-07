@@ -184,8 +184,18 @@ export function findSubmitControl(scan) {
  *                  the plan against itself passes through a redirect.
  * @param queueRow  the auto_queue row, for check 6.
  * @param plan      the fill plan, for check 8.
- * @param report    the fill report, if a fill already ran (submitReadiness
- *                  reads uploads from it, never from the plan).
+ * @param report    the fill report, if a fill already ran. submitReadiness
+ *                  reads the FILL'S OWN VERDICT off it — `failed`, `failures`,
+ *                  `verify` and `revealed`. IT READS NO `uploads` KEY, and the
+ *                  older claim here that it did was false against that
+ *                  function's body: an upload that did not attach arrives as a
+ *                  `failures` entry, because fill-engine.mjs demotes an upload
+ *                  whose input the DOM still shows present and holding zero
+ *                  files to a fill failure. The "never from the plan" half of
+ *                  that old sentence records a real incident and still holds —
+ *                  the plan says what was ATTEMPTED, only the report says what
+ *                  happened, and the attachment list a human reads is
+ *                  `report.uploads` rather than anything on the plan.
  * @param run       the audit run — beginSubmit/recordRehearsal/abandonAttempt.
  * @param trust     the trustBoard() verdict, for check 10.
  * @param verification {doc_sha256, profile_sha256, mode}, for check 11.

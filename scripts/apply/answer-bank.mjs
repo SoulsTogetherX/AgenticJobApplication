@@ -150,6 +150,342 @@ const DEGREE_LEVELS = [
 const IS_QUESTION =
   /\?\s*\*?\s*$|^\s*(are|do|did|does|have|has|were|was|will|would|can|could|is|to your knowledge|please confirm)\b/i
 
+// The role and the company being APPLIED TO are not the user's own. "Position
+// Applied For" resolved OK with the CURRENT job title and "Company you are
+// applying to" with the CURRENT employer (found 2026-08-05) — a wrong answer
+// typed into a real employer's form and submitted with no human review,
+// because an OK is what fill-plan.mjs turns into an automatic fill.
+//
+// The guard has to sit on the two current-job rules themselves: neither label
+// is question-shaped, so IS_QUESTION does not divert them.
+//
+// THE FIRST FIX WAS A DENYLIST AND FAILED OPEN (proved by execution, same
+// day). It dropped those two rules only when the label matched APPLIED_TO —
+// i.e. it ASSUMED every other label meant the user's own job and subtracted
+// the phrasings somebody had thought of. A board that names the requisition
+// without any of those words walks straight through:
+//
+//   {"k":"f0","how":"fill","value":"Engineer","label":"Requisition Title"}
+//   {"k":"f1","how":"fill","value":"Globex","label":"Hiring Company"}
+//   "Vacancy Title"  -> "Engineer"
+//   "Position Title" -> "Engineer"
+//
+// while "Position Applied For" in the same run correctly deferred — the guard
+// firing on the labels someone enumerated and not on the others. A denylist
+// over third-party label text is unbounded: there are as many ways to name a
+// requisition as there are ATS vendors, and each new one re-opens the defect.
+//
+// SO THE TEST IS INVERTED. The two `current-job` rules answer exactly one
+// question — "what is the applicant's CURRENT job?" — so they now run only on
+// POSITIVE evidence that the label is asking it, and are dropped otherwise.
+// Evidence is four things that must ALL hold, and nothing else:
+//
+//   (a) the LABEL says WHICH job (ASKS_CURRENT_JOB) — current / currently /
+//       present(ly) / most recent / latest / existing; or
+//   (b) the SECTION says whose job it is (isOwnEmploymentSection) —
+//       scan-page.js stamps `f.section` with the heading a field sits under,
+//       so a bare "Company" under a "Work Experience" heading is a
+//       work-history row and is legitimately asking about the user's own job;
+//   (c) AND, whichever of those supplied the evidence, the LABEL's own shape
+//       must be a bare work-history field name (isBareOwnJobLabel);
+//   (d) AND, if the label carries a row index at all, it must be row ONE
+//       (rowOrdinal) — these two rules read profile.experience[0] and know
+//       about no other job, so "Employer 2" is a question they cannot answer.
+//
+// AND THREE VETOES, any one of which withholds the answer whatever (a)-(d)
+// said: APPLIED_TO (below), THIRD_PARTY_SUBJECT and PAST_EMPLOYMENT_HEADING
+// (further down). A veto can only ever ADD a deferral. The reason there are
+// three rather than one is that they contradict different halves of the claim
+// — APPLIED_TO and PAST_EMPLOYMENT_HEADING say the answer is a different JOB,
+// THIRD_PARTY_SUBJECT says it is a different PERSON — and folding them into
+// one pattern would lose exactly that, which is what the comment at each one
+// is for.
+//
+// (c) IS NOT DECORATION — it closes a second fail-open of the same shape,
+// proved by execution 2026-08-06 while (a)+(b) alone were in place. (a) and
+// (b) establish WHICH job and WHOSE job; neither establishes that the label is
+// asking for an employer or a title at all, so the evidence leaked onto any
+// label the two tagged rules' regexes happened to touch:
+//
+//   "Current Hiring Company"                  -> OK "Globex"
+//   "Current Requisition Title"               -> OK "Engineer"
+//   "Currently Recruiting Company"            -> OK "Globex"
+//   "Requisition Title" [Work Experience]     -> OK "Engineer"
+//   "Hiring Company"    [Employment History]  -> OK "Globex"
+//
+// Every one of those is the requisition again, arriving through the evidence
+// rather than around it. (c) is an ALLOWLIST OVER TOKENS — one word outside
+// the vocabulary ("requisition", "hiring", "recruiting", "posting", or
+// whatever the next ATS vendor invents) and the label defers — so it fails in
+// the same direction as (a) and (b) rather than needing the requisition
+// vocabulary enumerated in advance.
+//
+// Everything else — including a bare "Employer" or "Job Title" with no
+// heading above it — falls through to the answer bank (a banked answer to
+// exactly that question still wins) and then to UNKNOWN, which defers. That
+// is a real throughput cost and it is measured, not guessed: see
+// REAL_ATS_LABELS in tests/apply/answer-bank.test.mjs.
+//
+// APPLIED_TO SURVIVES, BUT ONLY AS A VETO over every kind of evidence, and it
+// is applied to the SECTION as well as the label — whatever text is being read
+// as evidence is subject to it, or a prose heading ("Tell us about your
+// experience with this position") grants a work-history reading it should not.
+// The veto can only ever ADD a deferral, never grant one: a label carrying
+// both signals ("Current openings you are applying for") is ambiguous and
+// defers. A denylist that subtracts confidence is safe; a denylist that grants
+// it is what failed above. `apply(ing)` does not match "applicable".
+const APPLIED_TO =
+  /\bapplied\b|\bapply(?:ing)?\b|\bdesired\b|\bsought\b|\bprospective\b|\bof interest\b|\binterested in\b|\bthis (?:position|role|job|opening|opportunity|vacancy)\b/i
+
+// (a) The label itself names the applicant's own ongoing/most recent job.
+// "present" is word-bounded so "presentation" is not evidence of anything.
+const ASKS_CURRENT_JOB =
+  /\bcurrent(?:ly)?\b|\bpresent(?:ly)?\b|\bmost[\s-]+recent\b|\blatest\b|\bexisting\b/i
+
+// A SECTION HEADING THAT IS POSITIVELY ABOUT SOMEBODY ELSE, and the reason
+// this is a THIRD kind of veto rather than another entry in APPLIED_TO.
+//
+// asksCurrentJob used to read `(a) || (b)` — label evidence OR section
+// evidence — so a label carrying its own WHICH-job evidence never consulted
+// the section at all. The section could GRANT and could never VETO, and that
+// asymmetry fills a field about a different human being with the owner's job.
+// Verified by execution 2026-08-06, before this existed:
+//
+//   "Current Employer"  [Emergency Contact]           -> OK "Globex"
+//   "Current Employer"  [Reference 1]                 -> OK "Globex"
+//   "Current Job Title" [References]                  -> OK "Engineer"
+//   "Current Employer"  [Next of Kin / Beneficiary /
+//                        Spouse / Parent or Guardian /
+//                        Supervisor]                  -> OK "Globex"
+//
+// (a) establishes WHICH job and (b) establishes WHOSE job. A heading naming a
+// referee, a relative or a next of kin is direct evidence that the answer is
+// NOT the applicant's own job, and evidence against must outrank evidence for
+// — a wrong employer typed into an emergency-contact block goes out on a
+// signed application exactly like any other wrong answer.
+//
+// Like APPLIED_TO this can only ever ADD a deferral, so it is applied to the
+// LABEL as well as the section: nothing here can grant an answer, which is
+// what makes a loose word ("parent", which also occurs in "parent company")
+// safe to list.
+const THIRD_PARTY_SUBJECT =
+  /\bemergency\b|\bnext\s+of\s+kin\b|\bbeneficiar(?:y|ies)\b|\breferences?\b|\breferees?\b|\bspouse\b|\bparents?\b|\bguardians?\b|\bsupervisors?\b|\bdependents?\b|\brelatives?\b|\bnominees?\b/i
+
+// A PAST-TENSE HEADING CONTRADICTS "CURRENT" — it does not support it.
+//
+// `previous|prior|past` used to sit in OWN_EMPLOYMENT_SECTION's qualifier
+// alternation, so "Previous Employment" was read as evidence that the field is
+// about the applicant's own job and (b) granted the two current-job rules —
+// which know only profile.experience[0]. Verified by execution 2026-08-06:
+//
+//   "Employer"  [Previous Employment]  -> OK "Globex"   (the CURRENT employer)
+//   "Company"   [Prior Employment]     -> OK "Globex"
+//   "Job Title" [Past Experience]      -> OK "Engineer"
+//
+// Those headings do say WHOSE job it is. What they also say is WHICH job, and
+// they say a different one from the only job these rules can read — so the
+// heading is evidence AGAINST the answer being offered, and it vetoes rather
+// than merely failing to grant. That is why it also overrides (a): "Current
+// Employer" under a "Previous Employment" heading is a label and a heading
+// asserting opposite things, which is the definition of a field nothing
+// deterministic has understood.
+//
+// Unanchored on purpose. It is a veto, so a heading it over-matches costs one
+// deferral and never a wrong answer; an anchored form would miss "Employment
+// History (previous 10 years)" for no gain. Note that "History"/"Record" alone
+// is NOT past-tense here: every ATS files the current job under "Employment
+// History", which is why that heading still grants.
+const PAST_EMPLOYMENT_HEADING = /\b(?:previous|prior|past|former|earlier)\b/i
+
+// (b) The heading the field sits under names the applicant's employment
+// record. An ALLOWLIST of WHOLE heading shapes: the heading must BE one of
+// them, not merely CONTAIN one, so a heading nobody enumerated grants nothing.
+//
+// THE FIRST VERSION'S FIRST ALTERNATIVE WAS A BARE `\bexperience\b`, WHICH
+// CONTRADICTED THAT CLAIM AND FAILED OPEN (proved by execution 2026-08-06).
+// One loose token matches an unbounded set of headings that are about the JOB,
+// not about the applicant's history:
+//
+//   "Position Title" [Experience Required]   -> OK "Engineer"
+//   "Company"        [Experience Required]   -> OK "Globex"
+//   "Employer"       [Years of Experience]   -> OK "Globex"
+//
+// Anchoring is the fix, not a longer denylist of headings: "Experience
+// Required" and "Years of Experience" are two of an unbounded set, the same
+// way "Requisition Title" was one of an unbounded set of requisition labels.
+//
+// A bare "Experience" heading DOES grant — that is a resume-style work-history
+// header and a real board emits it (asserted in the corpus below). A bare
+// "Employment" grants for the same reason; it is listed now rather than
+// assumed, which is what the earlier note about it meant. What does not grant
+// is any heading with material either side of those words.
+//
+// `previous|prior|past` USED TO BE IN THE QUALIFIER LIST AND ARE GONE — see
+// PAST_EMPLOYMENT_HEADING above. A heading that names a past job is not
+// evidence for an answer read out of profile.experience[0].
+//
+// The heading is normalised first — lowercased, whitespace collapsed, and
+// leading/trailing punctuation runs dropped — so "Work Experience *" and
+// "Employment History:" match. Punctuation cannot carry a subject word, so
+// that normalisation cannot let a different subject through; anything it does
+// not reduce to a listed shape ("1. Work Experience", "Section 2: Employment")
+// simply defers.
+const OWN_EMPLOYMENT_SECTION =
+  /^(?:experience|employment)$|^(?:work|employment|job|career|occupational|professional|current|recent)\s+(?:experience|history|record|background|employment)$|^positions?\s+held$|^employment\s+(?:information|details|history)$/i
+
+const normalizeSection = (section) =>
+  String(section ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/^[^a-z0-9]+/, "")
+    .replace(/[^a-z0-9]+$/, "")
+    .trim()
+
+// The two vetoes are checked HERE as well as in resolveField, so that no
+// caller can obtain a grant from this predicate without them: a heading that
+// names somebody else, or a past job, is never own-current-employment
+// evidence, whatever else it says.
+const isOwnEmploymentSection = (section) => {
+  const s = normalizeSection(section)
+  if (PAST_EMPLOYMENT_HEADING.test(s) || THIRD_PARTY_SUBJECT.test(s)) {
+    return false
+  }
+  return OWN_EMPLOYMENT_SECTION.test(s)
+}
+
+// (c) The label's own shape. An ALLOWLIST of the words a bare work-history
+// field name is built from: the subjects the two tagged rules can actually
+// answer (an employer, a job title), the qualifiers that say WHICH of the
+// user's jobs is meant, and ordinary connective filler. Anything else in the
+// label means it is naming some OTHER subject, and the confident path is
+// withheld.
+//
+// `previous`/`prior`/`former`/`last` are in here DELIBERATELY. They keep the
+// pre-existing "Previous Employer" behaviour byte-for-byte — that label under a
+// work-history heading still answers with the CURRENT employer, which is a
+// defect belonging to a different rule (the two tagged rules have no notion of
+// WHICH of the user's jobs is asked for). Leaving it alone is the instruction;
+// silently half-fixing it here would hide it. See the out-of-scope test.
+//
+// Deliberately NOT here: `this`/`that`/`these`/`those`. "This Employer" is the
+// hiring company, not the user's.
+//
+// `any` and `no` are here for the numbered/optional row renderings measured
+// below — "Current Employer, if any", "Employer No. 1". Both are pure function
+// words: neither can name a different subject, which is the only property this
+// vocabulary is allowed to admit a word on.
+const OWN_JOB_LABEL_TOKENS = new Set(
+  (
+    "company companies employer employers organization organizations organisation organisations " +
+    "business firm job jobs title titles position positions role roles occupation employment work name names " +
+    "current currently present presently most recent latest existing previous prior former last " +
+    "of the a an your my s and or if applicable optional required any no"
+  ).split(" "),
+)
+
+// A numbered work-history row is a bare own-job label too: "Employer 1",
+// "Company #2", "Job Title 1" are how a repeated block spells the same field,
+// and a row index names no subject at all. Bounded to one or two digits so it
+// stays a row index — "Employer 2019" and "Company 401k" keep deferring.
+//
+// DELIBERATELY ASCII. `\d` is ASCII-only in a non-`u` regex and that is the
+// property wanted here: a numeral this file cannot read is not a row index it
+// has understood, so it must fail the vocabulary rather than pass it. The
+// Unicode-aware companion below exists to RECOGNISE such a numeral, never to
+// admit it.
+const ROW_ORDINAL = /^\d{1,2}$/
+// Any decimal digit in any script — Arabic-Indic ٢, full-width ２, Devanagari
+// २. Used only to tell "a numeral I cannot read" apart from "an ordinary word
+// I do not know", so rowOrdinal can say which it met.
+const NUMERAL_TOKEN = /^\p{Nd}{1,2}$/u
+const isOwnJobToken = (w) => OWN_JOB_LABEL_TOKENS.has(w) || ROW_ORDINAL.test(w)
+
+// A TOKEN THIS TOKENISER CANNOT REPRESENT MUST COUNT AS OUT OF VOCABULARY, NOT
+// VANISH. The split used to be /[^a-z0-9]+/ over a lowercased string, which
+// treats every non-ASCII character as a SEPARATOR — so a subject word written
+// in another script was deleted outright and the label that survived read as a
+// bare own-job label. Verified by execution 2026-08-06:
+//
+//   "Current Employer - Kompaniya" in Cyrillic  -> OK "Globex"
+//   the same label with the subject in kanji    -> OK "Globex"
+//   "Employer ٢" [Work Experience]              -> OK "Globex"  (row 1's value
+//                                                  answered for row 2, because
+//                                                  the numeral was deleted and
+//                                                  rowOrdinal() saw no index)
+//
+// That is the allowlist failing OPEN through its own tokeniser: an allowlist
+// can only reject what it is shown. Splitting on "not a letter, digit or
+// combining mark" (Unicode-aware) keeps the foreign word as ONE token, which
+// is then in no vocabulary and defers — the same outcome any other unknown
+// subject word gets. Deliberately NOT NFKC-normalised: folding full-width
+// letters back to ASCII would hand the vocabulary a match it never saw, and
+// deferring on an exotic rendering is the direction that costs a question
+// rather than an application.
+const LABEL_TOKEN_SEPARATOR = /[^\p{L}\p{N}\p{M}]+/u
+
+const labelTokens = (s) =>
+  String(s ?? "")
+    .toLowerCase()
+    .split(LABEL_TOKEN_SEPARATOR)
+    .filter(Boolean)
+
+// A bracketed aside qualifies the field ("(if applicable)", "[required]"); it
+// never names a different subject.
+//
+// THE STRIP USED TO RUN INSTEAD OF THE TOKEN TEST ON THE FULL TEXT, AND
+// BRACKETS THEREFORE HID A SUBJECT WORD FROM THE ALLOWLIST (proved by
+// execution 2026-08-06). Whatever sat inside the brackets was invisible, so
+// the requisition walked back in wearing them:
+//
+//   "Current Employer (Hiring Company)"  -> OK "Globex"
+//   "Current Title (Vacancy Title)"      -> OK "Engineer"
+//   "Current Employer [Requisition]"     -> OK "Globex"
+//
+// The token test now has to pass on BOTH forms — the stripped text and the
+// full text — so an out-of-vocabulary token defers wherever it sits. The two
+// halves are kept separate rather than collapsed to the full-text test alone
+// because they fail for different reasons and only one of them is implied by
+// the other: the full-text test is what closes the hole above, and the
+// stripped test is what keeps a label made of NOTHING BUT an aside
+// ("(if applicable)") on the deferring path. NO TOKENS AT ALL IS NOT
+// EVIDENCE — an empty, bracket-only or punctuation-only label returns false,
+// like every other label the vocabulary does not cover.
+const isBareOwnJobLabel = (label) => {
+  const raw = String(label ?? "").toLowerCase()
+  const stripped = labelTokens(raw.replace(/\([^)]*\)|\[[^\]]*\]/g, " "))
+  const full = labelTokens(raw)
+  if (!stripped.length || !full.length) return false
+  return stripped.every(isOwnJobToken) && full.every(isOwnJobToken)
+}
+
+// WHICH row of a repeated work-history block the label is asking about, or
+// null when it carries no index. The two `current-job` rules can only answer
+// row ONE: they read profile.experience[0] and have no notion of any other
+// job, so "Employer 2" under a work-history heading would be answered with the
+// CURRENT employer — a false statement, and the same WHICH-job defect the
+// out-of-scope "Previous Employer" test records. Admitting the digit into the
+// vocabulary above without this would have turned that defect from a
+// pre-existing one into a newly-created one. Highest index wins, so a label
+// naming two rows defers.
+//
+// A NUMERAL IT CANNOT READ IS NOT "NO INDEX". Before the Unicode split above,
+// "Employer ٢" lost its numeral in the tokeniser, this returned null, and the
+// caller's `(rowOrdinal(label) ?? 1) === 1` therefore read the label as row
+// ONE and answered row 2 with row 1's employer. Now the numeral survives as a
+// token, and a numeral outside ASCII yields NaN rather than a row number:
+// `NaN === 1` is false, so the caller defers. Do not "simplify" the NaN away —
+// it is the third state (an index that was seen and not understood) and it has
+// to be distinguishable from null (no index at all).
+const rowOrdinal = (label) => {
+  const nums = []
+  for (const w of labelTokens(label)) {
+    if (!NUMERAL_TOKEN.test(w)) continue
+    nums.push(ROW_ORDINAL.test(w) ? Number(w) : Number.NaN)
+  }
+  if (!nums.length) return null
+  return nums.some(Number.isNaN) ? Number.NaN : Math.max(...nums)
+}
+
 const EEO_RE =
   /\bgender\b|\brace\b|ethnic|hispanic|latino|veteran|disab|self-?identif|pronoun/i
 // "I do not want to answer" (Affirm's disability option) was one word away from
@@ -469,15 +805,24 @@ export function createResolver(profile = {}, answersDoc = {}) {
       "experience.current",
       isCurrent ? "Current role" : "",
     ],
+    // The 4th element tags the two rules that answer with the user's OWN
+    // employer/title, the way CONTACT_RULES' 4th element tags the identity
+    // rules. resolveField DROPS BOTH UNLESS the label carries positive
+    // evidence that it is asking for the applicant's current job — see the
+    // block above APPLIED_TO for the three conditions and for why the earlier
+    // "drop them when the label says 'applied'" denylist failed open. APPLIED_TO
+    // is now only the veto over that evidence, never the whole test.
     [
       /\b(company|employer|organi[sz]ation)( name)?\b/i,
       "experience.current",
       currentJob.company ?? "",
+      "current-job",
     ],
     [
       /\b(job )?title\b|\bposition\b/i,
       "experience.current",
       currentJob.title ?? "",
+      "current-job",
     ],
     [
       /\bstart date\b.*\bmonth\b|\bmonth\b.*\bstart\b/i,
@@ -525,43 +870,96 @@ export function createResolver(profile = {}, answersDoc = {}) {
     )
     .filter(Boolean)
 
-  // "Have you previously been employed at Affirm?" Only the negative is
-  // answered here: the profile can prove someone is ABSENT from a complete
-  // employment history, but not in what capacity they were employed if they
-  // are present.
+  // =========================================================================
+  // PRIOR EMPLOYMENT — THIS RULE NO LONGER ANSWERS. EVER. READ THIS BEFORE
+  // "FIXING" THE DEFERRAL.
+  // =========================================================================
+  // It used to answer "No" whenever the named company was absent from
+  // `profile.experience`. Three rounds of patching tried to make that safe by
+  // improving the SUBJECT EXTRACTOR, and all three failed:
   //
-  // FIXED (item 2.1, found by the polarity corpus in
-  // tests/apply/intents-polarity.test.mjs). This rule used to extract the
-  // company with a regex that ignored negation entirely and return a flat
-  // "No", so "Have you NOT previously been employed at Globex?" resolved OK
-  // with value "No" — a confident inversion, in shipped code, on the exact
-  // failure shape item 2.1 exists to make impossible. The bug was not in the
-  // extraction; it was that the rule mapped question -> answer STRING with no
-  // place to put a polarity, which is the ladder's defect in miniature.
+  //   round 1 (2026-08-05) — a placeholder DENYLIST. "our company" was caught;
+  //     "this employer or its related entities" was not, because "related" was
+  //     the one token nobody had listed -> OK "No".
+  //   round 2 (2026-08-06) — the test INVERTED to require positive evidence of
+  //     a name, with an adjacency rule. One intervening word defeated it:
+  //     "a related company", "the successor entity", "an affiliated entity"
+  //     -> OK "No". The {2,40} capture also cut a long subject off mid-word,
+  //     and the stub read as evidence of a name -> OK "No" about nobody.
+  //   round 3 (2026-08-06) — adjacency dropped, relation vocabulary widened,
+  //     mid-word captures rejected. An adversary then drove 54 fresh
+  //     prior-employment questions and 44 of them still fabricated OK "No"
+  //     reaching how:"fill":
+  //       "Have you ever been employed by the University?"        -> "No"
+  //       "...by the Hospital?" "...the District?" "...the Trust?" -> "No"
+  //       "...for the recruiting company?" "...the potential employer?" -> "No"
+  //     The vocabulary of generic organisation nouns is a denylist over
+  //     unbounded third-party label text, and it cannot be finished.
   //
-  // It now reads the polarity and the company off `typeQuestion()` — the same
-  // typing intents.mjs applies everywhere else, so the parameter extraction,
-  // the negated phrasings and the stray-negation check are one implementation
-  // and not a second copy that can drift. The PROPOSITION is still resolved
-  // from profile.yaml (the employment list), which is what this rule is for
-  // and what the answer bank cannot supply; only the rendering of that
-  // proposition onto the question's polarity is new.
+  // THE DENYLIST WAS NEVER THE REAL BUG, AND THAT IS WHY THE DESIGN CHANGED
+  // INSTEAD OF THE VOCABULARY. Even with a PERFECT extractor the rule is
+  // unsound. It answers "No, I have never worked for X" by checking that X is
+  // absent from `profile.experience` — and the fact base is a DISTILLED
+  // RESUME, not an exhaustive employment history. A resume omits jobs: short
+  // stints, unrelated work, anything its owner chose to leave off. So "absent
+  // from profile.experience" has never meant "never worked there", and a "No"
+  // built on it can be a FALSE STATEMENT ABOUT THE OWNER'S OWN HISTORY, made
+  // in their name, on a real application, with a checkbox next to it. That is
+  // hard rule 1 (documents and answers may only contain facts the fact base
+  // holds), and no amount of vocabulary reaches it.
   //
-  // Every "" return falls through to the intent pass below, which defers with
-  // a stated reason. Three of them are real: an unestablished polarity, a
-  // company the label never named, and a company the user DID work at (the
-  // profile proves presence, not capacity — unchanged).
+  // SO BOTH BRANCHES DEFER, and each says WHICH case it is, because the owner
+  // reads these notes in pending-questions.mjs:
+  //
+  //   * subject matches a company in profile.experience — the true answer is
+  //     "Yes", and that is an assertion the owner makes about their own
+  //     history (in what capacity, over what dates), not one the pipeline
+  //     makes for them.
+  //   * subject does not match, or the question named nobody — the fact base
+  //     cannot establish absence, so there is no truthful answer to fill.
+  //
+  // RE-ENABLING THE AUTO-"No" REQUIRES AN EXHAUSTIVE EMPLOYMENT RECORD, WHICH
+  // `profile.yaml` IS NOT. If a future fact base ever gains one — a field that
+  // asserts "this list is complete", set by the owner, not inferred — then
+  // this rule may answer the negative again, and only for subjects it
+  // extracted whole. Until then, a deferral here is not a throughput bug to
+  // revert: it is the system correctly reporting that nothing it holds can
+  // answer the question. Throughput on this field rises the three lawful ways
+  // (adapter, probed options, banked answer) — an exact banked answer already
+  // wins, because the exact-bank lookup in resolveField runs BEFORE
+  // QUESTION_RULES.
+  //
+  // isPlaceholderSubject() (intents.mjs) IS KEPT AND STILL EARNS ITS PLACE,
+  // but its job is now much smaller and it is no longer what stands between
+  // the owner and a fabricated statement: it only chooses WHICH deferral
+  // reason the owner reads ("the question named no company" vs. "the fact base
+  // cannot establish absence"). If it fails open now, the cost is a slightly
+  // wrong sentence in a question, not a false answer on a form.
+  const NO_COMPANY_NAMED =
+    'the question names no company ("our company", "this employer", "us"), so there is nothing to check the employment history against — and profile.yaml could not settle it even if there were: it is a distilled resume, not an exhaustive employment record. Answer this one yourself.'
+  const PRIOR_EMPLOYMENT_LISTED = (co) =>
+    `profile.experience lists "${co}" — your own history shows this employer, so the truthful answer is not "No". Exactly what to say (and in what capacity and over what dates) is an assertion about your history that only you can make, so this is deferred rather than answered.`
+  const PRIOR_EMPLOYMENT_ABSENT = (co) =>
+    `"${co}" is not in profile.experience — but profile.yaml is a distilled resume, not an exhaustive employment record, so its silence is NOT evidence that you never worked there. Nothing in the fact base can establish a truthful "No". Answer this one yourself.`
   const priorEmployment = (label) => {
     const t = typeQuestion(label)
-    if (!t || t.concept !== "prior_employment" || t.polarity === null) return ""
+    if (!t || t.concept !== "prior_employment" || t.polarity === null) {
+      return {
+        value: "",
+        note: "could not establish what this question asserts about prior employment",
+      }
+    }
     const co = t.param
-    if (!co) return ""
+    if (!co) return { value: "", note: NO_COMPANY_NAMED }
     const worked = employers.some((e) => e.includes(co) || co.includes(e))
-    if (worked) return ""
-    // P("has previously been employed at <co>") is false. The question asks P
-    // directly (+1) or its negation (-1) — the same boolean equality
-    // intents.mjs uses, so the two can never disagree.
-    return t.polarity === 1 ? "No" : "Yes"
+    // NOTHING RETURNS A VALUE FROM HERE. `value: ""` sets `hit` with an empty
+    // value, and resolveField's `if (hit)` branch turns that into UNKNOWN
+    // carrying this note — a stated deferral the owner can act on, which is
+    // what pending-questions.mjs surfaces.
+    return {
+      value: "",
+      note: worked ? PRIOR_EMPLOYMENT_LISTED(co) : PRIOR_EMPLOYMENT_ABSENT(co),
+    }
   }
 
   // User decision 2026-07-28: prefer the banked answer, fall back to "Other"
@@ -627,9 +1025,37 @@ export function createResolver(profile = {}, answersDoc = {}) {
   // bug walks back in through the side door — an untyped label like "Visa
   // status" fuzzy-matching a banked sponsorship answer is the same
   // string-copy with the same failure mode.
-  function bestAnswer(label) {
+  //
+  // THE THIRD FENCE — `fuzzy: false` (2026-08-06). The own-job guard DROPS the
+  // two `current-job` rules rather than blanking them, deliberately, so that a
+  // banked answer to exactly that question still wins. With an EMPTY bank —
+  // which is what every current-job test constructed — the label then fell to
+  // UNKNOWN and the suite was green. With a REAL bank it falls to THIS
+  // function, and a similarity of >= 0.7 refilled the requisition with the
+  // owner's own job, re-opening three of the four holes the guard had just
+  // closed. Verified by execution 2026-08-06 against a bank holding the
+  // owner's own answers ("Current Employer" -> "Globex", "Job Title" ->
+  // "Engineer"):
+  //
+  //   "Hiring Company"                       -> OK "Globex"   (a-003@0.90)
+  //   "Requisition Title" / "Vacancy Title"  -> OK "Engineer"  (a-004@0.90)
+  //   "Current Employer (Hiring Company)"    -> OK "Globex"   (a-001@0.90)
+  //   "Employer" [Years of Experience]       -> OK "Globex"   (a-001@0.90)
+  //
+  // The INTENT was right and is kept: a banked answer to that exact question
+  // should still win. The THRESHOLD is what was wrong. So when the own-job
+  // evidence test failed on a label whose subject IS the own job, this tier is
+  // restricted to an EXACT normalised match and nothing else — the same
+  // `normalizeQuestion` key the exact-bank lookup uses, so "exact" means one
+  // thing in this file and there is no second copy of the matching logic to
+  // drift. (In practice such a label has already been answered by the exact
+  // lookup at the top of resolveField, so this is belt and braces — and it
+  // stays correct if that ordering is ever changed.)
+  function bestAnswer(label, { fuzzy = true } = {}) {
+    const wanted = fuzzy ? null : normalizeQuestion(label)
     let best = null
     for (const a of untypedBank) {
+      if (wanted !== null && normalizeQuestion(a.question) !== wanted) continue
       const score = similarity(label, a.question)
       if (!best || score > best.score) best = { ...a, score }
     }
@@ -646,6 +1072,84 @@ export function createResolver(profile = {}, answersDoc = {}) {
       f.opts ??
       (Array.isArray(f.o) ? f.o.map((o) => o.l).filter(Boolean) : null)
     const requireOptions = CHOICE_TYPES.has(f.t)
+
+    // ---- own-job evidence, computed ONCE -----------------------------------
+    // Read by the `current-job` rule filter further down AND by the fuzzy bank
+    // tier's fence, which is why it is hoisted here rather than left beside
+    // the rules: two call sites deciding "is this label about the applicant's
+    // own current job?" with two different tests is how the bank tier came to
+    // answer the labels the rules had just refused.
+    const section = String(f.section ?? "").trim()
+    // The three vetoes. Each says the answer is about a different JOB
+    // (APPLIED_TO, PAST_EMPLOYMENT_HEADING) or a different PERSON
+    // (THIRD_PARTY_SUBJECT), and any one of them withholds the current-job
+    // answer whatever evidence (a)-(d) found.
+    const vetoed =
+      APPLIED_TO.test(label) ||
+      APPLIED_TO.test(section) ||
+      THIRD_PARTY_SUBJECT.test(label) ||
+      THIRD_PARTY_SUBJECT.test(section) ||
+      PAST_EMPLOYMENT_HEADING.test(normalizeSection(section))
+    const asksCurrentJob =
+      !vetoed &&
+      isBareOwnJobLabel(label) &&
+      // A numbered row other than the first is asking about a job these two
+      // rules cannot see — see rowOrdinal(). NaN (a numeral in a digit system
+      // this file cannot read) fails this test too, which is the point.
+      (rowOrdinal(label) ?? 1) === 1 &&
+      (ASKS_CURRENT_JOB.test(label) || isOwnEmploymentSection(section))
+    // WHETHER THE FUZZY BANK TIER MAY ANSWER THIS LABEL AT ALL.
+    //
+    // `ownJobSubjectLabel` asks the two `current-job` rules' OWN regexes
+    // whether this label's subject is the employer or the job title — derived
+    // from PROFILE_RULES rather than re-spelled, so it cannot come to name a
+    // different set of labels than the guard does. When the subject IS the own
+    // job and the evidence test FAILED, this label is exactly the case the
+    // guard just refused to answer from profile.yaml, and letting a 0.7 token
+    // overlap answer it from the bank instead is the same wrong answer by a
+    // longer route (see bestAnswer's third fence for the executed evidence).
+    // Such a label may still be answered by an EXACT banked question, and by
+    // nothing else.
+    //
+    // Every other label is untouched: the fuzzy tier is how an ordinary banked
+    // answer reaches an ordinary reworded question, and narrowing it further
+    // would be a throughput regression with no defect behind it.
+    const ownJobSubjectLabel = PROFILE_RULES.some(
+      (r) => r[3] === "current-job" && r[0].test(label),
+    )
+    const bankFuzzyAllowed = asksCurrentJob || !ownJobSubjectLabel
+
+    // AND THE BANK IS SILENCED ENTIRELY — exact match included — when the veto
+    // is about a different PERSON or a different JOB.
+    //
+    // `bankFuzzyAllowed` above closes the fuzzy route and deliberately leaves
+    // the EXACT route open, because for APPLIED_TO the label means what it
+    // says: someone who banked an answer to the literal question "Position
+    // Applied For" answered that question, and their answer is the answer.
+    //
+    // THIRD_PARTY_SUBJECT and PAST_EMPLOYMENT_HEADING are not like that. There
+    // the label text is identical to a question about the applicant and MEANS
+    // something else because of where it sits, so an exact match on the words
+    // is exactly the wrong reason to trust it. Verified by execution
+    // 2026-08-06, with profile/answers.yaml holding a banked "Current
+    // Employer" — the veto below already refused the profile rules, and the
+    // bank answered the same field a few lines later:
+    //
+    //   "Current Employer" [Emergency Contact] -> OK "Globex"   (the OWNER's)
+    //   "Current Employer" [Reference]         -> OK "Globex"
+    //   "Current Employer" [Next of Kin]       -> OK "Globex"
+    //
+    // Narrow on purpose: it applies ONLY when the label's subject is the
+    // applicant's own job (`ownJobSubjectLabel`). A banked "Emergency Contact
+    // Name" or "Reference Phone" is untouched — those labels are not about the
+    // owner's job, the pipeline is meant to fill them, and widening this to
+    // every field under such a heading would defer a whole block the bank can
+    // legitimately answer.
+    const ownJobBankSilenced =
+      ownJobSubjectLabel &&
+      (THIRD_PARTY_SUBJECT.test(label) ||
+        THIRD_PARTY_SUBJECT.test(section) ||
+        PAST_EMPLOYMENT_HEADING.test(normalizeSection(section)))
 
     // Radio/checkbox groups have no element of their own; resolve the answer
     // to the stamped key of the option to click so filling stays mechanical.
@@ -754,8 +1258,38 @@ export function createResolver(profile = {}, answersDoc = {}) {
 
     // Ahead of EEO too: if the user actually answered a self-ID question,
     // their answer is the answer — auto-declining over it would discard it.
-    const exact = exactBank.get(normalizeQuestion(label))
+    //
+    // `ownJobBankSilenced` is the one thing that outranks that, and only for a
+    // label whose subject is the applicant's own job sitting under a heading
+    // about somebody else or about a former job. This lookup is what actually
+    // filled "Current Employer" [Emergency Contact] with the owner's employer
+    // (source `a2@exact`) after the profile rules had already refused it — it
+    // runs BEFORE them, so gating the later `bestAnswer` call alone changed
+    // nothing. Both routes are gated now; see the definition for the reasoning.
+    const exact = ownJobBankSilenced
+      ? undefined
+      : exactBank.get(normalizeQuestion(label))
     if (exact) {
+      // The same decline-shape recognition the EEO branch below uses, and for
+      // the same reason (see its comment) — an exact question match is if
+      // anything the STRONGER signal, so it must not defer on a wording
+      // mismatch a fuzzy match already resolves. MEASURED alongside it: banked
+      // "Disability Status" -> "I do not want to answer" hit this exact branch
+      // byte-for-byte on a live Twilio form and still deferred, because
+      // Twilio's own decline option reads "I don't wish to answer" and
+      // matchOption() does not ground synonyms. Scoped to EEO_RE labels only —
+      // a decline is dispositive of intent specifically because these fields
+      // are voluntary; a non-EEO exact match still must ground literally.
+      if (EEO_RE.test(label) && DECLINE_RE.test(exact.answer)) {
+        const decline = (opts ?? []).find((o) => DECLINE_RE.test(o))
+        if (decline) {
+          return push(
+            "OK",
+            `${exact.id}@exact${(exact.source ?? "user") === "model" ? ":model" : ""}`,
+            decline,
+          )
+        }
+      }
       const m = matchOption(exact.answer, opts, { requireOptions, label })
       return push(
         m.needsChoice ? "NEEDS-CHOICE" : "OK",
@@ -766,17 +1300,96 @@ export function createResolver(profile = {}, answersDoc = {}) {
     }
 
     if (EEO_RE.test(label)) {
+      // The exact-match branch above honours a banked self-ID answer only when
+      // the board words the question byte-identically to the way it was banked,
+      // and no two boards word these the same.
+      //
+      // MEASURED 2026-08-06, against a bank holding "Race" -> "Hispanic or
+      // Latino": the label "Race" resolved from the bank, while "Race /
+      // Ethnicity", "What is your race/ethnicity?" and "Please select your
+      // race" all resolved to "Decline to self identify" at status OK — filled
+      // and submitted with no review, contradicting the answer the user had
+      // actually given. Auto-declining is meant to spare the user a question
+      // they did not answer, never to overwrite one they did.
+      //
+      // So the same fuzzy match the rest of this file trusts at 0.7 runs first,
+      // for the reason stated above the exact branch: if the user answered a
+      // self-ID question, their answer is the answer. Below 0.7 this still
+      // declines rather than raising a MAYBE — these fields are voluntary, a
+      // weak match is not worth a question, and declining asserts nothing about
+      // the user. A banked answer that does not ground to an option on offer
+      // defers, which is the wording mismatch being surfaced, not a value.
+      const banked = bestAnswer(label, { fuzzy: bankFuzzyAllowed })
+      if (banked && banked.score >= 0.7) {
+        // MEASURED 2026-08-06, on a live Twilio application: profile/answers.yaml
+        // banks EEO declines under several boards' own wording ("I do not want
+        // to answer", "Decline to self-identify", "I don't wish to answer") —
+        // each saved from a real form, none identical to another. Grounding
+        // "Decline to self-identify" against Twilio's literal option text
+        // ("I don't wish to answer") failed with no substring in common, so
+        // gender and veteran status deferred to the user despite the bank
+        // holding a clear decline and the board offering one to decline with.
+        //
+        // A decline is not a substantive claim the way "Hispanic or Latino"
+        // is — every wording of it means the same one thing, so recognising it
+        // by SHAPE (the same DECLINE_RE the auto-decline below already uses,
+        // not a new vocabulary) and mapping it to THIS board's own decline
+        // option is not inventing an answer; it is the identical mapping the
+        // no-bank-hit path two lines down performs, reached one gate earlier.
+        // A SUBSTANTIVE banked answer still falls through to matchOption()
+        // and must still ground literally or defer — this shortcut fires only
+        // when the bank itself already declined.
+        if (DECLINE_RE.test(banked.answer)) {
+          const decline = (opts ?? []).find((o) => DECLINE_RE.test(o))
+          if (decline) {
+            return push(
+              "OK",
+              `${banked.id}@${banked.score.toFixed(2)}`,
+              decline,
+            )
+          }
+        }
+        const m = matchOption(banked.answer, opts, { requireOptions, label })
+        return push(
+          m.needsChoice ? "NEEDS-CHOICE" : "OK",
+          `${banked.id}@${banked.score.toFixed(2)}`,
+          m.value,
+          noteFor(m),
+        )
+      }
       const decline = (opts ?? []).find((o) => DECLINE_RE.test(o))
       if (decline) return push("OK", "eeo:decline", decline)
       return push("UNKNOWN", "eeo", "", "voluntary self-ID — ask the user")
     }
 
     let hit = null
+    // The two `current-job` rules answer "what is the applicant's CURRENT
+    // job?", so they run ONLY on positive evidence that this label is asking
+    // it: WHICH job (ASKS_CURRENT_JOB on the label, or isOwnEmploymentSection
+    // on the heading the field sits under) AND that the label is shaped like a
+    // bare work-history field at all (isBareOwnJobLabel) AND that any row index
+    // it carries is row one (rowOrdinal). APPLIED_TO vetoes every one of those,
+    // on the section text as well as the label, because both are read as
+    // evidence. See the block above APPLIED_TO for the four conditions in full,
+    // for why the earlier "drop them when the label says 'applied'" test was
+    // the wrong way round, and for the executed evidence that WHICH-job
+    // evidence alone still handed "Current Hiring Company" the user's own
+    // employer.
+    //
+    // They are DROPPED rather than blanked so the label still falls through to
+    // the bank: a user who banked an answer to exactly this question still
+    // gets it, and everything else lands on UNKNOWN, which defers to the user.
+    // The other PROFILE_RULES are untouched. THAT FALL-THROUGH HAD A HOLE IN
+    // IT — see `bankFuzzyAllowed` at the top of this function and bestAnswer's
+    // third fence.
+    const profileRules = asksCurrentJob
+      ? PROFILE_RULES
+      : PROFILE_RULES.filter((r) => r[3] !== "current-job")
     // QUESTION_RULES run for both shapes and take precedence; PROFILE_RULES
     // are field-label rules and must not fire on a question.
     const rules = IS_QUESTION.test(label)
       ? [...QUESTION_RULES, ...ctx.CONTACT_RULES]
-      : [...QUESTION_RULES, ...ctx.CONTACT_RULES, ...PROFILE_RULES]
+      : [...QUESTION_RULES, ...ctx.CONTACT_RULES, ...profileRules]
     for (const [re, source, value] of rules) {
       if (re.test(label)) {
         const out = typeof value === "function" ? value(label) : value
@@ -791,12 +1404,19 @@ export function createResolver(profile = {}, answersDoc = {}) {
         // `bank.find(...)` directly and returned a bare value, so a banked
         // answer to a future rule shaped like a work-authorization question
         // would resolve OK unclassified.
+        //
+        // The same object return also carries an optional `note`: a rule that
+        // knows WHY it cannot answer says so, instead of the generic
+        // "not in profile.<source>" below. That generic line was actively
+        // wrong for a placeholder-subject prior-employment question — the fact
+        // base is not missing anything there, the question named no company —
+        // and it is what the owner reads in pending-questions.mjs.
         hit =
           out &&
           typeof out === "object" &&
           !Array.isArray(out) &&
           "value" in out
-            ? { source: out.source ?? source, value: out.value }
+            ? { source: out.source ?? source, value: out.value, note: out.note }
             : { source, value: out }
         break
       }
@@ -812,7 +1432,7 @@ export function createResolver(profile = {}, answersDoc = {}) {
           "UNKNOWN",
           hit.source ?? "-",
           "",
-          `not in profile.${hit.source ?? "contact"}`,
+          hit.note ?? `not in profile.${hit.source ?? "contact"}`,
         )
       }
       const m = matchOption(hit.value, opts, { requireOptions, label })
@@ -883,7 +1503,15 @@ export function createResolver(profile = {}, answersDoc = {}) {
       )
     }
 
-    const best = bestAnswer(label)
+    // `fuzzy: false` when the label's subject is the applicant's own job and
+    // the evidence test refused it — the MAYBE tier below is gated on the same
+    // `best`, so a requisition label cannot come back as a MAYBE carrying the
+    // owner's employer either. `ownJobBankSilenced` goes further and withholds
+    // the bank altogether; see its definition for why an EXACT match is the
+    // wrong reason to trust a label sitting under someone else's heading.
+    const best = ownJobBankSilenced
+      ? null
+      : bestAnswer(label, { fuzzy: bankFuzzyAllowed })
     if (best && best.score >= 0.7) {
       const m = matchOption(best.answer, opts, { requireOptions, label })
       return push(

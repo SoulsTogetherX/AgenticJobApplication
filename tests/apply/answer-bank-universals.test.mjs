@@ -7,7 +7,11 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 
 function resolve(fields) {
   const res = spawnSync(
@@ -140,7 +144,28 @@ test("a state abbreviation matches a spelled-out option and vice versa", () => {
   assert.equal(abbrev.get("a").value, "IL")
 })
 
-test("prior employment answers No from a complete employment history", () => {
+// PRIOR EMPLOYMENT NEVER ANSWERS. This test used to be called "prior
+// employment answers No from a complete employment history" and asserted the
+// opposite of what it asserts now. The name carried the false premise:
+// `profile.yaml` is a DISTILLED RESUME, not a complete employment history. A
+// resume omits jobs — short stints, unrelated work, anything the owner chose
+// to leave off — so "absent from profile.experience" never meant "never worked
+// there", and the "No" it produced was a statement about the owner's own past
+// that the fact base could not back. That is hard rule 1, and it went out on
+// applications signed with their name.
+//
+// Three rounds of the 2026-08-05 audit tried to fix this by improving the
+// EXTRACTOR — teaching it that "our company", "this employer or its related
+// entities" and "the successor entity" name nobody. Each round closed the
+// questions it was shown and leaked on the next batch, because the vocabulary
+// of organisation nouns is unbounded (University, Hospital, District, Diocese,
+// Authority, Bureau, Trust...). The fourth round stopped patching the
+// extractor and removed the answer, because the rule was unsound even when the
+// extractor was perfect.
+//
+// DO NOT RE-ENABLE THE AUTO-"No" without an exhaustive employment record to
+// check against. `profile.yaml` is not one and does not claim to be.
+test("prior employment defers rather than asserting a negative", () => {
   const r = resolve([
     {
       k: "a",
@@ -158,15 +183,22 @@ test("prior employment answers No from a complete employment history", () => {
       opts: YESNO,
     },
   ])
-  assert.equal(
-    r.get("a").value,
-    "I have not previously been employed at Affirm",
-  )
-  assert.equal(r.get("b").value, "No")
+  for (const k of ["a", "b"]) {
+    const f = r.get(k)
+    assert.notEqual(
+      f.status,
+      "OK",
+      `${k} must not assert an employment negative: ${JSON.stringify(f)}`,
+    )
+    assert.equal(f.value, "", `${k} must carry no value`)
+  }
 })
 
 test("prior employment defers when the company IS in the history", () => {
-  // The profile proves absence, not the capacity someone was employed in.
+  // The other direction, and it defers for a different reason: the true answer
+  // is "Yes", and that is an assertion the owner makes about their own past,
+  // not one the pipeline makes for them. The profile also cannot say in what
+  // CAPACITY they were employed, which is what these option lists ask for.
   const r = resolve([
     {
       k: "a",

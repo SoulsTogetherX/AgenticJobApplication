@@ -110,7 +110,10 @@ async (page) => {
       stats.refused++
       continue
     }
-    if (todo.length >= 18) {
+    // 18 -> 24, mirrored from scan-engine.mjs, which carries the measurement:
+    // Coinbase's Greenhouse form has 23 combos, so the old cap skipped 5 and
+    // deferred them for no reason the form was responsible for.
+    if (todo.length >= 24) {
       f.probe_skipped = "probe cap"
       stats.capped++
       continue
@@ -118,17 +121,70 @@ async (page) => {
     todo.push(f)
   }
 
+  // THE BOUND THAT WAS ACTUALLY MEANT IS TIME, NOT COUNT — mirrored from
+  // scan-engine.mjs, which carries the reasoning. In short: the cap has always
+  // stood in for "a long form should not spend a minute in here", and raising
+  // it 18 -> 24 alongside 2s -> 6s of click patience took the pathological
+  // form from ~72s to ~264s. The budget enforces the stated intent directly,
+  // so the worst case returns to ~60s while a healthy form keeps the coverage.
+  const probeBudgetMs = 60000
+  const probeStart = Date.now()
+
+  // THE ELEMENT WE STAMPED IS NOT ALWAYS THE ELEMENT THAT CARRIES THE ARIA —
+  // mirrored from scripts/apply/scan-engine.mjs, which carries the full
+  // reasoning. In short, measured on Coinbase's Greenhouse form 2026-08-07:
+  // react-select stamps the `.select__control` shell, which has no aria at all,
+  // while `aria-controls`/`aria-expanded` live on the inner `input.select__input`.
+  // Reading them off the shell returned null, so the menu was never named AND
+  // the chevron-toggle fallback never fired — 13 of 19 required combos failed.
+  // Identity stays on the shell; only the ATTRIBUTE READ is redirected, and
+  // only when the shell itself is silent.
+  const ariaOf = (k, attr) =>
+    page
+      .evaluate(
+        ([ajKey, a]) => {
+          const el = document.querySelector('[data-aj="' + ajKey + '"]')
+          if (!el || !el.getAttribute) return null
+          const own = el.getAttribute(a)
+          if (own != null) return own
+          const inner =
+            el.querySelector &&
+            el.querySelector(
+              "input[role='combobox'],input[aria-controls],input[aria-expanded]," +
+                "[role='combobox'][aria-controls],[role='combobox'][aria-expanded]",
+            )
+          return inner ? inner.getAttribute(a) : null
+        },
+        [k, attr],
+      )
+      .catch(() => null)
+
   for (const f of todo) {
+    // Checked BEFORE the control is touched, so the budget can only stop work
+    // that has not started — never abandon a control mid-probe with a menu
+    // left open for the next one to read.
+    if (probeBudgetMs > 0 && Date.now() - probeStart > probeBudgetMs) {
+      f.probe_skipped = "probe budget"
+      stats.capped++
+      continue
+    }
     const loc = page.locator('[data-aj="' + f.k + '"]')
     try {
       // NON-FATAL — mirrored from scan-engine.mjs, which carries the
       // measurement: on Oracle Recruiting Cloud this threw before the click was
       // ever attempted and every required picker came back as a probe_error
       // with no options. Scrolling is preparation, not the probe.
-      await loc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {})
+      //
+      // 2000 -> 5000 and 2000 -> 6000 below, mirrored from the engine: measured
+      // on Coinbase's Greenhouse form 2026-08-07, the 2s ceilings fired on
+      // controls a human clicks without noticing a delay, and a timeout that
+      // fires on a clickable control defers a field that would have answered.
+      await loc.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {})
       // NOT force:true — a forced click skips every actionability check, which
       // is "click something the user could not have clicked". See the engine.
-      await loc.click({ timeout: 2000 })
+      // The actionability checks are the safety property and are unchanged;
+      // only the patience moved.
+      await loc.click({ timeout: 6000 })
       // Wait for the menu to RENDER, not for a flat 300ms. When the control
       // NAMES its menu (aria-controls), wait for that element: it is this
       // control's own menu rather than a guess. Otherwise react-select's own
@@ -136,7 +192,7 @@ async (page) => {
       // widget, which is always in the DOM, so waiting on that would return
       // instantly on every form with a phone field, and reading it would hand
       // every dropdown the same list of countries.
-      const menuId = await loc.getAttribute("aria-controls").catch(() => null)
+      const menuId = await ariaOf(f.k, "aria-controls")
       const menuSel = menuId
         ? '[id="' + String(menuId).split(/\s+/)[0].replace(/(["\\])/g, "\\$1") + '"]'
         : "[class*='__option']"
@@ -145,6 +201,42 @@ async (page) => {
         .first()
         .waitFor({ state: menuId ? "visible" : "attached", timeout: 300 })
         .catch(() => {})
+      // THE BOX IS NOT ALWAYS WHAT OPENS THE MENU — mirrored from
+      // scripts/apply/scan-engine.mjs, which carries the full reasoning. In
+      // short, measured on Ashby 2026-08-04: the menu opens from a chevron
+      // BUTTON beside the combobox, not from the box, so every Ashby dropdown
+      // probed as zero options and deferred to a human for no reason. The
+      // trigger is aria-expanded — the page's own report — and the only thing
+      // this may click is a button inside the control's own container with no
+      // name of its own, which is a chevron and never a labelled action.
+      const shut = await ariaOf(f.k, "aria-expanded")
+      if (shut === "false") {
+        const toggleSel = await page.evaluate((k) => {
+          const el = document.querySelector('[data-aj="' + k + '"]')
+          const box = el && el.parentElement
+          if (!box) return null
+          const norm = (s) =>
+            String(s == null ? "" : s).replace(/\s+/g, " ").trim()
+          const cand = [...box.querySelectorAll("button")].find(
+            (b) => !norm(b.innerText) && !norm(b.getAttribute("aria-label")),
+          )
+          if (!cand) return null
+          cand.setAttribute("data-aj-toggle", k)
+          return '[data-aj-toggle="' + k + '"]'
+        }, f.k)
+        if (toggleSel) {
+          await page.locator(toggleSel).click({ timeout: 6000 })
+          const openedId = await ariaOf(f.k, "aria-controls")
+          const openedSel = openedId
+            ? '[id="' + String(openedId).split(/\s+/)[0].replace(/(["\\])/g, "\\$1") + '"]'
+            : menuSel
+          await page
+            .locator(openedSel)
+            .first()
+            .waitFor({ state: openedId ? "visible" : "attached", timeout: 300 })
+            .catch(() => {})
+        }
+      }
       // THE CUT IS STATED, NOT SILENT — mirrored from scan-engine.mjs, which
       // carries the reasoning: 40 survivors of a 200-option country list are
       // indistinguishable from a genuine 40-option list, so the cache stores
@@ -178,10 +270,26 @@ async (page) => {
           list.filter(
             (n) => !list.some((o) => o !== n && n.contains && n.contains(o)),
           )
+        // Same redirection as ariaOf() above, mirrored from scan-engine.mjs:
+        // react-select's stamped shell carries no aria, the ids live on the
+        // inner input. The shell answers first, so a control that names its own
+        // menu is untouched.
+        const ariaAttr = (c, a) => {
+          if (!c || !c.getAttribute) return ""
+          const own = c.getAttribute(a)
+          if (own != null) return own
+          const inner =
+            c.querySelector &&
+            c.querySelector(
+              "input[role='combobox'],input[aria-controls],input[aria-owns]," +
+                "[role='combobox'][aria-controls],[role='combobox'][aria-owns]",
+            )
+          return (inner && inner.getAttribute(a)) || ""
+        }
         const menuOf = (c) => {
           if (!c || !c.getAttribute) return null
           const ids = norm(
-            c.getAttribute("aria-controls") || c.getAttribute("aria-owns") || "",
+            ariaAttr(c, "aria-controls") || ariaAttr(c, "aria-owns") || "",
           ).split(/\s+/)
           for (const id of ids) {
             if (!id) continue
@@ -192,6 +300,27 @@ async (page) => {
             if (m && vis(m)) return m
           }
           return null
+        }
+        // THE MENU IS NOT ALWAYS INSIDE THE CONTROL — mirrored from
+        // scan-engine.mjs, which carries the reasoning. react-select renders
+        // `.select__menu` in a PORTAL, a sibling of <body>, so every
+        // container-scoped lookup misses it. Safe because the probe opens
+        // exactly ONE control at a time and Escapes before the next, so a
+        // SINGLE visible menu-list is unambiguously the one just opened; two or
+        // more means that assumption does not hold, and this declines to choose
+        // and falls through to the page-wide read.
+        const portalMenu = () => {
+          let found = []
+          try {
+            found = [
+              ...document.querySelectorAll(
+                "[class*='select__menu-list'],[class*='Select__menu-list']",
+              ),
+            ].filter(vis)
+          } catch {
+            return null
+          }
+          return found.length === 1 ? found[0] : null
         }
         const rowsIn = (menu) => {
           const declared = [...menu.querySelectorAll("[role='option']")]
@@ -222,7 +351,7 @@ async (page) => {
           }
           return out
         }
-        const menu = menuOf(el)
+        const menu = menuOf(el) || portalMenu()
         const rows = menu
           ? rowsIn(menu)
           : leavesOnly([
@@ -230,12 +359,22 @@ async (page) => {
                 "[role='option'],[role='listbox'] li,[class*='__option'],[class*='menu'] li",
               ),
             ])
+        // AN EMPTY-STATE MESSAGE IS NOT AN OPTION — mirrored from
+        // scripts/apply/scan-engine.mjs, which carries the reasoning. Measured
+        // on Ashby 2026-08-04: an async typeahead opened with no query renders
+        // a "No results" box and declares no [role=option], so the leaf
+        // fallback read the decoration and returned it as the option list.
+        // The cache would then store that as the COMPLETE list and the real
+        // answer would resolve as "not on offer" forever. Removal-only, so it
+        // can only cause a defer, never a wrong fill.
+        const EMPTY_STATE =
+          /^(no results?|no options?|no matches?|nothing found|start typing|type to search)\b/i
         const all = [
           ...new Set(
             rows
               .filter(vis)
               .map((e) => norm(e.innerText).slice(0, 60))
-              .filter(Boolean),
+              .filter((t) => t && !EMPTY_STATE.test(t)),
           ),
         ]
         return { opts: all.slice(0, 40), total: all.length }

@@ -602,11 +602,98 @@ window.__ajScan = async (PROBE = true) => {
     )
   }
 
-  const isReq = (el, label) =>
+  // REQUIRED-NESS CAN ALSO LIVE IN THE LABEL'S CLASS NAME, PAINTED BY CSS,
+  // WITH NO MARKER IN THE TEXT AND NONE ON THE CONTROL.
+  //
+  // MEASURED on Ashby (jobs.ashbyhq.com), 2026-08-04. A required Location
+  // typeahead renders as
+  //   <label class="_heading_f7cvd_52 _required_f7cvd_91 ...">Location</label>
+  //   <input role="combobox" placeholder="Start typing...">
+  // The asterisk a human sees is CSS ::after content generated from that
+  // class, so the label TEXT is the bare word "Location" and the control
+  // carries neither `required` nor `aria-required`. isReq() read text and
+  // attributes only, so the field came back optional, fill-plan.mjs skipped it
+  // as "optional and not in the fact base", and the application was one click
+  // from going out with a required field empty and the run reporting nothing
+  // wrong. Same direction of wrongness as the Oracle wrapper case below: a
+  // blocker that does not look like one is skipped in silence.
+  //
+  // BOUNDED, because a class list is page-controlled text and "the word
+  // required appears somewhere in it" is not evidence:
+  //   1. ONLY A WHOLE CLASS TOKEN COUNTS. CSS modules suffix a content hash
+  //      (`_required_f7cvd_91`) and BEM/utility CSS spells it `is-required` or
+  //      `field--required`, so the token is matched with its separators and
+  //      never as a substring of a longer word (`requiredness`, `prerequired`).
+  //   2. A NEGATED TOKEN DISQUALIFIES THE NODE OUTRIGHT. `not-required` and
+  //      `optional` both contain the marker and both mean its opposite, so a
+  //      node carrying either is skipped rather than reinterpreted.
+  // Wrong in the under-reporting direction, which is the direction this file
+  // always takes.
+  const REQ_TOKEN =
+    /(?:^|[\s_-])(?:is-)?required(?:_[A-Za-z0-9]+)?(?:$|[\s_-])/i
+  const REQ_NEGATED = /(?:^|[\s_-])(?:not|non|un)-?required|optional/i
+  const classOf = (n) => {
+    if (!n) return ""
+    // SVG elements carry an SVGAnimatedString here, not a string.
+    if (typeof n.className === "string") return n.className
+    return (n.getAttribute && n.getAttribute("class")) || ""
+  }
+  const labelClassRequired = (detail) => {
+    const nodes = (detail && detail.nodes) || []
+    for (const n of nodes) {
+      const cn = classOf(n)
+      if (!cn || REQ_NEGATED.test(cn)) continue
+      if (REQ_TOKEN.test(cn)) return true
+    }
+    return false
+  }
+
+  // THE SAME MARKER, FOR A GROUP WHOSE LABEL IS NOT ANY ONE BOX'S LABEL.
+  //
+  // A radio group's controls each resolve to their OWN option label ("Yes",
+  // "No"), so labelClassRequired() sees the option and never the question, and
+  // Ashby's required work-authorisation groups stayed unmarked. The question
+  // title lives on the field-entry wrapper:
+  //   <div class="_fieldEntry_...">
+  //     <label class="_required_...">Are you legally authorized to work...</label>
+  //     <div> <button>Yes</button> <button>No</button> </div>
+  //
+  // This is deliberately NOT the rule groupRequired() applies. That one demands
+  // the ancestor speak for ONE CONTROL, because it is deciding whether a single
+  // box is required and a section marker cannot say which box. Here the unit
+  // being marked is the GROUP — one field made of several controls — so a
+  // container label is exactly the right granularity, and the bound that
+  // matters is instead that the container holds ONE QUESTION:
+  //   1. FOUR ANCESTORS, stopping at the <form>, as above.
+  //   2. DIRECT-CHILD labels only. A descendant label deeper in the tree may
+  //      belong to a different field inside a shared wrapper.
+  //   3. EXACTLY ONE such label. Two means the container groups several
+  //      questions and its marker cannot say which one is required.
+  const entryLabelRequired = (el) => {
+    if (!el || !el.parentElement) return false
+    for (let p = el.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) {
+      if (p.tagName === "BODY" || p.tagName === "HTML" || p.tagName === "FORM")
+        break
+      // childNodes, not children: text nodes simply have no tagName and are
+      // filtered out by the same test, and it is the property the DOM harness
+      // in tests/fixtures/boards/dom.mjs implements.
+      const labels = [...(p.childNodes || [])].filter(
+        (c) => c.tagName === "LABEL" || c.tagName === "LEGEND",
+      )
+      if (labels.length !== 1) continue
+      const cn = classOf(labels[0])
+      if (!cn || REQ_NEGATED.test(cn)) continue
+      if (REQ_TOKEN.test(cn)) return true
+    }
+    return false
+  }
+
+  const isReq = (el, label, detail) =>
     !!(
       el.required ||
       el.getAttribute("aria-required") === "true" ||
-      /\*\s*$|\(required\)/i.test(label)
+      /\*\s*$|\(required\)/i.test(label) ||
+      labelClassRequired(detail)
     )
 
   // REQUIRED-NESS CAN LIVE ON A WRAPPER THE CONTROL DOES NOT OWN.
@@ -709,12 +796,55 @@ window.__ajScan = async (PROBE = true) => {
     "[class*='Select__control']",
     "[data-ui='select']",
   ].join(",")
+  // A CUSTOM DROPDOWN'S LABEL BELONGS TO ITS INNER INPUT, NOT TO ITS SHELL.
+  //
+  // MEASURED on Affirm's Greenhouse form, 2026-08-04, and it cost a required
+  // field silently. Greenhouse renders its Country picker as
+  //   <fieldset class="phone-input"><legend class="visually-hidden">Phone</legend>
+  //     <label id="country-label" for="country">Country*</label>
+  //     <div class="select__control">              <- matches COMBO_SEL, stamped
+  //       <input id="country" role="combobox" aria-required="true"
+  //              aria-labelledby="country-label">  <- carries the real labelling
+  // The stamped element is the SHELL, which has no label of its own, so
+  // labelDetail() walked out to the enclosing fieldset and returned its
+  // visually-hidden legend: "Phone".
+  //
+  // Two things then went wrong, and the second is the expensive one:
+  //   1. The field was reported as "Phone" — a label the page never shows for
+  //      it, in a plan a human is asked to approve.
+  //   2. fill-plan.mjs's duplicateCombo() saw a combo labelled "Phone" beside a
+  //      TEXT input labelled "Phone" (the actual number), concluded it was the
+  //      picker half of an intl-tel-input composite, and SKIPPED it. So a
+  //      required Country question was dropped from the plan entirely, the form
+  //      stayed invalid, and nothing in the run named the field.
+  //
+  // The label host is only ever taken from INSIDE the control, and only when
+  // that inner control states its own name (aria-label/aria-labelledby, or an
+  // id a <label for> points at). No statement of its own means nothing changes.
+  // Identity stays on the shell — it is what a human clicks and what every
+  // `data-aj` target must resolve to — so only the LABEL and `req` move.
+  const labelHost = (el) => {
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return el
+    for (const n of el.querySelectorAll("input,textarea")) {
+      if (n.getAttribute("aria-labelledby") || n.getAttribute("aria-label"))
+        return n
+      if (n.id) {
+        try {
+          const esc = window.CSS && CSS.escape ? CSS.escape(n.id) : n.id
+          if (document.querySelector('label[for="' + esc + '"]')) return n
+        } catch {}
+      }
+    }
+    return el
+  }
+
   const claimed = new Set()
   const combos = []
   for (const el of document.querySelectorAll(COMBO_SEL)) {
     if (el.tagName === "SELECT" || !vis(el) || claimedNow(el))
       continue
-    const dc = labelDetail(el)
+    const host = labelHost(el)
+    const dc = labelDetail(host)
     const label = txt(dc.text)
     combos.push({
       k: stamp(el, "f"),
@@ -722,8 +852,15 @@ window.__ajScan = async (PROBE = true) => {
       ...identityOf(el),
       t: "combo",
       l: label,
-      lSeen: seenOf(el, dc),
-      req: isReq(el, label) || groupRequired(el) || undefined,
+      lSeen: seenOf(host, dc),
+      // `req` from the HOST for the same reason as the label: Greenhouse's
+      // Country picker carries aria-required="true" on the inner input, and
+      // the shell carries nothing. Read off the shell it came back optional.
+      req:
+        isReq(host, label, dc) ||
+        groupRequired(el) ||
+        entryLabelRequired(el) ||
+        undefined,
       v: txt(el.value || el.innerText, 60) || undefined,
       h: helpOf(el) || undefined,
     })
@@ -797,7 +934,11 @@ window.__ajScan = async (PROBE = true) => {
           t: type,
           l: fromFieldset ? heading : own || heading,
           lSeen: fromFieldset ? undefined : seenOf(el, d),
-          req: isReq(el, own) || groupRequired(el) || undefined,
+          req:
+            isReq(el, own, d) ||
+            groupRequired(el) ||
+            entryLabelRequired(el) ||
+            undefined,
           o: [],
         }
         if (fromFieldset) g.labelWhy = "label source is fieldset legend"
@@ -831,7 +972,7 @@ window.__ajScan = async (PROBE = true) => {
       t: tag === "select" ? "select" : tag === "textarea" ? "textarea" : type,
       l: label,
       lSeen: seenOf(el, dg),
-      req: isReq(el, label) || groupRequired(el) || undefined,
+      req: isReq(el, label, dg) || groupRequired(el) || undefined,
       v: txt(el.value, 60) || undefined,
       h: helpOf(el) || undefined,
     }
@@ -1150,7 +1291,7 @@ window.__ajScan = async (PROBE = true) => {
   // whether the user REQUIRES SPONSORSHIP (correct answer: No); the fragment
   // reads as an authorisation question (correct answer: Yes). A fuzzy match
   // returns the right concept with the wrong truth value, which is exactly the
-  // inversion docs/reference/09-gotchas.md gotcha A warns about, and the answer
+  // inversion docs/operate/03-troubleshooting.md warns about, and the answer
   // that inversion produces is a false statement on a submitted application.
   //
   // SO THE BIAS IS EXPLICIT: WHEN A BOUNDARY IS AMBIGUOUS, KEEP MORE TEXT. An
@@ -1803,15 +1944,68 @@ window.__ajScan = async (PROBE = true) => {
   // Guards the leaf walk, which costs an innerText per node. A menu with more
   // nodes than this is not a menu; fall back rather than pay for it.
   const MENU_NODES_MAX = 400
+  // THE ELEMENT WE STAMPED IS NOT ALWAYS THE ELEMENT THAT CARRIES THE ARIA.
+  //
+  // MEASURED on Coinbase's Greenhouse form, 2026-08-07: 13 of 19 required
+  // combos failed to probe. react-select renders
+  //   <div class="select__control">                 <- matches COMBO_SEL, STAMPED
+  //     <div class="select__value-container">
+  //       <input class="select__input" role="combobox"
+  //              aria-controls="react-select-3-listbox" aria-expanded="false">
+  // and the wrapper carries NO aria at all, so reading aria-controls off it
+  // returned nothing and this fell through to the page-wide selector list —
+  // which hands every dropdown the same rows.
+  //
+  // Identity stays on the SHELL for the reason labelHost() above states: it is
+  // what a human clicks and what every data-aj selector must resolve to. Only
+  // the ATTRIBUTE READ is redirected, and only when the shell is silent, so a
+  // control that names its own menu (every ORC picker) is unaffected.
+  const ariaAttr = (el, a) => {
+    if (!el || !el.getAttribute) return ""
+    const own = el.getAttribute(a)
+    if (own != null) return own
+    let inner = null
+    try {
+      inner = el.querySelector(
+        "input[role='combobox'],input[aria-controls],input[aria-owns]," +
+          "[role='combobox'][aria-controls],[role='combobox'][aria-owns]",
+      )
+    } catch {}
+    return (inner && inner.getAttribute(a)) || ""
+  }
   const menuOf = (el) => {
     const ids = full(
-      (el.getAttribute && (el.getAttribute("aria-controls") || el.getAttribute("aria-owns"))) || "",
+      ariaAttr(el, "aria-controls") || ariaAttr(el, "aria-owns") || "",
     ).split(/\s+/)
     for (const id of ids) {
       const m = byId(id)
       if (m && vis(m)) return m
     }
     return null
+  }
+  // THE MENU IS NOT ALWAYS INSIDE THE CONTROL. On the same form react-select
+  // renders `.select__menu` in a PORTAL — a sibling of <body> rather than a
+  // descendant of the control — so a container-scoped lookup misses it and the
+  // page-wide fallback below is all that is left.
+  //
+  // ONLY ONE MENU IS OPEN AT A TIME, which is what makes this a reading rather
+  // than a guess: the probe opens one control, reads it, and dismisses it
+  // before the next. A SINGLE visible menu-list is therefore unambiguously the
+  // one just opened. Two or more means that does not hold — a stale menu, or a
+  // board rendering several — so this declines to choose and falls through to
+  // the page-wide read, which is exactly today's behaviour.
+  const portalMenu = () => {
+    let found = []
+    try {
+      found = [
+        ...document.querySelectorAll(
+          "[class*='select__menu-list'],[class*='Select__menu-list']",
+        ),
+      ].filter(vis)
+    } catch {
+      return null
+    }
+    return found.length === 1 ? found[0] : null
   }
   // Drop any candidate that contains another candidate: a container is not a
   // row, and this is what turns the blob back into a list even on the
@@ -1862,7 +2056,7 @@ window.__ajScan = async (PROBE = true) => {
     return out
   }
   const optionTexts = (el) => {
-    const menu = menuOf(el)
+    const menu = menuOf(el) || portalMenu()
     let rows
     if (menu) {
       rows = rowsIn(menu)

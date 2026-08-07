@@ -209,12 +209,18 @@ test("FINDING (w3-resolution): E1 BREAKS — 40 of 200 is cached as if it were t
 })
 
 // ---------------------------------------------------------------------------
-// E2 — more than 18 comboboxes
+// E2 — more than 24 comboboxes
+//
+// The cap moved 18 -> 24 on 2026-08-07: Coinbase's Greenhouse form carries 23
+// combos, so at 18 it skipped 5 real required fields and each came back
+// NEEDS-CHOICE for a reason the form was not responsible for. What this test
+// is about is unchanged and is not the number: a capped field must SAY it was
+// capped rather than look like a probed field with no options.
 // ---------------------------------------------------------------------------
 
-test("E2 HANDLED [w2-engine]: the probe caps at 18 and says which it skipped", async () => {
+test("E2 HANDLED [w2-engine]: the probe caps at 24 and says which it skipped", async () => {
   const scan = {
-    fields: Array.from({ length: 23 }, (_, i) => ({
+    fields: Array.from({ length: 29 }, (_, i) => ({
       k: "c" + (i + 1),
       t: "combo",
       l: "Dropdown " + (i + 1),
@@ -224,7 +230,7 @@ test("E2 HANDLED [w2-engine]: the probe caps at 18 and says which it skipped", a
   }
   const rig = instrumentedPage({ scan, menuOptions: 6 })
   const out = unwrapScan(await scanPage(rig.page)).scan
-  assert.equal(out.probe.probed, 18)
+  assert.equal(out.probe.probed, 24)
   assert.equal(out.probe.capped, 5)
   const skipped = out.fields.filter((f) => f.probe_skipped === "probe cap")
   assert.equal(skipped.length, 5, "a capped field must say so, not look probed")

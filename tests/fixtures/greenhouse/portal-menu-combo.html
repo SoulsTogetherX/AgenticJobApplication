@@ -1,0 +1,222 @@
+<!doctype html>
+<!--
+  REACT-SELECT'S SHAPE ON GREENHOUSE, reproduced from a live Coinbase
+  application on 2026-08-07 (job-boards.greenhouse.io, token 8113286). 13 of 19
+  required combos failed to probe there. Two independent defects, both here:
+
+    1. THE ARIA IS ON THE INNER INPUT, NOT ON THE ELEMENT WE STAMP. The scanner
+       stamps `.select__control` — the shell, because that is what a human
+       clicks and what every data-aj selector must resolve to. On this form the
+       shell carries NO aria attributes at all; `aria-controls` and
+       `aria-expanded` live on `input.select__input` inside it. So the probe
+       read null for both: it never learned the menu's id, AND `aria-expanded`
+       never read "false", so the chevron-toggle fallback never fired either.
+
+    2. THE MENU RENDERS IN A PORTAL. `.select__menu` is appended outside the
+       control's container entirely, so container-scoped lookups miss it.
+
+  THREE THINGS HERE ARE LOAD-BEARING, and without them this fixture passes
+  against the broken code and pins nothing:
+
+    * THE MENU IS MOUNTED ON OPEN AND UNMOUNTED ON CLOSE, which is what
+      react-select actually does. A menu that is merely hidden is already
+      ATTACHED, so the probe's fallback wait ("wait for [class*='__option'] to
+      be attached") returns instantly and the read happens before the menu
+      exists. Naming the menu is what lets the probe wait for the right thing.
+    * THE MENU RENDERS ASYNCHRONOUSLY (~120ms, inside the probe's 300ms
+      ceiling). A menu that appears synchronously inside the click handler is
+      readable by any means at all, so nothing distinguishes a correct read
+      from a lucky one.
+    * THE PHONE COUNTRY-CODE LIST IS ALWAYS PRESENT AND ALWAYS VISIBLE. This
+      is the widget scan-engine.mjs's probe comments already name: it sits in
+      the DOM of a real form permanently, and it is why a page-wide option
+      selector "hands every dropdown the same list". It is what turns a
+      too-early or unscoped read into a WRONG list rather than an empty one.
+
+  Field C is the bound. It names its own menu, and opening it also mounts a
+  DECOY into the portal. A reader that reaches for the portal before honouring
+  what the control actually named reads the decoy.
+-->
+<html>
+  <head>
+    <style>
+      .select__input {
+        border: 0;
+        width: 2px;
+      }
+      /* The phone widget's list is open on load and stays open, exactly as
+         intl-tel-input leaves it in the DOM. */
+      .iti__country-list {
+        list-style: none;
+      }
+    </style>
+  </head>
+  <body>
+    <form>
+      <!--
+        A: the plain react-select shape. The shell is silent; the inner input
+        names a menu that will be mounted into the portal below.
+      -->
+      <div class="field">
+        <label id="hear-label" for="hear">How did you hear about us?</label>
+        <div class="select__control" data-menu="hear-menu">
+          <div class="select__value-container">
+            <div class="select__placeholder">Select...</div>
+            <input
+              id="hear"
+              class="select__input"
+              role="combobox"
+              aria-expanded="false"
+              aria-controls="hear-menu"
+              aria-labelledby="hear-label"
+              aria-required="true"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!--
+        B: the same shell, but the control names NO menu — react-select omits
+        aria-controls until the menu exists, so a control probed from closed
+        can name nothing at all. Only the portal read can find this one, which
+        makes it the portal fallback's own test.
+      -->
+      <div class="field">
+        <label id="country-label" for="country">Country</label>
+        <div class="select__control" data-menu="country-menu">
+          <div class="select__value-container">
+            <div class="select__placeholder">Select...</div>
+            <input
+              id="country"
+              class="select__input"
+              role="combobox"
+              aria-expanded="false"
+              aria-labelledby="country-label"
+              aria-required="true"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!--
+        C: THE BOUND. This control names its own menu, and that menu is real.
+        Opening it also mounts a decoy in the portal. What is read must be the
+        menu the control NAMED.
+      -->
+      <div class="field">
+        <label id="gender-label" for="gender">Gender</label>
+        <div class="select__control" data-menu="gender-menu" data-decoy="1">
+          <div class="select__value-container">
+            <div class="select__placeholder">Select...</div>
+            <input
+              id="gender"
+              class="select__input"
+              role="combobox"
+              aria-expanded="false"
+              aria-controls="gender-menu"
+              aria-labelledby="gender-label"
+              aria-required="true"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!--
+        THE PHONE COUNTRY-CODE WIDGET. Always in the DOM, always visible, never
+        opened by anything the probe does — and its rows match the page-wide
+        option selector via "[role='listbox'] li". On a real form this is what
+        an unscoped read returns for EVERY dropdown on the page.
+      -->
+      <div class="field iti">
+        <label for="phone">Phone</label>
+        <input id="phone" type="tel" />
+        <ul class="iti__country-list" role="listbox">
+          <li class="iti__country">United States +1</li>
+          <li class="iti__country">Germany +49</li>
+        </ul>
+      </div>
+    </form>
+
+    <!--
+      THE PORTAL. A sibling of <form>, not a descendant of any control — which
+      is the whole point. react-select appends here with menuPortalTarget, and
+      mounts/unmounts as the menu opens and closes.
+    -->
+    <div id="portal-root"></div>
+
+    <script>
+      // Each control's menu, as markup, mounted only while open.
+      const MENUS = {
+        "hear-menu": ["LinkedIn", "Careers page", "Employee referral"],
+        // B's rows also declare no role="option". react-select does, but a
+        // menu that does not must still be read by the leaf walk, and pinning
+        // both shapes in one fixture is cheaper than a fourth field.
+        "country-menu": ["United States", "Canada", "United Kingdom"],
+        "gender-menu": ["Man", "Woman", "I prefer not to say"],
+        "decoy-menu": ["DECOY ONE", "DECOY TWO"],
+      }
+      const NO_ROLE = new Set(["country-menu"])
+      const portal = document.getElementById("portal-root")
+
+      const mount = (id) => {
+        const menu = document.createElement("div")
+        menu.className = "select__menu"
+        menu.id = id
+        const list = document.createElement("div")
+        list.className = "select__menu-list"
+        if (!NO_ROLE.has(id)) list.setAttribute("role", "listbox")
+        for (const label of MENUS[id]) {
+          const row = document.createElement("div")
+          row.className = "select__option"
+          if (!NO_ROLE.has(id)) row.setAttribute("role", "option")
+          const span = document.createElement("span")
+          span.textContent = label
+          row.appendChild(span)
+          list.appendChild(row)
+        }
+        menu.appendChild(list)
+        portal.appendChild(menu)
+      }
+      const shut = () => {
+        portal.replaceChildren()
+        for (const i of document.querySelectorAll(".select__input")) {
+          i.setAttribute("aria-expanded", "false")
+        }
+      }
+
+      // Clicking the SHELL opens the menu, which is what react-select does —
+      // there is no chevron button here, so this is not a re-run of the Ashby
+      // toggle case. What defeated the probe was reading aria off the shell.
+      for (const ctl of document.querySelectorAll(".select__control")) {
+        ctl.addEventListener("click", () => {
+          const id = ctl.dataset.menu
+          const already = !!document.getElementById(id)
+          shut()
+          if (already) return
+          ctl
+            .querySelector(".select__input")
+            .setAttribute("aria-expanded", "true")
+          // ASYNCHRONOUS, as React is. Inside the probe's 300ms ceiling, but
+          // not inside the click handler — a menu that exists the instant the
+          // click returns is readable by accident.
+          setTimeout(() => {
+            if (
+              ctl
+                .querySelector(".select__input")
+                .getAttribute("aria-expanded") !== "true"
+            )
+              return
+            mount(id)
+            if (ctl.dataset.decoy) mount("decoy-menu")
+          }, 120)
+        })
+      }
+      // Escape shuts everything, as a real combobox does. Without it a menu
+      // stays open across the next field's probe and the page-wide fallback
+      // reads options into a field they do not belong to.
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") shut()
+      })
+    </script>
+  </body>
+</html>

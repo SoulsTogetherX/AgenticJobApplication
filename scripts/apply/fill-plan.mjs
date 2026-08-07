@@ -333,6 +333,15 @@ const NEEDS_HUMAN = new Set(["UNKNOWN", "NEEDS-CHOICE", "MAYBE"])
 // answers.yaml, so there is nothing there to classify.
 const BANK_ID_RE = /^(a-\d+)@/
 
+// A provenance that traces to something the user approved: a fact read out of
+// profile.yaml, or an answer they banked through save-answer.mjs. Deliberately
+// NOT every source a rule can stamp — a rule's own static string ("eeo:decline"
+// and friends) is the pipeline's own default, not the user's answer, and must
+// not qualify anything to be typed onto a control that could not be grounded.
+// Read by the adapter-declared typeahead promotion in buildPlan; see the block
+// there for why each half of that gate exists.
+const APPROVED_SOURCE = /^(a-\d+@|contact\.|experience\.|education\.)/
+
 // answers.yaml keyed by id, loaded once per resolveFields() call (not once
 // per field — see the classification loop below for the cost this is
 // protecting). A missing/unreadable file yields an empty map, same as
@@ -669,6 +678,31 @@ export function isProfileImportControl(label) {
   const text = String(label ?? "").trim()
   if (!text) return false
   return PROFILE_IMPORT_PATTERNS.some((re) => re.test(text))
+}
+
+// The vocabulary of a file control whose label says nothing about WHICH
+// document it wants: upload verbs, synonyms for "file", and the filler words
+// that get written around them. A label built only from these carries no
+// evidence of its own, which is precisely the situation document order exists
+// to resolve — Greenhouse's two "Attach" inputs.
+//
+// Anything OUTSIDE this vocabulary is evidence, even when no fileFields regex
+// matched it: "Name", "Portfolio", "Transcript", "Writing sample" are all slots
+// the adapter does not know. See the doc-order fallback in buildPlan for the
+// measured defect this separates — an unknown slot must not be read as "the
+// résumé, then", and it must not consume a position either.
+const GENERIC_FILE_WORD =
+  /^(attach|attached|attachment|attachments|upload|uploaded|uploads|file|files|document|documents|doc|docs|choose|select|browse|add|drag|drop|here|click|your|a|an|the|and|or|to|of|optional|required|pdf|doc?x|txt|rtf)$/i
+
+export function isUninformativeFileLabel(label) {
+  const words = String(label ?? "")
+    .toLowerCase()
+    .replace(/[^a-z]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+  // No label at all is the original uninformative case and still falls through
+  // to document order, exactly as it did before this existed.
+  return !words.length || words.every((w) => GENERIC_FILE_WORD.test(w))
 }
 
 // Pure core (exported for tests).
@@ -1194,11 +1228,33 @@ export function buildPlan({
       if (!spec && f.section) {
         spec = (adapter.fileFields ?? []).find((s) => s.match.test(f.section))
       }
-      if (!spec) {
+      // THE DOC-ORDER FALLBACK NEEDS AN UNINFORMATIVE LABEL, NOT MERELY AN
+      // UNMATCHED ONE.
+      //
+      // It exists for the board that renders two inputs both labelled "Attach",
+      // where position is the only evidence there is. It was firing for ANY
+      // label no spec matched, which silently turned "nothing here identifies
+      // this slot" into "it must be the résumé, then".
+      //
+      // MEASURED 2026-08-06 on three live Ashby applications: those forms carry
+      // a third file input labelled "Name", matching neither fileFields regex.
+      // It took fileOrder[0], was planned the résumé, and so the résumé was
+      // planned TWICE — two upload items, same document, same labelMatch. The
+      // engine then either refused every upload on the form (two free inputs,
+      // ambiguous) or, on the two-input variant of the same shape, silently
+      // attached the résumé to the phantom and reported ok.
+      //
+      // This is the same pair of halves the import-control skip above spells
+      // out, and it fails the same two ways: an unrecognised slot must not be
+      // handed the first document, and it must not consume a POSITION either —
+      // otherwise the real "Attach" input after it is offered slot 1 and gets
+      // the cover letter. Hence `fileIndex` now advances only for a slot this
+      // adapter actually resolved.
+      if (!spec && isUninformativeFileLabel(label)) {
         const want = (adapter.fileOrder ?? ["resume", "cover"])[fileIndex]
         spec = (adapter.fileFields ?? []).find((s) => s.doc === want)
       }
-      fileIndex++
+      if (spec) fileIndex++
       const doc = spec && files[spec.doc]
       if (!doc) {
         defer.push({
@@ -1331,6 +1387,57 @@ export function buildPlan({
         value: r.value,
         ...(r.pick ? { pick: r.pick, pickSel: r.pickSel } : {}),
         classInfo: r.classDescription,
+      })
+      continue
+    }
+
+    // A TYPEAHEAD THE ADAPTER KNOWS IS NOT AN UNPROBED DROPDOWN.
+    //
+    // Ashby's Location is a server-queried autocomplete: there is no option
+    // list to enumerate, so the scanner records none and the field resolved
+    // NEEDS-CHOICE ("field was not probed"). MEASURED across three live Render
+    // applications 2026-08-06 — a human typed the same approved value in by
+    // hand every time, on a field the fact base could answer outright.
+    //
+    // EVERY CLAUSE BELOW IS LOAD-BEARING:
+    //
+    //   * THE ADAPTER MUST NAME IT. This is rule 6's first lawful route — an
+    //     adapter that knows a board's shape — and it is why this cannot leak
+    //     to a board nobody has looked at. No declaration, no promotion.
+    //   * NO OPTIONS RECORDED, i.e. the typeahead case the declaration is
+    //     about. A list that WAS read and simply did not contain the value is
+    //     the opposite situation ("this value is not offered") and must keep
+    //     deferring, so it is excluded here rather than trusted to the label.
+    //   * `NEEDS-CHOICE` ONLY, NEVER `UNKNOWN`. Rule 6: "UNKNOWN still blocks
+    //     on BOTH paths ... it means nothing deterministic understood the
+    //     field". NEEDS-CHOICE means the opposite — the value is resolved and
+    //     only its grounding is missing, which is exactly what an unenumerable
+    //     list cannot provide.
+    //   * AN APPROVED PROVENANCE. A profile fact or a banked answer, i.e.
+    //     rule 6's third route. A rule's own static guess does not qualify.
+    //   * CONSENT AND CONFIRM ARE UNREACHABLE. Both defer far above this
+    //     point, and this branch is below them on purpose. Do not re-order.
+    //
+    // The engine's verify pass reads the committed value back off the control,
+    // so a type that does not commit is a mismatch and a failed fill — which
+    // still blocks the submit. Nothing here is taken on trust.
+    const typeahead =
+      r.status === "NEEDS-CHOICE" &&
+      !(f.opts?.length || f.o?.length) &&
+      r.value &&
+      APPROVED_SOURCE.test(r.source ?? "") &&
+      (adapter.typeaheadFields ?? []).some((s) => s.match.test(label))
+    if (typeahead) {
+      items.push({
+        k: f.k,
+        sel: r.sel ?? f.sel,
+        how: verb,
+        value: r.value,
+        label: displayLabel,
+        ...mLabel(),
+        bank: r.source,
+        typeahead: true,
+        req: !!f.req,
       })
       continue
     }
@@ -1752,20 +1859,40 @@ export function readiness(plan) {
 // unticked. This is docs/autonomy-plan.md 3.3's plan-side half of the
 // two-key Phase 3 pre-submit gate ("readiness() after the live scan, plus a
 // new submitReadiness() requiring zero failures, zero verify mismatches,
-// zero required-empty, zero defers, and a submit-role button") — the fuller
-// gate needs the fill REPORT too (verify mismatches, required-empty fields,
-// which button is submit-shaped), which does not exist until after the
-// engine has actually run, so it belongs to Phase 3's automatability.mjs once
-// that is built. What is computable from the PLAN alone, today, is this: has
-// the planner left anything at all undecided. Never used to authorise an
-// actual submit click by itself — hard rule 6 is enforced independently of
-// what any function in this file returns.
+// zero required-empty, zero defers, and a submit-role button").
+//
+// THE REPORT HALF IS BUILT (2026-08-05) — this comment used to say it "belongs
+// to Phase 3's automatability.mjs once that is built", and it was that sentence
+// that let three of the five named checks go missing for a whole phase while
+// authorize.mjs's check 9 already described itself as enforcing them. Zero
+// failures, zero verify mismatches and zero required-empty are all checked
+// below, off the fill REPORT, which does not exist until after the engine has
+// run — and since 2026-08-06 so is zero `verify.errors`, the board's own
+// validation text (see that branch for what produces it). What remains
+// PLAN-only is the defer count and the label flags. ("A submit-role button" is
+// still submit.mjs's, where the button is.)
+//
+// Never used to authorise an actual submit click by itself — hard rule 6 is
+// enforced independently of what any function in this file returns.
+//
 // `report` is OPTIONAL and, when passed, is exactly fill-engine.mjs's
-// fillPage() return value — the half of the gate that does not exist until
-// after the engine has actually run (see this function's own comment above
-// and automatability.mjs's header, which already documents this pairing).
-// Today's only caller of this file's CLI runs before any fill, so `report`
-// is normally absent and every check below is skipped, same as before.
+// fillPage() return value, or `mergePages`'s concatenation of one per page on
+// a multi-page form. Today's only caller of this file's CLI runs before any
+// fill, so `report` is normally absent and every report check below is skipped,
+// same as before. ABSENCE IS NOT EVIDENCE OF CLEANLINESS AND IS NOT TREATED AS
+// ANY — it is treated as "nobody measured this", which is why a missing report
+// cannot make this function refuse. `null` and `undefined` are the only two
+// shapes that mean absent: a report that is PRESENT and unreadable (an array,
+// a string, a number) refuses, on the same reasoning as an unreadable
+// `verify` — see the shape check at the top of the report section.
+//
+// `report.uploads` IS NOT READ HERE, and that is not an oversight to correct.
+// An attachment that did not attach reaches this function as a `failures`
+// entry: fill-engine.mjs demotes an upload whose input the DOM still shows
+// present and holding zero files to a fill failure, so the evidence arrives in
+// the vocabulary every branch below already reads. `uploads` stays the list a
+// HUMAN reads to see which file reached which field (never the plan — the plan
+// says what was attempted), which is why mergePages must still carry it.
 //
 // `report.revealed`: the engine's verify pass sweeps the page for REQUIRED,
 // EMPTY controls the plan never contained — a conditional reveal ("if yes,
@@ -1798,6 +1925,28 @@ export function readiness(plan) {
 // §0.2 pairs this with the mirror in authorize.mjs. The two are INDEPENDENT
 // keys by design and neither reads the other's verdict — relaxing one cannot
 // widen the gate, and either standing alone still blocks.
+
+// Names the offending VALUE in a refusal, not merely its type.
+//
+// WHY IT EXISTS (2026-08-06): the failure-count branch below used to say
+// `is a ${typeof failed}, not a number`, and `NaN` and `-1` are both
+// `typeof "number"` — so the two shapes it most plausibly refuses rendered as
+// "the fill report's failure count is a number, not a number". The refusal was
+// right and the sentence was nonsense, which is its own failure: a reason
+// nobody can act on gets read as a bug in the gate rather than as a fact about
+// the report. Truncated hard, because a report key can carry board text.
+function showValue(v) {
+  if (v === null) return "null"
+  if (v === undefined) return "undefined"
+  if (typeof v === "string")
+    return `the string ${JSON.stringify(v.slice(0, 40))}`
+  if (typeof v === "number" || typeof v === "bigint" || typeof v === "boolean")
+    return String(v)
+  if (Array.isArray(v)) return `an array of ${v.length}`
+  if (typeof v === "object") return "an object"
+  return `a ${typeof v}`
+}
+
 export function submitReadiness(plan, report = null) {
   const fillable = (plan.items ?? []).filter((i) => i.how !== "skip")
   const flagged = [
@@ -1864,12 +2013,219 @@ export function submitReadiness(plan, report = null) {
   if (!fillable.length) {
     return { ready: false, reason: "nothing to fill" }
   }
+
+  // AN UNREADABLE REPORT REFUSES, THE WAY AN UNREADABLE `verify` ALREADY DID
+  // (2026-08-06). `null` and `undefined` still mean "no fill ran, nobody
+  // measured this" — the compatibility case the whole report section rests on,
+  // and the CLI's normal state. Anything else that is not a plain object is a
+  // report nothing can read, and the same fail-closed reasoning that governs
+  // `report.verify` one level down governs the report itself.
+  //
+  // THE TWO SHAPES THIS CLOSES, both fail-OPEN before today:
+  //   `[]`   truthy, so it walked into the section below; `.revealed`,
+  //          `.failed` and `.failures` are all `undefined` on an array and
+  //          `"verify" in []` is false, so every check skipped and this
+  //          returned ready:true having read not one key of the thing it was
+  //          handed. AN ARRAY IS NOT A RESULT OBJECT — mergePages says exactly
+  //          that sentence about `report.verify`, and it is just as true of the
+  //          report.
+  //   `'x'`, `42`, `true` — a truthy primitive reached `"verify" in report` and
+  //          threw a raw TypeError out of the gate. A gate that throws hands
+  //          the decision to whatever catches it, which is not a decision this
+  //          function is entitled to delegate.
+  if (report != null && (typeof report !== "object" || Array.isArray(report)))
+    return {
+      ready: false,
+      reason:
+        `the fill report is ${showValue(report)}, not a result object — a ` +
+        "report nothing can read is not the report of a clean fill",
+    }
+
   if (report?.revealed?.length) {
     return {
       ready: false,
       reason:
         `${report.revealed.length} field(s) revealed by the fill were ` +
         "never in the plan — the page was not fully understood",
+    }
+  }
+
+  // --- WHAT THE FILL ITSELF SAID HAPPENED (2026-08-05) ----------------------
+  //
+  // THE GAP THIS CLOSES. `report.failed`, `report.failures` and `report.verify`
+  // reached NO gate anywhere in this repository. The engine had just learned
+  // that an upload whose input the DOM shows still on the page and holding zero
+  // files did NOT attach, and demoted it from `ok` to a failure — and the
+  // failure went nowhere, because this function read only `report.revealed` and
+  // `mergePages` rebuilt the report without the rest. So the fix that was
+  // supposed to stop an application going out with no résumé was inert on the
+  // one path where nobody is watching. authorize.mjs's check 9 already called
+  // itself "the live-scan gate: zero failures, zero verify mismatches, zero
+  // required-empty" — it delegated all three to this function, which checked
+  // none of them. This is the implementation catching up with that promise.
+  //
+  // FAIL CLOSED, AND ON POSITIVE EVIDENCE. Every branch below asks "is this
+  // measurably clean?" and refuses otherwise; none of them enumerates bad
+  // shapes and waves the rest through. A count that is PRESENT and not
+  // countable is not a zero count — something produced it (`report.verify` is
+  // literally what the page handed back from the verify pass's evaluate) and a
+  // value nothing can read is not evidence of a clean form. Being wrong in this
+  // direction costs the user one deferral with a stated reason. Being wrong in
+  // the other sends an application in their name with a field empty or holding
+  // a value they never gave.
+  //
+  // ABSENT IS NOT ZERO, AND THAT IS THE WHOLE COMPATIBILITY STORY. `verify`
+  // legitimately does not exist on a path that never ran a verify pass, and on
+  // a walk with no fill stage at all there is no report to read. Reading a
+  // missing key as a failure would refuse every submit ever attempted, which is
+  // the same outage as a broken gate and much harder to see. Only a PRESENT
+  // verify with a non-zero count refuses; `undefined` means nobody looked.
+  if (report) {
+    // The `k` a failure carries is a stamp, not a name. The plan is right here
+    // and holds the label the user actually read on the form, so the reason
+    // says "Résumé (f3)" rather than "f3". Board text, so the two callers that
+    // print this (authorize.mjs, submit.mjs) run it through safeText.
+    const labels = new Map()
+    for (const x of [
+      ...(Array.isArray(plan.items) ? plan.items : []),
+      ...(Array.isArray(plan.defer) ? plan.defer : []),
+    ])
+      if (x && x.k != null && x.label) labels.set(x.k, String(x.label))
+    const name = (k) => {
+      const key = k && typeof k === "object" ? k.k : k
+      const l = labels.get(key)
+      return l ? `${l.slice(0, 60)} (${String(key)})` : String(key ?? "?")
+    }
+
+    const failed = report.failed
+    if (
+      failed != null &&
+      !(typeof failed === "number" && Number.isFinite(failed) && failed >= 0)
+    )
+      return {
+        ready: false,
+        reason:
+          `the fill report's failure count is ${showValue(failed)}, not a ` +
+          "finite count of zero or more — a count nothing can read is not a " +
+          "count of zero",
+      }
+    if (report.failures != null && !Array.isArray(report.failures))
+      return {
+        ready: false,
+        reason:
+          "the fill report's failure list is not a list — an unreadable " +
+          "failure list is not an empty one",
+      }
+    // BOTH, not either. They agree in everything fillPage emits; checking the
+    // number as well as the list means a report where they DISAGREE still
+    // refuses, instead of being quietly resolved in favour of the clean one.
+    const list = Array.isArray(report.failures) ? report.failures : []
+    const count = Math.max(typeof failed === "number" ? failed : 0, list.length)
+    if (count > 0)
+      return {
+        ready: false,
+        reason:
+          `${count} field(s) failed to fill: ` +
+          (list.length
+            ? list
+                .slice(0, 3)
+                .map(
+                  (f) =>
+                    `${name(f?.k)} [${f?.how ?? "?"}] ` +
+                    String(f?.why ?? "no reason recorded").slice(0, 140),
+                )
+                .join("; ")
+            : "the report counted them but listed none"),
+      }
+
+    if ("verify" in report && report.verify !== undefined) {
+      const v = report.verify
+      if (v === null || typeof v !== "object" || Array.isArray(v))
+        return {
+          ready: false,
+          reason:
+            "the fill's verify pass answered with something that is not a " +
+            "result object — the page fills that answer in, and one nothing " +
+            "can read is not a clean form",
+        }
+      // `verify.errors` IS A GATE INPUT (2026-08-06). It was collected by the
+      // engine, merged by mergePages and then read by nothing: a report whose
+      // only finding was `errors` passed this function with ready:true.
+      //
+      // WHAT PRODUCES IT, checked before wiring it up rather than assumed.
+      // fill-engine.mjs's verify pass sweeps the settled page for
+      // `[class*='error-message'], [class*='errorMessage'], [role='alert'],
+      // [id$='-error']`, keeps each node's non-empty collapsed innerText,
+      // de-duplicates, and drops anything over 120 chars. That is the BOARD'S
+      // OWN VALIDATION TEXT — "This field is required.", "Please select an
+      // option" — rendered by the board's own script after our fill, and the
+      // engine's own comment calls it "the only reliable signal that the app
+      // itself considers a field unset". It is at least as strong as a
+      // mismatch: a mismatch is our readback disagreeing with our plan, while
+      // this is the form telling us, in its words, that it will not accept
+      // what is on it.
+      //
+      // THE FALSE POSITIVE IS REAL AND IS THE CHEAP DIRECTION. That selector
+      // is broad: any `role="alert"` live region matches (a toast, a cookie
+      // notice), and `innerText` on a node that is not rendered falls back to
+      // textContent, so a hidden error TEMPLATE holding static text can be
+      // picked up. So a benign announcement can block one submit, and that
+      // costs the user one deferral with the message quoted. The other
+      // direction sends an application the board has already said is
+      // incomplete. No repository fixture emits either selector, so there is
+      // no evidence here that benign hits are common — if they turn out to be,
+      // NARROW THE ENGINE'S SWEEP, at the producer, deterministically. Do not
+      // add a wording list here: "block only messages that look like errors"
+      // is the same shape as every pattern list in this file, and the 26th
+      // wording (or the first non-English one) walks through it.
+      //
+      // `say` completes "N ... after the fill" and `show` renders one row. The
+      // noun moved INTO `say` when errors joined: an error row is a MESSAGE
+      // THE BOARD RENDERED, not a field, and counting it as a field would put
+      // a number of sentences where the reader expects a number of inputs.
+      const errText = (r) =>
+        `"${String(r?.text ?? r ?? "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 120)}"`
+      for (const [key, rows, say, show] of [
+        [
+          "mismatch",
+          v.mismatch,
+          "field(s) did not hold the value that was typed",
+          (r) =>
+            r && typeof r === "object"
+              ? `${name(r)} (wanted "${String(r.want ?? "").slice(0, 40)}", the page shows "${String(r.got ?? "").slice(0, 40)}")`
+              : name(r),
+        ],
+        [
+          "requiredEmpty",
+          v.requiredEmpty,
+          "field(s) are required and still empty",
+          (r) => name(r),
+        ],
+        [
+          "errors",
+          v.errors,
+          "validation message(s) rendered by the form itself",
+          errText,
+        ],
+      ]) {
+        if (rows != null && !Array.isArray(rows))
+          return {
+            ready: false,
+            reason:
+              `the verify pass's ${key} is not a list — an unreadable result ` +
+              "is not an empty one",
+          }
+        if (Array.isArray(rows) && rows.length)
+          return {
+            ready: false,
+            reason:
+              `${rows.length} ${say} after the fill: ` +
+              rows.slice(0, 3).map(show).join("; "),
+          }
+      }
     }
   }
   return { ready: true, reason: null }

@@ -6,7 +6,7 @@ scope from any sentence in this file** — `roles.title_keywords` in
 `docs/application-limits.yaml` is the authoritative list, the user owns it, and
 it is wider than any summary of it (AUDIT M16). Read that file.
 
-## Commands — catalogue in [docs/reference/10-commands.md](docs/reference/10-commands.md)
+## Commands — catalogue in [docs/operate/01-commands.md](docs/operate/01-commands.md)
 
 **Read that file when you need a command; do not read it to orient.** Scripts
 live in `scripts/<domain>/`: **leads**
@@ -98,12 +98,16 @@ Three to know without looking, because getting them wrong is expensive:
    report**, with the label quoted. The user is delegating assent, not waiving
    the record of it.
 
-   **The UNATTENDED path is a separate question and is still gated.** This rule
-   is about the agent applying when the user hands it a URL. The runner in
-   `scripts/auto/` ships `enabled: false, dry_run: true` in
-   `docs/application-limits.yaml`'s `auto_apply` block, and turning that on is
-   the user's act — that file is theirs; propose values, never edit it. The
-   trust gate, the submit gate and the classifier still bind there.
+   **The UNATTENDED path is a separate question, and it is now TURNED ON.**
+   This rule is about the agent applying when the user hands it a URL. The
+   runner in `scripts/auto/` used to ship `enabled: false, dry_run: true`, and
+   this paragraph said so until 2026-08-06. It no longer does:
+   `docs/application-limits.yaml`'s `auto_apply` block carries
+   `enabled: true`, `dry_run: false` and a four-board `board_allowlist`.
+   That was the user's act, which is how it should be — that file is theirs;
+   propose values, never edit it. The trust gate, the submit gate and the
+   classifier all still bind there, and the classifier is what currently stops
+   a live run short of recording anything (see the capability note below).
 
    On the **UNATTENDED** path, each of these still **blocks the submit and
    defers the application**, because each means something on the page was not
@@ -180,14 +184,34 @@ Three to know without looking, because getting them wrong is expensive:
    cannot be recovered — a page misread as a confirmation records an application
    that was never sent, and nothing later corrects it.
 
-   **The capability check that is still the right one to run:** nothing opens a
-   browser unattended — `auto-apply.mjs` does not launch Chromium, its stages
-   are injected, and the only caller supplying real ones is a fixture harness.
-   And the click is reachable only in `mode === 'live'`, which needs
-   `auto_apply.enabled: true` **and** a `board_allowlist` naming the board;
-   the user's file has neither, so the trust gate refuses every board today.
-   Until the user sets both, **the user is on the submit button for every
-   application** — the operative rule today, not a preference.
+   **THE RUNNER IS ARMED. Do not repeat the sentence that used to be here.**
+   This paragraph said, until 2026-08-06, that "nothing opens a browser
+   unattended — `auto-apply.mjs` does not launch Chromium, its stages are
+   injected, and the only caller supplying real ones is a fixture harness", and
+   that the user's file had neither `enabled: true` nor a `board_allowlist`.
+   All of that is false and the audit proved it by execution:
+
+   - `auto-apply.mjs` calls `makeStages()` and then `launchBrowser()`, which
+     reaches `chromium.launch` in `scripts/apply/browser.mjs`.
+   - `docs/application-limits.yaml` carries `auto_apply.enabled: true` and
+     `dry_run: false` — so `const mode = auto?.dry_run === false ? "live" : "dry_run"`
+     resolves to **live**.
+   - `board_allowlist` names four boards: both Greenhouse hosts, Lever and
+     Ashby.
+
+   So the trust gate admits real boards today, and the only thing standing
+   between a queued job and a real submit is the gate chain itself. That is the
+   user's decision and it is not to be reverted — but an agent that reads a
+   stale "it is switched off" and reasons from it will get the risk of its own
+   changes exactly backwards, which is why this is written in the imperative.
+
+   **The capability check that is still worth running, because it is the one
+   that has not moved:** the classifier. Every real ATS still classifies as
+   `unclassified`, and that is a hard STOP — so a live run defers at the
+   post-submit step rather than recording an application. Verify that before
+   assuming a submit can complete, and re-derive the rest from the code rather
+   than from this file: **a capability paragraph decays within the hour, and
+   this one has now been wrong five times.**
 
 7. **Git: `dev` branch only.** Never switch to, commit on, or push to
    `main`/`master` or anything else (`git checkout -b dev` if it doesn't exist).
@@ -206,7 +230,7 @@ Three to know without looking, because getting them wrong is expensive:
     North Las Vegas (remote or Las Vegas metro on-site OK, occasional travel
     OK), no stale postings. The user owns that file; ask before changing it.
 
-## Structure — detail in [docs/reference/00-overview.md](docs/reference/00-overview.md)
+## Structure — detail in [docs/guide/05-architecture.md](docs/guide/05-architecture.md)
 
 `scripts/` holds deterministic helpers with no LLM calls, grouped by domain
 (`lib/`, `leads/`, `applications/`, `documents/`, `apply/`, `auto/`, `profile/`,
@@ -214,8 +238,8 @@ Three to know without looking, because getting them wrong is expensive:
 mirrors it one-for-one; `tests/security/` is the Phase 1 gate. `jobs/<slug>/` is
 the per-job workspace, and its `context.json` is **shared** by both tailoring
 skills so they stay consistent. Full listing and the state-ownership table:
-[00-overview.md](docs/reference/00-overview.md); hooks and config:
-[07-guardrails-and-config.md](docs/reference/07-guardrails-and-config.md).
+[05-architecture.md](docs/guide/05-architecture.md); hooks and config:
+[07-safety-model.md](docs/guide/07-safety-model.md) and [12-harness-and-ci.md](docs/code/12-harness-and-ci.md).
 
 Four things that cause a **mistake** if you do not know them:
 
@@ -285,7 +309,7 @@ Agents are dispatched under further cost rules the manager owns — one bounded
 task each, reuse before re-hire, stop rather than expand scope. See **Dispatch
 discipline** in [docs/agent-protocol.md](docs/agent-protocol.md).
 
-## Gotchas — full account in [docs/reference/09-gotchas.md](docs/reference/09-gotchas.md)
+## Gotchas — full account in [docs/operate/03-troubleshooting.md](docs/operate/03-troubleshooting.md)
 
 **An index, not the account.** Each line names a real incident but not its
 reasoning, and the reasoning is what stops you re-introducing the bug — so

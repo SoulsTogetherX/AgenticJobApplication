@@ -54,25 +54,202 @@ export const MAX_PAGES = 8
 /**
  * The plan and report for the WHOLE form, from its per-page parts.
  *
- * `submitReadiness` reads `plan.items`, `plan.defer` and `report.uploads`, so
- * all three concatenate. Defers concatenate too even though a page with defers
- * ends the walk — the merged plan has to be able to REPRESENT a defer, or the
- * submit gate's own zero-defer check becomes vacuous on multi-page forms.
+ * `submitReadiness` reads `plan.items`, `plan.defer`, `plan.actuated`,
+ * `report.revealed` and — since 2026-08-05 — the FILL'S OWN VERDICT:
+ * `report.failed`, `report.failures` and `report.verify` (`mismatch`,
+ * `requiredEmpty`, and since 2026-08-06 `errors`). Every one of those has to
+ * survive the merge; on 2026-08-05 three of them did not, and `plan.actuated`
+ * was still being dropped until 2026-08-06 — see its own note in the loop.
+ *
+ * IT DOES NOT READ `report.uploads`. This sentence used to say it did, which
+ * was false against the body of the function on the day it was written and is
+ * worth correcting rather than deleting: an upload that did not attach reaches
+ * the gate as a `failures` ENTRY — fill-engine.mjs demotes an upload whose
+ * input the DOM still shows present and holding zero files to a fill failure —
+ * so the gate reads the failure, not an absence in this list. `uploads` is
+ * merged anyway because it is the list a HUMAN reads to see which file reached
+ * which field, and that must never be reconstructed from the plan: the plan
+ * says what was ATTEMPTED. Dropping it here because no gate reads it would
+ * take the attachment record with it.
+ *
+ * THE BUG THAT PUT THEM HERE, and it is worth stating because the old version
+ * looked complete. This function rebuilt the report as `{uploads, revealed}`
+ * and dropped everything else on the floor. The engine had just learned to
+ * demote an upload whose input the DOM showed STILL PRESENT AND EMPTY to a
+ * fill failure — and that failure landed in `report.failures`, which stopped
+ * existing right here, one call before any gate. The unattended path submits
+ * the MERGED report or nothing, so a key missing from this object does not
+ * exist as far as `authorizeSubmit` and `submitOnce` are concerned: an
+ * application with no résumé attached passed both. A gate cannot refuse
+ * evidence it was never handed.
+ *
+ * Defers concatenate too even though a page with defers ends the walk — the
+ * merged plan has to be able to REPRESENT a defer, or the submit gate's own
+ * zero-defer check becomes vacuous on multi-page forms.
+ *
+ * `verify` IS ABSENT, NOT EMPTY, when no page ran a verify pass, and that
+ * asymmetry with `uploads`/`revealed`/`failures` is deliberate. "Nothing
+ * measured this" and "this measured zero" are different facts; a fill that
+ * never verified would, if this synthesised `{mismatch: [], requiredEmpty: []}`
+ * for it, be handing the gate a clean bill of health nobody ever wrote.
+ * submitReadiness reads the absence as "not measured" and refuses only on a
+ * PRESENT non-zero count, so the forgery would have been silent.
+ *
+ * THE SAME FORGERY HAS A PER-PAGE HALF, and closing only the form-wide one left
+ * it open. `verify` is emitted or not for the WHOLE merged report, so a walk
+ * where page 1 verified and page 2 did not produced a PRESENT verify holding
+ * page 1's counts alone — page 2's silence read as page 2's zero, and the gate,
+ * which can only see the merged object, called the form measured clean. Mixed
+ * coverage is therefore recorded as a fill failure, in the same vocabulary as
+ * the malformed shapes below, naming the pages nobody measured.
+ *
+ * That cannot refuse anything the real engine produces: fillPage initialises
+ * `out.verify` at the top and returns `out` on every path including its two
+ * early guards, so a page it filled always carries one. Uniform absence —
+ * no fill stage at all, or a stage that never verifies — leaves `verifyRan`
+ * false and is untouched, which is the compatibility case item 4 protects.
  */
 export function mergePages(pages) {
   const items = []
   const defer = []
+  const actuated = []
   const uploads = []
   const revealed = []
+  const failures = []
+  const mismatch = []
+  const requiredEmpty = []
+  const errors = []
+  let failed = 0
+  let verifyRan = false
+  // Pages that ran a fill and reported NO verify pass. Only meaningful once
+  // some other page reported one — see the per-page forgery note above.
+  const unverified = []
+
+  // A report list that is PRESENT AND NOT A LIST is not an empty list.
+  // Something produced it — `report.verify` is literally whatever the page
+  // handed back from the verify pass's `page.evaluate` — and a shape nothing
+  // can read is evidence the page was not understood, which is the same class
+  // of thing as a failed fill. So it is recorded AS one, in the vocabulary
+  // every gate downstream already reads, rather than as a new key each of them
+  // would have to learn about (and one of them would forget).
+  const drain = (v, into, pageNo, what) => {
+    if (v == null) return
+    if (!Array.isArray(v)) {
+      failed += 1
+      failures.push({
+        k: "-",
+        how: "merge",
+        why: `page ${pageNo} reported ${what} as something other than a list, so it could not be checked`,
+        page: pageNo,
+      })
+      return
+    }
+    for (const x of v) into.push(x)
+  }
+
   for (const p of pages ?? []) {
     for (const i of p?.plan?.items ?? []) items.push({ ...i, page: p.page })
     for (const d of p?.plan?.defer ?? []) defer.push({ ...d, page: p.page })
-    for (const u of p?.report?.uploads ?? []) uploads.push(u)
-    for (const r of p?.report?.revealed ?? []) revealed.push(r)
+    // `actuated` IS A GATE INPUT TOO, and it was being dropped exactly the way
+    // `failures` and `verify` were (2026-08-06, found while correcting this
+    // function's own docstring). buildPlan records every checkbox or radio it
+    // ticked from an exact-text banked answer here, and submitReadiness refuses
+    // on a non-empty list: rule 6 delegates assent when the USER hands over a
+    // URL, and the unattended runner has no such instruction. Rebuilding the
+    // plan without this key meant a widget ticked on page 2 of a four-page form
+    // reached no gate at all, while the identical form on one page refused —
+    // the gate cannot refuse evidence it was never handed.
+    for (const a of p?.plan?.actuated ?? [])
+      actuated.push({ ...a, page: p.page })
+    drain(p?.report?.uploads, uploads, p?.page, "its uploads")
+    drain(p?.report?.revealed, revealed, p?.page, "its revealed fields")
+
+    // PAGE-TAGGED, exactly like the plan's items and defers above: "a field
+    // failed to fill" is not actionable on a four-page form without knowing
+    // which page to go back to.
+    const pageFailures = []
+    drain(p?.report?.failures, pageFailures, p?.page, "its fill failures")
+    for (const f of pageFailures)
+      failures.push(f && typeof f === "object" ? { ...f, page: p?.page } : f)
+
+    // The count is carried BESIDE the list rather than derived from it. They
+    // agree in everything the engine emits, and the gate checks both anyway —
+    // a count that disagreed with its own list would itself mean something is
+    // wrong with the report, and that is not a thing to resolve by picking the
+    // smaller number.
+    const n = p?.report?.failed
+    if (n != null) {
+      if (typeof n === "number" && Number.isFinite(n) && n >= 0) failed += n
+      else {
+        failed += 1
+        failures.push({
+          k: "-",
+          how: "merge",
+          // NAMES THE VALUE, not just the fact that it was rejected: the same
+          // correction submitReadiness's own count branch needed, where "is a
+          // ${typeof x}, not a number" rendered "is a number, not a number"
+          // for the two likeliest shapes (`NaN`, `-1`). Truncated because the
+          // value came off a page, and kept short because submitReadiness
+          // slices a failure's `why` at 140 chars.
+          why:
+            `page ${p?.page} reported a failure count of ` +
+            `${safeText(String(n), 40)}, which is not a count of zero or more`,
+          page: p?.page,
+        })
+      }
+    }
+
+    const v = p?.report?.verify
+    if (v !== undefined) {
+      verifyRan = true
+      if (v === null || typeof v !== "object" || Array.isArray(v)) {
+        failed += 1
+        failures.push({
+          k: "-",
+          how: "merge",
+          why: `page ${p?.page}'s verify pass answered with something that is not a result object`,
+          page: p?.page,
+        })
+      } else {
+        drain(v.mismatch, mismatch, p?.page, "verify.mismatch")
+        drain(v.requiredEmpty, requiredEmpty, p?.page, "verify.requiredEmpty")
+        drain(v.errors, errors, p?.page, "verify.errors")
+      }
+    } else if (p?.report != null && typeof p.report === "object") {
+      // A page that WAS filled and answered with no verify pass at all. Held
+      // rather than judged here: on its own this is the legitimate "nobody
+      // verified anything" walk, and it only becomes evidence once some other
+      // page turns out to have verified.
+      unverified.push(p?.page)
+    }
   }
+
+  // MEASURED IN PART IS NOT MEASURED. Recorded as a failure rather than as a
+  // new key because every gate downstream already reads `failures`, and a key
+  // one of them forgot to learn would be this bug again.
+  //
+  // UNDER 140 CHARACTERS, deliberately: submitReadiness slices a failure's
+  // `why` at that length when it builds the reason the user reads, so a longer
+  // sentence would lose its own tail. The page numbers come first for the same
+  // reason the upload readback puts its tag first.
+  if (verifyRan && unverified.length) {
+    failed += 1
+    failures.push({
+      k: "-",
+      how: "merge",
+      why:
+        `page ${unverified.map((n) => String(n ?? "?")).join(", ")} ran a fill ` +
+        `but reported no verify pass while other pages did — a partly-measured ` +
+        `form is not a measured one`,
+      page: unverified[0],
+    })
+  }
+
+  const report = { uploads, revealed, failed, failures }
+  if (verifyRan) report.verify = { mismatch, errors, requiredEmpty }
   return {
-    plan: { v: 1, items, defer, pages: (pages ?? []).length },
-    report: { uploads, revealed },
+    plan: { v: 1, items, defer, actuated, pages: (pages ?? []).length },
+    report,
   }
 }
 
@@ -202,6 +379,32 @@ export async function walkPages(
         "plan-defer",
         `page ${pageNo} deferred ${plan.defer.length} field(s)`,
       )
+
+    // A FAILED FILL DOES NOT END THE WALK, AND THAT IS KNOWN, NOT AN OVERSIGHT
+    // (recorded 2026-08-06). `plan.defer` is the ONLY condition on this line.
+    // A page whose fill reported failures — an upload that did not attach, a
+    // combo that never took its value, a `report` shape mergePages could not
+    // read — still mints a token, clicks Next, and the walk fills pages 2..N
+    // before anything refuses.
+    //
+    // NOTHING IS SENT OFF A FAILED FILL: those failures survive mergePages and
+    // submitReadiness refuses on them, which is exactly what tests/auto/
+    // multipage.test.mjs's "THE WHOLE PATH: a failed fill on page 1 refuses the
+    // merged submit" asserts — the walk returns ok:true and the SUBMIT gate
+    // says no. The cost is narrower than the submit: more of the user's data
+    // typed into a draft that will never be submitted, the same cost the defer
+    // branch above exists to avoid, reached through a different door. On every
+    // board on today's allowlist that draft cannot be discarded anyway (see
+    // DRAFT_ABANDONERS), so stopping earlier would leave the draft too — it
+    // would only stop adding to it.
+    //
+    // NOT CHANGED IN THE ROUND THAT WROTE THIS COMMENT, deliberately: a defer
+    // is a DECISION the planner made about a field, while a failure count is a
+    // MEASUREMENT handed back by an injected fill stage — and by the time it
+    // reaches a gate the same `failures` vocabulary also carries mergePages's
+    // own "we could not read your report" bookkeeping. Which of those is worth
+    // abandoning a part-filled form for is its own change with its own tests,
+    // not a second condition bolted onto the line above.
 
     const next = findNextControl(scan)
     // No `next` control means this is the last page — the ordinary and

@@ -73,7 +73,7 @@ measurements, and become numbers only once the harness exists):
 
 | Quantity                            | Estimate                        |
 | ----------------------------------- | ------------------------------- |
-| Scan probe sleep                    | ~6.8s (380ms × ≤18 dropdowns)   |
+| Scan probe sleep                    | ~9.1s (380ms × ≤24 dropdowns)   |
 | Fill sleep, 14-combo form           | ~17s                            |
 | Cover letter into `contenteditable` | up to 45s (15ms/char, uncapped) |
 | Browser round trips per page        | 4                               |
@@ -998,6 +998,7 @@ End to end (`node scripts/documents/reuse-check.mjs <slug> --dir <tmp> --json`),
 4. **The 3.3 cover-letter estimate is not in this ledger** because it is not a
    measurement: `scripts/documents/letter-plan.mjs --price-only` computes it from
    declared token counts, and no letter has been authored under that plan yet.
+
 ---
 
 ## M9 — Phase 4: the campaign harness, and both halves of the gate proved by mutation
@@ -1172,11 +1173,11 @@ on a completely healthy run, every run.
 **Leads carrying a trust-gate-usable `apply_url`: 77 → 91 of 158** (48.7% → 57.6%),
 at a cost of **zero third-party HTTP requests**.
 
-| via             |  n | what it is                                                     |
-| --------------- | -: | -------------------------------------------------------------- |
-| `already-ats`   | 77 | the swept URL was an ATS posting; query and fragment dropped   |
-| `lead-identity` | 14 | embedded careers page, resolved from the board's own API data  |
-| unresolved      | 67 | 51 adzuna, 9 jobicy, 7 successfactors (`jobs.igt.com`)         |
+| via             |   n | what it is                                                    |
+| --------------- | --: | ------------------------------------------------------------- |
+| `already-ats`   |  77 | the swept URL was an ATS posting; query and fragment dropped  |
+| `lead-identity` |  14 | embedded careers page, resolved from the board's own API data |
+| unresolved      |  67 | 51 adzuna, 9 jobicy, 7 successfactors (`jobs.igt.com`)        |
 
 The 14 are the coinbase (10) and samsara (4) leads. Their canonical form is a
 string operation on `source: greenhouse:<tenant>` plus `?gh_jid=<id>` — data the
@@ -1191,11 +1192,11 @@ embedded URLs". It recovers the embedded ones and NONE of the aggregator ones.**
 
 Measured against a 21-lead sample (12 adzuna, all 9 jobicy), fetched once each:
 
-| HTTP | n   | meaning                                                       |
-| ---- | --: | -------------------------------------------------------------- |
-| 403  | 11  | the aggregator declined a scripted request                     |
-| 200  | 8   | served, and carrying **no ATS link of any family**             |
-| 404  | 2   | the posting is gone                                            |
+| HTTP |   n | meaning                                            |
+| ---- | --: | -------------------------------------------------- |
+| 403  |  11 | the aggregator declined a scripted request         |
+| 200  |   8 | served, and carrying **no ATS link of any family** |
+| 404  |   2 | the posting is gone                                |
 
 **Resolved: 0 of 21.** The 200s were scanned for 14 ATS families — Greenhouse,
 Ashby, Lever, SmartRecruiters, Workday, Oracle, Ceipal, iCIMS, Taleo, BambooHR,

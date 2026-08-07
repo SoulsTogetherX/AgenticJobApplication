@@ -57,6 +57,7 @@ import {
   techTermsIn,
   evidenceText,
 } from "../lib/lib.mjs"
+import { canonicalSurface } from "../lib/keywords.mjs"
 import { verificationIdentity, JOBS_DIR } from "../lib/verification.mjs"
 
 const FACT_RE = /<!--\s*fact:\s*([A-Za-z0-9_,\s-]+?)\s*-->/
@@ -263,8 +264,24 @@ export function verifyDocument({
   }
 
   // R6: tech terms anywhere in the document.
+  //
+  // Compared as SPELLINGS, not as raw strings. This used to be a plain
+  // `corpusTech.has(term)`, so two spellings of one artifact were two different
+  // skills: a profile saying "Postgres" and a resume saying "PostgreSQL" was an
+  // R6 violation and exit 1 — while docs/tailoring-rules.md §8 instructs
+  // "PostgreSQL not Postgres" and checkWrittenForm() tells the writer to make
+  // exactly that edit (AUDIT C3). The gate and the documentation were fighting,
+  // and each round cost a model turn plus a re-verify.
+  //
+  // canonicalSurface() folds ONLY the eight hand-enumerated sibling pairs in
+  // keywords.mjs. It deliberately does NOT fold a whole `surface` list: an
+  // abstraction's surface list holds different products (Testing's is
+  // Jest/Vitest/Cypress/Selenium/…), so folding those would make a profile
+  // mentioning Jest into evidence for a resume claiming Selenium — an invention
+  // arriving through the truthfulness gate itself.
+  const corpusSpellings = new Set([...corpusTech].map(canonicalSurface))
   for (const term of techTermsIn(doc)) {
-    if (!corpusTech.has(term))
+    if (!corpusSpellings.has(canonicalSurface(term)))
       violations.push({
         rule: "R6",
         detail: `Tech term "${term}" not found in any fact source`,

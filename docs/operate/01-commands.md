@@ -775,7 +775,8 @@ lead carries the requested status.
 ```
 node scripts/leads/prep-queue.mjs [--top 5] [--status new|all] [--json]
      [--leads <path>] [--profile <path>] [--jobs-dir <path>]
-     [--applications <path>] [--cluster [--threshold 0.6]]
+     [--applications <path>] [--limits <path>] [--cluster [--threshold 0.6]]
+     [--by-score]
 ```
 
 Tailoring a résumé takes a subagent a few minutes. Doing it at apply time puts
@@ -786,6 +787,24 @@ tailoring itself.
 A lead is queued when it ranks well, has not been applied to, and has no verified
 tailored résumé yet. `--cluster` collapses near-duplicate postings so a group one
 résumé can serve costs one queue slot instead of four.
+
+**Ordering is by applicability first, fit second (2026-08-09).** Each queued lead
+reports an `applicability` tier, and the summary line counts them:
+
+| tier            | meaning                                                                          |
+| --------------- | -------------------------------------------------------------------------------- |
+| `automatable`   | resolved to an ATS posting on your `board_allowlist` — the machine can finish it |
+| `off-allowlist` | resolved to a real ATS posting, but no adapter ships for that board              |
+| `manual-only`   | never resolved past the aggregator — you can still apply by hand                 |
+
+Why: on the 2026-08-09 cycle all ten slots went to Adzuna leads that carry no
+`apply_url`, and the run prepared zero documents while nine submittable leads sat
+below the cut-off. Fit alone is the right order for a list you read and the wrong
+one for a queue whose output is a tailored document.
+
+**Nothing is filtered out** — a `manual-only` lead is still a job you can apply to
+yourself, so it is ranked down, never hidden. `--by-score` restores the old
+fit-only ordering.
 
 **Exit codes:** `0` ok, `2` usage or missing store.
 

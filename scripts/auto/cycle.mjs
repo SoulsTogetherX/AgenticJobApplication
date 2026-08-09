@@ -266,19 +266,33 @@ export async function runCycle(argv = []) {
   // APPLICABILITY IS CHECKED BEFORE THE DOCUMENT WORK, NOT AFTER
   // ==========================================================================
   //
-  // MEASURED, first real cycle (2026-08-03): prep-queue ranks on FIT and knows
-  // nothing about where a posting lives, so it picked ten leads of which every
-  // single one was refused by the runner a step later — eight on `www.adzuna.com`
-  // (an aggregator, not an ATS, so it is not on the user's board_allowlist and
-  // never will be) and two on a Workday tenant. The cycle had assembled,
-  // verified and rendered a PDF for each. A pipeline that spends its whole
-  // budget tailoring documents nothing can submit LOOKS like it is working:
-  // every stage reports ok, `prepared=10`, and zero applications go out.
+  // MEASURED, first real cycle (2026-08-03): prep-queue ranked on FIT alone and
+  // knew nothing about where a posting lives, so it picked ten leads of which
+  // every single one was refused by the runner a step later — eight on
+  // `www.adzuna.com` (an aggregator, not an ATS, so it is not on the user's
+  // board_allowlist and never will be) and two on a Workday tenant. The cycle
+  // had assembled, verified and rendered a PDF for each. A pipeline that spends
+  // its whole budget tailoring documents nothing can submit LOOKS like it is
+  // working: every stage reports ok, `prepared=10`, and zero applications go out.
   //
   // So the same gate the runner uses is asked FIRST. `trustBoard` is imported
   // rather than reimplemented on purpose — a second copy of "is this board
   // applicable" is a copy that drifts, and the direction it drifts is toward
   // preparing documents for boards the runner then refuses.
+  //
+  // PREP-QUEUE NOW RANKS BY APPLICABILITY TOO (2026-08-09), and this check is
+  // deliberately NOT redundant with it. The 2026-08-03 failure recurred exactly
+  // once more, on 2026-08-09: ten slots, ten aggregator leads, `prepared=0`,
+  // while nine submittable leads sat below the cut-off. The fix went upstream,
+  // into prep-queue's ordering, because that is where the slots are spent.
+  //
+  // This gate stays because the two answer different questions. Prep-queue ORDERS
+  // by a cheap proxy — does the lead carry an apply_url on an allowlisted host —
+  // and never drops anything, since a hand-appliable lead is still worth showing.
+  // `trustBoard` DECIDES, with the screening state and the full gate chain behind
+  // it. Deleting this on the grounds that "the queue already sorted them" would
+  // put the ordering heuristic in charge of a trust decision, which is precisely
+  // the drift the paragraph above refuses.
   //
   // A REFUSED LEAD IS NOT DROPPED SILENTLY. It is reported with the gate's own
   // reason, because "we found you a job and cannot apply to it" is information:

@@ -124,6 +124,13 @@ export function scoreLead(
     title: lead.title,
     location: lead.location,
     url: lead.url,
+    // The RESOLVED posting, carried through the projection because a consumer
+    // that cannot see it cannot tell an applicable lead from a dead one. This
+    // is a whitelist, not a spread, so anything it does not name is dropped —
+    // and prep-queue.mjs's applicability ranking read `apply_url` off these
+    // objects and silently graded every lead manual-only until it was added
+    // (caught on the live store 2026-08-09, after the unit tests passed).
+    apply_url: lead.apply_url ?? null,
     posted_at: lead.posted_at,
     score,
     matched_tech: overlap.sort(),

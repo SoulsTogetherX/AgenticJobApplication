@@ -439,3 +439,77 @@ test("a bot-blocked aggregator is unresolved, and is NOT reported as a dead post
   assert.equal(r.status, "unresolved")
   assert.notEqual(r.kind, "posting-gone")
 })
+
+// --- a refusal is not a parse gap ----------------------------------------------
+//
+// Measured 2026-08-09: www.adzuna.com/land/ad/... answers 403 and serves a 13 KB
+// block page. Before this distinction existed the scanner read that page, found
+// no ATS link and reported "no ATS posting found on the page" — which reads as
+// "our matcher missed one" and sent the last investigation after a matcher fix
+// that could not have worked. The kind is what a tally counts, so it is what the
+// two cases must not share.
+
+test("a host refusing robots reports blocked, not an empty page", async () => {
+  for (const status of [401, 403, 429]) {
+    const r = await resolveViaNetwork("https://www.adzuna.com/land/ad/1", {
+      // A block page is a real page with real bytes — that is the whole trap.
+      fetchImpl: async () =>
+        res(status, {}, "<html><body>Access denied</body></html>"),
+    })
+    assert.equal(r.status, "unresolved")
+    assert.equal(r.kind, "blocked", `HTTP ${status} must be kind=blocked`)
+    assert.equal(r.http_status, status)
+    assert.match(r.reason, /refuses automated requests/)
+    assert.doesNotMatch(
+      r.reason,
+      /no ATS posting found/,
+      "a refusal must never be reported as a parse gap",
+    )
+  }
+})
+
+test("blocked stays distinct from posting-gone and from a genuine empty page", async () => {
+  const gone = await resolveViaNetwork("https://www.adzuna.com/details/1", {
+    fetchImpl: async () => res(404, {}, "<html>expired</html>"),
+  })
+  assert.equal(gone.kind, "posting-gone")
+
+  const empty = await resolveViaNetwork("https://jobicy.com/jobs/1", {
+    fetchImpl: async () => res(200, {}, "<html>apply by email</html>"),
+  })
+  assert.equal(empty.status, "unresolved")
+  assert.equal(empty.kind, undefined)
+  assert.match(empty.reason, /no ATS posting found/)
+})
+
+test("a 403 is terminal — it is never retried behind a different identity", async () => {
+  let calls = 0
+  const r = await resolveViaNetwork("https://www.adzuna.com/land/ad/1", {
+    fetchImpl: async (_url, opts) => {
+      calls++
+      // Nothing may dress the client up as a browser to get past the wall.
+      assert.equal(opts.headers["user-agent"], undefined)
+      return res(403, {}, "blocked")
+    },
+  })
+  assert.equal(r.kind, "blocked")
+  assert.equal(calls, 1, "a refusal must not be retried")
+})
+
+test("canonicalizeLeads banks the kind so a later tally can tell these apart", async () => {
+  const leads = [
+    { id: "a", url: "https://www.adzuna.com/land/ad/1" },
+    { id: "b", url: "https://www.adzuna.com/details/2" },
+  ]
+  const stats = await canonicalizeLeads(leads, {
+    concurrency: 1,
+    fetchImpl: async (url) =>
+      url.includes("/land/ad/")
+        ? res(403, {}, "blocked")
+        : res(404, {}, "expired"),
+  })
+  assert.equal(stats.unresolved, 2)
+  assert.equal(leads[0].apply_url_unresolved_kind, "blocked")
+  assert.equal(leads[1].apply_url_unresolved_kind, "posting-gone")
+  assert.deepEqual(stats.by_kind, { blocked: 1, "posting-gone": 1 })
+})

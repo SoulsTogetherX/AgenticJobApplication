@@ -1475,10 +1475,31 @@ async function ingest(
   //
   // OFFLINE ONLY on the sweep path, deliberately. The free tiers resolve every
   // embedded careers page from what the board API already told us and cost
-  // nothing; the network tier resolves aggregator links and was measured at
-  // 0/21 on the two aggregators this store actually uses (M10), so paying a
-  // per-lead HTTP request on every sweep would buy a measured nothing. It stays
-  // available behind `canonical.mjs --network` for a board set where it pays.
+  // nothing; the network tier was measured at 0/21 on the two aggregators this
+  // store actually uses (M10), so paying a per-lead HTTP request on every sweep
+  // would buy a measured nothing. It stays available behind
+  // `canonical.mjs --network` for a board set where it pays.
+  //
+  // WHY THAT ZERO IS PERMANENT FOR ADZUNA, re-measured 2026-08-09 — M10 recorded
+  // the number but not the cause, which left it looking like a matcher gap
+  // someone could close. It is not. Four independent routes to the employer's
+  // posting were tried and every one is shut by design:
+  //
+  //   1. `redirect_url` (`/land/ad/...`) answers **403** with a block page;
+  //   2. the `/details/<id>/apply?aztt=<jwt>` hop the details page offers 303s
+  //      straight back to the details page with `after_login=<id>`;
+  //   3. the search API returns 15 fields and `redirect_url` is the only URL —
+  //      no employer link, no apply link, and `adref` decodes to {session, id};
+  //      there is no per-job detail endpoint to ask instead;
+  //   4. the `description` teaser contains no URLs at all — 0 of 95 stored
+  //      aggregator leads carry one.
+  //
+  // The click-through IS Adzuna's product, so the destination is exactly what
+  // they withhold. Getting it would mean driving a browser through the
+  // interstitial and signing in — circumventing an access control, which this
+  // pipeline does not do. Aggregator leads are therefore hand-apply-only, and
+  // prep-queue.mjs ranks them below leads the machine can finish rather than
+  // dropping them (see `applicability()` there).
   if (survivors.length) await canonicalizeLeads(survivors, { network: false })
 
   const kept = []

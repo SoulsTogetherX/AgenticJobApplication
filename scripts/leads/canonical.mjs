@@ -323,6 +323,33 @@ export async function resolveViaNetwork(
         chain,
       }
 
+    // A REFUSAL IS NOT A PARSE GAP, and conflating the two cost this project a
+    // wrong conclusion. Measured 2026-08-03, the network tier scored 0/21 on
+    // adzuna and jobicy and find-jobs.mjs was left offline on the strength of
+    // it, with the reason recorded as "no ATS posting found on the page" — a
+    // sentence that says the scanner looked and the page had nothing. It did
+    // not. Re-measured 2026-08-09: `www.adzuna.com/land/ad/...` answers **403**
+    // and serves a 13 KB block page, so what the scanner read was a bot wall.
+    // Those are opposite findings with opposite fixes — a parse gap asks for a
+    // better matcher, a 403 says this host does not serve robots and no matcher
+    // will ever change that — and the old wording pointed at the fix that could
+    // not work. Anything that refuses or rate-limits gets its own kind, before
+    // the body is scanned, so the distinction cannot be lost again.
+    //
+    // Deliberately NOT a retry or a backoff, and never a forged User-Agent: the
+    // host is declining automated access, and dressing the client up as a
+    // browser to get past that is circumventing a control the operator put
+    // there on purpose. `blocked` is a terminal answer here.
+    if (res.status === 401 || res.status === 403 || res.status === 429)
+      return {
+        status: "unresolved",
+        reason: `blocked by the host (HTTP ${res.status}) — it refuses automated requests, so no ATS posting can be read from it`,
+        kind: "blocked",
+        http_status: res.status,
+        hops,
+        chain,
+      }
+
     // Not a redirect: this is the page. Scan it.
     let html = ""
     try {
@@ -413,7 +440,16 @@ export async function canonicalizeLeads(
       // Recorded, not silent: a lead the gate will refuse should say why it
       // could not be resolved, in the same spirit as a deferral.
       lead.apply_url_unresolved = r.reason ?? "unresolved"
+      // The KIND is kept alongside the prose because the two answer different
+      // questions: the reason is for a human reading one lead, the kind is what
+      // a later measurement counts. `blocked` vs `no ATS posting found` is the
+      // difference between "this host will never work" and "our matcher missed
+      // one", and only the kind survives being tallied.
+      if (r.kind) lead.apply_url_unresolved_kind = r.kind
       stats.unresolved++
+      stats.by_kind ??= {}
+      const k = r.kind ?? "unresolved"
+      stats.by_kind[k] = (stats.by_kind[k] ?? 0) + 1
     }
   })
   return stats

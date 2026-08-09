@@ -1917,7 +1917,7 @@ compare a claim against, and how it is assembled differs per section:
 | `projects`      | `prj.id` and each `bullet.id` | for the project: `"<name> <tech> <year> <role>"`; for a bullet: `b.text` |
 | `skills`        | `sk.id`                       | `"<group>: <item, item, …>"`                                             |
 | `education`     | `edu.id`                      | school, degrees, graduation, GPA, honours and coursework joined          |
-| `organizations` | `org.id`                      | `org.name`                                                               |
+| `organizations` | `org.id`                      | `org.text`                                                               |
 | `extras`        | `ex.id`                       | `ex.text`                                                                |
 | `answers.yaml`  | `a.id`                        | `"<question> <answer>"`                                                  |
 

@@ -52,5 +52,13 @@ education:
     gpa: "3.50"
     coursework: [Algorithms, Data Structures]
 
-organizations: []
-extras: []
+# Non-empty on purpose. While both of these were `[]`, buildFactIndex could
+# read a field name the schema does not define and nothing caught it: every
+# organization fact indexed as the literal string "undefined".
+organizations:
+  - id: org-honor
+    text: Beta Kappa Engineering Honor Society, member since 2021.
+
+extras:
+  - id: extra-clearance
+    text: Eligible for and willing to complete a state background registration.

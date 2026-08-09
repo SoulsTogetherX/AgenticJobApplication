@@ -198,6 +198,14 @@ export function buildFactIndex(profile, answers) {
   const add = (id, text) => {
     if (!id) return
     if (index.has(id)) throw new Error(`Duplicate fact id: ${id}`)
+    // Reading a field the profile schema does not define used to land here as
+    // the literal string "undefined" — a fact that silently verifies against
+    // nothing, so every real claim citing it fails R3. That was live for
+    // `organizations` (it read org.name; the field is org.text). Throwing
+    // turns a whole class of schema drift into a loud failure at load time.
+    if (text === undefined || text === null) {
+      throw new Error(`Fact ${id} has no text — check the profile field name`)
+    }
     index.set(id, { id, text: String(text) })
   }
 
@@ -223,7 +231,7 @@ export function buildFactIndex(profile, answers) {
         `${(edu.coursework ?? []).join(", ")}`,
     )
   }
-  for (const org of profile.organizations ?? []) add(org.id, org.name)
+  for (const org of profile.organizations ?? []) add(org.id, org.text)
   for (const ex of profile.extras ?? []) add(ex.id, ex.text)
 
   for (const a of answers?.answers ?? []) add(a.id, `${a.question} ${a.answer}`)

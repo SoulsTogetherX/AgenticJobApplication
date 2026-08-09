@@ -229,6 +229,41 @@ test("buildFactIndex indexes every fixture fact id uniquely", () => {
   }
 })
 
+// Regression. The organizations line read `org.name`, but the schema defines
+// `org.text`, so every organization fact indexed as the literal string
+// "undefined". Nothing caught it: the fixture profiles all had
+// `organizations: []`, and String(undefined) is a perfectly good string. The
+// damage was downstream — a true bullet citing an organization failed R3,
+// because the number it quoted was "not present in" a fact that had no text.
+test("buildFactIndex indexes an organization by its text, not a missing name", () => {
+  const profile = {
+    organizations: [{ id: "org-honor", text: "Honor Society, member 2021." }],
+  }
+  const idx = buildFactIndex(profile, { answers: [] })
+  assert.equal(idx.get("org-honor").text, "Honor Society, member 2021.")
+  assert.ok(
+    [...extractNumbers(idx.get("org-honor").text)].includes("2021"),
+    "the year in an organization fact must survive into the index",
+  )
+})
+
+test("fixture profile's organization fact carries its real text", () => {
+  const profile = loadYamlFile(path.join(FIX, "profile.yaml"))
+  const idx = buildFactIndex(profile, { answers: [] })
+  for (const id of ["org-honor", "extra-clearance"]) {
+    assert.ok(idx.has(id), `missing ${id}`)
+    assert.notEqual(idx.get(id).text, "undefined")
+  }
+})
+
+// The guard that makes the whole class of bug loud instead of silent.
+test("buildFactIndex throws when a section field name does not exist", () => {
+  assert.throws(
+    () => buildFactIndex({ organizations: [{ id: "org-x" }] }, { answers: [] }),
+    /Fact org-x has no text/,
+  )
+})
+
 test("buildFactIndex throws on duplicate ids", () => {
   const profile = {
     summary: [{ id: "dup", text: "a" }],

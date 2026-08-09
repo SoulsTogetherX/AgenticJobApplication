@@ -44,6 +44,22 @@ test("faithful resume passes all rules", () => {
   assert.ok(report.checked.annotatedBullets >= 5)
 })
 
+// Regression — the end-to-end half of the buildFactIndex organizations bug.
+// `org.name` (undefined) instead of `org.text` meant a bullet quoting an
+// organization verbatim was rejected with
+//   Number "2021" not present in cited fact(s) [org-honor]
+// even though the year is right there in the fact. R3 is the load-bearing
+// number check, so the truthfulness gate was failing true content.
+test("a bullet citing an organization fact passes R3", () => {
+  const { status, report } = verify("resume", "good-resume-organizations.md")
+  assert.equal(status, 0, JSON.stringify(report?.violations))
+  assert.equal(report.ok, true)
+  assert.ok(
+    !report.violations.some((v) => v.detail?.includes("org-honor")),
+    "no rule may fault a bullet that quotes its organization fact exactly",
+  )
+})
+
 test("faithful cover letter passes with job context", () => {
   const { status, report } = verify("cover-letter", "good-cover-letter.md", [
     "--job",

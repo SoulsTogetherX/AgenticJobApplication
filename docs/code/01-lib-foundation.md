@@ -1002,7 +1002,7 @@ fact `e-003`?". This function builds that lookup, once, from the parsed
 | `projects[].bullets[]`   | `b.id`   | `b.text`                                                                       |
 | `skills[]`               | `sk.id`  | `` `${sk.group}: ${(sk.items ?? []).join(", ")}` ``                            |
 | `education[]`            | `edu.id` | school, degrees, graduation, GPA, honors and coursework joined into one string |
-| `organizations[]`        | `org.id` | `org.name`                                                                     |
+| `organizations[]`        | `org.id` | `org.text`                                                                     |
 | `extras[]`               | `ex.id`  | `ex.text`                                                                      |
 | `answers.answers[]`      | `a.id`   | `` `${a.question} ${a.answer}` ``                                              |
 

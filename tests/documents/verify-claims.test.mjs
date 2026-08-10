@@ -60,6 +60,31 @@ test("a bullet citing an organization fact passes R3", () => {
   )
 })
 
+// Regression — a line carrying TWO separate fact comments.
+//
+// Nothing requires a writer to combine citations into one `<!-- fact:a,b -->`
+// tag, and the strip used to be non-global: only the first comment came off,
+// so the second one's own text stayed in the content the number checks read.
+// A fact id is allowed to contain digits (`a-001`, `a-008`), so the verifier
+// reported a number the document never claimed:
+//   R4  Number "001" not found in any fact source
+// Found 2026-08-10 on a real tailored resume. Both halves are asserted: the
+// leaked id text (R4, non-bullet line) and the citations the first tag hid
+// (R3, bullet line — 42% is backed only by the SECOND tag's fact).
+test("two separate fact comments on one line are both stripped and both cited", () => {
+  const { status, report } = verify(
+    "resume",
+    "good-resume-two-fact-comments.md",
+  )
+  assert.equal(status, 0, JSON.stringify(report?.violations))
+  assert.equal(report.ok, true)
+  const details = (report.violations ?? []).map((v) => v.detail).join(" ")
+  assert.ok(
+    !details.includes("001"),
+    "a fact id's digits must never be read as an unsupported number",
+  )
+})
+
 test("faithful cover letter passes with job context", () => {
   const { status, report } = verify("cover-letter", "good-cover-letter.md", [
     "--job",

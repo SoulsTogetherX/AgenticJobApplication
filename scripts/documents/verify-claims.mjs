@@ -60,8 +60,32 @@ import {
 import { canonicalSurface } from "../lib/keywords.mjs"
 import { verificationIdentity, JOBS_DIR } from "../lib/verification.mjs"
 
-const FACT_RE = /<!--\s*fact:\s*([A-Za-z0-9_,\s-]+?)\s*-->/
+// A line may legitimately carry MORE THAN ONE annotation. Writers combine ids
+// into one tag (`<!-- fact:a,b -->`) but nothing requires it, and two separate
+// tags used to be half-handled: the non-global regex stripped only the first,
+// so the second tag's own text survived into the content that R3/R4 measure —
+// and a fact id like `a-008` leaks the digits 008 into extractNumbers(), which
+// reports a number nobody wrote as an unsupported claim. Found 2026-08-10 on a
+// real tailored resume, where the workaround was to combine the citations.
+//
+// So the regex is global, and it is used ONLY via matchAll() and replace() —
+// both of which leave its lastIndex at 0. Never call .test() or .match() on a
+// /g regex held at module scope: those advance lastIndex, and the next line
+// down the document would be matched from the middle.
+const FACT_RE_ALL = /<!--\s*fact:\s*([A-Za-z0-9_,\s-]+?)\s*-->/g
 const BULLET_RE = /^\s*(?:[-*●]|\d+\.)\s+/
+
+/** Every fact id cited on a line, across all of its annotations, in order. */
+function factIdsOn(line) {
+  const ids = []
+  for (const m of line.matchAll(FACT_RE_ALL)) {
+    for (const id of m[1].split(",")) {
+      const trimmed = id.trim()
+      if (trimmed && !ids.includes(trimmed)) ids.push(trimmed)
+    }
+  }
+  return ids
+}
 
 // ---------------------------------------------------------------------------
 // Pure core
@@ -198,10 +222,10 @@ export function verifyDocument({
   lines.forEach((line, i) => {
     const lineNo = i + 1
     const isBullet = BULLET_RE.test(line)
-    const factMatch = line.match(FACT_RE)
+    const ids = factIdsOn(line)
 
     if (mode === "resume" && isBullet) {
-      if (!factMatch) {
+      if (ids.length === 0) {
         violations.push({
           rule: "R1",
           line: lineNo,
@@ -210,10 +234,6 @@ export function verifyDocument({
         return
       }
       annotatedBullets++
-      const ids = factMatch[1]
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
       const factTexts = []
       for (const id of ids) {
         const fact = ctx.factIndex.get(id)
@@ -227,7 +247,7 @@ export function verifyDocument({
       }
       if (factTexts.length) {
         const allowed = extractNumbers(factTexts.join(" "))
-        const content = line.replace(FACT_RE, "")
+        const content = line.replace(FACT_RE_ALL, "")
         for (const n of extractNumbers(content)) {
           if (!allowed.has(n)) {
             violations.push({
@@ -241,8 +261,10 @@ export function verifyDocument({
       return
     }
 
-    // Non-bullet lines (and all cover-letter lines): numbers must exist in corpus.
-    const content = line.replace(FACT_RE, "")
+    // Non-bullet lines (and all cover-letter lines): numbers must exist in
+    // corpus. The check runs against the STRIPPED text — every annotation on
+    // the line is removed first, so no fact id can be read as a claim.
+    const content = line.replace(FACT_RE_ALL, "")
     for (const n of extractNumbers(content)) {
       if (!corpusNumbers.has(n)) {
         violations.push({

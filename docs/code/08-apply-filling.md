@@ -1154,33 +1154,35 @@ at), the engine pushes one record per upload:
   target: "resume",      // the input's id or name, sliced to 60 chars, page-controlled
   free: 2,               // only present on a positional placement
   attached: false,       // set true if setInputFiles did not throw
-  settled: "detached"    // or "timeout" — see below
+  settled: "detached"    // what the settle watch SAW — see below
 }
 ```
 
-`settled` records **which of two ways** the post-upload wait returned:
+`settled` records **what the settle stage observed this input do** with its file,
+and the vocabulary is about the page rather than about our clock:
 
-```js
-record.settled = await page
-  .locator('[data-ajup="' + tag + '"]')
-  .waitFor({ state: "detached", timeout: 1000 })
-  .then(() => "detached")
-  .catch(() => "timeout")
-```
+| value        | what the page did                                                    |
+| ------------ | -------------------------------------------------------------------- |
+| `"detached"` | the input left the DOM — the board consumed it (the Greenhouse swap) |
+| `"reset"`    | the input is still there and its `FileList` is gone                  |
+| `"held"`     | the file was still sitting on the input when the watching stopped    |
+| `"unknown"`  | the page could not be observed at all (a test double)                |
 
-The engine waits for the stamped input to **leave the DOM**, because that is the
-observable signal that React accepted the file and swapped the input for the
-attached-file view. `"timeout"` means the board never swapped it, so the upload is
-less certain than an `ok` count alone would suggest.
+A `held` upload is less settled than a `detached` one, which is exactly the kind
+of thing this record exists to be able to say. `reset` is not a verdict — the
+readback (D.6) rules on whether an emptied input means the board took the file or
+dropped it.
 
-> **Known defect (2026-08-05 audit).** On every board in this repository this wait
-> has never once exited early: `settled: "timeout"` on all three fixture boards,
-> every run, so it bills its full 1,000 ms per upload (2 seconds on a
-> two-attachment Greenhouse form) out of a ~2,750 ms median fill. The reasoning in
-> the comment — "a board that remounts in 150 ms now costs 150 ms" — is not
-> exercised by anything here. Racing the detach against a positive signal read in
-> one evaluate (the stamped input now holds a file) would exit immediately on the
-> common case.
+> **Was a known defect (2026-08-05 audit); fixed 2026-08-10, see M11.** Until
+> then each upload was followed by its own
+> `waitFor({state: "detached", timeout: 1000})`, and on every board in this
+> repository that wait never once exited early — `settled: "timeout"` on all
+> three fixtures, every run, billing its full second per upload (two seconds on a
+> two-attachment Greenhouse form) out of a ~2,750 ms median fill. The old
+> vocabulary had a `"timeout"` value for exactly that, which is the tell: paying
+> a ceiling is a cost, not a conclusion about the page. The window a board gets
+> to react is now opened **once**, before the verify pass, and can end early —
+> see E.1a.
 
 ### D.6 The readback — the change that landed on 2026-08-05
 
@@ -1377,24 +1379,65 @@ Everything up to here reports what the _calls_ did. The verify pass reports what
 the **page** holds. Those are different facts, and three separate incidents in
 this file exist because something confused them.
 
-It runs once, at the end, after blurring whatever has focus:
+It runs once, at the end, after blurring whatever has focus and letting the page
+settle:
 
 ```js
 await page.evaluate(
   () => document.activeElement && document.activeElement.blur(),
 )
-await page.waitForTimeout(450)
+// ...then the settle loop, below.
 ```
 
 The blur matters because a widget that reverts on blur must have reverted before
-we read it. The 450 ms is a flat wait for the page's own code to process that.
+we read it.
 
-> **Known defect (2026-08-05 audit).** That 450 ms is the largest unconditional
-> sleep in the whole fill and the benchmark identifies it by name as
-> board-independent and removable: three boards, 23 samples, every median inside
-> 456.1–458.7 ms. The condition it stands for — "the app has processed the blur" —
-> can be expressed as a bounded wait with the same ceiling, so a fast board would
-> pay nothing.
+### E.1a The settle stage — one loop, two conditions
+
+Until 2026-08-10 the blur was followed by a flat `waitForTimeout(450)`, and every
+upload had already paid its own `waitFor({state: "detached", timeout: 1000})`.
+Both were measured settling by **timeout**, on every fixture board, in every run
+(`docs/measurements.md`, B1): Greenhouse paid 2 × 1007 ms + 456 ms — 2,470 ms of
+a 2,754 ms fill. A ceiling paid in full every time is a flat sleep wearing a
+condition's name.
+
+They are now one polling stage before the verify pass. **Both** old ceilings are
+kept, and neither is paid unless the page offers no evidence:
+
+| arm         | ends early when                                                                                                                    | otherwise pays                             |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| **uploads** | every stamped input has visibly reacted — gone from the DOM (the Greenhouse swap), or its `FileList` taken (Ashby's parse remount) | 1000 ms after the **last** `setInputFiles` |
+| **quiet**   | validation text has appeared **and then repeated** between two polls                                                               | 450 ms                                     |
+
+Three things follow, and each is deliberate:
+
+- **The upload window opens once**, not per file, and it is anchored at the last
+  upload — so every non-upload item filled since then has already spent part of
+  it. A second upload adds no waiting at all.
+- **Silence is not evidence.** The quiet arm will not exit because nothing has
+  rendered yet: a 300 ms debounce looks exactly like a board that will never
+  speak, and `verify.errors` is a submit-gate input, so exiting on silence would
+  mean submitting into a form the board had already flagged. Silence pays the
+  ceiling, exactly as the flat sleep did — no regression against it.
+- **A fill that touched nothing settles nothing.** Every item skipped or deferred
+  means no interaction happened, so there is no reaction to wait out. The old
+  flat sleep was paid there too, on every page of a multi-page walk.
+
+The upload readback (Part D) runs **after** this stage rather than straight after
+the uploads, because this is the most-settled DOM the fill will ever see. Reading
+earlier is how a board whose remount drops the file at 700 ms gets reported as a
+clean upload.
+
+`report.settle` carries `{ms, quiet, uploads}` — the stage's wall cost and which
+arm resolved, so a ceiling paid in full is never re-read as a settle time. Each
+upload's `settled` says what the watch saw: `detached`, `reset`, `held`, or
+`unknown` for a page that could not be observed.
+
+> **Measured (M11).** Fill wall, medians: greenhouse 2895.55 → 1111.64 ms, lever
+> 1831.72 → 1159.57, ashby 1726.45 → 783.65, every fill report unchanged. All
+> three fixtures are static forms that **hold** the file, so they pay the upload
+> ceiling in full; the real Greenhouse swaps the input out and has evidence to
+> exit on, which no fixture in this repository can show.
 
 ### E.2 What it re-reads
 

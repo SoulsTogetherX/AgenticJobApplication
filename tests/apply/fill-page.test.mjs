@@ -492,7 +492,15 @@ test("each upload is located by its own label, not by a stamp", async () => {
 // self-contained by construction (it has to be; it is serialised into the
 // page), so `new Function` with a document shim runs exactly the code
 // Playwright would.
-const domPage = (html, { url = "https://board.test/apply", onUpload } = {}) => {
+// `sleep: true` makes waitForTimeout actually sleep. Off by default — most
+// tests here assert on what the engine DID, and paying its strategy delays
+// would only make the suite slower. It is on for the settle tests, where a
+// ceiling that terminates the wait is the property under test and a fake clock
+// that never advances cannot express it.
+const domPage = (
+  html,
+  { url = "https://board.test/apply", onUpload, sleep = false } = {},
+) => {
   const { root } = parseHtml(html)
   const log = []
   const q = (sel) => root.querySelectorAll(sel)
@@ -531,7 +539,10 @@ const domPage = (html, { url = "https://board.test/apply", onUpload } = {}) => {
     url: () => url,
     locator: mk,
     keyboard: { async type() {}, async insertText() {}, async press() {} },
-    async waitForTimeout() {},
+    async waitForTimeout(ms) {
+      log.push(["wait", ms])
+      if (sleep) await new Promise((r) => setTimeout(r, ms))
+    },
     async evaluate(fn, arg) {
       const src = String(fn)
       if (src.includes("data-ajup")) return run(fn, arg)
@@ -821,11 +832,13 @@ test("the report says which file went to which input, not just how many", async 
   // read back off the page rather than restated from the plan.
   const page = domPage(GREENHOUSE_HTML)
   const out = await fillPage(page, uploadPlan())
-  // `settled` is part of the record deliberately: it says whether the wait
-  // after setInputFiles returned on the observable remount or fell through to
-  // its 1s ceiling. `timeout` means the board never swapped the input, so the
-  // upload is less certain than `attached: true` alone would suggest — which
-  // is exactly the kind of thing this record exists to be able to say.
+  // `settled` is part of the record deliberately: it says what the settle
+  // watch SAW the board do with each stamped input, and the words are about
+  // the page rather than about our clock. `held` is this static fixture's
+  // honest answer — the file is on the input and nothing ever came to take it.
+  // `detached` is the Greenhouse swap, `reset` a board that read the file out
+  // and emptied the input. A held input is less settled than a detached one,
+  // which is the kind of thing this record exists to be able to say.
   assert.deepEqual(plain(out.uploads), [
     {
       k: "f1",
@@ -834,7 +847,7 @@ test("the report says which file went to which input, not just how many", async 
       match: "resume|\\bcv\\b",
       how: "label",
       target: "resume",
-      settled: "detached",
+      settled: "held",
       attached: true,
       seen: "attached",
       seenFile: "resume.pdf",
@@ -846,7 +859,7 @@ test("the report says which file went to which input, not just how many", async 
       match: "cover letter",
       how: "label",
       target: "cover_letter",
-      settled: "detached",
+      settled: "held",
       attached: true,
       seen: "attached",
       seenFile: "cover-letter.pdf",
@@ -1443,23 +1456,119 @@ test("a stale hit inside the long-text ladder still gets its one retry", async (
   )
 })
 
-test("the post-upload wait is a condition on the remount, not a flat second", async () => {
+test("an upload pays no serial wait of its own; the settle is charged once", async () => {
+  // WHAT CHANGED AND WHY. Each upload used to be followed by
+  // `waitFor({state:"detached", timeout:1000})` on its own stamp, and B1
+  // measured that wait settling by TIMEOUT on all three boards in every run —
+  // Greenhouse, with two uploads, paid 2,014.58ms of a 2,753.73ms fill. A
+  // ceiling paid in full every time is a flat sleep with a condition's name
+  // on it, and two of them are two flat sleeps. The window a board needs to
+  // react is now opened ONCE, before the verify pass, anchored at the last
+  // upload — so a second upload adds no waiting at all.
   const page = fakePage({
-    elements: { '[data-ajup="u1"]': { kind: "input" } },
+    elements: {
+      '[data-ajup="u1"]': { kind: "input" },
+      '[data-ajup="u2"]': { kind: "input" },
+    },
   })
   await fillPage(
     page,
-    plan([{ k: "f1", how: "upload", labelMatch: "resume", paths: ["r.pdf"] }]),
+    plan([
+      { k: "f1", how: "upload", labelMatch: "resume", paths: ["r.pdf"] },
+      { k: "f2", how: "upload", labelMatch: "cover letter", paths: ["c.pdf"] },
+    ]),
   )
-  const waited = page.log.find(
-    (e) => e[0] === "waitFor" && e[1] === '[data-ajup="u1"]',
+  assert.equal(
+    page.log.filter((e) => e[0] === "waitFor" && /data-ajup/.test(e[1] || ""))
+      .length,
+    0,
+    "no per-upload wait may return: that is the 1s-per-file cost B1 measured",
   )
-  assert.ok(waited, "must wait for the stamped input to leave the DOM")
-  assert.equal(waited[2], "detached")
-  assert.equal(waited[3], 1000, "the old flat wait becomes the ceiling")
   assert.ok(
-    !page.log.some((e) => e[0] === "wait" && e[1] === 1000),
-    "no unconditional 1s sleep after an upload",
+    !page.log.some((e) => e[0] === "wait" && e[1] >= 450),
+    "and it must not come back as a flat sleep either: " +
+      JSON.stringify(page.log.filter((e) => e[0] === "wait")),
+  )
+})
+
+// --- the settle: what it exits early on, and what it refuses to ------------
+//
+// Two arms, and they are deliberately asymmetric. The upload arm and the
+// validation arm both end early ONLY on positive evidence from the page;
+// silence pays the ceiling. A settle that treated "nothing yet" as "nothing
+// coming" would report a clean fill of a form the board had not finished
+// judging, and `verify.errors` is a submit-gate input.
+
+test("the settle ends when the board has visibly taken the file", async () => {
+  // Greenhouse's real behaviour: the input is swapped for an attached-file
+  // view, so the stamped element leaves the DOM. That is observable, so the
+  // wait ends on it rather than on the clock — and `settled` says which.
+  const page = domPage(GREENHOUSE_HTML, {
+    onUpload: (el) => {
+      const p = el.parentElement
+      p.childNodes = p.childNodes.filter((n) => n !== el)
+      el.parentElement = null
+    },
+  })
+  const out = await fillPage(page, uploadPlan(), {
+    settle: { uploadMs: 1000, quietMs: 450, pollMs: 10 },
+  })
+  assert.equal(out.ok, 2, JSON.stringify(out.failures))
+  assert.deepEqual(
+    out.uploads.map((u) => u.settled),
+    ["detached", "detached"],
+    "a swapped-out input is the board taking the file, observed not assumed",
+  )
+  assert.equal(out.settle.uploads, true, "the upload arm resolved on evidence")
+})
+
+test("the settle refuses to end early while a file is still sitting on an input", async () => {
+  // THE FAILURE ARM. This board does nothing at all: the file stays on the
+  // input, which is exactly what a board looks like in the moment BEFORE its
+  // async parse takes the file away (Ashby's lands ~700ms after the upload and
+  // drops the FileList). "Nothing has happened yet" is not evidence that
+  // nothing will, so this pays the ceiling and says so.
+  // A REAL clock here: the property is that the ceiling ENDS the wait, and a
+  // fake waitForTimeout that returns instantly cannot express one. Scaled down
+  // to 80ms so the evidence costs 80ms.
+  const page = domPage(GREENHOUSE_HTML, { sleep: true })
+  const t0 = Date.now()
+  const out = await fillPage(page, uploadPlan(), {
+    settle: { uploadMs: 80, quietMs: 40, pollMs: 10 },
+  })
+  const ms = Date.now() - t0
+  assert.deepEqual(
+    out.uploads.map((u) => u.settled),
+    ["held", "held"],
+    "a file still on the input is 'held' — the watch reports what it saw",
+  )
+  assert.equal(
+    out.settle.uploads,
+    true,
+    "the arm still terminates: it is a ceiling, not a hang",
+  )
+  assert.ok(
+    ms < 800,
+    `the ceiling bounds it: 80ms asked for, ${ms}ms paid — a wait that ` +
+      "outruns its own ceiling by 10x is not a ceiling",
+  )
+  // And the readback that follows still gets its answer off the settled DOM.
+  assert.equal(out.uploads[0].seen, "attached")
+  assert.equal(out.ok, 2)
+})
+
+test("a fill that touched nothing settles nothing", async () => {
+  // Every item skipped means no interaction happened, so there is no board
+  // reaction to wait out. The old flat 450ms was paid here too — per page, on
+  // every page of a multi-page walk whose fields were all deferred.
+  const page = fakePage({ elements: { "#a": { kind: "input" } } })
+  const out = await fillPage(page, plan([{ k: "f1", sel: "#a", how: "skip" }]))
+  assert.equal(out.ok, 0)
+  assert.equal(out.failed, 0)
+  assert.equal(out.settle.ms < 50, true, `settled for ${out.settle.ms}ms`)
+  assert.ok(
+    !page.log.some((e) => e[0] === "wait"),
+    "no sleep may be paid for a page this run never changed",
   )
 })
 

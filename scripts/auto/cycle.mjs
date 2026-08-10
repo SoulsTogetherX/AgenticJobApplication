@@ -55,6 +55,7 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { openDb, rowToLead, screenIndex } from "../lib/db.mjs"
+import { reverifySweep } from "../documents/reverify.mjs"
 import { trustBoard, readLimits } from "./trust.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -248,6 +249,48 @@ export async function runCycle(argv = []) {
     out.stages.screen = { ok: r.ok, detail: r.detail }
   }
 
+  // Documents whose recorded verification predates the current fact base are
+  // re-checked HERE, before anything consults eligibility. One save-answer
+  // write moves factBaseSha256 and invalidates every outstanding verification
+  // at once — the freshness key working as designed — but nothing downstream
+  // ever re-ran verify-claims for the already-tailored workspaces: prep-queue
+  // skips them (context.json still says verified), prepareDocuments only runs
+  // for queued leads, so selectEligible refused all of them, forever. Measured
+  // 2026-08-09: 33/33 tailored jobs stale, 0 eligible, runner idle.
+  //
+  // A document that re-FAILS is recorded as failing and stays ineligible —
+  // that is the sweep surfacing a document the new fact base no longer
+  // supports, not a sweep error. It is named in the output below, and its
+  // newest row now carries the current hash, so it is not re-tried until the
+  // facts move again. A sweep that cannot run leaves the rows stale and the
+  // runner refusing them: the failure direction is closed, and the cycle
+  // continues.
+  {
+    const t0 = Date.now()
+    try {
+      const db = openDb()
+      let sweep
+      try {
+        sweep = reverifySweep({ db, jobsDir })
+      } finally {
+        db.close()
+      }
+      out.reverify = sweep
+      out.stages.reverify = {
+        ok: true,
+        detail:
+          `${sweep.stale.length} stale job(s): ${sweep.repassed} re-passed, ` +
+          `${sweep.refailed} failed, ${sweep.missing.length} missing ` +
+          `(${Date.now() - t0}ms)`,
+      }
+    } catch (e) {
+      out.stages.reverify = {
+        ok: false,
+        detail: String(e?.message ?? e).slice(0, 300),
+      }
+    }
+  }
+
   const prep = step("scripts/leads/prep-queue.mjs", [
     "--top",
     String(top),
@@ -402,6 +445,15 @@ async function main(argv = process.argv.slice(2)) {
   for (const [name, s] of Object.entries(out.stages))
     process.stdout.write(
       `${name}: ${s.ok ? "ok" : "FAILED"}${s.detail ? ` — ${s.detail}` : ""}\n`,
+    )
+  // Every document the sweep re-checked and the new fact base no longer
+  // supports, by name. The job has dropped out of eligibility and this line is
+  // the why — a silent count would read as housekeeping instead of a loss.
+  for (const c of (out.reverify?.checked ?? []).filter((c) => !c.ok))
+    process.stdout.write(
+      `  re-verify FAILED ${c.slug} (${c.mode}): ${c.violations[0]?.rule ?? "?"} ${
+        c.violations[0]?.detail ?? ""
+      } — no longer supported by the fact base\n`,
     )
   for (const l of out.leads) {
     const failed = l.stages.find((s) => !s.ok)

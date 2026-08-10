@@ -163,22 +163,26 @@ test("B1/M6: ok:2 failed:1 deferred:3 is refused on the browser-fill branch", ()
 })
 
 // ---------------------------------------------------------------------------
-// 3. THE COVERAGE THIS SUITE DOES NOT HAVE, asserted so it stays visible.
+// 3. WHAT B1 FOUND, AND WHAT WAS DONE ABOUT IT.
 //
-// fill-engine.mjs waits for its own `data-ajup` stamp to go `detached` after
-// setInputFiles, on the reasoning that "a board that remounts in 150ms now
-// costs 150ms" instead of a flat second. That early exit has NO fixture
-// coverage: on all three boards the engine reports settled="timeout" and the
-// wait bills its whole ceiling (greenhouse 2 x 1000ms, lever 1 x 1000ms, ashby
-// 1 x 1000ms; observed by wrapping the engine and reading report.uploads).
+// B1's finding: fill-engine.mjs waited for its own `data-ajup` stamp to go
+// `detached` after every setInputFiles, on the reasoning that "a board that
+// remounts in 150ms now costs 150ms" instead of a flat second — and that early
+// exit fired on NO fixture board, ever. All three reported settled="timeout"
+// and each wait billed its whole ceiling (greenhouse 2 x 1000ms, lever 1 x
+// 1000ms, ashby 1 x 1000ms). The mechanical reason is in the ashby fixture:
+// its re-render strips `data-aj="..."` and leaves `data-ajup="..."` alone, so
+// the stamp being watched survives the remount.
 //
-// The mechanical reason is here, in the fixture: the ashby page is the only
-// one that re-renders after an upload, and its re-render strips `data-aj="..."`
-// while leaving `data-ajup="..."` untouched — the stamp the wait is watching
-// survives, so `detached` never fires. This test pins that so the ceiling
-// figure in B1 is never read as a settle time.
+// The engine no longer issues that wait (2026-08-10). What replaced it is one
+// settle stage before the verify pass, and this test pins BOTH halves of why
+// the old one could not work — the fixture still models the remount, and that
+// remount still leaves `data-ajup` in place. Kept rather than deleted because
+// it is the evidence for the change: if the fixture is ever "fixed" to strip
+// `data-ajup`, this repository has lost its record of what the old wait was
+// actually watching, and the temptation to bring it back returns unopposed.
 // ---------------------------------------------------------------------------
-test("B1: no fixture board can make the post-upload detach wait exit early", () => {
+test("B1: the ashby remount leaves data-ajup alone — why the old detach wait never fired", () => {
   const page = fs.readFileSync(
     path.join(ROOT, "tests/fixtures/boards/pages/ashby.html"),
     "utf8",
@@ -193,15 +197,70 @@ test("B1: no fixture board can make the post-upload detach wait exit early", () 
   assert.equal(
     ' data-ajup="u1"'.replace(re, ""),
     ' data-ajup="u1"',
-    "if this ever strips data-ajup, the detach wait CAN fire and " +
-      "post_upload_remount_ms stops being a pure ceiling measurement — " +
-      "re-take B1 and say so in docs/measurements.md",
+    "the upload stamp must survive the remount — that is what made the old " +
+      "detach wait a pure ceiling measurement, and it is the evidence for " +
+      "removing it. The settle stage watches the input's FILES instead, " +
+      "which this same remount does drop.",
   )
   assert.equal(
     ' data-aj="a1"'.replace(re, ""),
     "",
     "the fixture must still drop the SCANNER's stamps; that part is real",
   )
+})
+
+// ---------------------------------------------------------------------------
+// 4. The settle stage is REPORTED, and the removed column stays removed.
+//
+// The failure this guards is a silent one: a leg that quietly reported 0 for a
+// wait nobody issues any more would look like a 2-second speed-up on every
+// board and would be indistinguishable, in the ledger, from a real one. So the
+// dead column must be null WITH A REASON and the live stage must carry a
+// number and say which arm ended it.
+// ---------------------------------------------------------------------------
+test("B1: the fill leg reports the settle stage, not a phantom remount column", async (t) => {
+  const board = await start()
+  const dir = tmp("settle")
+  try {
+    const run = await benchBrowserFill({
+      board,
+      boardName: "greenhouse",
+      jobsDir: dir,
+    })
+    if (!run.ran) return t.skip("no usable Chromium: " + run.error)
+    assert.equal(run.error, undefined, "the leg must run end to end")
+
+    const f = run.legs.fill
+    assert.equal(
+      f.post_upload_remount_ms,
+      null,
+      "a number here means a per-upload wait is back; re-take B1 before " +
+        "quoting any fill figure",
+    )
+    assert.equal(f.post_upload_remount_waits, 0)
+    assert.equal(f.settle_method, "measured")
+    assert.ok(f.settle_ms > 0, "the settle stage must be timed, not inferred")
+    assert.equal(typeof f.settle_uploads, "boolean")
+    assert.equal(typeof f.settle_quiet, "boolean")
+
+    // THE POINT OF THE WHOLE CHANGE, as a number rather than a claim. The old
+    // shape was 2 x ~1007ms of upload waiting plus ~456ms of flat sleep before
+    // verify — 2,470ms of a 2,753ms fill on this exact board and fixture. One
+    // bounded stage cannot exceed the larger of its two ceilings by much, and
+    // a fill that still pays two seconds of waiting has regressed to it.
+    assert.ok(
+      f.settle_ms < 1500,
+      `the settle outran its own ceiling: ${f.settle_ms}ms`,
+    )
+    assert.ok(
+      f.fill_wall_ms < 2400,
+      `the fill wall is back in B1 territory (${f.fill_wall_ms}ms); the ` +
+        "serial per-upload waiting has returned in some form",
+    )
+  } finally {
+    await board.stop()
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -253,9 +312,14 @@ test("B1: a run where no file attached must not report a remount cost", async (t
           "that did not throw — it is not evidence a file reached a field.",
       )
     } else {
-      // The engine got fixed. Then the number must be real and the routing
-      // must be right, by name.
-      assert.ok(f.post_upload_remount_ms > 0)
+      // The engine got fixed. Then the routing must be right, BY NAME, and the
+      // stage that gave the board its window must carry a real number. This
+      // arm used to assert `post_upload_remount_ms > 0`; that column is gone
+      // (no per-upload wait is issued any more), so asserting on it here would
+      // fail the day the Ashby upload starts working — the opposite of what
+      // this branch is for.
+      assert.ok(f.settle_ms > 0, "the settle must be timed, not inferred")
+      assert.equal(f.settle_method, "measured")
       assert.equal(ui.ok, true)
       assert.deepEqual(ui.per_input.find((i) => /resume/.test(i.id))?.names, [
         "resume.pdf",

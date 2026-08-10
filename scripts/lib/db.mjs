@@ -306,6 +306,21 @@ CREATE INDEX IF NOT EXISTS idx_auto_subs_run ON auto_submissions(run_id);
 -- defer log aggregable: "unprobed-dropdown at plan on greenhouse cost 61
 -- applications this week" is a GROUP BY, not a string match. reason_detail
 -- carries the sanitised human half, and only that half is free text.
+--
+-- wall_ms is HOW LONG THIS JOB TOOK, end to end, in the worker that ran it:
+-- claim to terminal state, browser included. runJob has computed it since the
+-- queue existed and wrote it nowhere, so every per-application latency
+-- question ("is a fill slower than it was last week", "which stage eats the
+-- time") had no data behind it at all and the digest reported n=0.
+--
+-- It is a PER-JOB number and belongs on the per-job row: an average kept on
+-- auto_runs could not answer the question anyone asks first, which is which
+-- jobs are the slow ones. Read together with reason_stage it gives a
+-- distribution per stage, which is the shape a regression shows up in --
+-- a p95 that moves while the median does not is a tail, not a slowdown.
+--
+-- NULL means unrecorded, never zero: rows written before this column existed,
+-- and the not-claimed case, which does no work and writes nothing.
 CREATE TABLE IF NOT EXISTS auto_queue (
   slug          TEXT PRIMARY KEY,
   run_id        TEXT,
@@ -319,7 +334,8 @@ CREATE TABLE IF NOT EXISTS auto_queue (
   reason_detail TEXT,
   posted_at     TEXT,
   claimed_at    TEXT,
-  updated_at    TEXT
+  updated_at    TEXT,
+  wall_ms       INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_auto_queue_state ON auto_queue(state);
 CREATE INDEX IF NOT EXISTS idx_auto_queue_run ON auto_queue(run_id);
@@ -521,6 +537,11 @@ function healAutoQueue(db) {
     db.exec("ALTER TABLE auto_queue ADD COLUMN reason_stage TEXT")
   if (!have.has("posted_at"))
     db.exec("ALTER TABLE auto_queue ADD COLUMN posted_at TEXT")
+  // Same additive story as the two above. Existing rows get NULL, which reads
+  // as "nobody timed this job" and is the truth — they were written before
+  // anything recorded a duration.
+  if (!have.has("wall_ms"))
+    db.exec("ALTER TABLE auto_queue ADD COLUMN wall_ms INTEGER")
 }
 
 // How much a row looks like a real application, for the collision above.
@@ -1621,17 +1642,24 @@ export function setAutoJobState(db, slug, state, opts = {}) {
     reason_kind = null,
     reason_stage = null,
     reason_detail = null,
+    wall_ms = null,
     now = new Date(),
   } = opts
   assertReasonKind(state, reason_kind)
   return db
     .prepare(
+      // wall_ms COALESCEs like plan_sha256 and unlike the reason columns. The
+      // reasons are overwritten because each write states the CURRENT reason
+      // and a stale one would be a lie; a duration is a fact about a job that
+      // already happened, so an intermediate write that carries no timing
+      // ('planned', 'authorized') must not erase the one that does.
       `UPDATE auto_queue
           SET state = $state,
               plan_sha256 = COALESCE($plan_sha256, plan_sha256),
               reason_kind = $reason_kind,
               reason_stage = $reason_stage,
               reason_detail = $reason_detail,
+              wall_ms = COALESCE($wall_ms, wall_ms),
               updated_at = $at
         WHERE slug = $slug
           AND ($run_id IS NULL OR run_id = $run_id)`,
@@ -1643,6 +1671,12 @@ export function setAutoJobState(db, slug, state, opts = {}) {
       reason_kind,
       reason_stage,
       reason_detail,
+      // SQLite has no integer coercion for a float bind, and a duration is
+      // whole milliseconds. A negative one is not a duration at all.
+      wall_ms:
+        typeof wall_ms === "number" && Number.isFinite(wall_ms) && wall_ms >= 0
+          ? Math.round(wall_ms)
+          : null,
       at: nowIso(now),
       run_id,
     }).changes
@@ -1915,6 +1949,45 @@ export function readSubmitLatencies(db, { run_id = null, mode = null } = {}) {
       board_key: r.board_key,
       mode: r.mode,
       ms: new Date(r.submitted_at).getTime() - new Date(r.posted_at).getTime(),
+    }))
+    .filter((r) => Number.isFinite(r.ms))
+}
+
+/**
+ * How long each finished job took in its worker — the sample, in milliseconds,
+ * one row per job, with the stage it ended at.
+ *
+ * A DIFFERENT QUESTION FROM readSubmitLatencies, and the two must not be
+ * merged. That one measures the market: how long a POSTING waited between
+ * going up and being applied to, in hours, and it is the number the product
+ * exists to improve. This one measures the MACHINE: how long our own worker
+ * held a job, in milliseconds, which is the number that says whether the
+ * pipeline got slower this week. Neither is a substitute for the other, and a
+ * single "latency" reading both would be uninterpretable.
+ *
+ * `stage` is reason_stage where a terminal reason recorded one and the state
+ * otherwise, so a submitted job groups under 'submitted' rather than vanishing
+ * from the breakdown. Rows with no wall_ms are EXCLUDED, never counted as
+ * zero — a job nobody timed is unknown, and folding it in as instantaneous
+ * flatters the statistic it belongs to (the same rule readSubmitLatencies
+ * applies to a posting with no date).
+ */
+export function readJobWallTimes(db, { run_id = null } = {}) {
+  return db
+    .prepare(
+      `SELECT slug, state, board_key, reason_stage, wall_ms
+         FROM auto_queue
+        WHERE wall_ms IS NOT NULL
+          AND ($run_id IS NULL OR run_id = $run_id)
+        ORDER BY wall_ms DESC, slug`,
+    )
+    .all({ run_id: run_id ?? null })
+    .map((r) => ({
+      slug: r.slug,
+      state: r.state,
+      board_key: r.board_key,
+      stage: r.reason_stage ?? r.state,
+      ms: Number(r.wall_ms),
     }))
     .filter((r) => Number.isFinite(r.ms))
 }

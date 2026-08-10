@@ -244,6 +244,7 @@ test("the CLI itself emits every field 4.2 names", (t) => {
     "challenged",
     "stop",
     "latency",
+    "wall",
     "queue",
     "paused_boards",
     "warnings",
@@ -252,6 +253,123 @@ test("the CLI itself emits every field 4.2 names", (t) => {
   assert.equal(s.auto.stop.active, true)
   assert.equal(s.auto.paused_boards[0].board_key, "greenhouse")
   assert.equal(s.auto.orphans, 1)
+})
+
+// --- per-job wall time -----------------------------------------------------
+//
+// runJob has computed `wall_ms` for every job since the queue existed and
+// written it nowhere, so the one question a latency-sensitive pipeline gets
+// asked — is it slower than it was? — had no data behind it. These pin the
+// whole path: the column persists, the reader excludes what it cannot know,
+// and the digest reports it SEPARATELY from the posted→submitted hours.
+
+test("per-job wall time is persisted, and reported by stage", (t) => {
+  const f = fixture(t)
+  const job = (slug, board, ms, state, extra = {}) => {
+    enqueueAutoJobs(f.db, [{ slug, board_key: board, run_id: "run-1" }])
+    claimAutoJob(f.db, slug, { run_id: "run-1", board_key: board })
+    setAutoJobState(f.db, slug, state, {
+      run_id: "run-1",
+      wall_ms: ms,
+      ...extra,
+    })
+  }
+  // Three fills that went fine and one that sat in `plan` for 40 seconds —
+  // the shape a single slow board makes, and the one a mean would hide.
+  job("w-fast-1", "greenhouse", 1200, "submitted")
+  job("w-fast-2", "greenhouse", 1400, "submitted")
+  job("w-fast-3", "lever", 1600, "submitted")
+  job("w-slow", "ashby", 40_000, "deferred", {
+    reason_kind: "unprobed-dropdown",
+    reason_stage: "plan",
+  })
+
+  const a = buildAutoStatus(f.db, { now: NOW, stopPath: f.stopPath })
+  assert.equal(a.wall.n, 4, "one sample per job that recorded a duration")
+  // Nearest-rank over [1200, 1400, 1600, 40000]: p50 is the 2nd value.
+  assert.equal(a.wall.p50_ms, 1400)
+  assert.equal(
+    a.wall.p95_ms,
+    40_000,
+    "the tail is the whole point: one 40s job among four leaves the median " +
+      "at 1.4s and moves the p95 by 30x",
+  )
+
+  // BY STAGE, because a total cannot be acted on.
+  assert.equal(a.wall.by_stage.plan.n, 1)
+  assert.equal(a.wall.by_stage.plan.p95_ms, 40_000)
+  assert.equal(a.wall.by_stage.submitted.n, 3)
+  assert.equal(a.wall.by_stage.submitted.p95_ms, 1600)
+  assert.equal(
+    Object.keys(a.wall.by_stage)[0],
+    "plan",
+    "the slowest stage is listed first; the ordering is the recommendation",
+  )
+  assert.deepEqual(a.wall.slowest, {
+    slug: "w-slow",
+    ms: 40_000,
+    stage: "plan",
+  })
+
+  // The two latency blocks are DIFFERENT MEASUREMENTS and stay apart: one is
+  // hours from posting to click, the other milliseconds inside our worker.
+  assert.equal(a.latency.n, 1, "the market number is unchanged by any of this")
+  assert.equal(a.latency.p50_hours, 24)
+})
+
+test("a job nobody timed is excluded from the sample, never counted as instant", (t) => {
+  const f = fixture(t)
+  enqueueAutoJobs(f.db, [
+    { slug: "w-timed", board_key: "lever", run_id: "run-1" },
+    { slug: "w-untimed", board_key: "lever", run_id: "run-1" },
+  ])
+  for (const slug of ["w-timed", "w-untimed"])
+    claimAutoJob(f.db, slug, { run_id: "run-1", board_key: "lever" })
+  setAutoJobState(f.db, "w-timed", "submitted", {
+    run_id: "run-1",
+    wall_ms: 900,
+  })
+  // A row written by an older build, or any path that records no duration.
+  setAutoJobState(f.db, "w-untimed", "submitted", { run_id: "run-1" })
+
+  const a = buildAutoStatus(f.db, { now: NOW, stopPath: f.stopPath })
+  assert.equal(a.wall.n, 1, "an unknown duration is not a duration of zero")
+  assert.equal(a.wall.p50_ms, 900, "and it does not drag the median down")
+})
+
+test("an intermediate state write does not erase a duration already recorded", (t) => {
+  // The failure this guards: `setAutoJobState(..., 'attempted')` carries no
+  // timing, and a plain assignment would blank the column on the way past. The
+  // reason columns ARE overwritten — each write states the current reason —
+  // but a duration is a fact about a job that already ran.
+  const f = fixture(t)
+  enqueueAutoJobs(f.db, [
+    { slug: "w-seq", board_key: "greenhouse", run_id: "run-1" },
+  ])
+  claimAutoJob(f.db, "w-seq", { run_id: "run-1", board_key: "greenhouse" })
+  setAutoJobState(f.db, "w-seq", "planned", { run_id: "run-1", wall_ms: 700 })
+  setAutoJobState(f.db, "w-seq", "authorized", { run_id: "run-1" })
+  setAutoJobState(f.db, "w-seq", "submitted", { run_id: "run-1", wall_ms: 950 })
+
+  const a = buildAutoStatus(f.db, { now: NOW, stopPath: f.stopPath })
+  assert.equal(a.wall.n, 1)
+  assert.equal(a.wall.p50_ms, 950, "the last duration written wins")
+
+  // And a garbage value is refused rather than stored: a negative or
+  // non-finite duration would poison every percentile computed from it.
+  enqueueAutoJobs(f.db, [
+    { slug: "w-bad", board_key: "lever", run_id: "run-1" },
+  ])
+  claimAutoJob(f.db, "w-bad", { run_id: "run-1", board_key: "lever" })
+  setAutoJobState(f.db, "w-bad", "submitted", {
+    run_id: "run-1",
+    wall_ms: -5,
+  })
+  assert.equal(
+    buildAutoStatus(f.db, { now: NOW, stopPath: f.stopPath }).wall.n,
+    1,
+    "a negative duration is not a fast job",
+  )
 })
 
 test("the digest never fails the whole command when the auto tables are empty", (t) => {
@@ -273,5 +391,9 @@ test("the digest never fails the whole command when the auto tables are empty", 
   const a = JSON.parse(out).auto
   assert.equal(a.queue.outstanding, 0)
   assert.equal(a.latency.p50_ms, null, "no submissions is null latency, not 0")
+  assert.equal(a.wall.n, 0)
+  assert.equal(a.wall.p50_ms, null, "no jobs is null wall time, not 0")
+  assert.equal(a.wall.slowest, null)
+  assert.deepEqual(a.wall.by_stage, {})
   assert.deepEqual(a.warnings, [])
 })

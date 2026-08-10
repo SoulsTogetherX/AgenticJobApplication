@@ -1235,3 +1235,92 @@ job's.
 3. **91 leads have an `apply_url`; nothing has yet been submitted through one.**
    The trust gate that consumes this field is Phase 5's and does not exist. This
    entry measures that the field is populated and well-formed, not that it works.
+
+## M11 — the fill's two settle waits, replaced by one condition that can exit early
+
+- agent: the fill engine's owner, at the user's ask (latency is a stated priority)
+- harness: `benchBrowserFill` per board, medians over n=9 greenhouse / n=7 lever
+  / n=7 ashby, LOOPBACK, each sample one process, one Chromium, one real upload
+- baseline: **arm A** — the working tree with this change, and only this change,
+  reverted
+- after: **arm B** — the same tree, unmodified
+- budget: none declared. The ask was "reduce measured dead time"; the constraint
+  was that no strategy sleep moves without per-board measurement, and none did.
+- verdict: **improved** — 37–62% off the fill wall, no fill report changed
+- note: two ceilings that were paid in full every run became one condition with
+  the same ceilings, watched once and overlapped with the rest of the fill.
+
+### What was measured, and against what
+
+**Both arms are the same tree.** `HEAD` is `0612606`, but the working tree at
+measuring time also carried another session's in-flight work in
+`fill-engine.mjs`, `fill-plan.mjs`, `answer-bank.mjs` and `scan-page.js`. A
+before/after taken across that boundary would name one change and measure five —
+the exact failure `file_sha1` exists to prevent (see 0.9's anchor correction) —
+so the comparison was re-taken as an A/B in a scratch copy of the tree with a
+junctioned `node_modules`: arm A is that copy with **only** this change reversed,
+arm B is the copy untouched. Both therefore contain the other session's work,
+and the delta is attributable to this change alone.
+
+`fill-engine.mjs` at arm B: `ae9f8b82d3d5`. It is **not** a committed sha and
+must not be quoted as one.
+
+| board      | arm A (before)            | arm B (after)             |      delta |
+| ---------- | ------------------------- | ------------------------- | ---------: |
+| greenhouse | 2895.55 (2769.03–2935.72) | 1111.64 (1083.51–1151.02) | **−61.6%** |
+| lever      | 1831.72 (1780.49–1877.26) | 1159.57 (1090.63–1180.35) | **−36.7%** |
+| ashby      | 1726.45 (1676.79–1832.10) | 783.65 (749.09–826.96)    | **−54.6%** |
+
+Ranges do not overlap on any board. The fill report is byte-identical across the
+arms — greenhouse `ok=6 failed=0 deferred=3` with 2 files attached, lever
+`ok=5 failed=0 deferred=2` with 1, ashby `ok=3 failed=1 deferred=2` with 0 (that
+last is the pre-existing fixture defect B1 recorded, unchanged and still failing
+closed).
+
+### The two terms this removed, in the words B1 used for them
+
+1. **`post_upload_remount_ms` 2018.72 → the column no longer exists.** B1 found
+   this wait settling by TIMEOUT on all three boards in every run, i.e. a flat
+   1000ms per upload wearing a condition's name. Greenhouse paid two. The engine
+   no longer waits per upload at all, so the column is `null` with a reason
+   rather than 0 — a zero would average in as a very fast remount.
+2. **`unconditional_sleep_ms` 459.82 → 705.53 on greenhouse, and that is not a
+   regression.** The flat 450ms pre-verify sleep is gone; what this column now
+   carries is the settle stage's _poll gaps_, which are flat sleeps between two
+   observations of the page. The stage's whole wall cost is reported separately
+   and directly by the engine: **`settle_ms` 764 greenhouse, 756 lever, 548
+   ashby** (medians, n=5). One stage now covers what used to be 2×1007 + 456.
+
+### What did NOT change, and why the wins are the size they are
+
+The upload arm ends on evidence — the stamped input left the DOM, or its
+FileList was taken — and otherwise pays its 1000ms ceiling. **All three fixture
+boards are static forms that hold the file**, so greenhouse and lever pay that
+ceiling and land at ~1.1s; ashby exits early at ~548ms because its remount drops
+the FileList at ~700ms. On the real Greenhouse, which swaps the input for an
+attached-file view, the arm has evidence to exit on and the fixture number is
+therefore a **ceiling, not a prediction** — unmeasured here, and not claimed.
+
+The quiet arm keeps the old 450ms ceiling and pays it whenever the board renders
+no validation text, which is every fixture. It exits early only on positive
+evidence (text appeared, then repeated). Silence is not evidence of silence: a
+300ms debounce looks identical to a quiet board for the first two polls, and
+`verify.errors` is a submit-gate input, so an early exit on silence would mean
+submitting into a form the board had already flagged. On an upload page the arm
+is free — 450 < 1000, same loop. The residual flat cost is a page with **no**
+upload, which still pays up to 450ms.
+
+`sleep_ms_per_app` on the accounted runner bench is **unchanged at 450**, which
+is the perf gate's baseline column: the poll gap (90ms) divides the quiet ceiling
+evenly on purpose, so the accounted harness — which sums arguments rather than
+sleeping them — still totals exactly 450.
+
+### Per-job wall time is now persisted, which is why `auto latency n=0` was not a bug
+
+`runJob` has computed `wall_ms` per job since the queue existed and written it
+nowhere. It is now a column on `auto_queue`, written at every terminal state, and
+the digest reports it as `auto wall n=… p50ms=… p95ms=…` plus a per-stage
+breakdown — kept **separate** from `auto latency`, which is hours from posting to
+click and answers a different question. No sample is claimed for it here: the
+number is a per-run measurement of the machine, and this ledger entry is a
+fixture measurement of the fill.

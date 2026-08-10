@@ -2758,6 +2758,7 @@ auto queue outstanding=0 queued=0 claimed=0 planned=0 authorized=0 age_p95_queue
 auto deferrals total=3 failures=0 confirm-field=2 consent-tickbox=1
 auto class assent=3
 auto latency n=0 p50h=- p95h=-
+auto wall n=0 p50ms=- p95ms=-
 auto paused none
 ```
 

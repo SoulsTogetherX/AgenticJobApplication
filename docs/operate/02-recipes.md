@@ -1957,6 +1957,7 @@ auto queue outstanding=0 queued=0 claimed=0 planned=0 authorized=0 age_p95_queue
 auto deferrals total=3 failures=0 confirm-field=2 consent-tickbox=1
 auto class assent=3
 auto latency n=0 p50h=- p95h=-
+auto wall n=0 p50ms=- p95ms=-
 auto paused none
 ```
 
@@ -1978,6 +1979,11 @@ Line by line:
 - **`deferrals total= failures=`** and the per-reason breakdown — what stopped
   each application. In dry run every application defers; that is the point.
 - **`latency n= p50h= p95h=`** — hours from queueing to submission.
+- **`wall n= p50ms= p95ms=`** — a different question in different units: how long
+  the machine itself took per job, end to end, with a `by_stage` line saying
+  where it went and `slowest=` naming the one job to open first. Hours-to-
+  submission improves by finding postings sooner; this improves by making the
+  pipeline faster. Averaging the two would mean nothing.
 - **`paused`** — boards the circuit breaker has backed off from.
 
 Every unattended run also writes an append-only text record at

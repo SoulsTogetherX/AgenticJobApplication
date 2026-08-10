@@ -107,7 +107,31 @@
 //
 // SAFETY: there is deliberately no verb that clicks a button. "Never click
 // submit" is not a rule this engine follows — it is a thing it cannot express.
-export default async function fillPage(page, plan) {
+//
+// The settle ceilings are per-call options (opts.settle) so tests can compress
+// them; every production caller passes nothing and gets the defaults. They are
+// ceilings on CONDITIONS, not durations that are paid: see the settle stage.
+export default async function fillPage(page, plan, opts = {}) {
+  const SETTLE = {
+    // How long after the LAST setInputFiles a board gets to react to a file —
+    // swap the input out (Greenhouse), or read it and reset the input (the
+    // async parse remount Ashby does at ~700ms). This is the old per-upload
+    // detach ceiling, unchanged in size, but paid ONCE and overlapped with the
+    // rest of the fill instead of serially after each upload.
+    uploadMs: 1000,
+    // Ceiling for the post-blur quiet arm — the old flat pre-verify sleep,
+    // kept at its old size on purpose (see the settle stage: silence pays it).
+    quietMs: 450,
+    // One evaluate per poll, one flat sleep between polls. 90 is the shorter
+    // ceiling in five — five chances to observe the board inside the quiet
+    // window — and it divides that ceiling EVENLY, which is what keeps the
+    // accounted bench honest: that harness sums the arguments the engine
+    // passed rather than sleeping them (bench-apply.mjs's header), so a gap
+    // that overshot the ceiling would report a total the wall clock never
+    // paid, and read as a regression that did not happen.
+    pollMs: 90,
+    ...(opts.settle || {}),
+  }
   const out = {
     ok: 0,
     failed: 0,
@@ -326,6 +350,34 @@ export default async function fillPage(page, plan) {
             sawStore = true
             if (txt(sv.innerText)) return txt(sv.innerText)
           }
+          // A MULTI PICKER'S COMMITTED STORE IS ITS TOKEN LIST. react-select
+          // renders one [class*='multi-value'] node per committed choice and
+          // NO single-value node; its backing store is one hidden input PER
+          // choice, so the input walk below would report a two-token commit
+          // as its first token alone. The __label child is preferred (the
+          // token container also holds the × remove control); a widget
+          // without label children falls back to the outermost token nodes.
+          // Joined in DOM order with ", " — the same rendering the plan's
+          // joined `value` uses.
+          const mv = [
+            ...p.querySelectorAll(
+              "[class*='multi-value'], [class*='multiValue']",
+            ),
+          ]
+          if (mv.length) {
+            sawStore = true
+            const labels = mv.filter((x) =>
+              /label/i.test(String(x.className || "")),
+            )
+            const use = labels.length
+              ? labels
+              : mv.filter((x) => !mv.some((o) => o !== x && o.contains(x)))
+            const joined = use
+              .map((x) => txt(x.innerText))
+              .filter(Boolean)
+              .join(", ")
+            if (joined) return joined
+          }
           for (const n of p.querySelectorAll("input, select")) {
             if (n === el) continue
             if (!unpainted(n)) continue
@@ -339,6 +391,15 @@ export default async function fillPage(page, plan) {
         if (sawStore) return ""
         // No store anywhere: the box IS the value (plain typeahead, Ashby).
         return tag === "input" ? el.value || "" : txt(el.innerText)
+      }
+      if (tag === "select" && el.multiple) {
+        // el.value on a multi select is only the FIRST selected option — and
+        // its value attribute, not its text. The committed answer is every
+        // selected option's rendered text.
+        return [...el.selectedOptions]
+          .map((o) => txt(o.text))
+          .filter(Boolean)
+          .join(", ")
       }
       if (tag === "input" || tag === "textarea" || tag === "select") {
         return el.value || ""
@@ -537,8 +598,8 @@ export default async function fillPage(page, plan) {
     // Enter against the UNFILTERED list and commit whatever row happens to be
     // highlighted. A wrong dropdown value on a submitted application is not
     // worth 400ms.
-    "type-enter": async (loc, value) => {
-      await openCombo(loc)
+    "type-enter": async (loc, value, open = openCombo) => {
+      await open(loc)
       await page.keyboard.type(String(value).slice(0, 60), { delay: 20 })
       await page.waitForTimeout(500)
       await page.keyboard.press("Enter")
@@ -548,16 +609,16 @@ export default async function fillPage(page, plan) {
     // one whose text matches the value, and it can only exist once filtering
     // has produced it. Same 500ms ceiling, but a list that filters in 80ms
     // costs 80ms.
-    "type-click": async (loc, value) => {
-      await openCombo(loc)
+    "type-click": async (loc, value, open = openCombo) => {
+      await open(loc)
       await page.keyboard.type(String(value).slice(0, 40), { delay: 20 })
       const row = await optionLocator(loc, value)
       await row.waitFor({ state: "attached", timeout: 500 }).catch(() => {})
       await row.click({ timeout: 2500 })
     },
     // Short lists that do not filter at all.
-    "click-option": async (loc, value) => {
-      await openCombo(loc)
+    "click-option": async (loc, value, open = openCombo) => {
+      await open(loc)
       const row = await optionLocator(loc, value)
       await row.click({ timeout: 2500 })
     },
@@ -634,6 +695,155 @@ export default async function fillPage(page, plan) {
       } catch {}
     }
     return { ok: false, why: last }
+  }
+
+  // --- multi-token pickers -------------------------------------------------
+  // The multi twin of openCombo. Once a token picker holds selections, the
+  // control's CENTRE can be a token's × remove control — a centre click would
+  // DELETE a committed choice instead of opening the menu. The inner combobox
+  // input always sits after the last token and never carries a remove
+  // control, so it is the click target whenever one exists; a control with no
+  // inner input (ORC stamps the input itself) gets the ordinary click, where
+  // there are no tokens to hit. Single-select combos keep openCombo
+  // unchanged: their centre is the placeholder/value text, and rerouting a
+  // click that works on every measured board is not worth the symmetry.
+  const openComboMulti = async (loc) => {
+    await loc.scrollIntoViewIfNeeded({ timeout: 2500 }).catch(() => {})
+    const inner = loc
+      .locator(
+        "input[role='combobox'], [class*='__input'] input, " +
+          "input[class*='__input']",
+      )
+      .first()
+    let found = 0
+    try {
+      found = await inner.count()
+    } catch {}
+    if (found) await inner.click({ timeout: 2500 })
+    else await loc.click({ timeout: 2500 })
+    await page.waitForTimeout(220)
+  }
+
+  // The token list a multi picker currently shows — the same bounded walk and
+  // the same token/label preference as shownValue()'s multi branch, returned
+  // as a LIST so the per-value loop below can check one value without being
+  // fooled by another's text. A verify-class read: DOM out as data, nothing
+  // more.
+  const multiTokens = (loc) =>
+    loc.evaluate((el) => {
+      const txt = (s) =>
+        String(s == null ? "" : s)
+          .replace(/\s+/g, " ")
+          .trim()
+      for (let p = el, i = 0; p && i < 5; p = p.parentElement) {
+        if (
+          p.tagName === "FORM" ||
+          p.tagName === "BODY" ||
+          p.tagName === "HTML"
+        ) {
+          break
+        }
+        if (
+          p !== el &&
+          p.querySelectorAll(
+            "[role='combobox'], [aria-autocomplete='list'], [class*='select__control']",
+          ).length > 1
+        ) {
+          break
+        }
+        const mv = [
+          ...p.querySelectorAll(
+            "[class*='multi-value'], [class*='multiValue']",
+          ),
+        ]
+        if (mv.length) {
+          const labels = mv.filter((x) =>
+            /label/i.test(String(x.className || "")),
+          )
+          const use = labels.length
+            ? labels
+            : mv.filter((x) => !mv.some((o) => o !== x && o.contains(x)))
+          return use.map((x) => txt(x.innerText)).filter(Boolean)
+        }
+        i++
+      }
+      return []
+    })
+
+  // One value at a time: select it, verify its TOKEN appeared, move on. A
+  // token picker's committed store is its token list (see shownValue), so
+  // per-value verification reads that and nothing else — a filter box keeping
+  // typed text proves nothing here either. Values whose token is already
+  // present are SKIPPED, which is what makes the item-level stale-locator
+  // replay safe: a replay re-selects only what the remount lost instead of
+  // re-driving (and on a toggling widget, un-selecting) what survived. One
+  // value that lands on no token fails the whole item — a partial selection
+  // reported ok would ship an answer the user never gave.
+  const setComboMulti = async (loc, item) => {
+    const order = plan.comboStrategies || [
+      "type-enter",
+      "type-click",
+      "click-option",
+    ]
+    const wants = (item.values || []).map((v) => String(v))
+    const tokensNow = async () => {
+      try {
+        return await multiTokens(loc)
+      } catch (e) {
+        if (isStaleError(e)) throw e
+        return []
+      }
+    }
+    const has = (tokens, want) => tokens.some((t) => accepts(t, want))
+    // WHAT WORKED FOR VALUE 1 IS TRIED FIRST FOR VALUE 2. A strategy this
+    // widget ignores still costs 1.5-2.5s before it is ruled out (the same
+    // measurement plan.comboStrategies exists because of), and a multi field
+    // walks the ladder once PER VALUE — so a 3-value picker on a board whose
+    // first strategy does not work paid that failure three times. The order
+    // is only reordered, never shortened: if the remembered winner stops
+    // working mid-field the rest of the ladder still runs.
+    let via = null
+    for (const value of wants) {
+      if (has(await tokensNow(), value)) continue
+      let done = false
+      let last = "no strategy ran"
+      const tryOrder = via ? [via, ...order.filter((n) => n !== via)] : order
+      for (const name of tryOrder) {
+        const run = strategies[name]
+        if (!run) continue
+        try {
+          await run(loc, value, openComboMulti)
+          await page.waitForTimeout(200)
+          const got = await tokensNow()
+          if (has(got, value)) {
+            done = true
+            via = name
+            break
+          }
+          last = "after " + name + ' the tokens read "' + got.join(", ") + '"'
+        } catch (e) {
+          last = name + ": " + e.message
+        }
+        // Leave the widget closed before the next attempt.
+        try {
+          await page.keyboard.press("Escape")
+          await page.waitForTimeout(120)
+        } catch {}
+      }
+      if (!done) return { ok: false, why: '"' + value + '": ' + last }
+    }
+    // Shut and blurred before the verify pass reads it, same as
+    // committedValue leaves a single-select.
+    try {
+      await page.keyboard.press("Escape")
+    } catch {}
+    try {
+      await loc.evaluate((el) => el.blur && el.blur())
+      await page.waitForTimeout(150)
+    } catch (e) {
+      if (isStaleError(e)) throw e
+    }
+    return { ok: true, via }
   }
 
   // --- uploads go first ----------------------------------------------------
@@ -779,6 +989,10 @@ export default async function fillPage(page, plan) {
 
   const uploadItems = items.filter((i) => i.how === "upload")
   const patternOf = (item) => item.labelMatch || "resume"
+  // When the LAST file landed on an input. The settle stage before verify
+  // gives boards SETTLE.uploadMs from this moment to react (swap the input
+  // out, or read the file and reset it) before the readback judges them.
+  let lastUploadAt = 0
 
   // --- positional routing is a GUESS, and a guess does not get to place a
   // --- document under the user's name -------------------------------------
@@ -912,42 +1126,385 @@ export default async function fillPage(page, plan) {
       await page
         .locator('[data-ajup="' + tag + '"]')
         .setInputFiles(item.paths, { timeout: 5000 })
-      // The remount is how we know React accepted it; let it settle before the
-      // next lookup runs against the DOM. Wait on the OBSERVABLE remount
-      // rather than a flat second: the input we just stamped is swapped for
-      // the attached-file view, so the stamped element leaves the DOM. Same
-      // 1s ceiling, but a board that remounts in 150ms now costs 150ms.
-      // (Ashby's LATER, asynchronous re-parse remount is a separate event and
-      // is handled where it actually lands — the stale-locator retry below.)
+      // NO WAIT HERE, on measured evidence. This used to wait up to 1s for the
+      // stamped input to leave the DOM ("the remount is how we know React
+      // accepted it") — and on every fixture board, every run, it paid the
+      // full second: no board detaches the stamp, so the "condition" was a
+      // flat cost wearing one's clothes (docs/measurements.md, B1: 2×1007ms on
+      // Greenhouse, ~73% of the fill wall). The next lookup does not need it
+      // either — resolveUploads re-queries the DOM per item and skips stamped
+      // or filled inputs, so a mid-swap board cannot mis-route the next file.
       //
-      // `settled` records WHICH of the two ways this returned, and it exists
-      // because the alternative was a test that raced the clock. The claim
-      // being protected is "this is a condition with a ceiling, not a flat
-      // cost", and the only honest evidence for it is whether the wait
-      // resolved on the detach or fell through to the timeout — a wall-clock
-      // sample cannot tell those apart under load, which is how the test that
-      // used to guard this went intermittently red (2 of 6 full-gate runs,
-      // 2026-08-02, green 3/3 in isolation). It is also worth reporting on its
-      // own: `timeout` means the board never swapped the input, so the upload
-      // is less certain than an `ok` count alone would suggest.
-      record.settled = await page
-        .locator('[data-ajup="' + tag + '"]')
-        .waitFor({ state: "detached", timeout: 1000 })
-        .then(() => "detached")
-        .catch(() => "timeout")
+      // What the wait was ACTUALLY buying is time for a board's asynchronous
+      // reaction — Greenhouse swapping the input for an attached-file view,
+      // Ashby's resume-parse remount dropping the FileList at ~700ms — to land
+      // before the readback judges the upload. That window still exists, with
+      // the same ceiling, but it is now the settle stage before the verify
+      // pass: anchored at the LAST upload (`lastUploadAt`), overlapped with
+      // the non-upload fills instead of paid serially per upload, and able to
+      // end early the moment every stamp has visibly reacted. `settled` is
+      // recorded there, where the watching actually happens.
+      record.settled = "unknown"
       record.attached = true
       out.ok++
+      lastUploadAt = Date.now()
     } catch (e) {
       fail(item, e.message)
     }
   }
 
+  // --- everything else -----------------------------------------------------
+  // kindOf + the verb-specific action for ONE item against a given locator,
+  // pulled out so the stale-element retry below can replay the exact same
+  // sequence against a freshly re-resolved locator without duplicating the
+  // verb dispatch. Throws on any failure; the caller decides what to do
+  // about it (fail outright, or retry once).
+  const actOn = async (loc, item) => {
+    let kind
+    try {
+      kind = await kindOf(loc)
+    } catch (e) {
+      throw new Error("unreadable element: " + e.message)
+    }
+    if (String(kind).startsWith("forbidden:")) {
+      throw new Error(
+        "refusing to touch a <" + kind.split(":")[1] + "> — not a form control",
+      )
+    }
+    await loc.scrollIntoViewIfNeeded({ timeout: 2500 })
+    if (item.how === "fill") {
+      await loc.fill(String(item.value), { timeout: 2500 })
+    } else if (item.how === "select") {
+      // A plan item carrying `values` targets a <select multiple>. Playwright
+      // replaces the whole selection with exactly this set, so a stale-retry
+      // replay of the item cannot double or toggle anything.
+      await loc.selectOption(
+        Array.isArray(item.values) && item.values.length
+          ? item.values.map((v) => ({ label: String(v) }))
+          : { label: String(item.value) },
+        { timeout: 2500 },
+      )
+    } else if (item.how === "check") {
+      const on = item.value === false || item.value === "false" ? false : true
+      if (on) await loc.check({ timeout: 2500 })
+      else await loc.uncheck({ timeout: 2500 })
+    } else if (item.how === "type") {
+      await typeInto(loc, String(item.value))
+    } else if (item.how === "combo") {
+      const r =
+        Array.isArray(item.values) && item.values.length
+          ? await setComboMulti(loc, item)
+          : await setCombo(loc, item)
+      if (!r.ok) throw new Error(r.why)
+      // Which strategy worked is the expensive thing this run learned. The
+      // caller used to throw it away, so every application to this board
+      // re-discovered per field that it needs type-click — paying for each
+      // strategy that failed first.
+      if (r.via) out.comboVia[item.k] = r.via
+    } else {
+      throw new Error("unknown verb " + item.how)
+    }
+  }
+
+  // --- is this the form the plan was built for? ----------------------------
+  // urlGuard above compares URLs, and a multi-step form that never changes its
+  // URL (the Greenhouse replica in tests/fixtures/boards/ is one GET/POST pair
+  // on a single path) defeats it structurally: page 2 has the same URL as page
+  // 1, so the guard passes on a page it has never seen and page 1's answers go
+  // into whatever page 2's selectors happen to match.
+  //
+  // TWO CHECKS, and only the first is a real guard:
+  //
+  //   1. plan.pageGuard — selectors the PLANNER says must be present for this
+  //      plan to belong to this page. It is built from the scan the plan was
+  //      built against, so it is the only thing here that can tell two steps
+  //      of one form apart. Absent by default; nothing is asserted when the
+  //      planner does not supply it.
+  //   2. A floor: if NOT ONE of the plan's items resolves, this is not the
+  //      form. Every item would fail individually anyway, so no fill is lost —
+  //      what changes is that the report says "wrong page" once instead of
+  //      handing back N indistinguishable "no unique element" failures.
+  //
+  // STATED LIMIT: check 2 cannot catch a page 2 that reuses page 1's
+  // selectors (a shared `input[name=email]` is enough to defeat it). Only
+  // check 1 can, and only when the planner supplies it.
+  const targets = []
+  for (const item of items) {
+    if (item.how === "upload" || item.how === "skip") continue
+    targets.push({ item, loc: await locate(item) })
+  }
+  const guardFail = (why) => {
+    out.failed++
+    out.failures.push({ k: "-", how: "guard", why })
+    out.ms = Date.now() - started
+    return out
+  }
+  for (const sel of plan.pageGuard || []) {
+    let n = 0
+    try {
+      n = await page.locator(sel).count()
+    } catch {}
+    if (n !== 1) {
+      return guardFail(
+        "this plan expects " +
+          String(sel).slice(0, 60) +
+          " on the page and found " +
+          n +
+          " — the form is not the one the plan was built for",
+      )
+    }
+  }
+  if (targets.length && !targets.some((t) => t.loc)) {
+    return guardFail(
+      "not one of the plan's " +
+        targets.length +
+        " fields exists on this page — same URL, different form (a multi-step " +
+        "form on one URL does this); re-scan before filling",
+    )
+  }
+
+  for (const { item, loc: preflight } of targets) {
+    // Re-resolved at the item's own turn when the pre-flight pass did not find
+    // it: the pre-flight runs before the first fill, and a control that an
+    // earlier item in this same plan reveals does not exist yet at that point.
+    // Only the miss pays for the second lookup.
+    const first = preflight || (await locate(item))
+    if (!first) {
+      fail(item, "no unique element for " + (item.sel || item.k))
+      continue
+    }
+
+    // A DETACHED ELEMENT IS RETRIED, A REAL ERROR IS NOT. Ashby's
+    // resume-autofill remounts once, asynchronously, and one replay absorbed
+    // it — but a form that remounts on a timer (the 400ms interval in
+    // tests/fixtures/hostile/forms/remount-mid-fill.html is a real component
+    // library's autosave) can detach the replay as well, and a single retry
+    // then reports a failure for a value that landed. The cap is small and
+    // fixed: each attempt costs one re-resolve, the backoff grows, and a
+    // genuine failure still reaches `fail` rather than being retried forever.
+    // The remaining case — every attempt detached — is not decided here at
+    // all; it is handed to the verify pass, which reads the DOM in ONE
+    // page.evaluate and so cannot be raced by a remount the way a locator
+    // handle can.
+    const STALE_ATTEMPTS = 3
+    let loc = first
+    let lastErr = null
+    for (let attempt = 1; attempt <= STALE_ATTEMPTS; attempt++) {
+      try {
+        await actOn(loc, item)
+        lastErr = null
+        break
+      } catch (e) {
+        lastErr = e
+        if (!isStaleError(e) || attempt === STALE_ATTEMPTS) break
+        await page.waitForTimeout(150 * attempt)
+        const again = await locate(item)
+        if (!again) {
+          lastErr = new Error(
+            "no unique element for " +
+              (item.sel || item.k) +
+              " after a stale-locator retry",
+          )
+          break
+        }
+        loc = again
+      }
+    }
+    if (!lastErr) out.ok++
+    else fail(item, lastErr.message, isStaleError(lastErr))
+  }
+
+  // One value for the planner to remember about this board: the strategy that
+  // worked for the most combos on the form. Ties go to whichever won first,
+  // so the result does not depend on object key order.
+  const viaCount = new Map()
+  for (const item of items) {
+    const via = out.comboVia[item.k]
+    if (!via) continue
+    viaCount.set(via, (viaCount.get(via) || 0) + 1)
+    if (
+      !out.comboStrategy ||
+      viaCount.get(via) > viaCount.get(out.comboStrategy)
+    ) {
+      out.comboStrategy = via
+    }
+  }
+
+  // --- settle, then verify --------------------------------------------------
+  await page.evaluate(
+    () => document.activeElement && document.activeElement.blur(),
+  )
+  // Replaces a flat 450ms sleep here and a serial 1s-per-upload wait above,
+  // both measured settling by TIMEOUT on every fixture board in every run
+  // (docs/measurements.md, B1). TWO conditions, one loop, overlapped:
+  //
+  //   quiet   — the board's rendered validation text has APPEARED and then
+  //             stopped changing between two polls, or SETTLE.quietMs passed.
+  //
+  //             EARLY EXIT ONLY ON POSITIVE EVIDENCE, and this asymmetry is
+  //             the whole design. "Nothing has rendered yet" is not evidence
+  //             that nothing will: a 300ms debounce — ordinary in form
+  //             libraries — looks identical at poll 0 and poll 1 to a board
+  //             that will never say anything, so a stability rule that
+  //             accepted silence would exit at 200ms and miss it. What it
+  //             would miss is not cosmetic: `verify.errors` is a submit-gate
+  //             input (fill-plan.mjs), so an unseen validation message is an
+  //             application submitted into a form the board rejected. So
+  //             silence pays the ceiling, exactly as the flat sleep did — no
+  //             regression against it — and only a board that has spoken and
+  //             repeated itself gets to end the wait sooner.
+  //
+  //             ON AN UPLOAD PAGE THIS COSTS NOTHING EXTRA. The two arms share
+  //             one loop, and 450 < 1000: a page carrying an upload was going
+  //             to be here anyway. The residual flat cost is a page with NO
+  //             upload, which still pays up to 450 — measured and reported as
+  //             such rather than shrunk on a guess (the 2026-08-05 audit's #25
+  //             asked for a bounded wait with this ceiling, and that is what
+  //             this is).
+  //   uploads — every input this run stamped has visibly REACTED to its file:
+  //             left the DOM (Greenhouse swaps in an attached-file view), or
+  //             had its FileList taken (Ashby's async parse remount rebuilds
+  //             the form and an innerHTML round trip cannot carry files). An
+  //             input still HOLDING its file is indistinguishable from a board
+  //             about to drop it, so held inputs are watched until
+  //             SETTLE.uploadMs after the last setInputFiles. The readback
+  //             below must not judge an upload while the board's reaction is
+  //             still in flight — reading early and calling it good is exactly
+  //             the ok-with-no-resume shape this engine exists to refuse.
+  //
+  // The probe reads NOTHING new off the page: the same input[type=file] walk
+  // the readback below does, the same error selectors the verify pass reads,
+  // reduced to one change-detection string that never leaves this loop. A page
+  // that cannot answer it (the accounted bench double, a unit-test fake)
+  // returns something unshaped and the loop stops at once — the readback and
+  // verify passes carry their own guards, and such a page loses nothing but
+  // the waiting.
+  //
+  // A FILL THAT TOUCHED NOTHING SETTLES NOTHING. Every item skipped or
+  // deferred means no interaction happened, so there is no board reaction to
+  // wait out and the verify pass reads a page this run never changed. The old
+  // flat sleep was paid there too — 450ms per page for doing nothing, on every
+  // page of a multi-page walk whose fields were all deferred.
+  const watched = out.uploads.filter((u) => u.attached)
+  const settleT0 = Date.now()
+  const acted = out.ok > 0 || out.failed > 0
+  // TWO CLOCKS, AND THE CEILING IS WHICHEVER SAYS "DONE" FIRST. The wall
+  // clock is the real one, and it is the only one that credits this stage for
+  // work already done — the upload window is measured from the last
+  // setInputFiles, so every non-upload item filled since then has already
+  // spent part of it. The poll count is the second, and it exists because the
+  // accounted bench (bench-apply.mjs) and unit doubles RECORD waitForTimeout's
+  // argument instead of sleeping it: on those pages the wall clock never
+  // advances, and a wall-only ceiling would spin the loop instead of ending
+  // it. `poll * pollMs` is what the same loop would have cost on a real page,
+  // so the two agree by construction — a real page hits the wall deadline at
+  // or before the poll budget, a double hits the poll budget exactly.
+  const uploadDeadline = watched.length ? lastUploadAt + SETTLE.uploadMs : 0
+  const ceilingPolls = Math.ceil(
+    Math.max(SETTLE.uploadMs, SETTLE.quietMs) / SETTLE.pollMs,
+  )
+  let uploadsDone = watched.length === 0
+  let quietDone = !acted
+  let prevErr = null
+  let lastUpl = null
+  for (let poll = 0; acted; poll++) {
+    let probe = null
+    try {
+      probe = await page.evaluate(
+        (tags) => {
+          const all = [...document.querySelectorAll("input[type=file]")]
+          const upl = tags.map((tag) => {
+            const el = all.find(
+              (x) => x.getAttribute && x.getAttribute("data-ajup") === tag,
+            )
+            if (!el) return "gone"
+            return el.files && el.files.length ? "held" : "empty"
+          })
+          // The SAME selector list the verify pass reads its `errors` from. It
+          // is joined into one string and compared to the previous poll's;
+          // nothing derived from it leaves this loop, so no page text enters
+          // the report by this route.
+          let err = ""
+          try {
+            for (const e of document.querySelectorAll(
+              "[class*='error-message'], [class*='errorMessage'], [role='alert'], [id$='-error']",
+            ))
+              err += "|" + (e.innerText || "").trim()
+          } catch {}
+          // `ajSettleProbe` NAMES THIS ANSWER, and it is not decoration. A
+          // page double tells the engine's evaluates apart by their SOURCE
+          // TEXT, and the substrings this one would otherwise be recognised
+          // by — an upload state list, an error string — also appear in the
+          // verify pass's source ("upload", "errors"). A double that matched
+          // on those answered the VERIFY call with this shape, and the
+          // reconciliation that rescues a value landed under a remount then
+          // saw no `landed` list and reported a failure for a field that was
+          // filled (tests/apply/edge-cases.test.mjs, E4). One unambiguous key
+          // is the fix; do not remove it to tidy the shape.
+          return {
+            ajSettleProbe: true,
+            upl,
+            err: err.replace(/\|/g, "").trim() ? err : "",
+          }
+        },
+        watched.map((u) => u.tag),
+      )
+    } catch {}
+    if (!probe || !Array.isArray(probe.upl)) break
+    lastUpl = probe.upl
+    const now = Date.now()
+    const waited = poll * SETTLE.pollMs
+    if (!uploadsDone)
+      uploadsDone =
+        probe.upl.every((s) => s !== "held") ||
+        now >= uploadDeadline ||
+        waited >= SETTLE.uploadMs
+    if (!quietDone)
+      quietDone =
+        (probe.err !== "" && probe.err === prevErr) ||
+        now - settleT0 >= SETTLE.quietMs ||
+        waited >= SETTLE.quietMs
+    prevErr = probe.err
+    if ((uploadsDone && quietDone) || poll >= ceilingPolls) break
+    try {
+      await page.waitForTimeout(SETTLE.pollMs)
+    } catch {
+      break
+    }
+  }
+  // What the watch concluded, per upload record: "detached" — the board
+  // consumed the input (the Greenhouse swap); "reset" — the input is still on
+  // the page and its FileList is gone (a board that read the file into its own
+  // uploader, or one that dropped it — the readback below rules on which);
+  // "held" — the file was still sitting on the input when the watching
+  // stopped; "unknown" — the page could not be observed (a test double). The
+  // old vocabulary was {detached, timeout}; "timeout" is gone because paying a
+  // ceiling is a cost, not a conclusion about the page.
+  for (let i = 0; i < watched.length; i++) {
+    const s = lastUpl ? lastUpl[i] : null
+    watched[i].settled =
+      s === "gone" ? "detached" : s === "empty" ? "reset" : s || "unknown"
+  }
+  out.settle = {
+    ms: Date.now() - settleT0,
+    quiet: quietDone,
+    uploads: uploadsDone,
+  }
+
   // --- and did they land where the plan aimed them? ------------------------
-  // INDEPENDENT of the routing decision above: this reads the page. The whole
-  // reason a cover letter could go out as a resume undetected is that nothing
-  // ever compared what the engine decided against what the DOM ended up with —
-  // the report carried a count, and a count cannot be wrong about which file
-  // is on which input.
+  // INDEPENDENT of the routing decision in the upload loop: this reads the
+  // page. The whole reason a cover letter could go out as a resume undetected
+  // is that nothing ever compared what the engine decided against what the DOM
+  // ended up with — the report carried a count, and a count cannot be wrong
+  // about which file is on which input.
+  //
+  // It runs HERE, after the settle above, and not right after the uploads —
+  // deliberately. This is the most-settled DOM the fill will ever see: the
+  // settle has either watched every stamped input react or given the board
+  // SETTLE.uploadMs to do so, which is what makes the answers below evidence
+  // rather than a race. Ashby's parse remount lands at ~700ms and drops the
+  // FileList; a readback that ran before it would have called that upload
+  // good, and the remount would have unmade it after the report was written.
   //
   // ONE of the three answers is promoted to a failure, and only one:
   //
@@ -1090,184 +1647,19 @@ export default async function fillPage(page, plan) {
     } catch {}
   }
 
-  // --- everything else -----------------------------------------------------
-  // kindOf + the verb-specific action for ONE item against a given locator,
-  // pulled out so the stale-element retry below can replay the exact same
-  // sequence against a freshly re-resolved locator without duplicating the
-  // verb dispatch. Throws on any failure; the caller decides what to do
-  // about it (fail outright, or retry once).
-  const actOn = async (loc, item) => {
-    let kind
-    try {
-      kind = await kindOf(loc)
-    } catch (e) {
-      throw new Error("unreadable element: " + e.message)
-    }
-    if (String(kind).startsWith("forbidden:")) {
-      throw new Error(
-        "refusing to touch a <" + kind.split(":")[1] + "> — not a form control",
-      )
-    }
-    await loc.scrollIntoViewIfNeeded({ timeout: 2500 })
-    if (item.how === "fill") {
-      await loc.fill(String(item.value), { timeout: 2500 })
-    } else if (item.how === "select") {
-      await loc.selectOption({ label: String(item.value) }, { timeout: 2500 })
-    } else if (item.how === "check") {
-      const on = item.value === false || item.value === "false" ? false : true
-      if (on) await loc.check({ timeout: 2500 })
-      else await loc.uncheck({ timeout: 2500 })
-    } else if (item.how === "type") {
-      await typeInto(loc, String(item.value))
-    } else if (item.how === "combo") {
-      const r = await setCombo(loc, item)
-      if (!r.ok) throw new Error(r.why)
-      // Which strategy worked is the expensive thing this run learned. The
-      // caller used to throw it away, so every application to this board
-      // re-discovered per field that it needs type-click — paying for each
-      // strategy that failed first.
-      if (r.via) out.comboVia[item.k] = r.via
-    } else {
-      throw new Error("unknown verb " + item.how)
-    }
-  }
-
-  // --- is this the form the plan was built for? ----------------------------
-  // urlGuard above compares URLs, and a multi-step form that never changes its
-  // URL (the Greenhouse replica in tests/fixtures/boards/ is one GET/POST pair
-  // on a single path) defeats it structurally: page 2 has the same URL as page
-  // 1, so the guard passes on a page it has never seen and page 1's answers go
-  // into whatever page 2's selectors happen to match.
-  //
-  // TWO CHECKS, and only the first is a real guard:
-  //
-  //   1. plan.pageGuard — selectors the PLANNER says must be present for this
-  //      plan to belong to this page. It is built from the scan the plan was
-  //      built against, so it is the only thing here that can tell two steps
-  //      of one form apart. Absent by default; nothing is asserted when the
-  //      planner does not supply it.
-  //   2. A floor: if NOT ONE of the plan's items resolves, this is not the
-  //      form. Every item would fail individually anyway, so no fill is lost —
-  //      what changes is that the report says "wrong page" once instead of
-  //      handing back N indistinguishable "no unique element" failures.
-  //
-  // STATED LIMIT: check 2 cannot catch a page 2 that reuses page 1's
-  // selectors (a shared `input[name=email]` is enough to defeat it). Only
-  // check 1 can, and only when the planner supplies it.
-  const targets = []
-  for (const item of items) {
-    if (item.how === "upload" || item.how === "skip") continue
-    targets.push({ item, loc: await locate(item) })
-  }
-  const guardFail = (why) => {
-    out.failed++
-    out.failures.push({ k: "-", how: "guard", why })
-    out.ms = Date.now() - started
-    return out
-  }
-  for (const sel of plan.pageGuard || []) {
-    let n = 0
-    try {
-      n = await page.locator(sel).count()
-    } catch {}
-    if (n !== 1) {
-      return guardFail(
-        "this plan expects " +
-          String(sel).slice(0, 60) +
-          " on the page and found " +
-          n +
-          " — the form is not the one the plan was built for",
-      )
-    }
-  }
-  if (targets.length && !targets.some((t) => t.loc)) {
-    return guardFail(
-      "not one of the plan's " +
-        targets.length +
-        " fields exists on this page — same URL, different form (a multi-step " +
-        "form on one URL does this); re-scan before filling",
-    )
-  }
-
-  for (const { item, loc: preflight } of targets) {
-    // Re-resolved at the item's own turn when the pre-flight pass did not find
-    // it: the pre-flight runs before the first fill, and a control that an
-    // earlier item in this same plan reveals does not exist yet at that point.
-    // Only the miss pays for the second lookup.
-    const first = preflight || (await locate(item))
-    if (!first) {
-      fail(item, "no unique element for " + (item.sel || item.k))
-      continue
-    }
-
-    // A DETACHED ELEMENT IS RETRIED, A REAL ERROR IS NOT. Ashby's
-    // resume-autofill remounts once, asynchronously, and one replay absorbed
-    // it — but a form that remounts on a timer (the 400ms interval in
-    // tests/fixtures/hostile/forms/remount-mid-fill.html is a real component
-    // library's autosave) can detach the replay as well, and a single retry
-    // then reports a failure for a value that landed. The cap is small and
-    // fixed: each attempt costs one re-resolve, the backoff grows, and a
-    // genuine failure still reaches `fail` rather than being retried forever.
-    // The remaining case — every attempt detached — is not decided here at
-    // all; it is handed to the verify pass, which reads the DOM in ONE
-    // page.evaluate and so cannot be raced by a remount the way a locator
-    // handle can.
-    const STALE_ATTEMPTS = 3
-    let loc = first
-    let lastErr = null
-    for (let attempt = 1; attempt <= STALE_ATTEMPTS; attempt++) {
-      try {
-        await actOn(loc, item)
-        lastErr = null
-        break
-      } catch (e) {
-        lastErr = e
-        if (!isStaleError(e) || attempt === STALE_ATTEMPTS) break
-        await page.waitForTimeout(150 * attempt)
-        const again = await locate(item)
-        if (!again) {
-          lastErr = new Error(
-            "no unique element for " +
-              (item.sel || item.k) +
-              " after a stale-locator retry",
-          )
-          break
-        }
-        loc = again
-      }
-    }
-    if (!lastErr) out.ok++
-    else fail(item, lastErr.message, isStaleError(lastErr))
-  }
-
-  // One value for the planner to remember about this board: the strategy that
-  // worked for the most combos on the form. Ties go to whichever won first,
-  // so the result does not depend on object key order.
-  const viaCount = new Map()
-  for (const item of items) {
-    const via = out.comboVia[item.k]
-    if (!via) continue
-    viaCount.set(via, (viaCount.get(via) || 0) + 1)
-    if (
-      !out.comboStrategy ||
-      viaCount.get(via) > viaCount.get(out.comboStrategy)
-    ) {
-      out.comboStrategy = via
-    }
-  }
-
-  // --- verify once ---------------------------------------------------------
-  await page.evaluate(
-    () => document.activeElement && document.activeElement.blur(),
-  )
-  await page.waitForTimeout(450)
-
   const probes = items
     .filter((i) => i.how !== "skip")
     .map((i) => ({
       k: i.k,
       sel: i.sel || (i.k ? '[data-aj="' + i.k + '"]' : null),
       want: i.how === "upload" ? null : i.value,
+      // Multi items verify per VALUE — the page renders tokens in its own
+      // order, so equality against the joined `want` string would fail a
+      // fill that landed every value.
+      wants:
+        i.how !== "upload" && Array.isArray(i.values) && i.values.length
+          ? i.values
+          : undefined,
       how: i.how,
     }))
 
@@ -1356,6 +1748,32 @@ export default async function fillPage(page, plan) {
           sawStore = true
           if (n(sv.innerText)) return String(sv.innerText).trim()
         }
+        // Token list = the multi picker's committed store; mirrored from
+        // shownValue()'s multi branch, same reasoning, same preference for
+        // the __label child over the token container.
+        const mv = [
+          ...p.querySelectorAll(
+            "[class*='multi-value'], [class*='multiValue']",
+          ),
+        ]
+        if (mv.length) {
+          sawStore = true
+          const labels = mv.filter((x) =>
+            /label/i.test(String(x.className || "")),
+          )
+          const use = labels.length
+            ? labels
+            : mv.filter((x) => !mv.some((o) => o !== x && o.contains(x)))
+          const joined = use
+            .map((x) =>
+              String(x.innerText || "")
+                .replace(/\s+/g, " ")
+                .trim(),
+            )
+            .filter(Boolean)
+            .join(", ")
+          if (joined) return joined
+        }
         for (const x of p.querySelectorAll("input, select")) {
           if (x === el) continue
           if (!unpainted(x)) continue
@@ -1380,6 +1798,18 @@ export default async function fillPage(page, plan) {
         el.getAttribute("aria-haspopup") === "listbox" ||
         /select__control|Select__control/.test(String(el.className || ""))
       if (isCombo) return comboValue(el)
+      if (tag === "select" && el.multiple) {
+        // Mirrors shownValue(): el.value is only the first selected option's
+        // value attribute; the answer is every selected option's text.
+        return [...el.selectedOptions]
+          .map((o) =>
+            String(o.text || "")
+              .replace(/\s+/g, " ")
+              .trim(),
+          )
+          .filter(Boolean)
+          .join(", ")
+      }
       if (tag === "input" || tag === "textarea" || tag === "select")
         return el.value || ""
       const sv = el.querySelector(
@@ -1398,7 +1828,19 @@ export default async function fillPage(page, plan) {
       planned.add(el)
       const got = read(el)
       if (p.want != null && p.how !== "upload") {
-        if (!n(got) || (n(got) !== n(p.want) && !n(got).includes(n(p.want)))) {
+        // A multi item lands only when EVERY planned value appears in the
+        // committed readback (tokens / selected options, joined) — the page
+        // orders tokens however it likes, so per-value containment is the
+        // check, not equality on the joined string. A single item is
+        // unchanged.
+        const ok =
+          Array.isArray(p.wants) && p.wants.length
+            ? !!n(got) && p.wants.every((w) => n(got).includes(n(w)))
+            : !(
+                !n(got) ||
+                (n(got) !== n(p.want) && !n(got).includes(n(p.want)))
+              )
+        if (!ok) {
           res.mismatch.push({
             k: p.k,
             want: String(p.want).slice(0, 40),

@@ -18,6 +18,7 @@ import {
   readActiveBoardPauses,
   readQueueAges,
   readSubmitLatencies,
+  readJobWallTimes,
   countAutoSubmissions,
   latestAutoRun,
 } from "../lib/db.mjs"
@@ -124,6 +125,51 @@ export function buildAutoStatus(
     p95_hours: hours(percentile(latencies, 95)),
   }
 
+  // --- how long the MACHINE takes, which is a different question ------------
+  //
+  // `latency` above is the market number: hours between a posting going up and
+  // our click. This is the engineering one: milliseconds per job inside our own
+  // worker. They are reported as separate blocks and must stay that way — one
+  // improves by finding postings sooner, the other by making the pipeline
+  // faster, and an average of the two would mean nothing.
+  //
+  // BY STAGE, because a total cannot be acted on. A p95 sitting in `plan` and
+  // a p95 sitting in `post-submit` are different defects with different owners.
+  // p50 AND p95, because the tail is where a slow board hides: a single job
+  // taking 40s among 200 quick ones moves the p95 and leaves the median flat.
+  const walls = readJobWallTimes(db, { run_id: null })
+  const byStage = {}
+  for (const w of walls) (byStage[w.stage] ??= []).push(w.ms)
+  const wall = {
+    n: walls.length,
+    p50_ms: percentile(
+      walls.map((w) => w.ms),
+      50,
+    ),
+    p95_ms: percentile(
+      walls.map((w) => w.ms),
+      95,
+    ),
+    by_stage: Object.fromEntries(
+      Object.entries(byStage)
+        .map(([stage, xs]) => [
+          stage,
+          {
+            n: xs.length,
+            p50_ms: percentile(xs, 50),
+            p95_ms: percentile(xs, 95),
+          },
+        ])
+        // Slowest stage first: the ordering is the recommendation.
+        .sort((a, b) => (b[1].p95_ms ?? 0) - (a[1].p95_ms ?? 0)),
+    ),
+    // The single slowest job, by name. A distribution says a tail exists; this
+    // says which slug to open.
+    slowest: walls.length
+      ? { slug: walls[0].slug, ms: walls[0].ms, stage: walls[0].stage }
+      : null,
+  }
+
   // --- boards the machine backed away from ----------------------------------
   const paused = readActiveBoardPauses(db, { run_id }).map((p) => ({
     board_key: p.board_key,
@@ -221,6 +267,7 @@ export function buildAutoStatus(
     },
     queue,
     latency,
+    wall,
     paused_boards: paused,
     newly_challenged,
     stop,
@@ -243,6 +290,21 @@ export function formatAutoTerse(a) {
     `auto deferrals total=${a.deferrals.total} failures=${a.deferrals.failures} ${kv(a.deferrals.by_kind)}`,
     `auto class ${kv(a.deferrals.by_class)}`,
     `auto latency n=${a.latency.n} p50h=${a.latency.p50_hours ?? "-"} p95h=${a.latency.p95_hours ?? "-"}`,
+    // MILLISECONDS AND A DIFFERENT NAME, one line below the hours. `latency`
+    // is posting-to-click; `wall` is how long our own worker held the job.
+    `auto wall n=${a.wall.n} p50ms=${a.wall.p50_ms ?? "-"} p95ms=${a.wall.p95_ms ?? "-"}` +
+      (a.wall.slowest
+        ? ` slowest=${a.wall.slowest.slug}(${a.wall.slowest.ms}ms@${a.wall.slowest.stage})`
+        : ""),
+    ...(a.wall.n
+      ? [
+          `auto wall by_stage ${
+            Object.entries(a.wall.by_stage)
+              .map(([s, v]) => `${s}=${v.p50_ms}/${v.p95_ms}(n=${v.n})`)
+              .join(" ") || "-"
+          }`,
+        ]
+      : []),
     `auto paused ${a.paused_boards.map((p) => `${p.board_key}(${p.held})`).join(" ") || "none"}`,
   ]
   for (const w of a.warnings) lines.push(`auto WARN ${w.kind} n=${w.n}`)
@@ -273,6 +335,18 @@ export function formatAutoProse(a) {
     lines.push(
       `  Posted → submitted: p50 ${a.latency.p50_hours}h, p95 ${a.latency.p95_hours}h (n=${a.latency.n})`,
     )
+  if (a.wall.n) {
+    lines.push(
+      `  Time per job: p50 ${a.wall.p50_ms}ms, p95 ${a.wall.p95_ms}ms (n=${a.wall.n})`,
+    )
+    // Only the worst stage, and only when it is worth naming: the terse
+    // rendering above carries the whole breakdown for anyone who wants it.
+    const worst = Object.entries(a.wall.by_stage)[0]
+    if (worst && Object.keys(a.wall.by_stage).length > 1)
+      lines.push(
+        `    slowest stage: ${worst[0]} p95 ${worst[1].p95_ms}ms (n=${worst[1].n})`,
+      )
+  }
   const kinds = Object.entries(a.deferrals.by_kind).sort((x, y) => y[1] - x[1])
   if (kinds.length) {
     lines.push(

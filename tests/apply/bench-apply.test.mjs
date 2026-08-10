@@ -124,8 +124,44 @@ test("the accounted total is the sum of the arguments the engine passed", async 
     .filter((c) => c[0] === "waitForTimeout")
     .reduce((a, c) => a + c[1], 0)
   assert.equal(fromCalls, rig.cost.sleep_unconditional_ms)
-  // A bare fill costs exactly the one post-fill blur-and-settle.
+  // A bare fill costs exactly the one post-fill settle, in poll gaps that add
+  // up to its ceiling. 450 is the same total the flat pre-verify sleep cost,
+  // which is what keeps this column comparable across that change and the
+  // perf gate's baseline meaningful.
   assert.equal(rig.cost.sleep_unconditional_ms, 450)
+})
+
+test("the double answers the settle probe WITHOUT swallowing the verify pass", async () => {
+  // THE FAILURE THIS PINS, because it cost a green gate once. A page double
+  // tells the engine's evaluates apart by their source text, and the settle
+  // probe was recognised by substrings ("upl", "err") that also occur in the
+  // verify pass's source ("upload", "errors"). The double then answered the
+  // VERIFY call with a settle answer, the reconciliation saw no `landed` list,
+  // and a field that had been filled was reported as failed — E4 in
+  // tests/apply/edge-cases.test.mjs, which is the test that caught it.
+  //
+  // Asserted on the behaviour rather than on the matcher, so it survives any
+  // future change to how the two are told apart.
+  const rig = instrumentedPage({
+    elements: { "#f1": { kind: "input", value: "" } },
+    staleForever: true, // every attempt detaches -> the fill reports a failure
+    verifyLanded: ["f1"], // ...but the page says the value is there
+    ...PROFILES.best,
+  })
+  const report = await fillPage(rig.page, {
+    items: [{ k: "f1", how: "fill", sel: "#f1", value: "Ada" }],
+  })
+  assert.deepEqual(
+    report.verify.landed,
+    ["f1"],
+    "the verify pass must receive the double's verify answer, not the " +
+      "settle probe's",
+  )
+  assert.equal(report.failed, 0, "so the stale failure is reconciled to ok")
+  assert.deepEqual(
+    report.reconciled.map((r) => r.k),
+    ["f1"],
+  )
 })
 
 // --- 2. the derived columns are computed, not hardcoded -------------------
@@ -1138,18 +1174,40 @@ test("benchBrowserFill reports three separate columns and one REAL upload", asyn
       f.unconditional_sleep_ms > 0,
       "the fill pays a flat waitForTimeout; 0 means the recorder missed it",
     )
-    assert.ok(
-      f.post_upload_remount_ms > 0,
-      "the post-upload settle is the fill's largest single wait; 0 means it " +
-        "was not attributed",
-    )
-    assert.notEqual(
+    // THE SETTLE STAGE, which replaced the per-upload `detached` wait this
+    // column used to attribute. B1 measured that wait timing out on all three
+    // boards in every run, so the engine stopped issuing it; the column is now
+    // null WITH A REASON rather than 0, because a zero would average into a
+    // distribution as if it were a very fast remount.
+    assert.equal(
       f.post_upload_remount_ms,
-      f.unconditional_sleep_ms,
-      "a conditional wait and a flat sleep are different populations",
+      null,
+      "no per-upload wait is issued any more; a number here means one came " +
+        "back and B1's finding needs re-taking",
+    )
+    assert.equal(f.post_upload_remount_method, "unmeasured")
+    assert.ok(
+      (f.post_upload_remount_why || "").length > 20,
+      "an unmeasured column must carry its reason",
+    )
+    assert.equal(f.settle_method, "measured")
+    assert.ok(
+      f.settle_ms > 0,
+      "the settle is where the board's reaction window went; 0 means the " +
+        "engine reported no stage at all",
+    )
+    assert.equal(
+      typeof f.settle_uploads,
+      "boolean",
+      "which arm resolved is the difference between a settle time and a " +
+        "ceiling paid in full — the mistake B1 had to correct",
     )
     assert.ok(
-      f.fill_wall_ms > f.unconditional_sleep_ms + f.post_upload_remount_ms - 1,
+      f.settle_ms <= f.fill_wall_ms,
+      "a stage of the fill cannot outlast the fill",
+    )
+    assert.ok(
+      f.fill_wall_ms > f.unconditional_sleep_ms + f.conditional_total_ms - 1,
       "the columns must be parts of the wall, not a bigger number than it",
     )
     assert.equal(

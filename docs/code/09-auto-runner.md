@@ -49,7 +49,7 @@ You do not need to have read the others, but these help:
 | ----------------------------- | ----: | --------------------------------------------------------------------- |
 | `scripts/auto/auto-apply.mjs` |   756 | the runner's command-line entry point: args, selection, browser, pool |
 | `scripts/auto/job.mjs`        |   568 | the per-job state machine — one application, start to finish          |
-| `scripts/auto/cycle.mjs`      |   420 | one whole cycle: find → screen → prep → tailor → apply                |
+| `scripts/auto/cycle.mjs`      |   486 | one whole cycle: find → screen → reverify → prep → tailor → apply     |
 | `scripts/auto/stages.mjs`     |   189 | the four injected browser stages (`scan`, `plan`, `fill`, `classify`) |
 | `scripts/auto/pool.mjs`       |   185 | the worker pool, partitioned by origin                                |
 | `scripts/auto/caps.mjs`       |   114 | the blast-radius arithmetic (per-run / per-day / per-company caps)    |
@@ -2207,9 +2207,10 @@ nothing joined them up. This is the join:
 ```
 1. search    find-jobs.mjs      new leads from your boards
 2. screen    screen.mjs         l0/l1/l3 verdicts (hard rule 0 lives here)
-3. prep      prep-queue.mjs     which leads are worth documents
-4. tailor    new-job → keyword-plan → assemble-resume → verify-claims → render-pdf
-5. apply     auto-apply.mjs     the runner
+3. reverify  reverify.mjs       re-run verify-claims where the fact base moved
+4. prep      prep-queue.mjs     which leads are worth documents
+5. tailor    new-job → keyword-plan → assemble-resume → verify-claims → render-pdf
+6. apply     auto-apply.mjs     the runner
 ```
 
 The header names the property that makes unattended operation possible at all,
@@ -2245,6 +2246,7 @@ summary:
 ```text
 search: ok
 screen: ok
+reverify: ok — 33 stale job(s): 54 re-passed, 0 failed, 0 missing (411ms)
 prep: ok
   render-swe-compute-infra: documents ready
   acme-backend-engineer: stopped at verify-claims — 2 unsupported claims
@@ -2258,12 +2260,12 @@ fails for one lead is reported and does not change the exit code."
 
 ### 3. Everything it exposes
 
-| export                                    | shape                                                                  |
-| ----------------------------------------- | ---------------------------------------------------------------------- |
-| `step(script, args, {cwd, timeout})`      | `{ok, code, stdout, detail}` — **never throws**                        |
-| `slugFor(lead, {jobsDir, taken})`         | `string` — a filesystem-safe workspace name                            |
-| `prepareDocuments(slug, lead, {jobsDir})` | `{slug, ok, stages: [{stage, ok, detail}]}`                            |
-| `runCycle(argv)`                          | `Promise<{started, stages, leads, skipped, prepared, run?, finished}>` |
+| export                                    | shape                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------------------- |
+| `step(script, args, {cwd, timeout})`      | `{ok, code, stdout, detail}` — **never throws**                                   |
+| `slugFor(lead, {jobsDir, taken})`         | `string` — a filesystem-safe workspace name                                       |
+| `prepareDocuments(slug, lead, {jobsDir})` | `{slug, ok, stages: [{stage, ok, detail}]}`                                       |
+| `runCycle(argv)`                          | `Promise<{started, stages, reverify?, leads, skipped, prepared, run?, finished}>` |
 
 `step` runs a child process with `spawnSync` and returns its exit code and the
 last three lines of stderr (truncated to 300 characters) as **data**:
@@ -2286,9 +2288,26 @@ overwrite the first's tailored resume after it had been verified."
 3. Always: run `screen.mjs --skip-screened` (10-minute timeout) — "Screening is
    where hard rule 0 is enforced, and the runner refuses an unscreened lead
    outright, so this is not optional housekeeping."
-4. Run `prep-queue.mjs --top N --cluster --json` and parse its stdout. A parse
+4. **The re-verification sweep** (`scripts/documents/reverify.mjs`, in-process,
+   before anything consults eligibility). Every job whose newest recorded
+   verification carries a `profile_sha256` other than the current
+   `factBaseSha256()` gets verify-claims re-RUN through the normal recording
+   path — both `resume.md` and `cover-letter.md` where present. One
+   `save-answer` write invalidates every outstanding verification at once
+   (the freshness key working as designed), and without this sweep nothing
+   ever re-checked the already-tailored workspaces: measured 2026-08-09,
+   33/33 tailored jobs stale, `selectEligible` refused all of them; the first
+   sweep re-passed all 54 documents (33 resumes + 21 cover letters) in 411ms
+   end-to-end through the CLI, with zero LLM calls, and the second sweep found
+   nothing stale in 94ms. A document
+   that re-passes becomes eligible again; one the new fact base no longer
+   supports is recorded as FAILING, printed by name (`re-verify FAILED <slug>
+(<mode>): …`), and not re-tried until the facts move again. A sweep that
+   cannot run reports `ok: false` and leaves the rows stale — the runner keeps
+   refusing them, which is the closed failure direction.
+5. Run `prep-queue.mjs --top N --cluster --json` and parse its stdout. A parse
    failure sets a detail message and leaves the queue empty.
-5. **The applicability gate, before any document work.** This is the most
+6. **The applicability gate, before any document work.** This is the most
    instructive comment in the file:
 
    > MEASURED, first real cycle (2026-08-03): prep-queue ranks on FIT and knows
@@ -2310,9 +2329,9 @@ overwrite the first's tailored resume after it had been verified."
    `trustBoard` per queue entry. A refusal pushes `{company, title, url, reason}`
    onto `skipped`.
 
-6. For each surviving lead, pick a slug and call `prepareDocuments`.
-7. Count the successes into `prepared`.
-8. Unless `--skip-apply`: spawn
+7. For each surviving lead, pick a slug and call `prepareDocuments`.
+8. Count the successes into `prepared`.
+9. Unless `--skip-apply`: spawn
    `node scripts/auto/auto-apply.mjs --limit N --json` (30-minute timeout) and
    parse the last line of its stdout into `out.run`.
 

@@ -846,11 +846,34 @@ window.__ajScan = async (PROBE = true) => {
     const host = labelHost(el)
     const dc = labelDetail(host)
     const label = txt(dc.text)
+    // A TOKEN PICKER IS A DIFFERENT VERB, and the flag has to come from the
+    // scan: the planner cannot see the widget and the engine only does what
+    // the plan says. Recognised from the widget's own static markers — the
+    // BEM modifier react-select puts on its value container
+    // (select__value-container--is-multi), a rendered token
+    // (select__multi-value, present once anything is selected), or an
+    // explicit aria-multiselectable. Same recognition family as COMBO_SEL
+    // above: class-shape plus ARIA, never behaviour. A control carrying none
+    // of these scans exactly as before, so a single-select combo record is
+    // byte-identical to what it was.
+    let multi
+    try {
+      multi =
+        el.getAttribute("aria-multiselectable") === "true" ||
+        !!el.querySelector(
+          "[aria-multiselectable='true'],[class*='--is-multi']," +
+            "[class*='multi-value']",
+        ) ||
+        undefined
+    } catch (e) {
+      multi = undefined
+    }
     combos.push({
       k: stamp(el, "f"),
       sel: stableSel(el),
       ...identityOf(el),
       t: "combo",
+      multi,
       l: label,
       lSeen: seenOf(host, dc),
       // `req` from the HOST for the same reason as the label: Greenhouse's

@@ -1680,7 +1680,7 @@ The three rules, and the measured cost of them:
 > BOARD;
 >
 > - same board failing >= 3 of its LAST 5 — pauses that BOARD;
-> - >\>= 8 of the LAST 10 attempts across >= 2 distinct boards — stops the RUN.
+> - > >\>= 8 of the LAST 10 attempts across >= 2 distinct boards — stops the RUN.
 >
 > Simulated at 20,000 trials (N=3) and 2,000 (N=999): the run-level stop fires
 > 0.00% at both sizes at p=5%, and 0.45% at p=15%. The cost the simulation
@@ -2886,6 +2886,9 @@ file."_
   queue: { depth: {queued, claimed, planned, authorized}, outstanding,
            age_p95_ms: {queued, claimed}, age_unknown },
   latency: { n, p50_ms, p95_ms, p50_hours, p95_hours },
+  wall: { n, p50_ms, p95_ms,                       // per-JOB wall time, in ms
+          by_stage: { [stage]: {n, p50_ms, p95_ms} },  // slowest stage first
+          slowest: {slug, ms, stage} | null },
   paused_boards: [{board_key, held, since, until, reason_kind}],
   newly_challenged: [{board_key, challenges, why}],
   stop: { active, reason },
@@ -2910,6 +2913,8 @@ auto queue outstanding=42 queued=40 claimed=1 planned=1 authorized=0 age_p95_que
 auto deferrals total=53 failures=2 consent-tickbox=21 unknown-field=17 unprobed-dropdown=13 board-paused=2
 auto class assent=21 understanding=30 environment=2
 auto latency n=7 p50h=18.4 p95h=41.2
+auto wall n=60 p50ms=4180 p95ms=39210 slowest=acme-sre(39210ms@plan)
+auto wall by_stage plan=5100/39210(n=31) authorize=3900/9100(n=22) submitted=3200/4400(n=7)
 auto paused greenhouse(12)
 auto WARN queue-stalled n=6
 auto WARN board-paused n=12

@@ -1645,6 +1645,19 @@ export function buildPlan({
       sel: r.sel ?? f.sel,
       how: verb,
       value: r.value,
+      // A multi-capable field (scan-page.js's f.multi) whose banked answer is
+      // a LIST: answer-bank's matchOption already grounded EVERY element
+      // against the field's own recorded options, or the row would not be OK
+      // (one ungrounded element defers the whole field as NEEDS-CHOICE — rule
+      // 1 unchanged). The engine selects each element; `value` stays the
+      // joined string every display path reads. Gated to the two verbs that
+      // can express a multiple selection so a hand-written scan cannot smuggle
+      // a values list onto fill/check.
+      ...((verb === "select" || verb === "combo") &&
+      Array.isArray(r.values) &&
+      r.values.length
+        ? { values: r.values }
+        : {}),
       label: displayLabel,
       ...mLabel(),
       // A combo strategy remembered from a previous application to this same

@@ -595,10 +595,21 @@ const atWordBoundary = (s, i) => i >= s.length || !/[a-z0-9]/i.test(s[i])
 // UNPROBED, not "a free-text field with nothing to check against" — return
 // needsChoice instead of silently accepting the first candidate, because
 // there is no way to know the value is actually offered.
+//
+// `multi`: true when the FIELD accepts several values (scan-page.js marks a
+// <select multiple> and a react-select token picker with `f.multi`). It flips
+// what a LIST answer means: on a single-value field a list is "ordered
+// alternatives, first offered wins" (unchanged); on a multi field it is "all
+// of these", so EVERY element must ground against the recorded options and
+// the grounded set comes back in `values`. One element the form does not
+// offer defers the whole field — a partial selection would silently drop part
+// of the user's recorded answer, which is worse than asking. A SINGLE value
+// on a multi field stays on the single ladder: selecting one option of many
+// is a complete answer, not a degraded one.
 export function matchOption(
   value,
   opts,
-  { requireOptions = false, label = "" } = {},
+  { requireOptions = false, label = "", multi = false } = {},
 ) {
   const candidates = (Array.isArray(value) ? value : [value])
     .map((v) => String(v ?? "").trim())
@@ -611,9 +622,13 @@ export function matchOption(
   }
   const real = opts.filter((o) => o && !/^(select|choose|--|\s*)$/i.test(o))
 
-  for (const v of candidates) {
+  // The per-candidate ladder, exactly as it has always run: exact text, then
+  // prefix-grounding in either direction, then the yes/no long forms. Hoisted
+  // so the multi branch below grounds each element by the SAME rules — a
+  // second copy of this ladder is a second rule to keep in sync.
+  const groundOne = (v) => {
     const exact = real.find((o) => o.trim().toLowerCase() === v.toLowerCase())
-    if (exact) return { value: exact }
+    if (exact) return exact
 
     const grounded = real.find((o) => {
       const ot = o.trim()
@@ -633,7 +648,7 @@ export function matchOption(
       if (vl.startsWith(otl)) return atWordBoundary(v, ot.length)
       return false
     })
-    if (grounded) return { value: grounded }
+    if (grounded) return grounded
 
     if (YES.test(v) || NO.test(v)) {
       const want = YES.test(v) ? YES_LONG : NO_LONG
@@ -642,8 +657,25 @@ export function matchOption(
         if (!m) return false
         return remainderIsGrounded(o.trim().slice(m[0].length), label)
       })
-      if (hit) return { value: hit }
+      if (hit) return hit
     }
+    return null
+  }
+
+  if (multi && Array.isArray(value) && candidates.length > 1) {
+    const picked = []
+    for (const v of candidates) {
+      const hit = groundOne(v)
+      if (!hit) return { value: candidates.join(", "), needsChoice: true }
+      // Two spellings grounding to one option is one selection, not two.
+      if (!picked.includes(hit)) picked.push(hit)
+    }
+    return { value: picked.join(", "), values: picked }
+  }
+
+  for (const v of candidates) {
+    const hit = groundOne(v)
+    if (hit) return { value: hit }
   }
   return { value: first, needsChoice: true }
 }
@@ -1072,6 +1104,14 @@ export function createResolver(profile = {}, answersDoc = {}) {
       f.opts ??
       (Array.isArray(f.o) ? f.o.map((o) => o.l).filter(Boolean) : null)
     const requireOptions = CHOICE_TYPES.has(f.t)
+    // One options object for every matchOption call below, so no tier can
+    // forget the multi flag and quietly collapse a list answer to its first
+    // element on a token picker. `f.multi` is scan-page.js's statement that
+    // the control ACCEPTS several values (<select multiple>, react-select
+    // multi); checkbox GROUPS never carry it — they are t:"checkbox" with
+    // stamped options, resolve one pick, and keep deferring as
+    // confirm-widget in buildPlan regardless of anything here.
+    const matchOpts = { requireOptions, label, multi: !!f.multi }
 
     // ---- own-job evidence, computed ONCE -----------------------------------
     // Read by the `current-job` rule filter further down AND by the fuzzy bank
@@ -1154,7 +1194,7 @@ export function createResolver(profile = {}, answersDoc = {}) {
     // Radio/checkbox groups have no element of their own; resolve the answer
     // to the stamped key of the option to click so filling stays mechanical.
     const result = { k: f.k }
-    const push = (status, source, value, note) => {
+    const push = (status, source, value, note, values) => {
       let extra = note
       let pick
       let pickSel
@@ -1178,6 +1218,11 @@ export function createResolver(profile = {}, answersDoc = {}) {
         status,
         source,
         value,
+        // The grounded set from matchOption's multi branch — every element an
+        // option the form really offers. `value` stays the joined string so
+        // every existing reader (defer entries, disclosure, the printed plan)
+        // keeps seeing one displayable string.
+        values: Array.isArray(values) && values.length ? values : undefined,
         pick,
         pickSel,
         note: extra,
@@ -1247,12 +1292,13 @@ export function createResolver(profile = {}, answersDoc = {}) {
       if (!out) {
         return push("UNKNOWN", idSource, "", `not in profile.${idSource}`)
       }
-      const m = matchOption(out, opts, { requireOptions, label })
+      const m = matchOption(out, opts, matchOpts)
       return push(
         m.needsChoice ? "NEEDS-CHOICE" : "OK",
         idSource,
         m.value,
         noteFor(m),
+        m.values,
       )
     }
 
@@ -1290,12 +1336,13 @@ export function createResolver(profile = {}, answersDoc = {}) {
           )
         }
       }
-      const m = matchOption(exact.answer, opts, { requireOptions, label })
+      const m = matchOption(exact.answer, opts, matchOpts)
       return push(
         m.needsChoice ? "NEEDS-CHOICE" : "OK",
         `${exact.id}@exact${(exact.source ?? "user") === "model" ? ":model" : ""}`,
         m.value,
         noteFor(m),
+        m.values,
       )
     }
 
@@ -1349,12 +1396,13 @@ export function createResolver(profile = {}, answersDoc = {}) {
             )
           }
         }
-        const m = matchOption(banked.answer, opts, { requireOptions, label })
+        const m = matchOption(banked.answer, opts, matchOpts)
         return push(
           m.needsChoice ? "NEEDS-CHOICE" : "OK",
           `${banked.id}@${banked.score.toFixed(2)}`,
           m.value,
           noteFor(m),
+          m.values,
         )
       }
       const decline = (opts ?? []).find((o) => DECLINE_RE.test(o))
@@ -1435,12 +1483,13 @@ export function createResolver(profile = {}, answersDoc = {}) {
           hit.note ?? `not in profile.${hit.source ?? "contact"}`,
         )
       }
-      const m = matchOption(hit.value, opts, { requireOptions, label })
+      const m = matchOption(hit.value, opts, matchOpts)
       return push(
         m.needsChoice ? "NEEDS-CHOICE" : "OK",
         hit.source,
         m.value,
         noteFor(m),
+        m.values,
       )
     }
 
@@ -1464,10 +1513,7 @@ export function createResolver(profile = {}, answersDoc = {}) {
       const optNote =
         opts && opts.length ? `; options: ${opts.join(" | ")}` : ""
       if (intent.decision === "answer") {
-        const m = matchOption(intent.value ? "Yes" : "No", opts, {
-          requireOptions,
-          label,
-        })
+        const m = matchOption(intent.value ? "Yes" : "No", opts, matchOpts)
         // The `a-NNN@` prefix is what fill-plan.mjs's BANK_ID_RE keys on, so
         // an assertion-class entry still routes through the datum/assertion
         // gate and still becomes a CONFIRM defer. A typed intent must not be
@@ -1513,12 +1559,13 @@ export function createResolver(profile = {}, answersDoc = {}) {
       ? null
       : bestAnswer(label, { fuzzy: bankFuzzyAllowed })
     if (best && best.score >= 0.7) {
-      const m = matchOption(best.answer, opts, { requireOptions, label })
+      const m = matchOption(best.answer, opts, matchOpts)
       return push(
         m.needsChoice ? "NEEDS-CHOICE" : "OK",
         `${best.id}@${best.score.toFixed(2)}`,
         m.value,
         noteFor(m),
+        m.values,
       )
     }
     if (best && best.score >= 0.45) {

@@ -379,18 +379,19 @@ it does three separate jobs.
 
 ### `scripts/documents/` — tailoring, verifying, rendering
 
-Eight files, 2,991 lines.
+Nine files, 3,245 lines.
 
-| File                  | Lines | What it does                                                                                                                               | Explained in                           |
-| --------------------- | ----: | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
-| `assemble-resume.mjs` |   777 | Deterministic resume assembly — tailoring with the model removed. Emits your own sentences verbatim, so it cannot invent anything.         | [`05-documents.md`](./05-documents.md) |
-| `verify-claims.mjs`   |   426 | **The truthfulness gate.** Checks every claim in a tailored document against the fact base and fails the document if one cannot be backed. | [`05-documents.md`](./05-documents.md) |
-| `keyword-plan.mjs`    |   419 | Works out which keywords a posting rewards and where they may honestly be placed — built before the resume is written.                     | [`05-documents.md`](./05-documents.md) |
-| `reuse-check.mjs`     |   389 | "Is this posting close enough to one already tailored for?" Recommends only; never reuses anything by itself.                              | [`05-documents.md`](./05-documents.md) |
-| `ats-lint.mjs`        |   287 | Checks that the rendered PDF's text layer is actually readable by an applicant-tracking system.                                            | [`05-documents.md`](./05-documents.md) |
-| `new-job.mjs`         |   279 | Scaffolds a per-job workspace: `jobs/<slug>/job.json` and `context.json`.                                                                  | [`05-documents.md`](./05-documents.md) |
-| `letter-plan.mjs`     |   272 | Plans cover letters per reuse cluster rather than per job, and states what that costs.                                                     | [`05-documents.md`](./05-documents.md) |
-| `render-pdf.mjs`      |   142 | Renders markdown to PDF using a locally installed Edge or Chrome. No network, no LLM; fact annotations stripped first.                     | [`05-documents.md`](./05-documents.md) |
+| File                  | Lines | What it does                                                                                                                               | Explained in                               |
+| --------------------- | ----: | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| `assemble-resume.mjs` |   777 | Deterministic resume assembly — tailoring with the model removed. Emits your own sentences verbatim, so it cannot invent anything.         | [`05-documents.md`](./05-documents.md)     |
+| `verify-claims.mjs`   |   426 | **The truthfulness gate.** Checks every claim in a tailored document against the fact base and fails the document if one cannot be backed. | [`05-documents.md`](./05-documents.md)     |
+| `keyword-plan.mjs`    |   419 | Works out which keywords a posting rewards and where they may honestly be placed — built before the resume is written.                     | [`05-documents.md`](./05-documents.md)     |
+| `reuse-check.mjs`     |   389 | "Is this posting close enough to one already tailored for?" Recommends only; never reuses anything by itself.                              | [`05-documents.md`](./05-documents.md)     |
+| `ats-lint.mjs`        |   287 | Checks that the rendered PDF's text layer is actually readable by an applicant-tracking system.                                            | [`05-documents.md`](./05-documents.md)     |
+| `new-job.mjs`         |   279 | Scaffolds a per-job workspace: `jobs/<slug>/job.json` and `context.json`.                                                                  | [`05-documents.md`](./05-documents.md)     |
+| `letter-plan.mjs`     |   272 | Plans cover letters per reuse cluster rather than per job, and states what that costs.                                                     | [`05-documents.md`](./05-documents.md)     |
+| `reverify.mjs`        |   254 | Re-runs verify-claims for documents verified against an older fact base — one edit invalidates every row, and this re-checks them.         | [`09-auto-runner.md`](./09-auto-runner.md) |
+| `render-pdf.mjs`      |   142 | Renders markdown to PDF using a locally installed Edge or Chrome. No network, no LLM; fact annotations stripped first.                     | [`05-documents.md`](./05-documents.md)     |
 
 ### `scripts/apply/` — reading and filling an application form
 
@@ -459,7 +460,7 @@ runs, and the machinery that stops it.
 | `guard.mjs`          |   587 | The filesystem boundary, the STOP kill switch and its four scopes, and the append-only alert inbox.                          | [`10-auto-safety.md`](./10-auto-safety.md) |
 | `job.mjs`            |   568 | The per-job state machine: `queued → claimed → planned → …`, one application start to finish.                                | [`09-auto-runner.md`](./09-auto-runner.md) |
 | `submit.mjs`         |   532 | `submitOnce()` — **the only function in this repository permitted to contain a submit click**, and its eleven preconditions. | [`09-auto-runner.md`](./09-auto-runner.md) |
-| `cycle.mjs`          |   420 | One whole cycle: find → screen → prep → tailor → apply. The thing a scheduler runs twice a day.                              | [`09-auto-runner.md`](./09-auto-runner.md) |
+| `cycle.mjs`          |   486 | One whole cycle: find → screen → reverify → prep → tailor → apply. The thing a scheduler runs twice a day.                   | [`09-auto-runner.md`](./09-auto-runner.md) |
 | `trust.mjs`          |   411 | Five mechanical facts that decide whether a board may be submitted to unattended. Never a model's impression of a page.      | [`10-auto-safety.md`](./10-auto-safety.md) |
 | `taxonomy.mjs`       |   394 | The closed vocabulary of defer/failure reasons, and which single one gets recorded when several apply.                       | [`10-auto-safety.md`](./10-auto-safety.md) |
 | `multipage.mjs`      |   385 | `walkPages()` — resolves a multi-page application form one page at a time.                                                   | [`09-auto-runner.md`](./09-auto-runner.md) |

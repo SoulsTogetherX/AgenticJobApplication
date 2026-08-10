@@ -140,6 +140,64 @@ test("the happy dry-run path reaches submitted with no reason to explain", async
   assert.equal(row.reason_kind, null)
 })
 
+// --- the duration reaches the row, on every exit ---------------------------
+//
+// runJob has returned `wall_ms` since it existed and persisted it nowhere, so
+// the digest had no per-job sample and reported n=0. The return value and the
+// column must be the SAME number: a caller that trusts one and a digest that
+// reads the other would disagree about the same job.
+
+test("a submitted job records how long it took, in the row", async (t) => {
+  const r = rig(t)
+  const out = await runJob(r.base)
+  assert.equal(out.state, "submitted")
+  const row = queue(r.db)
+  assert.ok(
+    Number.isInteger(row.wall_ms) && row.wall_ms >= 0,
+    `the queue row must carry a duration, got ${JSON.stringify(row.wall_ms)}`,
+  )
+  assert.ok(
+    Math.abs(row.wall_ms - out.wall_ms) <= 10,
+    `the row (${row.wall_ms}ms) and the return value (${out.wall_ms}ms) must ` +
+      "be the same measurement",
+  )
+})
+
+test("a job that ended at a deferral records its duration too, with the stage", async (t) => {
+  // THE FAILURE ARM, and the one that matters more: a defer is the common
+  // outcome, so timing only the successes would measure the fast half of the
+  // distribution and call it the distribution.
+  const r = rig(t, {
+    limits: { auto_apply: { ...LIMITS.auto_apply, board_allowlist: {} } },
+  })
+  const out = await runJob(r.base)
+  assert.equal(out.state, "deferred")
+  const row = queue(r.db)
+  assert.ok(
+    Number.isInteger(row.wall_ms) && row.wall_ms >= 0,
+    "a deferred job is still a job that took time",
+  )
+  assert.equal(
+    row.reason_stage,
+    "claim",
+    "and the stage it stopped at is what makes the duration attributable",
+  )
+})
+
+test("the loser of a claim race writes no duration onto the winner's row", async (t) => {
+  const r = rig(t)
+  enqueueAutoJobs(r.db, [{ slug: SLUG, origin: ORIGIN }])
+  claimAutoJob(r.db, SLUG, { run_id: "someone-else", origin: ORIGIN })
+  const out = await runJob(r.base)
+  assert.equal(out.state, NOT_CLAIMED)
+  assert.equal(
+    queue(r.db).wall_ms,
+    null,
+    "not-claimed does no work; a duration here would be this worker timing " +
+      "somebody else's job",
+  )
+})
+
 test("the trust gate runs BEFORE the browser opens", async (t) => {
   // Deliberately first: a board the user has not allowlisted costs one row and
   // no page load, which is what makes the gate cheap enough to be strict.

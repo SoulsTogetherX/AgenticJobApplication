@@ -171,6 +171,13 @@ export async function runJob({
     board_key: job.board_key ?? null,
     origin: job.origin ?? null,
   }
+  /** How long this job has been running, at the moment of asking. Written to
+   *  the queue row at every TERMINAL state and returned to the caller, so the
+   *  number the digest reports and the number the pool sees are the same one.
+   *  It was computed and returned here for as long as this function has
+   *  existed, and persisted nowhere — so `auto latency` had no per-job sample
+   *  to report and said n=0. */
+  const wallMs = () => Date.now() - t0
   const done = (state, record) => ({
     slug,
     state,
@@ -178,7 +185,7 @@ export async function runJob({
     stage: record?.stage ?? null,
     detail: record?.detail ?? null,
     submitted: state === "submitted",
-    wall_ms: Date.now() - t0,
+    wall_ms: wallMs(),
   })
 
   /** Write a terminal row and return the result. One funnel, so no exit can
@@ -188,6 +195,7 @@ export async function runJob({
     setAutoJobState(db, slug, record.state, {
       run_id: run.id,
       ...toStateOpts(record),
+      wall_ms: wallMs(),
     })
     if (record.state === "failed") run.failJob(job, detail)
     else run.deferJob(job, `${record.kind}: ${record.detail ?? ""}`)
@@ -381,6 +389,7 @@ export async function runJob({
           run_id: run.id,
           ...toStateOpts(walkDefer),
           reason_detail: `${walkDefer.detail ?? ""}${suffix}`,
+          wall_ms: wallMs(),
         })
         if (walkDefer.state === "failed") run.failJob(job, walkDefer.detail)
         else run.deferJob(job, `${walkDefer.kind}: ${walkDefer.detail ?? ""}`)
@@ -397,6 +406,7 @@ export async function runJob({
       setAutoJobState(db, slug, planDefer.state, {
         run_id: run.id,
         ...toStateOpts(planDefer),
+        wall_ms: wallMs(),
       })
       if (planDefer.state === "failed") run.failJob(job, planDefer.detail)
       else run.deferJob(job, `${planDefer.kind}: ${planDefer.detail ?? ""}`)
@@ -499,7 +509,10 @@ export async function runJob({
     }
 
     if (result.outcome === "dry-run" || result.outcome === "confirmation") {
-      setAutoJobState(db, slug, "submitted", { run_id: run.id })
+      setAutoJobState(db, slug, "submitted", {
+        run_id: run.id,
+        wall_ms: wallMs(),
+      })
       return done("submitted", null)
     }
 

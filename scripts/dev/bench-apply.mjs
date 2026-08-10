@@ -561,6 +561,37 @@ export function instrumentedPage(spec = {}) {
       if (src.includes("(0, eval)") && typeof arg === "string") return undefined
       if (src.includes("a.scanner")) return structuredClone(scan)
       if (src.includes("__ajLastScan")) return undefined
+      // THE SETTLE PROBE, and it has to be answered in the model's own terms or
+      // the engine takes a branch no real page would put it on. It polls one
+      // question per stamped upload — has this input reacted to its file? — and
+      // a double that cannot answer makes the engine stop settling AT ONCE,
+      // which reports as zero sleep and reads as a speed-up. That is M6's exact
+      // shape (a number that measures the double refusing, not the product
+      // running), so `uploadDetaches` — the same profile flag that used to
+      // decide whether the old per-upload detach wait fired — decides it here:
+      //
+      //   uploadDetaches true  -> "gone": the board swapped the input out, the
+      //                           settle has its evidence and exits early.
+      //   uploadDetaches false -> "held": nothing observable happened, so the
+      //                           settle pays its ceiling in poll gaps, which
+      //                           is what a real board of that kind costs.
+      //
+      // `err: ""` throughout: this model has no rendered validation text, so
+      // the quiet arm has nothing to see and pays its ceiling — the honest
+      // answer for a page with no board-side validation.
+      // MATCHED ON THE PROBE'S OWN KEY, never on "upl"/"err": both of those
+      // substrings appear in the VERIFY pass's source too ("upload", "errors"),
+      // and a double that matched on them answered the verify call with this
+      // shape — which cost E4 its `landed` list and reported a filled field as
+      // failed (tests/apply/edge-cases.test.mjs).
+      if (src.includes("ajSettleProbe")) {
+        return {
+          upl: (Array.isArray(arg) ? arg : []).map(() =>
+            uploadDetaches ? "gone" : "held",
+          ),
+          err: "",
+        }
+      }
       if (src.includes("data-ajup")) return true
       if (src.includes("requiredEmpty")) {
         return {
@@ -2111,14 +2142,34 @@ export async function benchBrowser({ board, boardName, pings = 20 } = {}) {
 //   unconditional_sleep_ms  measured. Flat page.waitForTimeout, paid in full
 //                           every time regardless of what the DOM does. This
 //                           is the term that is removable by editing code.
-//   post_upload_remount_ms  measured. The `detached` wait on the upload's own
-//                           `data-ajup` stamp — i.e. how long React actually
-//                           takes to swap the file input for the attached-file
-//                           view. Its 1000ms ceiling is in the source and has
-//                           been quoted as a cost; this is the first number
-//                           that says what it really costs. Attributed by
-//                           selector out of clockedPage's `by_target`, never
-//                           by subtracting one total from another.
+//                           SINCE 2026-08-10 it also carries the settle stage's
+//                           poll gaps, which are flat sleeps between two
+//                           observations of the page — see settle_ms, which
+//                           reports that stage's whole wall cost separately so
+//                           the two are never inferred from each other.
+//   settle_ms               measured, by the ENGINE, and read off its report
+//                           (`report.settle`) rather than reconstructed here.
+//                           One stage now covers what used to be a per-upload
+//                           `detached` wait plus a flat pre-verify sleep: it
+//                           watches the stamped inputs and the board's
+//                           validation text and ends on whichever evidence
+//                           arrives, or on its ceiling. `settle_uploads` and
+//                           `settle_quiet` say which arm resolved, so a
+//                           ceiling paid in full is never read as a settle
+//                           time — the mistake B1 had to correct about the
+//                           column below.
+//   post_upload_remount_ms  UNMEASURED since 2026-08-10, and null with a
+//                           reason. It attributed the `detached` wait on each
+//                           upload's own `data-ajup` stamp, by selector out of
+//                           clockedPage's `by_target`. B1 measured that wait
+//                           settling by TIMEOUT on all three boards in every
+//                           run — 2,014.58ms of a 2,753.73ms Greenhouse fill,
+//                           i.e. a ceiling paid in full and not a remount cost
+//                           at all — so the engine no longer waits per upload
+//                           and there is nothing left to attribute. The
+//                           attribution code below is KEPT, not deleted: if a
+//                           per-upload wait ever comes back it is measured the
+//                           day it does, instead of arriving unpriced.
 //
 // ONE REAL FILE UPLOAD, and it is verified rather than assumed: after the fill
 // the leg reads `input[type=file].files.length` back out of the real DOM. A
@@ -2261,11 +2312,35 @@ export async function benchBrowserFill({
       per_input: attached,
     }
 
+    // The settle stage, read off the engine's own report. Reported even when
+    // absent (an older engine, or a fill that touched nothing and settled
+    // nothing) — as null with a method, never as a zero that would average in.
+    const settle = report.settle || null
     out.legs.fill = {
       method: "measured",
       fill_wall_ms: round(fillMs),
       unconditional_sleep_ms: round(cost.slept_ms),
-      post_upload_remount_ms: remount.ms,
+      settle_ms: settle ? round(settle.ms) : null,
+      settle_method: settle ? "measured" : "unmeasured",
+      ...(settle
+        ? { settle_quiet: settle.quiet, settle_uploads: settle.uploads }
+        : {
+            settle_why:
+              "the fill report carries no `settle` — nothing waited, or an " +
+              "engine that predates the stage",
+          }),
+      // Null-with-a-reason whenever no per-upload wait was issued at all,
+      // which is every run since the engine stopped issuing them. A 0 here
+      // would average into a distribution as if it were a fast remount.
+      post_upload_remount_ms: remount.n ? remount.ms : null,
+      ...(remount.n
+        ? {}
+        : {
+            post_upload_remount_method: "unmeasured",
+            post_upload_remount_why:
+              "the engine issues no per-upload `detached` wait; the window a " +
+              "board gets to react is now the settle stage — see settle_ms",
+          }),
       post_upload_remount_ceiling_ms: remount.ceiling_ms,
       post_upload_remount_waits: remount.n,
       conditional_total_ms: round(cost.conditional_ms),

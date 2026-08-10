@@ -691,14 +691,23 @@ and the count of fields that could not be joined is reported, "because a join
 that silently drops rows is the same failure again."
 
 **`--browser-fill`** runs the fill engine in Chromium including **one real file
-upload**, and reports three columns separately: `fill_wall_ms`,
-`unconditional_sleep_ms`, and `post_upload_remount_ms` — how long the page really
-takes to swap the file input for its "file attached" view, attributed by selector
-out of `by_target` rather than by subtracting one total from another. It then
-reads `input[type=file].files.length` back out of the real DOM, because
+upload**, and reports its wait columns separately: `fill_wall_ms`,
+`unconditional_sleep_ms`, and `settle_ms` — the settle stage's own wall clock,
+read off the engine's `report.settle` rather than reconstructed here, with
+`settle_quiet` / `settle_uploads` saying which arm ended it. **A ceiling paid in
+full is not a settle time**, and those two flags are what keep the two apart.
+It then reads `input[type=file].files.length` back out of the real DOM, because
 "setInputFiles fails silently often enough that this had to be checked rather
-than trusted". If nothing attached, the remount column flips to `null` with a
-reason instead of reporting a cost for an upload that did not happen.
+than trusted". If nothing attached, the settle column is still real but the
+upload columns flip to `null` with a reason rather than reporting a cost for an
+upload that did not happen.
+
+`post_upload_remount_ms` — the per-upload `detached` wait, attributed by selector
+out of `by_target` — is **`null` and unmeasured since 2026-08-10**: B1 measured
+that wait timing out on every board in every run, so the engine no longer issues
+one and there is nothing left to attribute (M11). The attribution code is kept
+rather than deleted, so that if a per-upload wait ever returns it is priced the
+day it does instead of arriving unmeasured.
 
 > **Known defect (2026-08-05 audit).** `benchBrowserFill`'s `page` parameter is
 > destructured, copied into the result as `page: pageNo`, and never used again —
@@ -709,7 +718,7 @@ reason instead of reporting a cost for an upload that did not happen.
 
 ## 2.10 Reading the output
 
-Here is a real run, taken on 2026-08-06 against the Greenhouse fixture:
+Here is a real run, taken on 2026-08-10 against the Greenhouse fixture:
 
 ```
 bench-apply — board=greenhouse profile=typical runs=2
@@ -718,14 +727,14 @@ column          value    method      note
 ------------------------------------------------------------------------------
 round_trips     5        derived     navigate, scan, scan-to-disk, fill, advance
 sleep_ms        450      measured    unconditional + typing, on the path taken
-  worst_case    2830     measured    + every conditional ceiling (2380)
+  worst_case    830      measured    + every conditional ceiling (380)
 model_turns     12       derived     12 prescribed steps
-wall_ms         308.6    measured    median of 2; stddev 66.81
+wall_ms         210.1    measured    median of 2; stddev 17.94
 
 per leg (sleep ms: unconditional / typing / conditional ceiling)
   scan_engine         0 /      0 /    380   cdp_calls=14 typed_chars=0
   scan_driver         0 /      0 /    380   cdp_calls=15 typed_chars=0
-  fill              450 /      0 /   2000   cdp_calls=42 typed_chars=0
+  fill              450 /      0 /      0   cdp_calls=46 typed_chars=0
 
 twin drift (driver - engine): none — the two scan twins cost the same
 plan: ready=false items=6 defer=3 probe_needed=1 reason=3 deferred field(s) need a human
@@ -733,23 +742,30 @@ gate: confirm=1 confirm-widget=0 (required 0) consent=0 other=2  [f1:unknown, f8
 fill: ok=6 failed=0 deferred=3
 
 legs (ms, median):
-  serve_ms              46.64  (10.3–82.98, sd 36.34)
-  scan_engine_ms         2.69  (1.43–3.95, sd 1.26)
-  scan_driver_ms          0.8  (0.38–1.23, sd 0.43)
-  plan_ms              242.42  (216.35–268.49, sd 26.07)
-  fill_ms                4.96  (4.1–5.82, sd 0.86)
+  serve_ms               18.15  (6.25–30.05, sd 11.9)
+  scan_engine_ms          2.54  (1.82–3.27, sd 0.72)
+  scan_driver_ms          0.61  (0.39–0.82, sd 0.21)
+  plan_ms               159.72  (158–161.44, sd 1.72)
+  fill_ms                 3.87  (2.96–4.78, sd 0.91)
 ```
 
 Reading it top to bottom:
 
-- **`sleep_ms 450`** — the whole accounted flow contains exactly one flat sleep,
-  the 450 ms blur-and-settle at the end of the fill. **`worst_case 2830`** adds
-  every conditional ceiling; if no page ever satisfied any conditional wait, this
-  run would cost 2,830 ms of waiting instead of 450.
+- **`sleep_ms 450`** — the whole accounted flow's flat sleep, all of it the
+  end-of-fill settle. It is the same 450 the old flat pre-verify sleep cost,
+  and deliberately so: the settle polls the page in 90 ms gaps, which divide
+  its 450 ms ceiling evenly, so this column stays comparable across that change
+  and the perf gate's baseline keeps its meaning (M11).
+- **`worst_case 830`** adds every conditional ceiling; if no page ever satisfied
+  any conditional wait, this run would cost 830 ms of waiting instead of 450.
+  **This number was 2,830 before 2026-08-10**, and the 2,000 ms that left was the
+  fill's two per-upload `detached` waits — measured never to exit early on any
+  fixture, and now gone (M11).
 - **The per-leg table** attributes it: both scanners contribute 0 flat sleep and
-  a 380 ms ceiling; the fill contributes the whole 450 ms and a 2,000 ms ceiling.
-  If you wanted to make this faster, the fill's conditional waits are where the
-  headroom is.
+  a 380 ms ceiling; the fill contributes the whole 450 ms and, since M11, **no
+  conditional ceiling at all** — its settle is a poll loop, so its waiting is
+  accounted as flat sleep rather than as a ceiling. The headroom that used to be
+  named here has been taken.
 - **`twin drift: none`** — the two scanner copies currently cost the same. This
   line going non-zero means one twin has been optimised and the other has not.
 - **`plan: ready=false … defer=3`** — three fields need a human. **`gate:`**
@@ -757,10 +773,10 @@ Reading it top to bottom:
   fields. This is the safety machinery working, not a fault.
 - **`fill: ok=6 failed=0 deferred=3`** — six fields filled, none failed. `failed=0`
   is what makes this run a legitimate baseline (§2.8).
-- **`legs (ms, median)`** — where the wall time went. Note `plan_ms 242` dwarfs
+- **`legs (ms, median)`** — where the wall time went. Note `plan_ms 160` dwarfs
   everything else, because the plan leg starts a whole separate Node process.
-  Also note `serve_ms` swings 10 ms → 83 ms across two samples; that is noise, and
-  the `sd 36.34` tells you so.
+  Also note `serve_ms` swings 6 ms → 30 ms across two samples; that is noise, and
+  the `sd 11.9` tells you so.
 
 The `--ledger` form of the same run:
 

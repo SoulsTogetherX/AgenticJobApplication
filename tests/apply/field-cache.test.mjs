@@ -1,0 +1,694 @@
+// The cache exists to skip re-probing dropdowns in the browser. The risks are
+// that it goes stale silently, or that it overwrites something freshly read —
+// both would be worse than not caching at all.
+import test from "node:test"
+import assert from "node:assert/strict"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import { spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
+import {
+  fingerprint,
+  hostOf,
+  loadCache,
+  saveCache,
+  applyCache,
+  recordCache,
+  invalidate,
+  recordVia,
+  recordShapeHistory,
+  CACHE_VERSION,
+} from "../../scripts/apply/field-cache.mjs"
+
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
+
+const scanOf = (fields) => ({
+  url: "https://job-boards.greenhouse.io/x/jobs/1",
+  fields,
+})
+
+test("the key follows the form's required shape, not its URL", () => {
+  const a = scanOf([
+    { k: "f1", t: "text", l: "First Name", req: true },
+    { k: "f2", t: "combo", l: "Degree", req: true },
+  ])
+  // Same required labels in a different order, different URL, different options.
+  const b = scanOf([
+    { k: "fA", t: "combo", l: "  degree  ", req: true, opts: ["x"] },
+    { k: "fB", t: "text", l: "First Name", req: true },
+  ])
+  b.url = "https://job-boards.greenhouse.io/y/jobs/99"
+  assert.equal(fingerprint(a, "greenhouse"), fingerprint(b, "greenhouse"))
+})
+
+test("optional fields do not churn the key", () => {
+  const base = [{ k: "f1", t: "text", l: "First Name", req: true }]
+  const a = scanOf(base)
+  const b = scanOf([...base, { k: "f2", t: "combo", l: "Veteran Status" }])
+  assert.equal(fingerprint(a, "greenhouse"), fingerprint(b, "greenhouse"))
+})
+
+test("a redesigned form gets a different key, so it re-probes", () => {
+  const a = scanOf([{ k: "f1", t: "text", l: "First Name", req: true }])
+  const b = scanOf([
+    { k: "f1", t: "text", l: "First Name", req: true },
+    { k: "f2", t: "combo", l: "Work Authorization", req: true },
+  ])
+  assert.notEqual(fingerprint(a, "greenhouse"), fingerprint(b, "greenhouse"))
+})
+
+test("the same shape on a different ATS is a different key", () => {
+  const s = scanOf([{ k: "f1", t: "text", l: "First Name", req: true }])
+  assert.notEqual(fingerprint(s, "greenhouse"), fingerprint(s, "lever"))
+})
+
+// --- Phase 0.5: the host is part of the key --------------------------------
+//
+// The old basis was `atsId + "|" + labels`, cross-tenant by construction: any
+// two employers whose REQUIRED labels agree (name, email, resume — the common
+// case) shared one fingerprint, so employer B was served employer A's
+// remembered option lists and selectors. That is wrong data, not a missed
+// optimisation: a "How did you hear about us?" list is written per employer.
+test("two different hosts with identical label sets are different keys", () => {
+  const fields = [
+    { k: "f1", t: "text", l: "First Name", req: true },
+    { k: "f2", t: "text", l: "Email", req: true },
+  ]
+  const a = { url: "https://acme.wd5.myworkdayjobs.com/careers/job/1", fields }
+  const b = {
+    url: "https://globex.wd5.myworkdayjobs.com/careers/job/1",
+    fields,
+  }
+  assert.notEqual(fingerprint(a, "workday"), fingerprint(b, "workday"))
+})
+
+test("the host is normalized: case and a leading www. do not fork the key", () => {
+  const fields = [{ k: "f1", t: "text", l: "First Name", req: true }]
+  const plain = { url: "https://jobs.lever.co/acme/1", fields }
+  const shouty = { url: "https://JOBS.LEVER.CO/acme/1", fields }
+  const dubdub = { url: "https://www.jobs.lever.co/acme/1", fields }
+  assert.equal(fingerprint(plain, "lever"), fingerprint(shouty, "lever"))
+  assert.equal(fingerprint(plain, "lever"), fingerprint(dubdub, "lever"))
+})
+
+test("a scan with no URL, or an unparseable one, keys on a sentinel instead of throwing", () => {
+  // fingerprint() runs on the plan path before anything is filled, and a scan
+  // fixture without a URL is a legitimate input. It must not throw, and it
+  // must not silently share a key with a real board.
+  const fields = [{ k: "f1", t: "text", l: "First Name", req: true }]
+  const none = fingerprint({ fields }, "greenhouse")
+  const empty = fingerprint({ url: "", fields }, "greenhouse")
+  const junk = fingerprint({ url: "not a url", fields }, "greenhouse")
+  const real = fingerprint(
+    { url: "https://job-boards.greenhouse.io/acme/jobs/1", fields },
+    "greenhouse",
+  )
+  assert.equal(none, empty)
+  assert.equal(none, junk, "no URL and an unparseable URL are the same unknown")
+  assert.notEqual(none, real, "and neither may collide with a real host")
+})
+
+test("hostOf strips the port and the path, keeps the subdomain", () => {
+  assert.equal(
+    hostOf("https://boards.greenhouse.io:8443/acme/jobs/1"),
+    "boards.greenhouse.io",
+  )
+  assert.equal(
+    hostOf("https://acme.wd5.myworkdayjobs.com/x"),
+    "acme.wd5.myworkdayjobs.com",
+  )
+  assert.equal(hostOf(undefined), "?")
+})
+
+// THE RESIDUAL, PINNED DELIBERATELY. Phase 0.5 says "registrable host", and
+// that is what shipped — but the host does NOT separate path-based tenancy,
+// which is the majority board shape here. Two employers on Greenhouse (or
+// Lever) with identical required labels STILL share a fingerprint after this
+// change. This is asserted rather than left unstated so nobody reads
+// "cross-tenant fixed" off the item title. Closing it means keying on the
+// first path segment, which over-fragments embedded Greenhouse
+// (`/embed/job_app?token=<per-posting>`) into a cache that never hits — the
+// silent-amber failure the v2/v3 discard bug already cost this project once.
+// If someone closes it, THIS TEST GOES RED, and that is the intended signal to
+// come read this comment.
+test("KNOWN RESIDUAL: same host, different tenant path still collides", () => {
+  const fields = [
+    { k: "f1", t: "text", l: "First Name", req: true },
+    { k: "f2", t: "text", l: "Email", req: true },
+  ]
+  const empA = { url: "https://job-boards.greenhouse.io/emp-a/jobs/1", fields }
+  const empB = { url: "https://job-boards.greenhouse.io/emp-b/jobs/2", fields }
+  assert.equal(
+    fingerprint(empA, "greenhouse"),
+    fingerprint(empB, "greenhouse"),
+    "not a passing property — a documented, priced-out gap (see the comment)",
+  )
+})
+
+test("the v3 cache written before the host was in the basis is discarded", (t) => {
+  // The bump is deliberate, not a ride on the accident that the on-disk file
+  // was already stale: every v3 fingerprint was computed WITHOUT the host, so
+  // re-serving one would hand a remembered shape to the wrong tenant.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "field-cache-v3-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const f = path.join(dir, "c.json")
+  fs.writeFileSync(
+    f,
+    JSON.stringify({ v: 3, forms: { old: { ats: "greenhouse", fields: {} } } }),
+  )
+  const restore = console.error
+  console.error = () => {}
+  let loaded
+  try {
+    loaded = loadCache(f)
+  } finally {
+    console.error = restore
+  }
+  assert.equal(CACHE_VERSION, 4, "0.5 bumped it; a silent revert is a re-serve")
+  assert.deepEqual(loaded.forms, {})
+  assert.equal(loaded.discarded.fromVersion, 3)
+})
+
+test("cached options fill in a scan that skipped the probe", () => {
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const probed = scanOf([
+    {
+      k: "f1",
+      t: "combo",
+      l: "Degree*",
+      req: true,
+      opts: ["Bachelor's Degree", "Master's Degree"],
+      sel: "#deg",
+    },
+  ])
+  const fp = fingerprint(probed, "greenhouse")
+  recordCache(cache, { fp, scan: probed, atsId: "greenhouse", url: probed.url })
+
+  const unprobed = scanOf([{ k: "fZ", t: "combo", l: "Degree*", req: true }])
+  const stats = applyCache(unprobed, cache.forms[fp])
+  assert.equal(stats.hits, 1)
+  assert.deepEqual(unprobed.fields[0].opts, [
+    "Bachelor's Degree",
+    "Master's Degree",
+  ])
+  assert.equal(unprobed.fields[0].sel, "#deg", "the selector is remembered too")
+})
+
+test("a genuine miss is distinguishable from an empty form", () => {
+  // A form the cache has never seen, with a combo that was not probed either
+  // (e.g. scanned with `__ajScan(false)`): previously this incremented
+  // neither `hits` nor `probed`, so it read exactly like a form with no
+  // combos at all — both were "0/0". `miss` is what makes them different.
+  const brandNewForm = scanOf([
+    { k: "f1", t: "combo", l: "Work Authorization", req: true },
+  ])
+  const stats = applyCache(brandNewForm, undefined)
+  assert.equal(stats.hits, 0)
+  assert.equal(stats.probed, 0)
+  assert.equal(
+    stats.miss,
+    1,
+    "a real gap must not read the same as nothing to do",
+  )
+
+  const textOnlyForm = scanOf([
+    { k: "f1", t: "text", l: "First Name", req: true },
+  ])
+  const nothingToDo = applyCache(textOnlyForm, undefined)
+  assert.equal(nothingToDo.hits, 0)
+  assert.equal(nothingToDo.probed, 0)
+  assert.equal(
+    nothingToDo.miss,
+    0,
+    "a form with nothing to probe is a real zero",
+  )
+})
+
+test("a cache entry that never recorded options for a field is still a miss", () => {
+  // The cache KNOWS about this field (label/type/req were recorded) but never
+  // captured its options — e.g. a first pass ran with the probe skipped.
+  // Knowing the field exists is not the same as knowing what it offers.
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const scan = scanOf([{ k: "f1", t: "select", l: "Country", req: true }])
+  const fp = fingerprint(scan, "greenhouse")
+  recordCache(cache, { fp, scan, atsId: "greenhouse" })
+
+  const stats = applyCache(
+    scanOf([{ k: "f9", t: "select", l: "Country", req: true }]),
+    cache.forms[fp],
+  )
+  assert.equal(stats.hits, 0)
+  assert.equal(stats.miss, 1)
+})
+
+test("optsTruncated survives a cache round trip", () => {
+  // scan-page.js does not emit this signal yet (MAX_OPTS truncates silently),
+  // but field-cache.mjs's OWN cap must never re-serve a cut list as though it
+  // were complete — and once the scanner does start flagging a cut, this is
+  // the path that carries it through untouched.
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const scan = scanOf([
+    {
+      k: "f1",
+      t: "combo",
+      l: "Country",
+      req: true,
+      opts: ["United States", "Canada"],
+      optsTruncated: true,
+    },
+  ])
+  const fp = fingerprint(scan, "greenhouse")
+  recordCache(cache, { fp, scan, atsId: "greenhouse" })
+  assert.equal(cache.forms[fp].fields["country|combo"].optsTruncated, true)
+
+  const unprobed = scanOf([{ k: "f9", t: "combo", l: "Country", req: true }])
+  applyCache(unprobed, cache.forms[fp])
+  assert.equal(
+    unprobed.fields[0].optsTruncated,
+    true,
+    "a re-served cached list must still say it might be incomplete",
+  )
+})
+
+test("field-cache's own cap flags truncation even without an incoming signal", () => {
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const longList = Array.from({ length: 90 }, (_, i) => `Country ${i}`)
+  const scan = scanOf([
+    { k: "f1", t: "combo", l: "Country", req: true, opts: longList },
+  ])
+  const fp = fingerprint(scan, "greenhouse")
+  recordCache(cache, { fp, scan, atsId: "greenhouse" })
+  const stored = cache.forms[fp].fields["country|combo"]
+  assert.equal(stored.opts.length, 60, "still capped, for file size")
+  assert.equal(stored.optsTruncated, true)
+})
+
+test("recordVia persists which combo strategy worked, keyed off the plan", () => {
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const scan = scanOf([
+    { k: "f1", t: "combo", l: "School", req: true, opts: ["UNLV"] },
+  ])
+  const fp = fingerprint(scan, "greenhouse")
+  recordCache(cache, { fp, scan, atsId: "greenhouse" })
+
+  const plan = {
+    items: [{ k: "f1", how: "combo", label: "School", value: "UNLV" }],
+  }
+  // Exactly the shape fill-engine.mjs's fillPage() returns: comboVia is
+  // { [item.k]: via }, comboStrategy is the board-wide winner.
+  const report = { comboVia: { f1: "type-click" }, comboStrategy: "type-click" }
+  const updated = recordVia(cache, fp, plan, report)
+  assert.equal(updated, 1)
+  assert.equal(cache.forms[fp].fields["school|combo"].via, "type-click")
+  assert.equal(
+    cache.forms[fp].comboStrategy,
+    "type-click",
+    "the board-level summary is also remembered",
+  )
+
+  // And it round-trips back out through applyCache, onto a later unprobed scan.
+  const later = scanOf([{ k: "f9", t: "combo", l: "School", req: true }])
+  applyCache(later, cache.forms[fp])
+  assert.equal(later.fields[0].via, "type-click")
+})
+
+test("recordVia is a no-op for a fingerprint the cache has never seen", () => {
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const updated = recordVia(
+    cache,
+    "nope",
+    { items: [] },
+    {
+      comboVia: { f1: "type-click" },
+    },
+  )
+  assert.equal(updated, 0)
+})
+
+test("recordVia uses item.matchedLabel when the plan showed the user a different string", () => {
+  // fill-plan.mjs's buildPlan() shows the user the PAGE's visible label
+  // (`lSeen`) when it disagrees with the label the scan actually matched on
+  // (fieldKey() below, and the cache's own key, are always the MATCHED
+  // string — buildPlan never repoints that). Without preferring
+  // matchedLabel here, a combo field with a display divergence would look
+  // up the cache by the wrong key and silently stop being found — not a
+  // wrong VALUE, just a missed optimisation (the combo strategy hint is
+  // never remembered for that one field).
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const scan = scanOf([
+    { k: "f1", t: "combo", l: "School (internal)", req: true, opts: ["UNLV"] },
+  ])
+  const fp = fingerprint(scan, "greenhouse")
+  recordCache(cache, { fp, scan, atsId: "greenhouse" })
+
+  const plan = {
+    items: [
+      {
+        k: "f1",
+        how: "combo",
+        label: "School",
+        matchedLabel: "School (internal)",
+        value: "UNLV",
+      },
+    ],
+  }
+  const report = { comboVia: { f1: "type-click" }, comboStrategy: "type-click" }
+  const updated = recordVia(cache, fp, plan, report)
+  assert.equal(updated, 1, "must find the field by the MATCHED label")
+  assert.equal(
+    cache.forms[fp].fields["school (internal)|combo"].via,
+    "type-click",
+  )
+})
+
+test("a fresh probe always beats a remembered one", () => {
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const old = scanOf([
+    { k: "f1", t: "combo", l: "Degree", req: true, opts: ["stale"] },
+  ])
+  const fp = fingerprint(old, "greenhouse")
+  recordCache(cache, { fp, scan: old, atsId: "greenhouse" })
+
+  const fresh = scanOf([
+    { k: "f1", t: "combo", l: "Degree", req: true, opts: ["current"] },
+  ])
+  const stats = applyCache(fresh, cache.forms[fp])
+  assert.deepEqual(
+    fresh.fields[0].opts,
+    ["current"],
+    "live data must never be overwritten",
+  )
+  assert.equal(stats.hits, 0)
+  assert.equal(stats.probed, 1)
+})
+
+test("recording twice keeps what the later scan did not see", () => {
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const full = scanOf([
+    { k: "f1", t: "combo", l: "Degree", req: true, opts: ["A", "B"] },
+  ])
+  const fp = fingerprint(full, "greenhouse")
+  recordCache(cache, { fp, scan: full, atsId: "greenhouse" })
+  // A later run without a probe must not erase what we already knew.
+  recordCache(cache, {
+    fp,
+    scan: scanOf([{ k: "f1", t: "combo", l: "Degree", req: true }]),
+    atsId: "greenhouse",
+  })
+  assert.deepEqual(cache.forms[fp].fields["degree|combo"].opts, ["A", "B"])
+})
+
+test("a composite widget's options do not leak onto its text input", () => {
+  // Greenhouse's phone field is a country picker plus a tel input, both
+  // labelled "Phone". Handing the country list to the tel input made the phone
+  // number resolve to NEEDS-CHOICE and bounced it to the user for no reason.
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const probed = scanOf([
+    {
+      k: "f1",
+      t: "combo",
+      l: "Phone",
+      opts: ["United States +1", "Canada +1"],
+    },
+    { k: "f2", t: "tel", l: "Phone", req: true },
+  ])
+  const fp = fingerprint(probed, "greenhouse")
+  recordCache(cache, { fp, scan: probed, atsId: "greenhouse" })
+
+  const unprobed = scanOf([
+    { k: "f1", t: "combo", l: "Phone" },
+    { k: "f2", t: "tel", l: "Phone", req: true },
+  ])
+  applyCache(unprobed, cache.forms[fp])
+  assert.deepEqual(unprobed.fields[0].opts, ["United States +1", "Canada +1"])
+  assert.equal(
+    unprobed.fields[1].opts,
+    undefined,
+    "the tel input has no options",
+  )
+})
+
+// 0.12 support: an append-only sidecar, never read by applyCache/recordCache,
+// carrying only a date, the ATS, the fingerprint and one boolean per scan —
+// specifically NOT a second copy of entry.fields (no labels, no options, no
+// selectors).
+test("recordShapeHistory appends one line per call, carrying only date/ats/fp/boolean", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shape-history-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, ".shape-history.jsonl")
+
+  const withCheckbox = scanOf([
+    { k: "f1", t: "text", l: "First Name", req: true },
+    { k: "f2", t: "checkbox", l: "Current role" },
+  ])
+  const clean = scanOf([{ k: "f1", t: "text", l: "First Name", req: true }])
+
+  const r1 = recordShapeHistory(file, {
+    fp: "abc123",
+    ats: "greenhouse",
+    scan: withCheckbox,
+    now: new Date("2026-08-01T00:00:00Z"),
+  })
+  assert.equal(r1.hasCheckboxOrRadio, true)
+
+  const r2 = recordShapeHistory(file, {
+    fp: "def456",
+    ats: "generic",
+    scan: clean,
+    now: new Date("2026-08-01T00:00:00Z"),
+  })
+  assert.equal(r2.hasCheckboxOrRadio, false)
+
+  const lines = fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+  assert.equal(lines.length, 2, "one appended line per call")
+  assert.deepEqual(lines[0], {
+    date: "2026-08-01",
+    ats: "greenhouse",
+    fp: "abc123",
+    hasCheckboxOrRadio: true,
+  })
+  assert.deepEqual(lines[1], {
+    date: "2026-08-01",
+    ats: "generic",
+    fp: "def456",
+    hasCheckboxOrRadio: false,
+  })
+  // Carries none of the live cache's field-level content.
+  for (const l of lines) {
+    assert.equal(Object.keys(l).length, 4)
+    assert.equal("fields" in l, false)
+  }
+})
+
+test("recordShapeHistory detects a radio group the same as a checkbox", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shape-history-radio-"))
+  const file = path.join(dir, ".shape-history.jsonl")
+  const r = recordShapeHistory(file, {
+    fp: "xyz",
+    ats: "workday",
+    scan: scanOf([{ k: "f1", t: "radio", l: "Work authorization" }]),
+    now: new Date("2026-08-01T00:00:00Z"),
+  })
+  assert.equal(r.hasCheckboxOrRadio, true)
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test("invalidate drops the entry", () => {
+  const cache = {
+    v: CACHE_VERSION,
+    forms: { abc: { ats: "greenhouse", fields: {} } },
+  }
+  assert.equal(invalidate(cache, "abc"), true)
+  assert.equal(cache.forms.abc, undefined)
+  assert.equal(
+    invalidate(cache, "abc"),
+    false,
+    "evicting twice is not an error",
+  )
+})
+
+test("a corrupt or outdated cache file starts clean instead of throwing", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "field-cache-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+
+  const f = path.join(dir, "c.json")
+  fs.writeFileSync(f, "{ not json")
+  assert.deepEqual(loadCache(f).forms, {})
+
+  saveCache(f, { v: CACHE_VERSION + 99, forms: { old: { fields: {} } } })
+  assert.deepEqual(
+    loadCache(f).forms,
+    {},
+    "a version bump discards rather than guesses",
+  )
+
+  assert.deepEqual(loadCache(path.join(dir, "missing.json")).forms, {})
+})
+
+// FIX (w3-resolution, 2026-08-01): the discard above used to be silent — this
+// is the live incident it hid. jobs/.field-cache.json sat at v2 with 7 real
+// fingerprints on disk while CACHE_VERSION moved to 3; loadCache() threw all
+// 7 away on every load with nothing printed anywhere, so green tier went
+// unreachable for every lead and nobody could see why. A missing cache file
+// (never had data) must stay silent; a cache that DID have data and got
+// discarded must not.
+test("a version-mismatch discard is audible: logged, and carried on the return value", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "field-cache-audible-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const f = path.join(dir, "c.json")
+
+  // Mirrors the live shape: 7 remembered forms at v2, code now expects v3.
+  const forms = {}
+  for (let i = 0; i < 7; i++)
+    forms[`fp${i}`] = { ats: "greenhouse", fields: {} }
+  fs.writeFileSync(f, JSON.stringify({ v: 2, forms }))
+
+  const calls = []
+  const restore = console.error
+  console.error = (...args) => calls.push(args.join(" "))
+  let result
+  try {
+    result = loadCache(f)
+  } finally {
+    console.error = restore
+  }
+
+  assert.deepEqual(result.forms, {}, "the discard itself is unchanged")
+  assert.deepEqual(result.discarded, {
+    fromVersion: 2,
+    toVersion: CACHE_VERSION,
+    forms: 7,
+  })
+  assert.equal(calls.length, 1, "exactly one warning line, not silence")
+  assert.match(calls[0], /discarding 7 remembered form/)
+  assert.match(calls[0], /v2/)
+  assert.match(calls[0], new RegExp(`v${CACHE_VERSION}`))
+})
+
+test("a missing cache file is not a discard — no warning, nothing to lose", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "field-cache-missing-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const calls = []
+  const restore = console.error
+  console.error = (...args) => calls.push(args.join(" "))
+  let result
+  try {
+    result = loadCache(path.join(dir, "missing.json"))
+  } finally {
+    console.error = restore
+  }
+  assert.deepEqual(result, { v: CACHE_VERSION, forms: {} })
+  assert.equal(result.discarded, undefined)
+  assert.equal(calls.length, 0)
+})
+
+test("an unparseable cache file is also an audible discard", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "field-cache-corrupt-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const f = path.join(dir, "c.json")
+  fs.writeFileSync(f, "{ not json")
+  const calls = []
+  const restore = console.error
+  console.error = (...args) => calls.push(args.join(" "))
+  let result
+  try {
+    result = loadCache(f)
+  } finally {
+    console.error = restore
+  }
+  assert.deepEqual(result.forms, {})
+  assert.equal(calls.length, 1)
+  assert.match(calls[0], /could not read/)
+})
+
+test("end to end: a second run reuses the shape the first one learned", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fill-plan-cache-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const slug = "acme-swe"
+  const jobDir = path.join(dir, slug)
+  fs.mkdirSync(jobDir, { recursive: true })
+
+  const probed = scanOf([
+    { k: "f1", t: "text", l: "First Name", req: true },
+    {
+      k: "f2",
+      t: "combo",
+      l: "Degree*",
+      req: true,
+      opts: ["Bachelor's Degree"],
+    },
+  ])
+  fs.writeFileSync(path.join(jobDir, "probed.json"), JSON.stringify(probed))
+
+  // Same form, scanned without opening any dropdown.
+  const unprobed = scanOf([
+    { k: "f1", t: "text", l: "First Name", req: true },
+    { k: "f2", t: "combo", l: "Degree*", req: true },
+  ])
+  fs.writeFileSync(path.join(jobDir, "unprobed.json"), JSON.stringify(unprobed))
+
+  const run = (scanFile) =>
+    spawnSync(
+      process.execPath,
+      [
+        path.join(ROOT, "scripts", "apply", "fill-plan.mjs"),
+        slug,
+        "--jobs-dir",
+        dir,
+        "--scan",
+        path.join(jobDir, scanFile),
+        "--profile",
+        path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+        "--answers",
+        path.join(ROOT, "tests", "fixtures", "answers-bank.yaml"),
+      ],
+      { cwd: ROOT, encoding: "utf8" },
+    )
+
+  const cold = run("probed.json")
+  assert.equal(cold.status, 0, cold.stderr)
+  assert.match(
+    cold.stdout,
+    /cache=0\/1/,
+    "nothing known yet; one field was probed live",
+  )
+
+  const warm = run("unprobed.json")
+  assert.equal(warm.status, 0, warm.stderr)
+  assert.match(
+    warm.stdout,
+    /cache=1\/1/,
+    "the dropdown did not need re-probing",
+  )
+  assert.ok(fs.existsSync(path.join(dir, ".field-cache.json")))
+
+  // The 0.12 sidecar is written on every scan-backed run, one line each —
+  // both runs share a fingerprint (same required shape), so this also proves
+  // the sidecar is APPEND-only rather than keyed/overwritten like the live
+  // cache is.
+  const historyFile = path.join(dir, ".shape-history.jsonl")
+  assert.ok(fs.existsSync(historyFile))
+  const lines = fs
+    .readFileSync(historyFile, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+  assert.equal(lines.length, 2, "one line per run, not deduped or overwritten")
+  for (const l of lines) {
+    assert.equal(
+      l.hasCheckboxOrRadio,
+      false,
+      "neither scan has a checkbox/radio field",
+    )
+    assert.equal(l.ats, "greenhouse")
+  }
+})

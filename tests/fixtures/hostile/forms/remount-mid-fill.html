@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Dynamics — Full-Stack Engineer</title>
+  </head>
+  <body>
+    <!--
+      A FORM THAT REMOUNTS *MID-FILL*. Fixture; exists to be survived.
+
+      The Ashby replica remounts once, after an upload, which fill-engine.mjs's
+      one-shot retry handles. This form is the harder shape:
+
+        * it remounts on a TIMER, every 400ms, regardless of what the engine is
+          doing — so a remount lands between locate() and the interaction after
+          it no matter how the engine orders its work;
+        * it remounts more than once, so a retry budget of exactly one is not
+          enough on its own;
+        * it PRESERVES typed values across the remount (a real React re-render
+          restores from state), which is the detail that makes this dangerous:
+          the fill actually landed, the handle went stale, and the engine
+          reports a FAILURE for a field that is correctly filled. A live run
+          logged exactly that.
+
+      So the outcome to assert is not "no error". It is: the reported result
+      must match the DOM. A field reported failed whose value is present is a
+      false failure, and a false failure on the autonomy path means re-filling
+      a field that was already right.
+
+      data-aj stamps are stripped on every remount, which is what makes the
+      stable `sel` fallback (id/name/aria-label) load-bearing here.
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <form id="application-form" method="post" action="">
+      <div class="field">
+        <label for="r-name">Full name</label>
+        <input type="text" id="r-name" name="name" />
+      </div>
+      <div class="field">
+        <label for="r-email">Email</label>
+        <input type="email" id="r-email" name="email" />
+      </div>
+      <div class="field">
+        <label for="r-phone">Phone</label>
+        <input type="tel" id="r-phone" name="phone" />
+      </div>
+      <button type="submit" id="submit-application">Submit Application</button>
+    </form>
+
+    <script>
+      ;(function () {
+        var form = document.getElementById("application-form")
+        window.__ajRemounts = 0
+        setInterval(function () {
+          // Capture live values first: a real re-render restores from state,
+          // so the value survives even though the element does not.
+          var vals = {}
+          form.querySelectorAll("input").forEach(function (el) {
+            vals[el.id] = el.value
+          })
+          form.innerHTML = form.innerHTML.replace(/ data-aj="[^"]*"/g, "")
+          form.querySelectorAll("input").forEach(function (el) {
+            if (vals[el.id] !== undefined) el.value = vals[el.id]
+          })
+          window.__ajRemounts++
+        }, 400)
+      })()
+    </script>
+  </body>
+</html>

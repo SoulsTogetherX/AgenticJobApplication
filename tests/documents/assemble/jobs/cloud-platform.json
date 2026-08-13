@@ -1,0 +1,15 @@
+{
+  "slug": "cloud-platform",
+  "company": "Meridian Cloud",
+  "title": "Platform Engineer",
+  "description": "Meridian Cloud runs the internal developer platform. You will own the deployment path end to end.",
+  "requirements": [
+    "AWS, especially Lambda, S3 and EC2",
+    "Terraform for everything",
+    "Kubernetes in anger",
+    "CI/CD pipeline ownership"
+  ],
+  "source_url": "https://boards.example.test/cloud-platform",
+  "captured_at": "2026-08-02",
+  "questions": []
+}

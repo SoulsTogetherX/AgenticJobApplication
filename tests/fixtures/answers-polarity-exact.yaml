@@ -1,0 +1,12 @@
+# Fake answers bank used ONLY by the polarity-guard tests (the real one is
+# gitignored). Mirrors the real-world fix: once a NEGATED phrasing has been
+# saved under its own EXACT label (the way a-045 was saved for "...without
+# company sponsorship?" in the real store), that exact question must keep
+# resolving OK from here on — the polarity guard only applies to the fuzzy
+# path, never to an exact match.
+answers:
+  - id: a-101
+    question: Are you authorized to work in the U.S. without company sponsorship?
+    answer: "Yes"
+    source: model
+    added: 2026-07-30

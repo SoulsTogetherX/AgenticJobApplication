@@ -1,0 +1,6 @@
+# Test fixture: only a work-authorization answer, no sponsorship answer.
+answers:
+  - id: a-001
+    question: Are you legally authorized to work in the United States?
+    answer: Yes
+    added: "2026-07-28"

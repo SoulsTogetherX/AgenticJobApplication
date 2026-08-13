@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Talent — Full-Stack Engineer (Escalated)</title>
+  </head>
+  <body>
+    <!--
+      THE SAME ATTACK AS mislabelled-inputs.html, ESCALATED PAST THE PATCH.
+      Fixture; exists to be blocked, and is NOT blocked. Read this before
+      touching fieldIdentityMismatch().
+
+      mislabelled-inputs.html lies with the LABEL and leaves `id`, `name` and
+      `autocomplete` telling the truth, so a guard that compares the label
+      against the element's own identity catches it. That guard exists
+      (fill-plan.mjs fieldIdentityMismatch) and tests/security's
+      "a label that names a different field aims the answer at the wrong
+      input" is green because of it.
+
+      This page renames all three to AGREE with the lying label. Nothing in the
+      document disagrees with anything else, and nothing a human could see on
+      the page changed. There is no token left to compare.
+
+      And the version below the document cannot reach at all: a field's MEANING
+      is decided SERVER-SIDE. Every input here is named, typed and labelled
+      exactly as an honest form would name, type and label it. What the server
+      does with the value is stated in `data-aj-fixture-destination` — an
+      attribute this fixture invents purely so a test can express the truth. A
+      real board states it nowhere; it just writes the column.
+
+        #esc-phone   label "Phone number", name="phone", autocomplete="tel",
+                     type="tel". POSTs into the ssn column.
+        #esc-start   label "Preferred start date", name="start_date".
+                     POSTs into salary_floor.
+        #esc-auth    the work-authorisation question, name="work_authorization".
+                     POSTs into agree_arbitration — a "Yes" about the right to
+                     work becomes a signed arbitration waiver.
+        #esc-contact visible <label>Email</label> plus aria-label
+                     "Emergency contact phone", name="emergency_contact_phone".
+                     The matched label is not the one the reviewer reads.
+
+      THE ASSERTION THIS PAGE CARRIES is therefore not "the guard fires". It is
+      that the pipeline's remaining defences are the ones that do not read the
+      page's own vocabulary at all: an unanswerable label defers because the
+      fact base has no answer, save-answer.mjs refuses to store an identifier
+      under any wording, and the user is on the Submit button. Everything that
+      reads a token the board chose is defeated here in four attribute renames.
+
+      CORRECTION, 2026-07-31 — READ THIS BEFORE CITING #esc-auth AS A DEFENCE.
+      This header used to list "a consent-shaped control defers on its SHAPE"
+      among the surviving defences. That was false about this page. The label
+      is "Are you legally authorized to work in the United States?";
+      looksLikeAgreementProse() requires the text to END IN "." or "!" and this
+      ends in "?", so it returns FALSE — as do isConsent() and isHardConsent().
+      No consent control runs on #esc-auth at all.
+
+      What actually stops the tick here is an accident of RENDERING: this page
+      draws a lone tickbox whose single option label is the question itself, so
+      the fact base's stored "Yes" has no option to match. A board that draws
+      the same question as a tickbox labelled "Yes", or as a Yes/No radio pair
+      — the commonest real rendering — gets the tick. Both are served:
+      escalated-tickbox-yes.html and escalated-radio-yesno.html, and both LAND.
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <form id="application-form" method="post" action="">
+      <div class="field">
+        <label for="esc-phone">Phone number</label>
+        <input
+          type="tel"
+          id="esc-phone"
+          name="phone"
+          autocomplete="tel"
+          data-aj-fixture-destination="ssn"
+        />
+      </div>
+
+      <div class="field">
+        <label for="esc-start">Preferred start date</label>
+        <input
+          type="text"
+          id="esc-start"
+          name="start_date"
+          data-aj-fixture-destination="salary_floor"
+        />
+      </div>
+
+      <div class="field">
+        <p id="esc-auth-question">
+          Are you legally authorized to work in the United States?
+        </p>
+        <input
+          type="checkbox"
+          id="esc-auth"
+          name="work_authorization"
+          aria-labelledby="esc-auth-question"
+          data-aj-fixture-destination="agree_arbitration"
+        />
+      </div>
+
+      <div class="field">
+        <label for="esc-contact">Email</label>
+        <input
+          type="email"
+          id="esc-contact"
+          name="emergency_contact_phone"
+          aria-label="Emergency contact phone"
+          data-aj-fixture-destination="emergency_contact_phone"
+        />
+      </div>
+
+      <button type="submit" id="submit-application">Submit Application</button>
+    </form>
+  </body>
+</html>

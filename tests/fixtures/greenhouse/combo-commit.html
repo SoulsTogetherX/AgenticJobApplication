@@ -1,0 +1,146 @@
+<!doctype html>
+<!--
+  THREE COMBOBOXES THAT LOOK IDENTICAL AND COMMIT DIFFERENTLY, plus the widget
+  that made the whole thing invisible. Reproduced from Affirm's Greenhouse form,
+  driven by hand on 2026-08-04.
+
+    #a  FILTER-ONLY. Typing puts text in the visible box; Enter does NOT commit,
+        and the box KEEPS the text. Its backing store stays empty, so the form
+        submits nothing for this question. This is the one that reported success:
+        reading the visible input's `value` reads back what was just typed.
+
+    #b  REACT-SELECT. Enter commits: the backing store is set, the search box is
+        CLEARED, and a single-value node renders the choice. Reading the input
+        here returns "" — so a naive "did the box keep it" check would call a
+        working fill a failure.
+
+    #c  PLAIN TYPEAHEAD (Ashby's Location shape). No backing store at all; the
+        input itself carries the committed value. Must keep working unchanged.
+
+  The country list is intl-tel-input's, reproduced because it is the reason the
+  bug was invisible: it is the ONLY [role=listbox] on the real page, it is
+  ALWAYS attached, and it is usually hidden. A page-wide search for an option
+  row finds a country for every question that names no menu of its own.
+-->
+<html>
+  <head>
+    <style>
+      .menu {
+        display: none;
+      }
+      .menu[data-open="1"] {
+        display: block;
+      }
+      #iti-list {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <form>
+      <div class="field">
+        <label for="a">Filter only</label>
+        <input id="a" role="combobox" aria-autocomplete="list" value="" />
+        <input id="a-store" type="hidden" name="a_store" value="" />
+        <div class="menu" id="a-menu" role="listbox">
+          <div role="option">Yes</div>
+          <div role="option">No</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="b">React select</label>
+        <div class="b-wrap">
+          <span class="single-value"></span>
+          <input id="b" role="combobox" aria-autocomplete="list" value="" />
+          <input id="b-store" type="hidden" name="b_store" value="" />
+        </div>
+        <div class="menu" id="b-menu" role="listbox">
+          <div role="option">Yes</div>
+          <div role="option">No</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="c">Plain typeahead</label>
+        <input id="c" role="combobox" aria-autocomplete="list" value="" />
+        <div class="menu" id="c-menu" role="listbox">
+          <div role="option">North Las Vegas, Nevada, United States</div>
+        </div>
+      </div>
+
+      <!-- intl-tel-input: always attached, hidden, 3 rows standing in for 244 -->
+      <ul id="iti-list" role="listbox" class="iti__country-list">
+        <li role="option" class="iti__country">Afghanistan+93</li>
+        <li role="option" class="iti__country">No</li>
+        <li role="option" class="iti__country">Yes</li>
+      </ul>
+    </form>
+
+    <script>
+      const open = (id) => {
+        const m = document.getElementById(id)
+        if (m) m.setAttribute("data-open", "1")
+      }
+      for (const id of ["a", "b", "c"]) {
+        document
+          .getElementById(id)
+          .addEventListener("click", () => open(id + "-menu"))
+      }
+
+      // #a — the box keeps whatever was typed and nothing is ever committed.
+      document.getElementById("a").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") e.preventDefault()
+      })
+
+      // #b — Enter commits, clears the search box, renders the selection.
+      document.getElementById("b").addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return
+        e.preventDefault()
+        const typed = e.target.value.trim()
+        const row = [
+          ...document.querySelectorAll("#b-menu [role=option]"),
+        ].find(
+          (o) => o.textContent.trim().toLowerCase() === typed.toLowerCase(),
+        )
+        if (!row) return
+        document.getElementById("b-store").value = row.textContent.trim()
+        document.querySelector(".single-value").textContent =
+          row.textContent.trim()
+        e.target.value = ""
+      })
+
+      // #c — Enter commits into the input itself. No store anywhere.
+      document.getElementById("c").addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return
+        e.preventDefault()
+        const typed = e.target.value.trim()
+        const row = [
+          ...document.querySelectorAll("#c-menu [role=option]"),
+        ].find((o) =>
+          o.textContent.trim().toLowerCase().startsWith(typed.toLowerCase()),
+        )
+        if (row) e.target.value = row.textContent.trim()
+      })
+
+      // Clicking a row commits it, for the click-based strategies.
+      for (const id of ["a", "b", "c"]) {
+        for (const row of document.querySelectorAll(
+          "#" + id + "-menu [role=option]",
+        )) {
+          row.addEventListener("click", () => {
+            const text = row.textContent.trim()
+            if (id === "a") return // #a never commits, however it is driven
+            if (id === "b") {
+              document.getElementById("b-store").value = text
+              document.querySelector(".single-value").textContent = text
+              document.getElementById("b").value = ""
+            } else {
+              document.getElementById("c").value = text
+            }
+          })
+        }
+      }
+    </script>
+  </body>
+</html>

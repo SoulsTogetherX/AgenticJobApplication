@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Talent — Full-Stack Engineer (button answers)</title>
+  </head>
+  <body>
+    <!--
+      SHAPE G. A DESTRUCTIVE ACTION WEARING THE MARKUP OF A YES/NO ANSWER.
+      Fixture; exists to be blocked.
+
+      WHY THIS PAGE HAD TO BE WRITTEN THE MOMENT THE SCANNER LEARNED TO SEE
+      BUTTON PAIRS. Teaching scan-page.js that "two short unnamed <button>s
+      under a question" is an ANSWER moves a whole class of control out of
+      `btns` — which fill-plan.mjs never reads — and into `fields`, which it
+      does. The fill engine clicks what the plan targets. So the same change
+      that ends the silent miss on an honest board is the change that could put
+      a plan item on "Delete my account", and THIS IS THE FILE WHERE THAT
+      MISTAKE GETS MADE.
+
+      WHAT THIS PAGE ASKS FOR. Structurally it is indistinguishable from the
+      honest Ashby rendering in tests/fixtures/boards/pages/ashby-buttons.html:
+      a question in a <label>, two short <button>s in a sibling container, no
+      aria state on either, a hashed class on the "selected" one. Every
+      structural test the detector applies, this page passes. That is the
+      point — the detector is structural on purpose, because a name list is the
+      same defect one rewording later, and a page that looks trustworthy is the
+      one worth worrying about (CLAUDE.md rule 0).
+
+      SO WHAT STOPS IT IS NOT THE DETECTOR. It is the tier split:
+
+        - "Delete my account" / "Keep" is not a recognised closed answer set,
+          so the group is emitted verb-less (t:"widget", widget:"buttons").
+          fill-plan.mjs's VERB map has no entry for that type, so it lands in
+          the `unsupported field type` defer: REPORTED, blocking, never acted
+          on. Reporting is not a verb.
+        - The second question below IS labelled Yes / No, so it clears the
+          answer-set restriction — and is still not fillable, because the only
+          thing that can fill one of these is an EXACT bank hit on the
+          question's own text, and nobody has ever recorded an answer to
+          "Withdraw my application?". It resolves UNKNOWN and defers. A word
+          list also refuses this one, and that word list is a backstop, not the
+          control: the 26th rewording is free, the exact-hit requirement is not.
+
+      WHAT A GREEN RUN HERE MEANS: neither question became a plan item, both
+      reached the user as a defer, and readiness() says no. What it does NOT
+      mean: that a destructive pair worded in a way nobody thought of is
+      refused BY NAME. It is refused by never having been answered.
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <form id="application-form" method="post" action="">
+      <div class="field">
+        <label for="bp-name">Full name</label>
+        <input type="text" id="bp-name" name="name" />
+      </div>
+
+      <div class="field">
+        <label id="bp-q-account"
+          >Delete my account and all stored applications?</label
+        >
+        <div class="options">
+          <button type="button" class="_opt_a1b2c3 _active_a1b2c3">
+            Delete my account
+          </button>
+          <button type="button" class="_opt_a1b2c3">Keep</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label id="bp-q-withdraw">Withdraw my application?</label>
+        <div class="options">
+          <button type="button" class="_opt_a1b2c3">Yes</button>
+          <button type="button" class="_opt_a1b2c3">No</button>
+        </div>
+      </div>
+
+      <button type="submit" id="submit-application">Submit Application</button>
+    </form>
+  </body>
+</html>

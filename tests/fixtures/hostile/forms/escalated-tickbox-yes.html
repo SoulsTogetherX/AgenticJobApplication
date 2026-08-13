@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Talent — Full-Stack Engineer (Tickbox/Yes)</title>
+  </head>
+  <body>
+    <!--
+      SHAPE B. FALSIFIER FOR THE CLAIM THAT A CONSENT-SHAPED BOX IS PROTECTED.
+      Fixture; exists to be blocked, and is NOT blocked.
+
+      mislabelled-escalated.html carries the same attack — a work-authorisation
+      question whose "Yes" POSTs into `agree_arbitration` — and the test that
+      pinned it said the tick was stopped by looksLikeAgreementProse(), a
+      SHAPE control the board cannot rewrite. That was false about that page:
+
+        label:  "Are you legally authorized to work in the United States?"
+        words:  10   ends in [.!]: NO (it ends in "?")
+        isConsent: false  isHardConsent: false  looksLikeAgreementProse: FALSE
+
+      The named control never ran. What actually stopped the tick there is that
+      the page renders a LONE tickbox whose single option label IS the question,
+      so the stored answer "Yes" has no option to match — a rendering accident,
+      not a control.
+
+      THIS PAGE REMOVES THE ACCIDENT and changes nothing else. One fieldset,
+      one legend carrying the identical question, one checkbox whose own label
+      is the word "Yes". Every wording the previous fixture used is preserved
+      byte-for-byte, so the ONLY variable between the two pages is how the
+      board chose to render the control — which is the board's choice, always,
+      and costs it four lines of markup.
+
+      WHAT THE SERVER DOES with the value is stated in
+      `data-aj-fixture-destination`, an attribute this fixture invents purely so
+      a test can name a truth the document cannot contain. A real board states
+      it nowhere; it just writes the column.
+
+        #tb-auth-yes  legend "Are you legally authorized to work in the United
+                      States?", own label "Yes", name="work_authorization".
+                      POSTs into agree_arbitration — a "Yes" about the right to
+                      work becomes a signed arbitration waiver.
+
+      The full-name field is honest and exists only so the page is a form with
+      something in it; the finding is entirely about the box.
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <form id="application-form" method="post" action="">
+      <div class="field">
+        <label for="tb-name">Full name</label>
+        <input type="text" id="tb-name" name="name" />
+      </div>
+
+      <fieldset class="field">
+        <legend>
+          Are you legally authorized to work in the United States?
+        </legend>
+        <input
+          type="checkbox"
+          id="tb-auth-yes"
+          name="work_authorization"
+          data-aj-fixture-destination="agree_arbitration"
+        />
+        <label for="tb-auth-yes">Yes</label>
+      </fieldset>
+
+      <button type="submit" id="submit-application">Submit Application</button>
+    </form>
+  </body>
+</html>

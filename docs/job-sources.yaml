@@ -1,0 +1,81 @@
+# =============================================================================
+# JOB SOURCES — the boards swept by `node scripts/leads/find-jobs.mjs search`.
+#
+# Manage this list with the manage-sources skill (or by hand):
+#   node scripts/leads/manage-sources.mjs add --type <ats> --slug <slug> --company "Name"
+#   node scripts/leads/manage-sources.mjs remove "<company or slug>"
+#   node scripts/leads/manage-sources.mjs verify
+# `add` prescreens the board (live API check) and refuses duplicates.
+#
+# FORMAT RULE: one entry per line, flow style ({ ... }) — the add/remove
+# tooling edits this file line-by-line to preserve these comments.
+#
+# Types and required fields:
+#   greenhouse | lever | ashby | workable | recruitee | smartrecruiters:
+#     { type, slug, company }
+#   workday:
+#     { type, company, host, tenant, site }
+#     (from the careers URL: https://<tenant>.wdN.myworkdayjobs.com/<site>)
+#
+# The Adzuna aggregator is separate — it is credential-based (.env) and always
+# included in `search --source all` when configured.
+# =============================================================================
+
+boards:
+  - { type: greenhouse, slug: anthropic, company: Anthropic }
+  - { type: greenhouse, slug: cloudflare, company: Cloudflare }
+  - { type: greenhouse, slug: datadog, company: Datadog }
+  - { type: greenhouse, slug: gitlab, company: GitLab }
+  - { type: greenhouse, slug: mongodb, company: MongoDB }
+  - { type: greenhouse, slug: reddit, company: Reddit }
+  - { type: lever, slug: palantir, company: Palantir }
+  - { type: ashby, slug: openai, company: OpenAI }
+  - { type: ashby, slug: linear, company: Linear }
+  - { type: ashby, slug: ramp, company: Ramp }
+  - { type: greenhouse, slug: pinterest, company: Pinterest }
+  - { type: greenhouse, slug: twilio, company: Twilio }
+  - { type: greenhouse, slug: coinbase, company: Coinbase }
+  - { type: greenhouse, slug: grafanalabs, company: Grafana Labs }
+  - { type: greenhouse, slug: affirm, company: Affirm }
+  - { type: greenhouse, slug: samsara, company: Samsara }
+  - { type: greenhouse, slug: stripe, company: Stripe }
+  - { type: greenhouse, slug: cribl, company: Cribl }
+  - { type: greenhouse, slug: dropbox, company: Dropbox }
+  - { type: greenhouse, slug: vercel, company: Vercel }
+  - { type: greenhouse, slug: chainguard, company: Chainguard }
+  - { type: greenhouse, slug: doximity, company: Doximity }
+  - { type: greenhouse, slug: instacart, company: Instacart }
+  - { type: greenhouse, slug: discord, company: Discord }
+  - { type: greenhouse, slug: gusto, company: Gusto }
+  - { type: greenhouse, slug: airtable, company: Airtable }
+  - { type: ashby, slug: render, company: Render }
+  - { type: ashby, slug: cursor, company: Cursor }
+  - { type: ashby, slug: watershed, company: Watershed }
+  - { type: ashby, slug: vanta, company: Vanta }
+  - { type: smartrecruiters, slug: BoydGaming, company: Boyd Gaming }
+  - { type: workday, company: "Light & Wonder", host: lnw.wd5.myworkdayjobs.com, tenant: lnw, site: LightWonderExternalCareers }
+  - { type: workday, company: Aristocrat, host: aristocrat.wd3.myworkdayjobs.com, tenant: aristocrat, site: AristocratExternalCareersSite }
+  - { type: workday, company: MGM Resorts International, host: mgmresorts.wd5.myworkdayjobs.com, tenant: mgmresorts, site: MGMCareers }
+  - { type: lever, slug: allegiantair, company: Allegiant Travel }
+  - { type: greenhouse, slug: fanaticsfbg, company: "Fanatics Betting & Gaming" }
+  - { type: greenhouse, slug: fanaticsinc, company: Fanatics }
+  - { type: oracle_cloud, company: Caesars Entertainment, host: edmn.fa.us2.oraclecloud.com, site: CX_1 }
+  - { type: oracle_cloud, company: Station Casinos, host: ejfh.fa.us6.oraclecloud.com, site: StationCasinos }
+  - { type: jobvite, slug: agscareer, company: AGS }
+  - { type: successfactors, company: IGT, host: jobs.igt.com }
+  - { type: ashby, slug: confluent, company: Confluent }
+  - { type: smartrecruiters, slug: wynnresorts, company: Wynn Resorts }
+
+  # --- remote-only aggregators ------------------------------------------------
+  # Not a company board: the whole corpus is remote roles, so a posting's
+  # location states who may be HIRED ("USA") rather than where an office is.
+  # The fetchers set remote_source, which is what stops the location gate
+  # reading "USA" as a relocation. Full descriptions arrive in the list
+  # endpoint, so the body gate runs with no per-posting fetch.
+  #
+  # jobicy measured 5 kept of 50 (10%) on 2026-07-29 — a better yield than every
+  # company board tracked here except Render. remotive and remoteok measured 0
+  # and are left commented out; uncomment to let board-yield judge them again.
+  - { type: jobicy, company: Jobicy (remote US), geo: usa, industry: engineering }
+  # - { type: remotive, company: "Remotive (remote)", category: software-dev }
+  # - { type: remoteok, company: "RemoteOK (remote)" }

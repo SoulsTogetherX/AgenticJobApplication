@@ -1,0 +1,66 @@
+# A fake answer bank whose entries exist to defeat WORD-READING defences.
+# Fixture only; nothing here belongs to the user, and nothing here is a tool.
+#
+# WHAT IT IS FOR. tests/security/hostile-forms.test.mjs section 4c asserts that
+# the check-verb defer in scripts/apply/fill-plan.mjs's buildPlan() reads NO
+# WORDS AT ALL — it refuses to tick a checkbox or select a radio option
+# unattended because of the WIDGET's shape, whatever the bank answer says or how
+# it was classified. Every previous defence on this attack read one string the
+# attacker chose, so every previous defence had a 26th rewording.
+#
+# Each entry below is the SAME attack on the same page (shapes B and C in
+# tests/fixtures/hostile/forms/), differing only in the wording the user
+# happened to record. The board makes its form label equal that wording, which
+# is the one lever it genuinely has: it cannot rewrite the fact base, but it can
+# ask, verbatim, a question the user already banked.
+#
+# w1 is the row that matters most and it is NOT an obfuscation. It is an
+# ordinary, honestly-classified `datum` — a real preference question with a real
+# "Yes" answer. Classification is CORRECT here and permissive, so no
+# classifier improvement can ever stop it. Only the widget rule can. That is
+# innov-resilience's 34-of-49 measurement in one row.
+#
+# w5 is the ceiling case: an assertion that classifyAnswer() DOES match
+# ("work_authorization"), overridden by a DECLARED `class: datum` with
+# `class_source: user` — the strongest claim the fact base can make, and the one
+# leg of answerClass() that consults no pattern at all. If the widget rule ever
+# grows a word-reading exemption, w5 ticks the arbitration waiver again.
+#
+# ids are w1..w5 rather than a-NNN so a row can never be confused with a real
+# fact-base entry in a failure message.
+#
+# SUPERSEDES tests/fixtures/hostile/answers-reworded-assertion.yaml, which held
+# this file's w2 row alone and was deleted with the LANDS test that read it. Its
+# wording is preserved here verbatim so nothing was lost in the merge; it is no
+# longer the whole attack, only one row of it.
+answers:
+  - id: w1
+    question: Would you like to receive text message updates about your application?
+    answer: "Yes"
+    added: 2026-07-31
+    class: datum
+    class_source: user
+  - id: w2
+    question: Do you now, or will you in the future, need immigration support?
+    answer: "Yes"
+    added: 2026-07-31
+    class: datum
+    class_source: user
+  - id: w3
+    question: Können Sie ohne weitere Genehmigung in den Vereinigten Staaten arbeiten?
+    answer: "Yes"
+    added: 2026-07-31
+    class: datum
+    class_source: user
+  - id: w4
+    question: Is your onboarding paperwork preference the standard packet?
+    answer: "Yes"
+    added: 2026-07-31
+    class: datum
+    class_source: user
+  - id: w5
+    question: Are you legally authorized to work in the United States?
+    answer: "Yes"
+    added: 2026-07-31
+    class: datum
+    class_source: user

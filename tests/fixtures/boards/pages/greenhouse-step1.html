@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply — Full-Stack Engineer at Fixture Widgets</title>
+  </head>
+  <body>
+    <!--
+      Greenhouse replica, page 1 of 2.
+
+      FIDELITY NOTES — every one of these is a trait the engine actually trips
+      on, not decoration:
+
+      * SINGLE URL, TWO STEPS. This page and greenhouse-step2.html are served at
+        the SAME path; only the request method differs (GET -> step 1,
+        POST -> step 2). That is why fill-plan.mjs's urlGuard cannot catch a
+        stale scan: the URL never changes between steps, so a plan built from
+        scan-p1.json applies cleanly-looking garbage to page 2's fields.
+      * BOTH FILE INPUTS ARE LABELLED "Attach". The real heading sits outside
+        the element the scanner reads, so buildPlan falls back to document
+        order (resume first) via adapter.fileOrder.
+      * react-select COMBOBOX with no <select> behind it. Its options do not
+        exist in the DOM until the control is clicked, which is why scanning
+        costs a real click per dropdown.
+      * A LABEL LONGER THAN 120 CHARACTERS, because scan-page.js's txt() slices
+        at 120 and two different questions can collide after the slice.
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <div id="app_body">
+      <form
+        id="application_form"
+        method="post"
+        action=""
+        enctype="multipart/form-data"
+      >
+        <input type="hidden" name="step" value="1" />
+
+        <div class="field">
+          <label for="first_name"
+            >First Name <span class="required">*</span></label
+          >
+          <input
+            type="text"
+            id="first_name"
+            name="job_application[first_name]"
+            required
+          />
+        </div>
+
+        <div class="field">
+          <label for="last_name"
+            >Last Name <span class="required">*</span></label
+          >
+          <input
+            type="text"
+            id="last_name"
+            name="job_application[last_name]"
+            required
+          />
+        </div>
+
+        <div class="field">
+          <label for="email">Email <span class="required">*</span></label>
+          <input
+            type="email"
+            id="email"
+            name="job_application[email]"
+            required
+          />
+        </div>
+
+        <div class="field">
+          <label for="phone">Phone</label>
+          <input type="tel" id="phone" name="job_application[phone]" />
+        </div>
+
+        <!--
+          Greenhouse labels BOTH attachment inputs "Attach". The word that
+          tells resume from cover letter is the SECTION HEADING above each
+          one, which sits OUTSIDE the element labelOf() reads — and that is
+          the whole of case E8.
+
+          THE <h3>s ARE LOAD-BEARING, ADDED 2026-07-31. Before them this page
+          had exactly one heading, the page <h1>, and scan-page.js's section
+          rule never stamps a heading whose parent is <body> (a key with the
+          same value on every field distinguishes nothing). So E8's assertion
+          "no field carries a section" was true of this page for a reason
+          that had nothing to do with the defect it was asserting, and it
+          would have stayed green after the fix landed. Each <h3> lives in a
+          wrapper that contains ONLY its own input, because sectionOf()
+          requires the heading's own parent to contain the field — see
+          greenhouse-step2.html, where a legend precedes the "I certify"
+          checkbox in document order and must NOT be stamped on it.
+
+          Do not flatten these wrappers, and do not give the <h3>s a shared
+          parent: either change makes the section key vanish or spread, and
+          both look like a scanner regression.
+        -->
+        <div class="field-group" id="resume_section">
+          <h3>Resume</h3>
+          <div class="field">
+            <label for="resume">Attach</label>
+            <input type="file" id="resume" name="job_application[resume]" />
+          </div>
+        </div>
+        <div class="field-group" id="cover_letter_section">
+          <h3>Cover Letter</h3>
+          <div class="field">
+            <label for="cover_letter">Attach</label>
+            <input
+              type="file"
+              id="cover_letter"
+              name="job_application[cover_letter]"
+            />
+          </div>
+        </div>
+
+        <!-- A real react-select. Options appear only after a click. -->
+        <div class="field">
+          <div id="country_label" class="label">
+            Country <span class="required">*</span>
+          </div>
+          <div
+            class="select__control"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-labelledby="country_label"
+            aria-required="true"
+            tabindex="0"
+            data-aj-testid="country"
+          >
+            <div class="select__placeholder">Select...</div>
+          </div>
+          <div class="select__menu" hidden>
+            <div class="select__option">United States +1</div>
+            <div class="select__option">Canada +1</div>
+            <div class="select__option">United Kingdom +44</div>
+          </div>
+        </div>
+
+        <!-- Over 120 characters on purpose. txt() will slice it. -->
+        <div class="field">
+          <label for="gh_long_q"
+            >Please describe, in as much detail as you are comfortable sharing,
+            the single engineering decision you are most proud of and what you
+            would do differently today <span class="required">*</span></label
+          >
+          <textarea
+            id="gh_long_q"
+            name="job_application[answers][0]"
+            required
+          ></textarea>
+        </div>
+
+        <fieldset class="field">
+          <legend>
+            Are you legally authorized to work in the United States?
+          </legend>
+          <label
+            ><input
+              type="radio"
+              name="job_application[answers][1]"
+              value="Yes"
+            />
+            Yes</label
+          >
+          <label
+            ><input
+              type="radio"
+              name="job_application[answers][1]"
+              value="No"
+            />
+            No</label
+          >
+        </fieldset>
+
+        <button type="submit" id="submit_app">Save and Continue</button>
+      </form>
+    </div>
+  </body>
+</html>

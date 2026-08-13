@@ -1,0 +1,342 @@
+# =============================================================================
+# APPLICATION LIMITS — the user's hard filters for which jobs are worth pursuing.
+#
+# Read by the find-jobs and pipeline-jobs skills; enforced mechanically by
+# scripts/leads/find-jobs.mjs. The user owns this policy: the agent reads it but asks
+# before changing it.
+# =============================================================================
+
+location:
+  base: "North Las Vegas, NV"
+  relocation: false # never pursue roles that require relocating away from base
+  remote_ok: true # fully remote roles are always in scope
+  travel_ok: occasional # occasional business travel is fine; constant travel is not
+  # On-site / hybrid is only acceptable within commuting distance of base.
+  # A stated job location must contain one of these (case-insensitive) or the
+  # word "remote", otherwise the lead is filtered out. Leads with NO stated
+  # location are kept but flagged "unknown_location" for screening to resolve.
+  onsite_allowed:
+    - north las vegas
+    - las vegas
+    - henderson
+
+  # Location strings that state WHO MAY BE HIRED rather than where to move.
+  # A remote posting open to the whole country writes "USA", not "Remote", and
+  # until 2026-07-29 the gate read that as a relocation and threw the posting
+  # out — 35 of 35 Remotive, 50 of 50 Jobicy and 100 of 100 RemoteOK postings
+  # were rejected on it. Matched against the WHOLE location string, so
+  # "Tulsa, USA" is still an on-site Tulsa role and still filtered.
+  #
+  # Leave this key out entirely to use the built-in list (US_WIDE_LOCATION in
+  # scripts/leads/find-jobs.mjs); setting it REPLACES the built-in list.
+  remote_synonyms:
+    - usa
+    - u.s.
+    - u.s.a.
+    - us
+    - united states
+    - united states of america
+    - anywhere
+    - anywhere in the us
+    - worldwide
+    - global
+    - north america
+    - northern america
+    - remote us
+    - us remote
+    - remote (us)
+    - remote - us
+    - remote, us
+    - remote - united states
+    - flexible / remote
+    - fully remote
+    - distributed
+
+freshness:
+  # Postings older than this are stale and unlikely to be useful.
+  max_age_days: 30
+  # Postings with no discoverable date are kept but flagged "unknown_age" so
+  # screening can double-check before any effort is spent on them.
+
+compensation:
+  # Set to a number (annual USD, e.g. 90000) to reject any lead whose stated
+  # salary tops out below it. Leave null to disable the gate.
+  min_salary: null
+  # When the gate is active, leads with NO discoverable salary are kept but
+  # flagged "no_salary" — missing pay info is also a mild ghost-job signal.
+  flag_missing: true
+
+experience:
+  # The seniority gate in scripts/leads/screen.mjs. It reads the highest "N+ years"
+  # demand out of the posting body and compares it to the tenure computed from
+  # profile.yaml (currently 2.5 years).
+  #
+  # A posting demanding more than (your years + stretch_years) is REJECTED, not
+  # cautioned — a caution still costs a human or model read, and on 2026-07-28
+  # every single one of those reads ended in a rejection anyway.
+  #
+  # stretch_years: 2 puts the ceiling at 4.5 years, which catches the "5+ years"
+  # band where Senior roles actually sit. Raise it to see more stretch roles;
+  # lower it to be stricter. Set max_years_required to pin an absolute ceiling
+  # instead of one relative to your tenure.
+  stretch_years: 2
+  # max_years_required: 5
+
+fit:
+  # The L2 "can I actually do this job?" stage (scripts/leads/fit.mjs).
+  # It reads the posting's REQUIRED section only — technologies listed under
+  # "nice to have" never count against you — and compares the stack named there
+  # against the profile.
+  #
+  # User decision 2026-07-29: L2 REJECTS below the threshold rather than only
+  # cautioning. min_required_terms is what makes that safe, so raise it if you
+  # ever suspect a good job was dropped, and check with:
+  #   node scripts/leads/gate-audit.mjs
+  # which lists every lead L2 removed and why.
+
+  # A posting naming FEWER than this many technologies in its required section
+  # is treated as unevaluated, never as a bad match. A thin description must not
+  # be able to reject a job. This is the most important number here.
+  min_required_terms: 4
+
+  # Fraction of the required stack the profile must evidence.
+  #   below reject_below   -> rejected
+  #   below caution_below  -> kept, flagged "fit_weak"
+  reject_below: 0.2
+  caution_below: 0.45
+
+  # Senior-scope phrases ("own the roadmap", "mentor the team", "set technical
+  # direction"). This many, COMBINED with a weak stack match, rejects — senior
+  # language on its own never does, because mid-level postings borrow it.
+  senior_phrase_reject: 3
+
+ghost_signals:
+  # A posting live/reposted this long reads as a ghost job (industry guidance:
+  # 30+ days). Screening treats it as a strong reject signal; the freshness
+  # gate above usually catches these first.
+  repost_age_days: 30
+
+roles:
+  # Full-Stack Developer roles only (CLAUDE.md). A job title must contain one
+  # of these keywords to be stored. Generic "software engineer" titles pass
+  # this gate because many are full-stack in practice; screening confirms
+  # actual full-stack fit from the description.
+  title_keywords:
+    - full-stack
+    - full stack
+    - fullstack
+    - back-end
+    - backend
+    - back end
+    - front-end
+    - frontend
+    - front end
+    - software developer
+    - software engineer
+    - web developer
+    - game mathematician
+    - mathematician
+    - game developer
+    - gameplay
+    - game engineer
+    # Added 2026-08-02 on the user's explicit approval, from the dead-board
+    # diagnosis: the only two titles out of ~2,700 read that cleared every
+    # other gate (non-senior, location OK) and failed ONLY the literal keyword
+    # match. "Product engineer" is the startup convention for a full-stack IC
+    # role (Linear, North America remote). "Forward deployed engineer" is
+    # hands-on at Cursor; at Palantir the same title is ~57 onsite-abroad
+    # roles, so expect it to surface true negatives that reject on LOCATION —
+    # that is the gate working, not a regression.
+    - product engineer
+    - forward deployed engineer
+    # Added 2026-08-03 at the user's request: QA-automation / SDET as a second
+    # searched role family (evidenced by the SightX QA internship, Python test
+    # scripting, and this repo's Playwright automation). The soft_filter's
+    # "qa" / "test" / "automation" entries are kept deliberately: they flag
+    # these leads "title_watch" so screening reads the body and keeps
+    # automation-engineering roles while dropping manual-testing ones.
+    - qa engineer
+    - qa automation
+    - sdet
+    - software development engineer in test
+    - test engineer
+    - test automation
+    - automation engineer
+    - quality engineer
+
+  # ===========================================================================
+  # HARD FILTER — a title containing any of these is rejected at ingest.
+  # Matched as WHOLE WORDS, case-insensitive, so "sr" matches "Sr." but not
+  # "usr", and "lead" matches "Lead" but not "leading".
+  #
+  # The seniority terms are not guesswork. They come from the stated minimums
+  # in the 47 postings read on 2026-07-28:
+  #   Senior / Sr.   4-10 yrs   (median 5-6; the LOWEST bar seen all day was 4+)
+  #   Staff          7-12 yrs
+  #   Senior Staff   10-12 yrs
+  #   Principal      8-12 yrs
+  #   Lead / Manager 6-8 yrs + people leadership
+  #   Architect      4+ yrs + certification
+  # Against ~2.5 years of experience, none of these is reachable — which is why
+  # every one of those 47 leads was rejected. Filtering them at ingest is what
+  # stops the pipeline paying to read them again.
+  # ===========================================================================
+  hard_filter:
+    # --- Seniority above reach ---
+    - senior
+    - sr
+    - staff
+    - principal
+    - distinguished
+    - fellow
+    - architect
+    - lead
+    - leader
+    - manager
+    - director
+    - head of
+    - vp
+    - vice president
+    - chief
+    - president
+    - executive
+    - founding
+    # --- Not a software-development role (13 of today's 47 rejects) ---
+    - technician
+    - specialist
+    - recruiter
+    - sales
+    - scrum master
+    - help desk
+    - service desk
+    - field engineer
+    - network engineer
+    - designer
+    - copywriter
+    - technical writer
+    - compliance analyst
+    - chargeback analyst
+    - business analyst
+    - financial analyst
+    - marketing analyst
+    - marketing analytics
+    - digital analytics
+    - security analyst
+    # --- Wrong career stage ---
+    - intern
+    - internship
+    - apprentice
+
+  # ===========================================================================
+  # SOFT FILTER — not disqualifying, but flagged "title_watch" so screening
+  # reads the posting body before any effort is spent. These are the title
+  # patterns that proved MISLEADING today: a clean-looking title whose body
+  # said something different.
+  #
+  # The motivating case: Chainguard's "Software Engineer (Libraries Platform)"
+  # carried no seniority word at all, yet the body said "join as a Senior
+  # Software Engineer" and asked for 5+ years. A title filter alone cannot
+  # catch that — only reading the description can.
+  # ===========================================================================
+  soft_filter:
+    # --- Level markers that mean different things at different companies ---
+    # Samsara's "Software Engineer II" wanted 8+ yrs; IGT's "Software Eng
+    # (Dev) II" was genuinely mid-level. Same numeral, very different bar.
+    - ii
+    - iii
+    - iv
+    - "2"
+    - "3"
+    # --- Adjacent disciplines: real engineering, but not full-stack/back-end ---
+    - analyst
+    - consultant
+    - data engineer
+    - cloud
+    - devops
+    - sre
+    - site reliability
+    - platform
+    - infrastructure
+    - security
+    - ml
+    - machine learning
+    - ai engineer
+    - mobile
+    - ios
+    - android
+    - embedded
+    - firmware
+    - qa
+    - test
+    - automation
+    - support
+    - solutions
+    - systems engineer
+    - integration
+    # --- Stacks outside the profile (TypeScript/JavaScript/Python/React/Node) ---
+    - wordpress
+    - php
+    - .net
+    - c#
+    - java
+    - salesforce
+    - sharepoint
+    - drupal
+    - ruby
+    - rails
+    - golang
+    - rust
+    - scala
+    - kotlin
+    - swift
+    - cobol
+    - sap
+    - unity
+    - unreal
+    # --- Clearance / regulated work that can be a hard blocker in the body ---
+    # NNSS's "Principal Cyber Security Analyst" was federal classified work.
+    - clearance
+    - classified
+    - top secret
+    - ts/sci
+    - polygraph
+    - federal
+    - government
+    - defense
+    # --- Employment shape that may not be full-time permanent ---
+    - contract
+    - contractor
+    - temporary
+    - seasonal
+    - part-time
+
+auto_apply:
+  enabled: true
+  dry_run: false
+  per_run_max: 10
+  per_day_max: 10
+  per_company_max_per_week: 5
+  cache_max_age_days: 30
+
+  # The boards the trust gate will consider. NESTED UNDER auto_apply ON
+  # PURPOSE — trust.mjs and auto-apply.mjs both read `auto_apply.board_allowlist`,
+  # so the same four lines at the top level of this file are read by nothing and
+  # the gate refuses every board. Moved here 2026-08-03.
+  #
+  # `domain: ats-id`. The id must name an adapter this repo ships, because the
+  # gate checks the DECLARED ats rather than inferring one from the URL — a
+  # board that puts "greenhouse" in its own path would otherwise be trusted as
+  # Greenhouse.
+  #
+  # WHAT THIS LIST CAN AND CANNOT DO, because it is easy to read it as more than
+  # it is: every Greenhouse tenant is same-origin with every other Greenhouse
+  # tenant, and ATS tenancy is self-service. So this answers "is this the
+  # vendor's software", while the gate is being asked "is this party safe to
+  # submit to unattended". The allowlist can never be load-bearing against a
+  # hostile tenant; the controls that survive that are structural (carry no
+  # session cookie, read nothing back out of the page).
+  board_allowlist:
+    boards.greenhouse.io: greenhouse
+    job-boards.greenhouse.io: greenhouse
+    jobs.lever.co: lever
+    jobs.ashbyhq.com: ashby

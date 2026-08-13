@@ -1,0 +1,267 @@
+name: CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev, main]
+  # Manual trigger. Without this no run could be started by hand, so a
+  # pipeline change could only be tested by pushing.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------
+  # The Phase 1 gate from docs/autonomy-plan.md ("Verification"). Autonomy
+  # does not ship until this is green. It used to be enforced by someone
+  # remembering to run the command; this is the mechanical form.
+  #
+  # It runs the plan's exact command through the test gate, which additionally
+  # fails when tests/security/ is MISSING or EMPTY. That matters more than it
+  # sounds: `node --test` exits 0 when it runs zero tests, so an absent
+  # security suite would otherwise report success.
+  #
+  # Runs on ubuntu because it is the fastest leg and this gate is the one
+  # people wait on; the same tests also run on Windows inside the matrix below.
+  # ---------------------------------------------------------------------
+  security-gate:
+    name: Phase 1 security gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --fund=false
+
+      # ---- the browser, and why it is on THIS leg only ------------------
+      # tests/security/browser-vouch.test.mjs drives a real Chromium against
+      # our own loopback fixture (tests/fixtures/boards/), never a live
+      # employer's board. It is the only real-browser evidence in the suite,
+      # and it covers the one carrier a fake DOM cannot express: CSS. The
+      # markup of an honest label and of a label rendered `color: transparent`
+      # is IDENTICAL — the difference is what getComputedStyle returns, so the
+      # only way to know whether the scanner vouches for an unreadable label
+      # is to render it. That control is load-bearing since d945871.
+      #
+      # `playwright-core`, never `playwright`: the latter's postinstall
+      # downloads ~150MB of browsers on EVERY leg. Installing it here and not
+      # in the matrix below is the deliberate trade — one download instead of
+      # four, on the gate people actually wait on. The four matrix legs still
+      # run these tests, skip them with an attributed reason, and the gate
+      # prints that reason on every run.
+      - name: Cache the Chromium build playwright-core pins
+        id: chromium-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          # Keyed on the lockfile: playwright-core pins one exact Chromium
+          # revision, so a version bump must miss the cache rather than launch
+          # a browser the library does not speak to.
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # Uses the LOCAL playwright-core CLI. `npx playwright install` would
+      # fetch the full `playwright` package as an undeclared extra dependency,
+      # which is exactly the postinstall this project avoided.
+      # No `|| true`: if the download fails, this leg goes red here, which is
+      # a clearer failure than three tests skipping later for a stated reason.
+      - name: Install Chromium (playwright-core CLI, not npx playwright)
+        run: npm run browser:install
+
+      # --require-ran turns an ATTRIBUTED skip into a failure for these three
+      # names, and ONLY on this leg. Rationale in test-gate.mjs: the gate's
+      # normal rule (a skip is fine if it names a reason) is right for a leg
+      # that genuinely has no browser, and wrong for the one leg whose job is
+      # to have one. "no browser available" printed here means the install
+      # step above silently did not work — a broken setup, not an unrunnable
+      # test — and nothing else in the summary distinguishes those two.
+      # Absence fails too, so renaming a test cannot satisfy "did not skip".
+      - name: Security gate (tests/security + untrusted + verify-claims)
+        run: >-
+          npm run test:security --
+          --require-ran "color:transparent must not be vouched for"
+          --require-ran "the honest boxes on the same page still behave"
+          --require-ran "nonce CSP is ENFORCED, not merely sent"
+
+  # ---------------------------------------------------------------------
+  # The whole suite, on both platforms. Windows is the primary platform (the
+  # user's machine) and PDF rendering shells out to a local Edge/Chrome, so a
+  # Linux-only pipeline would prove very little about the shipped path.
+  # ---------------------------------------------------------------------
+  test:
+    name: npm test (${{ matrix.os }}, node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --fund=false
+
+      # Diagnostic, not a gate: render-pdf.mjs shells out to a local browser
+      # and its tests skip when none is found. Printing what this leg has makes
+      # any skip in the gate summary attributable to an observable fact about
+      # the runner instead of a mystery. The gate itself fails on a skip that
+      # carries no reason.
+      - name: Report browser availability (attributes any PDF skips)
+        run: node .github/workflows/report-browsers.mjs
+
+      # `npm test` is the gate, not a bare `node --test`: it asserts the test
+      # COUNT against the floor in package.json "testGate", fails on any todo,
+      # and fails on a skip with no reason. A green run here means tests ran.
+      - run: npm test
+
+      # Chromium is deliberately NOT installed on these four legs — it is
+      # installed once, on `security-gate` above. The browser tests therefore
+      # skip here, loudly and with an attributed reason the gate prints. That
+      # is the whole trade: one ~150MB download instead of four, with the
+      # real-browser evidence produced on the blocking gate rather than
+      # nowhere. If you want it on a matrix leg, add the same cache + install
+      # pair; there is no silent middle option.
+
+  # ---------------------------------------------------------------------
+  # The scaffolding reaper. docs/team-roster.md promises that ci-engineer
+  # FAILS THE BUILD when a development-only artifact outlives the phase it
+  # declared it would die in; until 2026-07-31 that promise was a comment in
+  # this file and nothing else, which is the protocol's "a capability
+  # documented that does not exist".
+  #
+  # It currently finds ZERO declared artifacts, and that is reported as
+  # "0 declared" rather than as a silent tick — a checker with nothing to
+  # check must be distinguishable from a broken one. The --self-test step is
+  # how: it drives the verdict function over five synthetic artifacts and
+  # fails if the checker cannot go red. tests/hooks/scaffolding-reaper.test.mjs
+  # covers the same ground over real fixture trees.
+  #
+  # Its own job, not a step inside `test`, because it is seconds long, needs
+  # no npm install, and its verdict should be readable without opening a
+  # 1167-test log.
+  # ---------------------------------------------------------------------
+  scaffolding:
+    name: Scaffolding reaper
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prove the reaper can still go red
+        run: node .github/workflows/scaffolding-reaper.mjs --self-test
+      - name: Fail if any scaffolding artifact outlived its phase
+        run: npm run reap
+
+  # ---------------------------------------------------------------------
+  # The Phase 4.8 performance gate.
+  #
+  # It runs bench-runner against the loopback fixture — 50 applications at
+  # concurrency 8 over 8 origins, three times — and compares five columns
+  # against docs/perf-baseline.json. No employer is ever contacted; the only
+  # board it can reach is tests/fixtures/boards/server.mjs, which binds
+  # loopback and refuses anything else.
+  #
+  # THE RULE STRENGTHS DIFFER ON PURPOSE and perf-gate.mjs's header says why
+  # for each one. The short version: model_turns is hard with NO override,
+  # because green tier is DEFINED as removing the model from the path;
+  # sleep_ms and round_trips are overridable by a `perf-budget: <col> +N` line
+  # in the PR body, so a deliberate rise is something somebody wrote down;
+  # wall_ms_p95 is WARN only, because hard-failing on the noisiest column
+  # teaches people to ignore red.
+  #
+  # Both halves of the plan's falsifiable check were proved by mutation before
+  # this was wired, not argued: a waitForTimeout(200) added to
+  # fill-engine.mjs's verify step turns sleep_ms red (and a matching budget
+  # line clears it), and an https.request to a provider added to
+  # fill-plan.mjs turns model_turns red AND is NOT cleared by
+  # `perf-budget: model_turns +99`. See docs/measurements.md M9.
+  #
+  # ubuntu-only: the numbers are compared against a baseline, and a baseline
+  # is only meaningful against one platform. The matrix proves the code runs
+  # everywhere; this proves it did not get slower.
+  # ---------------------------------------------------------------------
+  perf-gate:
+    name: Phase 4 performance gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefer-offline --no-audit --fund=false
+      - name: bench-runner vs docs/perf-baseline.json
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node .github/workflows/perf-gate.mjs
+
+  # ---------------------------------------------------------------------
+  # NOT wired, on purpose — and stated here rather than wired vacuously,
+  # because a job that always passes reads as coverage that does not exist:
+  #
+  # * `gate-audit.mjs` — the whole-store regression check that exits 1 when a
+  #   lead became newly REJECTED, which is the worst failure in this system
+  #   (a job the user never sees). It opens jobs/leads.db, which is
+  #   gitignored because it holds personal data, so on a clean checkout there
+  #   is no store to diff against and no previous run to compare with. It
+  #   stays a local step the owner of a gate change runs, and CLAUDE.md says
+  #   to run it after ANY gate change:
+  #     node scripts/leads/gate-audit.mjs
+  #   Wiring it would need a committed fixture store, which is a different
+  #   piece of work owned by w5-leads, not a CI change.
+  # ---------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------
+  # One stable check name to require in branch protection. Mark `ci-gate` as
+  # the required status check on dev and main; it fails if either job above
+  # failed, was cancelled, or was skipped.
+  #
+  # HONEST LIMIT: a workflow file cannot make itself required. Branch
+  # protection is a repository setting; until someone ticks `ci-gate` there,
+  # this is blocking for the RUN's conclusion but not for merging.
+  # ---------------------------------------------------------------------
+  ci-gate:
+    name: ci-gate
+    if: always()
+    needs: [security-gate, test, scaffolding, perf-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the security gate, the matrix, the reaper and the perf gate
+        run: |
+          echo "security-gate: ${{ needs.security-gate.result }}"
+          echo "test matrix:   ${{ needs.test.result }}"
+          echo "scaffolding:   ${{ needs.scaffolding.result }}"
+          echo "perf-gate:     ${{ needs.perf-gate.result }}"
+          fail=0
+          if [ "${{ needs.security-gate.result }}" != "success" ]; then
+            echo "::error::Phase 1 security gate did not pass"
+            fail=1
+          fi
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "::error::the test matrix did not pass"
+            fail=1
+          fi
+          if [ "${{ needs.scaffolding.result }}" != "success" ]; then
+            echo "::error::a scaffolding artifact outlived its phase"
+            fail=1
+          fi
+          if [ "${{ needs.perf-gate.result }}" != "success" ]; then
+            echo "::error::the Phase 4 performance gate did not pass"
+            fail=1
+          fi
+          exit $fail

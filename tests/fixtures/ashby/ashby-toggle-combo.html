@@ -1,0 +1,142 @@
+<!doctype html>
+<!--
+  ASHBY'S DROPDOWN SHAPE, reproduced from a live Render application on
+  2026-08-04. Two things about it broke the probe, and both are here:
+
+    1. THE MENU OPENS FROM THE CHEVRON, NOT FROM THE BOX. Clicking the
+       role="combobox" input only focuses it. The probe clicked the input, got
+       nothing, and every Ashby dropdown came back with zero options.
+
+    2. AN EMPTY TYPEAHEAD RENDERS A MESSAGE, NOT AN EMPTY LIST. The Location
+       picker with no query shows a "No results" box and declares NO
+       [role=option] at all, so the reader's leaf fallback picked the message
+       up and returned it as if it were the one available option.
+
+  "Withdraw application" is the control that must never be clicked: it sits in
+  the same container as a combobox and is a button, so only its having a NAME
+  OF ITS OWN separates it from a chevron.
+-->
+<html>
+  <head>
+    <style>
+      .menu {
+        display: none;
+      }
+      .menu[data-open="1"] {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <form>
+      <!-- A: opens only from the chevron, and has a real list. -->
+      <div class="fieldEntry">
+        <label class="heading _required_f7cvd_91" for="hear"
+          >How did you hear about us?</label
+        >
+        <div class="inputContainer">
+          <input
+            id="hear"
+            class="input"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="hear-menu"
+            placeholder="Start typing..."
+          />
+          <button class="toggleButton" data-for="hear">
+            <svg viewBox="0 0 16 16" height="1em">
+              <path d="M4 6l4 4 4-4" />
+            </svg>
+          </button>
+        </div>
+        <div class="menu" id="hear-menu" role="listbox">
+          <div class="resultContainer">
+            <div role="option" aria-selected="false"><span>LinkedIn</span></div>
+            <div role="option" aria-selected="false">
+              <span>Careers page</span>
+            </div>
+            <div role="option" aria-selected="false">
+              <span>Employee referral</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- B: an async typeahead with nothing to show until it is typed into. -->
+      <div class="fieldEntry">
+        <label class="heading _required_f7cvd_91" for="loc">Location</label>
+        <div class="inputContainer">
+          <input
+            id="loc"
+            class="input"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="loc-menu"
+            placeholder="Start typing..."
+          />
+          <button class="toggleButton" data-for="loc">
+            <svg viewBox="0 0 16 16" height="1em">
+              <path d="M4 6l4 4 4-4" />
+            </svg>
+          </button>
+        </div>
+        <div class="menu" id="loc-menu" role="listbox">
+          <div class="resultContainer">
+            <div class="noResults"><p>No results</p></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- C: a NAMED button beside a combobox. Never clickable by the probe. -->
+      <div class="fieldEntry">
+        <label class="heading" for="team">Team</label>
+        <div class="inputContainer">
+          <input
+            id="team"
+            class="input"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="team-menu"
+          />
+          <button class="danger" id="withdraw">Withdraw application</button>
+        </div>
+        <div class="menu" id="team-menu" role="listbox">
+          <div class="resultContainer">
+            <div role="option" aria-selected="false"><span>Platform</span></div>
+          </div>
+        </div>
+      </div>
+    </form>
+
+    <script>
+      // The menu opens ONLY from the chevron — clicking the box does nothing,
+      // which is the behaviour that defeated the probe.
+      for (const b of document.querySelectorAll("button[data-for]")) {
+        b.addEventListener("click", (e) => {
+          e.preventDefault()
+          const input = document.getElementById(b.dataset.for)
+          const menu = document.getElementById(b.dataset.for + "-menu")
+          const open = menu.getAttribute("data-open") === "1"
+          menu.setAttribute("data-open", open ? "0" : "1")
+          input.setAttribute("aria-expanded", open ? "false" : "true")
+        })
+      }
+      document.getElementById("withdraw").addEventListener("click", (e) => {
+        e.preventDefault()
+        document.body.setAttribute("data-withdrawn", "1")
+      })
+      // Escape shuts every menu, as a real combobox does. Without this the
+      // fixture leaves one open across the next field's probe, and the
+      // reader's page-wide fallback then reads THAT menu's options into a
+      // field they do not belong to.
+      document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return
+        for (const m of document.querySelectorAll(".menu")) {
+          m.setAttribute("data-open", "0")
+          const input = document.getElementById(m.id.replace(/-menu$/, ""))
+          if (input) input.setAttribute("aria-expanded", "false")
+        }
+      })
+    </script>
+  </body>
+</html>

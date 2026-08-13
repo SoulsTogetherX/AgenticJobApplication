@@ -1,0 +1,872 @@
+# Board candidates discovered by scripts/leads/find-boards.mjs.
+# NOT swept yet — run discover-boards.mjs to yield-gate these, then add
+# the survivors with manage-sources. Nothing here touches job-sources.yaml.
+candidates:
+  - type: smartrecruiters
+    slug: servicenow
+    company: ServiceNow
+    pool: levelled
+  - type: ashby
+    slug: snowflake
+    company: Snowflake
+    pool: levelled
+  - type: greenhouse
+    slug: databricks
+    company: Databricks
+    pool: levelled
+  - type: greenhouse
+    slug: okta
+    company: Okta
+    pool: levelled
+  - type: greenhouse
+    slug: elastic
+    company: Elastic
+    pool: levelled
+  - type: ashby
+    slug: confluent
+    company: Confluent
+    pool: levelled
+  - type: greenhouse
+    slug: roblox
+    company: Roblox
+    pool: levelled
+  - type: greenhouse
+    slug: epicgames
+    company: Epic Games
+    pool: levelled
+  - type: greenhouse
+    slug: riotgames
+    company: Riot Games
+    pool: levelled
+  - type: greenhouse
+    slug: airbnb
+    company: Airbnb
+    pool: levelled
+  - type: greenhouse
+    slug: lyft
+    company: Lyft
+    pool: levelled
+  - type: smartrecruiters
+    slug: uber
+    company: Uber
+    pool: levelled
+  - type: greenhouse
+    slug: robinhood
+    company: Robinhood
+    pool: levelled
+  - type: greenhouse
+    slug: block
+    company: Block
+    pool: levelled
+  - type: ashby
+    slug: plaid
+    company: Plaid
+    pool: levelled
+  - type: greenhouse
+    slug: chime
+    company: Chime
+    pool: levelled
+  - type: greenhouse
+    slug: brex
+    company: Brex
+    pool: levelled
+  - type: greenhouse
+    slug: toast
+    company: Toast
+    pool: levelled
+  - type: smartrecruiters
+    slug: wayfair
+    company: Wayfair
+    pool: levelled
+  - type: greenhouse
+    slug: peloton
+    company: Peloton
+    pool: levelled
+  - type: lever
+    slug: spotify
+    company: Spotify
+    pool: levelled
+  - type: lever
+    slug: capital
+    company: Capital One
+    pool: levelled
+  - type: greenhouse
+    slug: charles
+    company: Charles Schwab
+    pool: levelled
+  - type: lever
+    slug: fi
+    company: Fidelity Investments
+    pool: levelled
+  - type: recruitee
+    slug: gs
+    company: Goldman Sachs
+    pool: levelled
+  - type: recruitee
+    slug: ms
+    company: Morgan Stanley
+    pool: levelled
+  - type: recruitee
+    slug: aa
+    company: American Airlines
+    pool: levelled
+  - type: greenhouse
+    slug: general
+    company: General Electric
+    pool: levelled
+  - type: recruitee
+    slug: fm
+    company: Ford Motor Company
+    pool: levelled
+  - type: greenhouse
+    slug: general
+    company: General Motors
+    pool: levelled
+  - type: greenhouse
+    slug: lucidmotors
+    company: Lucid Motors
+    pool: levelled
+  - type: smartrecruiters
+    slug: abbvie
+    company: AbbVie
+    pool: levelled
+  - type: ashby
+    slug: eli
+    company: Eli Lilly
+    pool: levelled
+  - type: greenhouse
+    slug: cc
+    company: Charter Communications
+    pool: levelled
+  - type: greenhouse
+    slug: tripadvisor
+    company: TripAdvisor
+    pool: levelled
+  - type: smartrecruiters
+    slug: wynnresorts
+    company: Wynn Resorts
+    pool: levelled
+  - type: ashby
+    slug: clark
+    company: Clark County Nevada
+    pool: levelled
+  - type: recruitee
+    slug: spring
+    company: Spring Mobile
+    pool: levelled
+  - type: greenhouse
+    slug: ultimate
+    company: Ultimate Fighting Championship
+    pool: levelled
+  - type: smartrecruiters
+    slug: diamondresorts
+    company: Diamond Resorts
+    pool: levelled
+  - type: greenhouse
+    slug: amplitude
+    company: Amplitude
+    pool: levelled
+  - type: greenhouse
+    slug: pagerduty
+    company: PagerDuty
+    pool: levelled
+  - type: greenhouse
+    slug: mixpanel
+    company: Mixpanel
+    pool: levelled
+  - type: greenhouse
+    slug: twitch
+    company: Twitch
+    pool: levelled
+  - type: greenhouse
+    slug: clever
+    company: Clever
+    pool: levelled
+  - type: greenhouse
+    slug: smartasset
+    company: SmartAsset
+    pool: levelled
+  - type: ashby
+    slug: zapier
+    company: Zapier
+    pool: levelled
+  - type: ashby
+    slug: benchling
+    company: Benchling
+    pool: levelled
+  - type: greenhouse
+    slug: fivetran
+    company: Fivetran
+    pool: levelled
+  - type: greenhouse
+    slug: webflow
+    company: Webflow
+    pool: levelled
+  - type: smartrecruiters
+    slug: bellabeat
+    company: Bellabeat
+    pool: levelled
+  - type: greenhouse
+    slug: flexport
+    company: Flexport
+    pool: levelled
+  - type: greenhouse
+    slug: weave
+    company: Weave
+    pool: levelled
+  - type: greenhouse
+    slug: algolia
+    company: Algolia
+    pool: levelled
+  - type: greenhouse
+    slug: checkr
+    company: Checkr
+    pool: levelled
+  - type: lever
+    slug: rigetti
+    company: Rigetti Computing
+    pool: levelled
+  - type: greenhouse
+    slug: ginkgobioworks
+    company: Ginkgo Bioworks
+    pool: levelled
+  - type: greenhouse
+    slug: oklo
+    company: Oklo
+    pool: levelled
+  - type: ashby
+    slug: notable
+    company: Notable Labs
+    pool: levelled
+  - type: greenhouse
+    slug: truebill
+    company: Truebill
+    pool: levelled
+  - type: lever
+    slug: meesho
+    company: Meesho
+    pool: levelled
+  - type: greenhouse
+    slug: scaleai
+    company: Scale AI
+    pool: levelled
+  - type: greenhouse
+    slug: bird
+    company: Bird
+    pool: levelled
+  - type: ashby
+    slug: clipboard
+    company: Clipboard
+    pool: levelled
+  - type: greenhouse
+    slug: faire
+    company: Faire
+    pool: levelled
+  - type: ashby
+    slug: flock
+    company: Flock Safety
+    pool: levelled
+  - type: greenhouse
+    slug: groww
+    company: Groww
+    pool: levelled
+  - type: greenhouse
+    slug: momentus
+    company: Momentus
+    pool: levelled
+  - type: greenhouse
+    slug: odeko
+    company: Odeko
+    pool: levelled
+  - type: ashby
+    slug: onyx
+    company: Onyx
+    pool: levelled
+  - type: greenhouse
+    slug: navierai
+    company: Navier AI
+    pool: levelled
+  - type: greenhouse
+    slug: poka
+    company: Poka Labs
+    pool: levelled
+  - type: ashby
+    slug: reducto
+    company: Reducto
+    pool: levelled
+  - type: greenhouse
+    slug: momentic
+    company: Momentic
+    pool: levelled
+  - type: ashby
+    slug: tuesday-labs
+    company: Tuesday Labs
+    pool: levelled
+  - type: greenhouse
+    slug: newton
+    company: Newton
+    pool: levelled
+  - type: ashby
+    slug: garage
+    company: Garage
+    pool: levelled
+  - type: ashby
+    slug: pivotrobotics
+    company: Pivot Robotics
+    pool: levelled
+  - type: ashby
+    slug: pointone
+    company: PointOne
+    pool: levelled
+  - type: greenhouse
+    slug: paradigm
+    company: Paradigm
+    pool: levelled
+  - type: ashby
+    slug: arini
+    company: Arini
+    pool: levelled
+  - type: ashby
+    slug: furtherai
+    company: FurtherAI
+    pool: levelled
+  - type: ashby
+    slug: artisan
+    company: Artisan
+    pool: levelled
+  - type: ashby
+    slug: greenboard
+    company: Greenboard
+    pool: levelled
+  - type: lever
+    slug: trellis
+    company: Trellis AI
+    pool: levelled
+  - type: ashby
+    slug: clarion
+    company: Clarion
+    pool: levelled
+  - type: ashby
+    slug: tamarindbio
+    company: Tamarind Bio
+    pool: levelled
+  - type: ashby
+    slug: centralize
+    company: Centralize
+    pool: levelled
+  - type: recruitee
+    slug: ca
+    company: CodeAnt AI
+    pool: levelled
+  - type: ashby
+    slug: astro-mechanica
+    company: Astro Mechanica
+    pool: levelled
+  - type: ashby
+    slug: conduit
+    company: Conduit
+    pool: levelled
+  - type: greenhouse
+    slug: hazel
+    company: Hazel
+    pool: levelled
+  - type: ashby
+    slug: offdeal
+    company: OffDeal
+    pool: levelled
+  - type: ashby
+    slug: circleback
+    company: Circleback
+    pool: levelled
+  - type: ashby
+    slug: brainbaselabs
+    company: Brainbase Labs
+    pool: levelled
+  - type: ashby
+    slug: retell-ai
+    company: Retell AI
+    pool: levelled
+  - type: ashby
+    slug: commodityai
+    company: CommodityAI
+    pool: levelled
+  - type: ashby
+    slug: spur
+    company: Spur
+    pool: levelled
+  - type: ashby
+    slug: ultra
+    company: Ultra
+    pool: levelled
+  - type: ashby
+    slug: domu
+    company: Domu Technology Inc.
+    pool: levelled
+  - type: ashby
+    slug: mem0
+    company: Mem0
+    pool: levelled
+  - type: ashby
+    slug: codes-health
+    company: Codes Health
+    pool: levelled
+  - type: ashby
+    slug: sagecare
+    company: Sage Care
+    pool: levelled
+  - type: ashby
+    slug: corgi
+    company: Corgi Insurance
+    pool: levelled
+  - type: greenhouse
+    slug: weave
+    company: Weave Robotics
+    pool: levelled
+  - type: greenhouse
+    slug: pulse
+    company: Pulse
+    pool: levelled
+  - type: ashby
+    slug: substrate
+    company: Substrate
+    pool: levelled
+  - type: ashby
+    slug: anthrogen
+    company: Anthrogen
+    pool: levelled
+  - type: ashby
+    slug: kastle
+    company: Kastle
+    pool: levelled
+  - type: ashby
+    slug: clearly-ai
+    company: Clearly AI
+    pool: levelled
+  - type: ashby
+    slug: finny
+    company: FINNY AI
+    pool: levelled
+  - type: ashby
+    slug: anara
+    company: Anara
+    pool: levelled
+  - type: ashby
+    slug: conductor
+    company: Conductor Quantum
+    pool: levelled
+  - type: ashby
+    slug: david-ai
+    company: David AI
+    pool: levelled
+  - type: ashby
+    slug: thundercompute
+    company: Thunder Compute
+    pool: levelled
+  - type: ashby
+    slug: simple-ai
+    company: Simple AI
+    pool: levelled
+  - type: ashby
+    slug: dataleap
+    company: Dataleap
+    pool: levelled
+  - type: ashby
+    slug: assembly
+    company: Assembly HOA
+    pool: levelled
+  - type: recruitee
+    slug: br
+    company: Bucket Robotics
+    pool: levelled
+  - type: ashby
+    slug: usul
+    company: Usul
+    pool: levelled
+  - type: recruitee
+    slug: ca
+    company: Capitol AI
+    pool: levelled
+  - type: greenhouse
+    slug: ma
+    company: Merlin AI
+    pool: levelled
+  - type: ashby
+    slug: conductor
+    company: Conductor
+    pool: levelled
+  - type: ashby
+    slug: ctgt
+    company: CTGT
+    pool: levelled
+  - type: lever
+    slug: unusual
+    company: Unusual
+    pool: levelled
+  - type: ashby
+    slug: abundant
+    company: Abundant
+    pool: levelled
+  - type: ashby
+    slug: capy
+    company: Capy
+    pool: levelled
+  - type: ashby
+    slug: innate
+    company: Innate
+    pool: levelled
+  - type: recruitee
+    slug: alex
+    company: Alex
+    pool: levelled
+  - type: ashby
+    slug: ryvn
+    company: Ryvn
+    pool: levelled
+  - type: recruitee
+    slug: ember
+    company: Ember
+    pool: levelled
+  - type: ashby
+    slug: apolink
+    company: Apolink
+    pool: levelled
+  - type: ashby
+    slug: reviserobotics
+    company: Revise Robotics
+    pool: levelled
+  - type: ashby
+    slug: bild-ai
+    company: Bild AI
+    pool: levelled
+  - type: ashby
+    slug: flowtel
+    company: Flowtel
+    pool: levelled
+  - type: greenhouse
+    slug: axiom
+    company: Axiom
+    pool: levelled
+  - type: ashby
+    slug: salespatriot
+    company: SalesPatriot
+    pool: levelled
+  - type: ashby
+    slug: paragon
+    company: Paragon
+    pool: levelled
+  - type: recruitee
+    slug: adam
+    company: Adam
+    pool: levelled
+  - type: ashby
+    slug: mosaic
+    company: Mosaic
+    pool: levelled
+  - type: greenhouse
+    slug: osmosis
+    company: Osmosis
+    pool: levelled
+  - type: ashby
+    slug: hud
+    company: HUD
+    pool: levelled
+  - type: ashby
+    slug: solidroad
+    company: Solidroad
+    pool: levelled
+  - type: greenhouse
+    slug: mesh
+    company: Mesh
+    pool: levelled
+  - type: ashby
+    slug: orbital
+    company: Orbital Operations
+    pool: levelled
+  - type: ashby
+    slug: infinite
+    company: Infinite
+    pool: levelled
+  - type: ashby
+    slug: fuse
+    company: Fuse AI
+    pool: levelled
+  - type: ashby
+    slug: afterquery
+    company: AfterQuery
+    pool: levelled
+  - type: ashby
+    slug: dex
+    company: Dex
+    pool: levelled
+  - type: ashby
+    slug: ambral
+    company: Ambral
+    pool: levelled
+  - type: ashby
+    slug: blaxel
+    company: Blaxel
+    pool: levelled
+  - type: ashby
+    slug: chestnut
+    company: Chestnut
+    pool: levelled
+  - type: ashby
+    slug: avallon
+    company: Avallon AI
+    pool: levelled
+  - type: ashby
+    slug: minerva
+    company: Minerva
+    pool: levelled
+  - type: recruitee
+    slug: sl
+    company: Synthio Labs
+    pool: levelled
+  - type: ashby
+    slug: auctor
+    company: Auctor
+    pool: levelled
+  - type: ashby
+    slug: claim-health
+    company: Claim Health
+    pool: levelled
+  - type: ashby
+    slug: sim
+    company: Sim
+    pool: levelled
+  - type: greenhouse
+    slug: ma
+    company: Mbodi AI
+    pool: levelled
+  - type: ashby
+    slug: jeevyfabrication
+    company: Jeevy Fabrication
+    pool: levelled
+  - type: ashby
+    slug: sygaldry-technologies
+    company: Sygaldry Technologies
+    pool: levelled
+  - type: ashby
+    slug: eloquentai
+    company: Eloquent AI
+    pool: levelled
+  - type: ashby
+    slug: pingo
+    company: Pingo
+    pool: levelled
+  - type: lever
+    slug: autonomous
+    company: Autonomous Technologies Group
+    pool: levelled
+  - type: ashby
+    slug: prox
+    company: Prox
+    pool: levelled
+  - type: ashby
+    slug: dedalus-labs
+    company: Dedalus Labs
+    pool: levelled
+  - type: ashby
+    slug: mangodesk
+    company: MangoDesk
+    pool: levelled
+  - type: ashby
+    slug: halluminate
+    company: Halluminate
+    pool: levelled
+  - type: ashby
+    slug: agentmail
+    company: AgentMail
+    pool: levelled
+  - type: ashby
+    slug: truthsystems
+    company: truthsystems
+    pool: levelled
+  - type: recruitee
+    slug: blank
+    company: Blank Bio
+    pool: levelled
+  - type: ashby
+    slug: oh
+    company: Overdrive Health
+    pool: levelled
+  - type: recruitee
+    slug: humwork
+    company: Humwork
+    pool: levelled
+  - type: ashby
+    slug: careswift
+    company: CareSwift
+    pool: levelled
+  - type: ashby
+    slug: bootloop
+    company: BootLoop
+    pool: levelled
+  - type: ashby
+    slug: interface
+    company: Interface
+    pool: levelled
+  - type: greenhouse
+    slug: b12
+    company: b12 Labs
+    pool: levelled
+  - type: ashby
+    slug: flai
+    company: Flai
+    pool: levelled
+  - type: ashby
+    slug: solva
+    company: Solva
+    pool: levelled
+  - type: ashby
+    slug: misolabs
+    company: Miso Labs
+    pool: levelled
+  - type: ashby
+    slug: idler
+    company: Idler
+    pool: levelled
+  - type: ashby
+    slug: reacher
+    company: Reacher
+    pool: levelled
+  - type: ashby
+    slug: fleetline
+    company: Fleetline
+    pool: levelled
+  - type: ashby
+    slug: interfere
+    company: Interfere
+    pool: levelled
+  - type: ashby
+    slug: veritus
+    company: Veritus
+    pool: levelled
+  - type: greenhouse
+    slug: burnt
+    company: burnt
+    pool: levelled
+  - type: greenhouse
+    slug: uplift
+    company: Uplift AI
+    pool: levelled
+  - type: ashby
+    slug: nox-metals
+    company: Nox Metals
+    pool: levelled
+  - type: ashby
+    slug: uplane
+    company: Uplane
+    pool: levelled
+  - type: ashby
+    slug: hyperspell
+    company: Hyperspell
+    pool: levelled
+  - type: ashby
+    slug: cranston
+    company: Cranston AI
+    pool: levelled
+  - type: ashby
+    slug: hypercubic
+    company: Hypercubic
+    pool: levelled
+  - type: greenhouse
+    slug: icarus
+    company: Icarus
+    pool: levelled
+  - type: ashby
+    slug: diligencesquared
+    company: DiligenceSquared
+    pool: levelled
+  - type: ashby
+    slug: vector
+    company: Vector Legal
+    pool: levelled
+  - type: ashby
+    slug: moss
+    company: Moss
+    pool: levelled
+  - type: greenhouse
+    slug: mantis
+    company: Mantis
+    pool: levelled
+  - type: greenhouse
+    slug: clara
+    company: Clara
+    pool: levelled
+  - type: ashby
+    slug: onerobot
+    company: One Robot
+    pool: levelled
+  - type: recruitee
+    slug: rc
+    company: Ruma Care
+    pool: levelled
+  - type: ashby
+    slug: lance
+    company: Lance
+    pool: levelled
+  - type: ashby
+    slug: asimov
+    company: Asimov
+    pool: levelled
+  - type: recruitee
+    slug: sparkles
+    company: Sparkles
+    pool: levelled
+  - type: greenhouse
+    slug: hs
+    company: Hex Security
+    pool: levelled
+  - type: ashby
+    slug: cardboard
+    company: Cardboard
+    pool: levelled
+  - type: ashby
+    slug: 9-mothers
+    company: 9 Mothers
+    pool: levelled
+  - type: ashby
+    slug: humanarchive
+    company: Human Archive
+    pool: levelled
+  - type: ashby
+    slug: polymath
+    company: Polymath
+    pool: levelled
+  - type: greenhouse
+    slug: superset
+    company: Superset
+    pool: levelled
+  - type: greenhouse
+    slug: dispatch
+    company: Dispatch
+    pool: levelled
+  - type: greenhouse
+    slug: juno
+    company: Juno
+    pool: levelled
+  - type: recruitee
+    slug: ca
+    company: Callab AI
+    pool: levelled
+  - type: ashby
+    slug: complir
+    company: Complir
+    pool: levelled
+  - type: recruitee
+    slug: bp
+    company: BioStack Platforms
+    pool: levelled
+  - type: greenhouse
+    slug: openwork
+    company: OpenWork
+    pool: levelled
+  - type: ashby
+    slug: arlo
+    company: Arlo Industries
+    pool: levelled
+  - type: lever
+    slug: rise
+    company: Rise Reforming
+    pool: levelled

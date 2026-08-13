@@ -277,6 +277,13 @@ const asleep = (ms) => new Promise((r) => setTimeout(r, ms))
  * @param {boolean} [spec.uploadDetaches]
  * @param {boolean} [spec.staleForever] every touch throws "not attached"
  * @param {boolean} [spec.realSleep]    actually sleep instead of accounting
+ * @param {(ms:number)=>Promise<void>} [spec.sleepFn] the sleep primitive
+ *                                      `realSleep` drives. Defaults to a real
+ *                                      setTimeout. Inject a virtual clock to
+ *                                      assert the accounting exactly without
+ *                                      making the assertion a race against the
+ *                                      machine's load — see
+ *                                      tests/apply/bench-apply.test.mjs.
  */
 export function instrumentedPage(spec = {}) {
   const {
@@ -293,6 +300,7 @@ export function instrumentedPage(spec = {}) {
     uploadDetaches = true,
     staleForever = false,
     realSleep = false,
+    sleepFn = asleep,
   } = spec
 
   const cost = {
@@ -323,7 +331,7 @@ export function instrumentedPage(spec = {}) {
   const waitForTimeout = async (ms) => {
     cost.sleep_unconditional_ms += ms
     cost.calls.push(["waitForTimeout", ms])
-    if (realSleep) await asleep(ms)
+    if (realSleep) await sleepFn(ms)
   }
 
   // A conditional wait. `fires` says whether the DOM condition this model
@@ -332,7 +340,7 @@ export function instrumentedPage(spec = {}) {
     cost.sleep_conditional_ceiling_ms += timeout
     if (!fires) {
       cost.sleep_conditional_hit_ms += timeout
-      if (realSleep) await asleep(timeout)
+      if (realSleep) await sleepFn(timeout)
     }
     cost.calls.push(["waitFor", label, timeout, fires ? "early" : "timeout"])
   }
@@ -526,7 +534,7 @@ export function instrumentedPage(spec = {}) {
         cost.typed_chars += text.length
         cost.calls.push(["type", text.length, delay])
         note("keyboard.type", text.length, delay)
-        if (realSleep) await asleep(text.length * delay)
+        if (realSleep) await sleepFn(text.length * delay)
         page._lastTyped = text
         if (combo.open) {
           combo.sawType = true
@@ -1816,6 +1824,14 @@ export function clockedPage(page) {
     conditional_ms: 0,
     conditional_calls: 0,
     conditional_ceiling_ms: 0,
+    // How many conditional waits ended on their TIMEOUT rather than on the
+    // condition they were waiting for. This is the only load-independent way
+    // to ask "did this wait pay its ceiling": the elapsed wall clock is not,
+    // because it also counts protocol overhead the timeout does not govern,
+    // so on a loaded machine a wait that resolved early can still measure
+    // longer than its own ceiling. Asserting on the durations is what made
+    // tests/apply/bench-apply.test.mjs flake under a contended full run.
+    conditional_timeouts: 0,
     cdp_calls: 0,
     waits: [],
     // UNCAPPED, unlike `waits`. `waits` is a 60-entry sample for a human to
@@ -1834,13 +1850,22 @@ export function clockedPage(page) {
   }
   const clock = async (label, ceiling, fn, sel = null) => {
     const t = performance.now()
+    let timedOut = false
     try {
       return await fn()
+    } catch (e) {
+      // Playwright throws TimeoutError, and only TimeoutError, when the
+      // condition never became true within the ceiling. Any other throw is
+      // the wait failing for some other reason and is not a timeout. The
+      // error is re-thrown untouched — the caller decides what it means.
+      if (e && e.name === "TimeoutError") timedOut = true
+      throw e
     } finally {
       const ms = performance.now() - t
       cost.conditional_ms += ms
       cost.conditional_calls++
       cost.conditional_ceiling_ms += ceiling || 0
+      if (timedOut) cost.conditional_timeouts++
       bucket((sel ?? "-") + "::" + label, ms, ceiling)
       if (cost.waits.length < 60)
         cost.waits.push({
@@ -1848,6 +1873,7 @@ export function clockedPage(page) {
           sel,
           ms: round(ms),
           ceiling_ms: ceiling || null,
+          timedOut,
         })
     }
   }
@@ -1979,6 +2005,7 @@ export async function benchBrowser({ board, boardName, pings = 20 } = {}) {
         probe: scan?.probe ?? null,
         conditional_actual_ms: round(cost.conditional_ms),
         conditional_ceiling_ms: cost.conditional_ceiling_ms,
+        conditional_timeouts: cost.conditional_timeouts,
         slept_ms: round(cost.slept_ms),
         cdp_calls: cost.cdp_calls,
         waits: cost.waits,

@@ -673,6 +673,16 @@ end when the page is ready) in separate buckets, plus `by_target`, an uncapped
 map keyed `selector::state` so a caller can total a _subset_ of waits without the
 recorder needing to know what an upload is.
 
+It also records **whether each wait ended on its condition or on its timeout**
+(`timedOut` per wait, `conditional_timeouts` as a total). That flag, not the
+elapsed time, is what says a wait paid its ceiling: `conditional_ms` also counts
+protocol overhead the timeout does not govern, so on a loaded machine a wait that
+resolved early can still measure longer than its own ceiling. A test that
+compared summed elapsed against summed ceilings failed a perfectly healthy page
+under a contended full run for exactly this reason. The flag is also the sharper
+question — a sum can stay under its ceiling while one wait inside it quietly
+times out.
+
 **`--browser`** runs: a real navigation; 20 `page.evaluate(() => 1)` pings to
 price a single browser round trip; the real scan through the clock; a
 fixture-versus-live **label drift** check; the page-side probe path neither

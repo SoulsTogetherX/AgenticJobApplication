@@ -32,20 +32,46 @@ function fixture(files) {
   return dir
 }
 
-function runGate(args, cwd) {
+// A gate run is three process levels deep — this test spawns the gate, which
+// spawns its own `node --test`, which spawns a process per fixture file. One
+// takes ~300ms idle, but under a contended full suite (`npm test` has been
+// measured at 1070s against 147s on the same tree) the whole chain stalls, and
+// a 60s cap here was enough to have the child KILLED mid-run. spawnSync then
+// reports status null, and `assert.equal(r.status, 1)` failed with "expected 1,
+// got null" — which reads as a gate regression and is not one.
+//
+// So the cap is a hang-breaker, not an assertion about speed: it is generous,
+// and a run that trips it is retried once, because a killed run is not evidence
+// about the gate in either direction. Nothing about the verdict is relaxed —
+// every assertion still has to hold on a run that actually finished.
+const SPAWN_TIMEOUT_MS = 240_000
+
+function spawnGate(args, cwd) {
   // --cwd is what the gate resolves required dirs and test paths against; the
   // spawn cwd alone would leave it pointed at the real repo.
   const scoped = cwd ? ["--cwd", cwd] : []
-  const res = spawnSync(
-    process.execPath,
-    [GATE, "--quiet", ...scoped, ...args],
-    {
-      cwd: cwd ?? ROOT,
-      encoding: "utf8",
-      timeout: 60_000,
-    },
-  )
-  return { status: res.status, out: res.stdout + res.stderr }
+  return spawnSync(process.execPath, [GATE, "--quiet", ...scoped, ...args], {
+    cwd: cwd ?? ROOT,
+    encoding: "utf8",
+    timeout: SPAWN_TIMEOUT_MS,
+  })
+}
+
+function runGate(args, cwd) {
+  let res = spawnGate(args, cwd)
+  // status is null for both "killed" (timeout, .signal set) and "never
+  // started" (.error set). Neither produced a verdict, so neither can be
+  // asserted against.
+  if (res.status === null) res = spawnGate(args, cwd)
+  if (res.status === null) {
+    const why = res.error ? res.error.message : `killed by ${res.signal}`
+    throw new Error(
+      `the gate subprocess produced no verdict on two consecutive attempts ` +
+        `(${SPAWN_TIMEOUT_MS}ms cap each): ${why}. That is a hang or a machine ` +
+        `problem, not a wrong answer from the gate.`,
+    )
+  }
+  return { status: res.status, out: (res.stdout || "") + (res.stderr || "") }
 }
 
 const PASSING = `import test from "node:test"

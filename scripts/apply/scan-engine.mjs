@@ -678,8 +678,33 @@ export default async function scanPage(page, opts = {}) {
       }
       stats.probed++
       await page.keyboard.press("Escape")
-      // Let the menu close before the next dropdown is clicked — for as long
-      // as that actually takes, not a flat 80ms.
+      // Stop the NEXT dropdown's probe from reading THIS menu's rows. The read
+      // above falls back to a document-wide sweep whenever it cannot find the
+      // control's own menu, so a menu still on screen when the next control is
+      // clicked can hand its options to the wrong field — and a returned list
+      // is cached as the COMPLETE one, so that field then defers on every
+      // future application to the board. Same silent-wrongness as the
+      // empty-state note above, reached from the other end.
+      //
+      // IT DOES NOT EXIT EARLY, AND DID NOT ON ANY RUN MEASURED. MEASURED
+      // 2026-08-13 against all four page fixtures: every one renders the menu
+      // as a static container toggled with `hidden`, so the rows are never
+      // removed from the DOM and `detached` cannot fire. Three consecutive
+      // scans of greenhouse-step1 paid 82.5, 82.2 and 81.9ms of the 80ms
+      // ceiling. The guard still lands — 80ms is long enough for any menu to
+      // close — but it lands on the TIMEOUT, which makes this exactly the flat
+      // sleep the early exit was written to replace. Real react-select unmounts
+      // its menu and would detach; whether the live boards do was not checked.
+      //
+      // DO NOT "FIX" THAT BY SWITCHING TO state:"hidden" ALONE. Playwright
+      // reads hidden as "not visible OR not in the DOM", and this locator is
+      // page-wide with .first(), so it resolves against the first __option in
+      // DOM order — on a form carrying a persistent country-code widget (the
+      // one the open wait above already dodges) that element is ALREADY
+      // hidden, the wait returns instantly, and the guard is silently gone
+      // while the scan merely looks 80ms faster per dropdown. Scoping this to
+      // the control's own menu via aria-controls, as the open wait does, is a
+      // precondition for that change and not an independent improvement.
       await page
         .locator("[class*='__option']")
         .first()

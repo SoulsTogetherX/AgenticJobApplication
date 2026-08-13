@@ -77,38 +77,124 @@ test("accounted sleep equals real sleep for the same plan", async () => {
     "[class*='__option'], [role='option']": { kind: "input", value: "" },
   })
 
+  // Pinned rather than inherited so the divergence bound at the bottom is a
+  // number this test states, not one it guesses. These are fill-engine's own
+  // defaults; the settle stage is the only part of the engine that reads a
+  // clock, so it is the only part whose behaviour these change.
+  const SETTLE = { uploadMs: 1000, quietMs: 450, pollMs: 90 }
+  const run = (page) => fillPage(page, { items }, { settle: SETTLE })
+
   const accounted = instrumentedPage({
     elements: elements(),
     ...PROFILES.best,
   })
-  await fillPage(accounted.page, { items })
+  await run(accounted.page)
 
+  // Every millisecond this case really sleeps: the two unconditional kinds
+  // plus any conditional wait that times out. `best` pays no conditional
+  // ceiling today, but summing it keeps the equality below correct if the
+  // profile ever changes rather than silently becoming an inequality.
+  const budget =
+    accounted.cost.sleep_unconditional_ms +
+    accounted.cost.sleep_typing_ms +
+    accounted.cost.sleep_conditional_hit_ms
+  assert.ok(budget > 0, "the case must actually cost sleep to be a test")
+
+  // --- 1. every accounted millisecond reaches the sleep primitive ---------
+  // A virtual clock records what the rig would have slept instead of serving
+  // it, so this compares the accounting against the argument the engine
+  // actually handed to the primitive — exactly, with no tolerance. This is
+  // what the old `wall < budget + 4000` was reaching for; stated this way it
+  // is both stricter and immune to how loaded the machine is.
+  let virtual = 0
+  const virtualClock = instrumentedPage({
+    elements: elements(),
+    ...PROFILES.best,
+    realSleep: true,
+    sleepFn: async (ms) => {
+      virtual += ms
+    },
+  })
+  const tv = performance.now()
+  await run(virtualClock.page)
+  const computeWall = performance.now() - tv
+
+  assert.equal(
+    virtual,
+    budget,
+    "every accounted ms must reach the sleep primitive, and no unaccounted ms may",
+  )
+  assert.equal(
+    virtualClock.cost.sleep_unconditional_ms,
+    accounted.cost.sleep_unconditional_ms,
+    "virtualising the clock must not change the path the engine takes",
+  )
+
+  // --- 2. no sleep bypasses the page object ------------------------------
+  // With the clock virtualised what remains is pure compute: measured at 6ms
+  // against a 1680ms budget on an idle machine. A sleep taken with a bare
+  // setTimeout inside the engine would be invisible to the rig and would make
+  // the whole bench under-report, and it still shows up here. The old upper
+  // bound caught the same thing only above 4000ms, and conflated it with load.
+  assert.ok(
+    computeWall < budget,
+    `with the clock virtualised the engine still spent ${Math.round(computeWall)}ms, ` +
+      `on the order of the ${budget}ms it claims to sleep — something is sleeping ` +
+      `outside the page object, where the bench cannot account for it`,
+  )
+
+  // --- 3. the accounting is denominated in real milliseconds -------------
   const slept = instrumentedPage({
     elements: elements(),
     ...PROFILES.best,
     realSleep: true,
   })
   const t0 = performance.now()
-  await fillPage(slept.page, { items })
+  await run(slept.page)
   const wall = performance.now() - t0
 
-  const budget =
-    accounted.cost.sleep_unconditional_ms + accounted.cost.sleep_typing_ms
-  assert.ok(budget > 0, "the case must actually cost sleep to be a test")
-  assert.equal(
-    slept.cost.sleep_unconditional_ms,
-    accounted.cost.sleep_unconditional_ms,
-    "the two modes must account identically",
+  // THE REAL-SLEEP RUN IS ALLOWED TO ACCOUNT LESS, AND ONLY IN ONE PLACE.
+  // The settle loop ends on whichever of two clocks says "done" first: the
+  // wall deadline, or `poll * pollMs`. That pair exists precisely because a
+  // rig which records sleeps instead of serving them never advances the wall,
+  // and fill-engine documents the intended split — "a real page hits the wall
+  // deadline at or before the poll budget, a double hits the poll budget
+  // exactly". Sleeping for real makes this rig the first kind. Idle, the two
+  // clocks land on the same poll and the totals match exactly; under load each
+  // 90ms sleep overshoots, the wall reaches 450ms in fewer polls, and the run
+  // legitimately accounts less. Asserting equality here made the suite fail
+  // for doing the right thing — it failed on all three rounds of a 12-burner
+  // stress run — so what is asserted instead is the contract itself.
+  const shortfall =
+    accounted.cost.sleep_unconditional_ms - slept.cost.sleep_unconditional_ms
+  assert.ok(
+    shortfall >= 0,
+    `sleeping for real made the engine account MORE (${slept.cost.sleep_unconditional_ms}ms ` +
+      `vs ${accounted.cost.sleep_unconditional_ms}ms). The wall clock can only end the settle ` +
+      `loop earlier than the poll budget, never later, so this is a real divergence.`,
   )
+  assert.ok(
+    shortfall <= SETTLE.quietMs,
+    `the two modes diverged by ${shortfall}ms, more than the ${SETTLE.quietMs}ms settle ` +
+      `budget that is the only place they may differ — something outside the settle ` +
+      `loop is now clock-dependent`,
+  )
+
   // setTimeout only guarantees "not before", so the wall clock is a lower
-  // bound with slack above it, never below.
+  // bound with slack above it, never below. Contention can only push it
+  // further above the floor, so this half never flaked. It is measured
+  // against what THIS run accounted, not against the double's total, so an
+  // early settle exit shortens both sides together instead of failing.
+  // There is deliberately no upper bound any more: that was the half that
+  // failed under a contended full run, and assertion 1 pins the same property
+  // exactly instead of racing the scheduler for it.
+  const sleptBudget =
+    slept.cost.sleep_unconditional_ms +
+    slept.cost.sleep_typing_ms +
+    slept.cost.sleep_conditional_hit_ms
   assert.ok(
-    wall >= budget * 0.9,
-    `real sleep ${Math.round(wall)}ms should be at least the accounted ${budget}ms`,
-  )
-  assert.ok(
-    wall < budget + 4000,
-    `real sleep ${Math.round(wall)}ms wildly exceeds the accounted ${budget}ms`,
+    wall >= sleptBudget * 0.9,
+    `real sleep ${Math.round(wall)}ms should be at least the accounted ${sleptBudget}ms`,
   )
 })
 
@@ -660,7 +746,29 @@ test("clockedPage separates a flat sleep from a conditional wait, and forwards t
 test("benchBrowser measures against real Chromium, or says why it did not", async (t) => {
   const board = await start()
   try {
-    const run = await benchBrowser({ board, boardName: "greenhouse" })
+    // WHICH WAITS TIME OUT IS THE ONE THING HERE A LOADED MACHINE CAN CHANGE.
+    // Everything else below is a fact about the page or the recorder and reads
+    // the same at any speed. But "the option menu appears inside the engine's
+    // 300ms ceiling" is partly a claim about how fast this machine can render
+    // React right now, and under a 12-burner stress run it was genuinely false
+    // on one attempt in three — the wait really did time out, which is not a
+    // measurement artifact and cannot be asserted away.
+    //
+    // A run whose waits timed out is not evidence about the engine, so it is
+    // retried, exactly like a killed subprocess in tests/hooks/test-gate.test.mjs.
+    // Nothing is relaxed: a page whose menu never appears times out on all
+    // three attempts and still fails, and the assertions below run in full
+    // against whichever run is used.
+    const EXPECTED_TIMEOUTS = ["locator.waitFor:detached"]
+    const timedOutLabels = (r) =>
+      (r.legs?.scan?.waits ?? []).filter((w) => w.timedOut).map((w) => w.label)
+    let run
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      run = await benchBrowser({ board, boardName: "greenhouse" })
+      if (!run.ran) break
+      const seen = timedOutLabels(run)
+      if (JSON.stringify(seen) === JSON.stringify(EXPECTED_TIMEOUTS)) break
+    }
     if (!run.ran) return t.skip("no usable Chromium: " + run.error)
 
     // It only ever points at loopback. Asserted on the URL it actually used,
@@ -678,10 +786,40 @@ test("benchBrowser measures against real Chromium, or says why it did not", asyn
     const s = run.legs.scan
     assert.equal(s.error, undefined, "the scan leg must actually run")
     assert.ok(s.fields > 0, "a scan that found no fields measured nothing")
+    // WHICH WAITS FIRED, NOT HOW LONG THEY TOOK. This used to compare summed
+    // elapsed time against summed ceilings, which is not a question about the
+    // engine at all: the elapsed time also counts protocol overhead the
+    // ceiling does not govern, so under a contended full run these same three
+    // waits measured 601ms against a 380ms ceiling and failed a page that had
+    // hydrated perfectly well. Whether a wait ended on its CONDITION or on its
+    // TIMEOUT is the sharper question either way — a sum can stay under its
+    // ceiling while one wait inside it quietly times out.
     assert.ok(
-      s.conditional_actual_ms < s.conditional_ceiling_ms,
-      `actual ${s.conditional_actual_ms}ms should be under the ` +
-        `${s.conditional_ceiling_ms}ms ceiling on a page that hydrates fast`,
+      s.conditional_actual_ms > 0,
+      "the conditional clock recorded nothing, so this leg measured no waits",
+    )
+    assert.ok(
+      s.waits.some((w) => w.label === "locator.waitFor:attached"),
+      `the scan must wait for the option menu to appear; saw ${JSON.stringify(
+        s.waits.map((w) => w.label),
+      )}`,
+    )
+    // Exactly one wait is expected to end on its timeout, and it is a NEGATIVE
+    // probe: greenhouse-step1's menu does not detach, so paying the 80ms
+    // ceiling there is the correct outcome, measured identically on three
+    // consecutive idle runs. Pinning the SET rather than a count means a new
+    // timeout — including the option menu failing to appear, which is what
+    // "hydrates fast" means here — fails instead of being absorbed into a sum.
+    assert.deepEqual(
+      timedOutLabels(run),
+      EXPECTED_TIMEOUTS,
+      "the option menu must appear on its condition and only the detach probe " +
+        "may end on its timeout, and that held on none of 3 attempts",
+    )
+    assert.equal(
+      s.conditional_timeouts,
+      EXPECTED_TIMEOUTS.length,
+      "the leg must report the timeouts it recorded",
     )
 
     // The fixture is only a valid stand-in for the live DOM while it agrees

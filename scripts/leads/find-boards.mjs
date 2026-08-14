@@ -32,7 +32,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import yaml from "js-yaml"
-import { isTerse, mapPool, UA } from "../lib/lib.mjs"
+import { fetchJson, isTerse, mapPool } from "../lib/lib.mjs"
 import { loadSources } from "./find-jobs.mjs"
 
 const ROOT = path.resolve(
@@ -102,17 +102,17 @@ export function slugsFor(name) {
   ].filter((s) => s.length >= 2)
 }
 
+// fetchJson rather than raw fetch so per-host politeness applies — probing
+// walks api.lever.co once per candidate slug, exactly the burst its
+// robots.txt Crawl-delay is about.
 async function probeOne(slug, probe, timeoutMs) {
-  const ctl = AbortSignal.timeout(timeoutMs)
   try {
-    const r = await fetch(probe.url(slug), {
-      headers: { "user-agent": UA, accept: "application/json" },
-      signal: ctl,
-    })
-    if (!r.ok) return null
-    const n = probe.count(await r.json())
+    const j = await fetchJson(probe.url(slug), null, { timeoutMs })
+    const n = probe.count(j)
     return n > 0 ? { type: probe.type, slug, live: n } : null
-  } catch {
+  } catch (e) {
+    // A 429 is the host pushing back, not evidence the slug is absent.
+    if (e?.status === 429) return { rateLimited: true }
     return null
   }
 }
@@ -120,13 +120,20 @@ async function probeOne(slug, probe, timeoutMs) {
 // Find the board for one company. Stops at the first hit: a company has one
 // real board, and continuing costs round trips for nothing.
 export async function findBoard(name, { timeoutMs = 8000 } = {}) {
+  let rateLimited = false
   for (const slug of slugsFor(name)) {
     for (const probe of PROBES) {
       const hit = await probeOne(slug, probe, timeoutMs)
+      if (hit?.rateLimited) {
+        rateLimited = true
+        continue
+      }
       if (hit) return { company: name, ...hit }
     }
   }
-  return { company: name, type: null, slug: null, live: 0 }
+  // rateLimited distinguishes "an ATS refused to answer" from "no board" —
+  // reporting a rate-limited company as boardless would quietly shrink reach.
+  return { company: name, type: null, slug: null, live: 0, rateLimited }
 }
 
 function flag(args, name, fallback = null) {
@@ -185,12 +192,13 @@ async function main() {
     (r) => !known.has(`${r.type}:${r.slug.toLowerCase()}`),
   )
   const dupes = found.length - fresh.length
-  const missing = rows.filter((r) => !r.type)
+  const missing = rows.filter((r) => !r.type && !r.rateLimited)
+  const rateLimited = rows.filter((r) => !r.type && r.rateLimited)
 
   if (asJson) {
     return console.log(
       JSON.stringify(
-        { ms, probed: rows.length, found: fresh, dupes, missing },
+        { ms, probed: rows.length, found: fresh, dupes, missing, rateLimited },
         null,
         2,
       ),
@@ -231,7 +239,7 @@ async function main() {
     for (const r of fresh)
       console.log(`found|${r.type}|${r.slug}|${r.company}|live=${r.live}`)
     console.log(
-      `probed=${rows.length} found=${fresh.length} already_tracked=${dupes} no_public_board=${missing.length} ms=${ms} out=${outPath}`,
+      `probed=${rows.length} found=${fresh.length} already_tracked=${dupes} no_public_board=${missing.length} rate_limited=${rateLimited.length} ms=${ms} out=${outPath}`,
     )
     return
   }
@@ -262,6 +270,13 @@ async function main() {
         `what most large and most local employers use:`,
     )
     console.log(`  ${missing.map((r) => r.company).join(", ")}\n`)
+  }
+  if (rateLimited.length) {
+    console.log(
+      `An ATS rate-limited the probe for ${rateLimited.length} compan(ies) —\n` +
+        `NOT evidence they have no board. Re-run these later:`,
+    )
+    console.log(`  ${rateLimited.map((r) => r.company).join(", ")}\n`)
   }
 }
 

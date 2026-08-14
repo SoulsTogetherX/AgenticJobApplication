@@ -90,40 +90,164 @@ async function withTimeout(url, timeoutMs, fn) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Per-host politeness. api.lever.co's robots.txt declares Crawl-delay: 1, and
+// Common Crawl asks the same restraint of bulk index clients; both are hosts
+// this pipeline hits many times in a row (every tracked Lever board, every CDX
+// page). Spacing is START-TO-START per host — Crawl-delay semantics — so
+// responses may overlap and a slow reply never widens the gap. Every other
+// host pays one Map lookup and no promise chaining: the sweep fans out across
+// dozens of DISTINCT ATS hosts, and serializing those would hand back the
+// whole mapPool win for nothing.
+// ---------------------------------------------------------------------------
+
+export const HOST_MIN_DELAY_MS = {
+  "api.lever.co": 1000,
+  "index.commoncrawl.org": 1000,
+}
+
+// Retry-After is server-controlled data: honored, defaulted when absent or
+// malformed, and CAPPED so a hostile value cannot park a host for a day.
+export const RETRY_AFTER_DEFAULT_MS = 60_000
+export const RETRY_AFTER_CAP_MS = 900_000
+
+// host -> { chain, nextAt, pausedUntil }. Module-level on purpose: every
+// fetcher in the process shares one gate per host, which is the point.
+const hostGates = new Map()
+
+// Injectable timers so tests assert 1s spacing without spending 1s. The
+// returned function restores the previous clock.
+let clock = {
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+}
+export function setPolitenessClock(next) {
+  const prev = clock
+  clock = { ...prev, ...next }
+  return () => {
+    clock = prev
+  }
+}
+
+export function resetHostGates() {
+  hostGates.clear()
+}
+
+// "120" (delta-seconds) or an HTTP-date; absent, garbage or negative falls to
+// the default rather than zero — a host that said 429 without saying when is
+// still saying "not now".
+export function retryAfterMs(header) {
+  let ms = NaN
+  const s = String(header ?? "").trim()
+  if (/^\d+$/.test(s)) ms = Number(s) * 1000
+  else if (s) ms = Date.parse(s) - clock.now()
+  if (!Number.isFinite(ms) || ms < 0) ms = RETRY_AFTER_DEFAULT_MS
+  return Math.min(ms, RETRY_AFTER_CAP_MS)
+}
+
+function gateFor(host) {
+  let gate = hostGates.get(host)
+  if (!gate) {
+    gate = { chain: Promise.resolve(), nextAt: 0, pausedUntil: 0 }
+    hostGates.set(host, gate)
+  }
+  return gate
+}
+
+async function politeRequest(url, exec) {
+  let host
+  try {
+    host = new URL(url).hostname
+  } catch {
+    return exec() // not a gateable URL; let fetch report what it is
+  }
+  const minDelay = HOST_MIN_DELAY_MS[host] ?? 0
+  // Fast path: unthrottled and never 429'd. One Map lookup, no chaining.
+  if (!minDelay && !hostGates.has(host)) return noting429(host, exec)
+  const gate = gateFor(host)
+  const turn = gate.chain.then(async () => {
+    const now = clock.now()
+    const wait = Math.max(gate.nextAt - now, gate.pausedUntil - now, 0)
+    if (wait > 0) await clock.sleep(wait)
+    gate.nextAt = clock.now() + minDelay
+    // An unthrottled host that finished serving out a 429 pause goes back to
+    // the fast path instead of chaining forever.
+    if (!minDelay && gate.pausedUntil <= clock.now()) hostGates.delete(host)
+  })
+  // Each turn resolves when its request STARTS (start-to-start spacing); the
+  // catch keeps one broken injected timer from poisoning the host for good.
+  gate.chain = turn.catch(() => {})
+  await turn
+  return noting429(host, exec)
+}
+
+// A 429 pauses its host. The failed request is NOT retried — the host said
+// "not now", and canonical.mjs applies the same no-retry rule — but every
+// later request to that host waits the pause out instead of piling on.
+async function noting429(host, exec) {
+  try {
+    return await exec()
+  } catch (e) {
+    if (e?.status === 429) {
+      const gate = gateFor(host)
+      gate.pausedUntil = Math.max(
+        gate.pausedUntil,
+        clock.now() + (e.retryAfterMs ?? RETRY_AFTER_DEFAULT_MS),
+      )
+    }
+    throw e
+  }
+}
+
+// HTTP failures carry their status so callers can tell "board absent" (404)
+// from "host pushing back" (429) without parsing the message. The message
+// itself is unchanged — it is what every existing caller stores and logs.
+function httpError(res, url) {
+  const e = new Error(`HTTP ${res.status} for ${url}`)
+  e.status = res.status
+  if (res.status === 429)
+    e.retryAfterMs = retryAfterMs(res.headers.get("retry-after"))
+  return e
+}
+
 export async function fetchJson(
   url,
   body = null,
   { timeoutMs = FETCH_TIMEOUT_MS } = {},
 ) {
-  return withTimeout(url, timeoutMs, async (signal) => {
-    const res = await fetch(url, {
-      method: body ? "POST" : "GET",
-      headers: {
-        "user-agent": UA,
-        accept: "application/json",
-        ...(body ? { "content-type": "application/json" } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal,
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
-    return res.json()
-  })
+  return politeRequest(url, () =>
+    withTimeout(url, timeoutMs, async (signal) => {
+      const res = await fetch(url, {
+        method: body ? "POST" : "GET",
+        headers: {
+          "user-agent": UA,
+          accept: "application/json",
+          ...(body ? { "content-type": "application/json" } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal,
+      })
+      if (!res.ok) throw httpError(res, url)
+      return res.json()
+    }),
+  )
 }
 
 export async function fetchText(url, { timeoutMs = FETCH_TIMEOUT_MS } = {}) {
-  return withTimeout(url, timeoutMs, async (signal) => {
-    const res = await fetch(url, {
-      headers: {
-        "user-agent": UA,
-        accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-      signal,
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
-    return res.text()
-  })
+  return politeRequest(url, () =>
+    withTimeout(url, timeoutMs, async (signal) => {
+      const res = await fetch(url, {
+        headers: {
+          "user-agent": UA,
+          accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+        signal,
+      })
+      if (!res.ok) throw httpError(res, url)
+      return res.text()
+    }),
+  )
 }
 
 // Out-of-range numeric entities are left as written rather than crashing the

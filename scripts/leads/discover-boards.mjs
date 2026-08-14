@@ -22,7 +22,13 @@ import { pathToFileURL } from "node:url"
 import path from "node:path"
 import yaml from "js-yaml"
 import { isTerse, mapPool } from "../lib/lib.mjs"
-import { loadSources, loadLimits, fetchBoard } from "./find-jobs.mjs"
+import {
+  loadSources,
+  loadLimits,
+  fetchBoard,
+  parseQueries,
+  DEFAULT_SEARCH_QUERY,
+} from "./find-jobs.mjs"
 import { scoreBoard } from "./board-yield.mjs"
 
 function flag(args, name, fallback = null) {
@@ -72,7 +78,11 @@ function loadCandidates(file) {
 
 async function main() {
   const args = process.argv.slice(2)
-  const query = flag(args, "--query", "full stack")
+  // Parsed at the CLI boundary, exactly as cmdSearch does it: a comma-
+  // separated --query becomes a list, which fetchBoard unions across a
+  // server-filtered board. Without this the whole string is one searchText and
+  // a Workday board reads live=0 — which is how UNLV and LVVWD were rejected.
+  const query = parseQueries(flag(args, "--query")) ?? DEFAULT_SEARCH_QUERY
   const minSolid = Number(flag(args, "--min-solid", 1))
   const concurrency = Number(flag(args, "--concurrency", 6))
   const asJson = args.includes("--json")

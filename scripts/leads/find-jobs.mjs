@@ -1230,12 +1230,57 @@ export const BOARD_TYPES = Object.keys(BOARD_FETCHERS)
 // the limits file.
 export const DEFAULT_SEARCH_QUERY = "full stack"
 
+// The board types where the query is a SERVER-SIDE filter, so one query
+// returns one SLICE of the board rather than the whole thing. Workday is the
+// only one of the thirteen (see DEFAULT_SEARCH_QUERY above) — every other
+// fetcher returns the full list and the gates filter it locally, which is why
+// re-asking those per query would be N identical fetches for one result.
+//
+// Measured 2026-08-13, and this is why a list is supported at all: sweeping
+// with the single query "full stack" returned 2 of Aristocrat's 178 postings,
+// 10 of Light & Wonder's 111, 122 of MGM's 542, and 0 of UNLV's 123 — 697
+// postings across three tracked boards that no gate ever saw. The same
+// blindness made discover-boards.mjs score UNLV at live=0 and reject it; with
+// a list it scores live=123, solid=2, ACCEPT. So the defect suppressed board
+// DISCOVERY as well as the sweep.
+//
+// What this does NOT fix, checked rather than assumed: seeing a posting is not
+// passing it. LVVWD goes 0 -> 10 postings and still yields 0, because its
+// Las Vegas roles are located by BUILDING ("Molasky Corporate Center"), which
+// the location gate reads as a relocation, and titled "Applications Developer",
+// which roles.title_keywords does not carry. Both are the user's config to
+// change, not this module's.
+const SERVER_FILTERED_TYPES = new Set(["workday"])
+
 // One entry point per board — used by cmdSearch and by manage-sources.mjs to
 // prescreen a board before it is added to docs/job-sources.yaml.
+//
+// `query` may be a string or a list. A list is a UNION, not a refinement: each
+// query is asked separately and the results are merged, because that is the
+// only way to see a server-filtered board whose postings use vocabulary the
+// canonical query does not ("Applications Developer", "Assoc GIS Developer").
 export async function fetchBoard(board, query = DEFAULT_SEARCH_QUERY) {
   const fetcher = BOARD_FETCHERS[board.type]
   if (!fetcher) throw new Error(`unknown board type "${board.type}"`)
-  return fetcher(board, query)
+  const queries = (Array.isArray(query) ? query : [query])
+    .map((q) => String(q ?? "").trim())
+    .filter(Boolean)
+  // A caller that passes [], [""] or null still gets one real fetch. An empty
+  // sweep is a worse failure than a narrow one, and it fails silently.
+  if (!queries.length) queries.push(DEFAULT_SEARCH_QUERY)
+  if (queries.length === 1 || !SERVER_FILTERED_TYPES.has(board.type)) {
+    return fetcher(board, queries[0])
+  }
+  // Union, first occurrence wins. Every fetcher stamps a stable `id`; `url` is
+  // the fallback so a posting is never dropped for lacking one.
+  const seen = new Map()
+  for (const q of queries) {
+    for (const job of await fetcher(board, q)) {
+      const key = job.id ?? job.url
+      if (key && !seen.has(key)) seen.set(key, job)
+    }
+  }
+  return [...seen.values()]
 }
 
 // ---------------------------------------------------------------------------
@@ -1590,6 +1635,23 @@ async function ingest(
   }
 }
 
+// Normalize whatever a caller spelled into a scalar or a list. Both
+// `--query "full stack, developer"` and a YAML list under roles.search_query
+// mean "sweep the server-filtered boards with each of these".
+//
+// A single query stays a SCALAR rather than becoming a one-element list, so
+// the existing path through fetchBoard is byte-for-byte what it always was and
+// the multi-query code is never entered by a user who did not ask for it.
+// Returns null for absent/empty so `??` falls through to the next source.
+export function parseQueries(value) {
+  if (value == null || value === true) return null
+  const list = (Array.isArray(value) ? value : String(value).split(","))
+    .map((q) => String(q ?? "").trim())
+    .filter(Boolean)
+  if (!list.length) return null
+  return list.length === 1 ? list[0] : list
+}
+
 async function cmdSearch(args) {
   const limits = loadLimits()
   const source = getFlag(args, "--source", "all")
@@ -1598,9 +1660,14 @@ async function cmdSearch(args) {
   // optional — see DEFAULT_SEARCH_QUERY above for why "full stack" is the
   // fallback), then the canonical default itself.
   const query =
-    getFlag(args, "--query") ??
-    limits.roles?.search_query ??
+    parseQueries(getFlag(args, "--query")) ??
+    parseQueries(limits.roles?.search_query) ??
     DEFAULT_SEARCH_QUERY
+  // Hacker News and Adzuna keep the FIRST query rather than the union. Adzuna
+  // is credentialed and rate-limited, so widening it multiplies billed calls —
+  // a cost the user should choose deliberately, not inherit from a change made
+  // to unblock Workday. Boards are free to re-ask; a paid API is not.
+  const primaryQuery = Array.isArray(query) ? query[0] : query
   const maxAge = getFlag(args, "--max-age")
   if (maxAge) (limits.freshness ??= {}).max_age_days = Number(maxAge)
 
@@ -1634,14 +1701,14 @@ async function cmdSearch(args) {
   }
   if (source === "all" || source === "hn") {
     try {
-      candidates.push(...(await fetchHackerNews(query)))
+      candidates.push(...(await fetchHackerNews(primaryQuery)))
     } catch (e) {
       failures.push(`hn — ${e.message}`)
     }
   }
   if (source === "all" || source === "adzuna") {
     try {
-      candidates.push(...(await fetchAdzuna(query, limits)))
+      candidates.push(...(await fetchAdzuna(primaryQuery, limits)))
     } catch (e) {
       // On --source all, an unconfigured .env is a soft skip; asking for
       // adzuna explicitly makes it a hard failure worth surfacing.

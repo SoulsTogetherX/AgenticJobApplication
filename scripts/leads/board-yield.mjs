@@ -18,6 +18,8 @@ import {
   loadLimits,
   passesLimits,
   fetchBoard,
+  parseQueries,
+  DEFAULT_SEARCH_QUERY,
 } from "./find-jobs.mjs"
 import { isTerse, mapPool } from "../lib/lib.mjs"
 
@@ -84,7 +86,8 @@ export function scoreBoard(board, postings, limits, now = new Date()) {
 }
 
 export async function auditBoards(boards, limits, opts = {}) {
-  const { query = "full stack", concurrency = DEFAULT_CONCURRENCY } = opts
+  const { query = DEFAULT_SEARCH_QUERY, concurrency = DEFAULT_CONCURRENCY } =
+    opts
   const now = opts.now ?? new Date()
   return mapPool(boards, concurrency, async (board) => {
     try {
@@ -100,7 +103,10 @@ export async function auditBoards(boards, limits, opts = {}) {
 
 async function main() {
   const args = process.argv.slice(2)
-  const query = getFlag(args, "--query", "full stack")
+  // Comma-separated --query becomes a list here for the same reason it does in
+  // cmdSearch: measuring a Workday board with one query measures one slice of
+  // it, which is what made three tracked gaming boards look nearly empty.
+  const query = parseQueries(getFlag(args, "--query")) ?? DEFAULT_SEARCH_QUERY
   const concurrency = Number(
     getFlag(args, "--concurrency", DEFAULT_CONCURRENCY),
   )

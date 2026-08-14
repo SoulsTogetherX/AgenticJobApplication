@@ -40,17 +40,83 @@ test("findDuplicate matches by company name (case-insensitive)", () => {
   assert.equal(dup?.slug, "anthropic")
 })
 
-test("findDuplicate matches by type+slug and workday tenant", () => {
+test("findDuplicate matches by type+slug and workday tenant+site", () => {
   assert.ok(
     findDuplicate(BOARDS, { type: "ashby", slug: "OpenAI", company: "Other" }),
   )
   assert.ok(
-    findDuplicate(BOARDS, { type: "workday", tenant: "nvidia", company: "X" }),
+    findDuplicate(BOARDS, {
+      type: "workday",
+      tenant: "nvidia",
+      site: "NVIDIAExternalCareerSite",
+      company: "X",
+    }),
+    "same tenant AND site is the same board",
   )
   assert.equal(
     findDuplicate(BOARDS, { type: "lever", slug: "openai", company: "Novel" }),
     null,
     "same slug on a different ATS is not a duplicate",
+  )
+})
+
+test("findDuplicate admits a second oracle_cloud board on the default site name", () => {
+  // "CX_1" is Oracle's default site name, not an identifier. Caesars and
+  // Southwest Gas both use it on different hosts; site-only identity refused
+  // the second, capping the whole ATS at one employer.
+  const boards = [
+    {
+      type: "oracle_cloud",
+      company: "Caesars Entertainment",
+      host: "edmn.fa.us2.oraclecloud.com",
+      site: "CX_1",
+    },
+  ]
+  assert.equal(
+    findDuplicate(boards, {
+      type: "oracle_cloud",
+      company: "Southwest Gas",
+      host: "ebtw.fa.us2.oraclecloud.com",
+      site: "CX_1",
+    }),
+    null,
+    "same site name on a different host is a different board",
+  )
+  assert.ok(
+    findDuplicate(boards, {
+      type: "oracle_cloud",
+      company: "Caesars (again)",
+      host: "edmn.fa.us2.oraclecloud.com",
+      site: "CX_1",
+    }),
+    "same host and site is still the same board",
+  )
+})
+
+test("findDuplicate admits a second employer sharing a workday tenant", () => {
+  // NSHE hosts UNLV and the College of Southern Nevada on one tenant with
+  // different sites. Keying identity on tenant alone refused the second as a
+  // duplicate of the first, which silently caps a shared tenant at one
+  // employer — measured while adding both on 2026-08-13.
+  const boards = [
+    {
+      type: "workday",
+      company: "UNLV (NSHE)",
+      host: "nshe.wd1.myworkdayjobs.com",
+      tenant: "nshe",
+      site: "UNLV-External",
+    },
+  ]
+  assert.equal(
+    findDuplicate(boards, {
+      type: "workday",
+      company: "College of Southern Nevada",
+      host: "nshe.wd1.myworkdayjobs.com",
+      tenant: "nshe",
+      site: "CSN-External",
+    }),
+    null,
+    "same tenant, different site is a different board",
   )
 })
 

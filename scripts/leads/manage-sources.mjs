@@ -65,8 +65,34 @@ const norm = (s) =>
 
 // A duplicate is the same company name, or the same type + board identity —
 // one entry per employer per board. The identity field varies by ATS: slug for
-// most, tenant for workday, site for oracle_cloud.
-const identity = (b) => norm(b.slug ?? b.tenant ?? b.site)
+// most, tenant+site for workday, site for oracle_cloud.
+//
+// Host-based ATSs need EVERY field that distinguishes one board, and both
+// single-field identities were wrong in the same way — they matched boards
+// that merely share infrastructure, and refused the second real employer:
+//
+//   workday: tenant alone. NSHE (nshe.wd1) carries UNLV on `UNLV-External` and
+//   the College of Southern Nevada on `CSN-External`. Two employers, two job
+//   lists — the second refused for sharing a landlord.
+//
+//   oracle_cloud: site alone. `CX_1` is Oracle's DEFAULT site name, not an
+//   identifier: Caesars (edmn.fa.us2) and Southwest Gas (ebtw.fa.us2) both use
+//   it. Site-only identity refused Southwest Gas as a duplicate of Caesars,
+//   which would have capped this ATS at one employer forever.
+//
+// Both found by execution while adding boards on 2026-08-13.
+const IDENTITY_FIELDS = {
+  workday: ["tenant", "site"],
+  oracle_cloud: ["host", "site"],
+  successfactors: ["host"],
+}
+const identity = (b) =>
+  norm(
+    b.slug ??
+      (IDENTITY_FIELDS[b.type] ?? ["host", "tenant", "site"])
+        .map((f) => b[f] ?? "")
+        .join("/"),
+  )
 
 export function findDuplicate(boards, entry) {
   return (

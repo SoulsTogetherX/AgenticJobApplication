@@ -19,6 +19,7 @@ location:
     - north las vegas
     - las vegas
     - henderson
+    - molasky corporate center
 
   # Location strings that state WHO MAY BE HIRED rather than where to move.
   # A remote posting open to the whole country writes "USA", not "Remote", and
@@ -117,6 +118,14 @@ ghost_signals:
   repost_age_days: 30
 
 roles:
+  search_query:
+    - full stack
+    - software
+    - developer
+    - engineer
+    - game
+    - test
+
   # Full-Stack Developer roles only (CLAUDE.md). A job title must contain one
   # of these keywords to be stored. Generic "software engineer" titles pass
   # this gate because many are full-stack in practice; screening confirms
@@ -139,22 +148,8 @@ roles:
     - game developer
     - gameplay
     - game engineer
-    # Added 2026-08-02 on the user's explicit approval, from the dead-board
-    # diagnosis: the only two titles out of ~2,700 read that cleared every
-    # other gate (non-senior, location OK) and failed ONLY the literal keyword
-    # match. "Product engineer" is the startup convention for a full-stack IC
-    # role (Linear, North America remote). "Forward deployed engineer" is
-    # hands-on at Cursor; at Palantir the same title is ~57 onsite-abroad
-    # roles, so expect it to surface true negatives that reject on LOCATION —
-    # that is the gate working, not a regression.
     - product engineer
     - forward deployed engineer
-    # Added 2026-08-03 at the user's request: QA-automation / SDET as a second
-    # searched role family (evidenced by the SightX QA internship, Python test
-    # scripting, and this repo's Playwright automation). The soft_filter's
-    # "qa" / "test" / "automation" entries are kept deliberately: they flag
-    # these leads "title_watch" so screening reads the body and keeps
-    # automation-engineering roles while dropping manual-testing ones.
     - qa engineer
     - qa automation
     - sdet
@@ -163,6 +158,8 @@ roles:
     - test automation
     - automation engineer
     - quality engineer
+    - applications developer
+    - programmer
 
   # ===========================================================================
   # HARD FILTER — a title containing any of these is rejected at ingest.
@@ -201,6 +198,7 @@ roles:
     - president
     - executive
     - founding
+
     # --- Not a software-development role (13 of today's 47 rejects) ---
     - technician
     - specialist
@@ -222,6 +220,7 @@ roles:
     - marketing analytics
     - digital analytics
     - security analyst
+
     # --- Wrong career stage ---
     - intern
     - internship
@@ -247,6 +246,7 @@ roles:
     - iv
     - "2"
     - "3"
+
     # --- Adjacent disciplines: real engineering, but not full-stack/back-end ---
     - analyst
     - consultant
@@ -273,6 +273,7 @@ roles:
     - solutions
     - systems engineer
     - integration
+
     # --- Stacks outside the profile (TypeScript/JavaScript/Python/React/Node) ---
     - wordpress
     - php
@@ -293,6 +294,7 @@ roles:
     - sap
     - unity
     - unreal
+
     # --- Clearance / regulated work that can be a hard blocker in the body ---
     # NNSS's "Principal Cyber Security Analyst" was federal classified work.
     - clearance
@@ -303,6 +305,7 @@ roles:
     - federal
     - government
     - defense
+
     # --- Employment shape that may not be full-time permanent ---
     - contract
     - contractor

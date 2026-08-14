@@ -5,6 +5,7 @@
 // Usage: node scripts/documents/render-pdf.mjs <input.md> <output.pdf> [--letter] [--css templates/document.css]
 // Env:   PDF_BROWSER=<path to msedge.exe/chrome.exe> overrides browser discovery.
 import fs from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { marked } from "marked"
@@ -107,6 +108,47 @@ fs.writeFileSync(htmlPath, html, "utf8")
 const outAbs = path.resolve(output)
 const htmlUrl = "file:///" + path.resolve(htmlPath).replace(/\\/g, "/")
 
+// Edge's Program Files launcher DETACHES: spawnSync returns exit 0 while the
+// real render child is still writing the PDF. Measured 2026-08-13 on Edge 151
+// with the user's browser open: every probe "failed" an immediate existsSync,
+// and every probe's PDF then appeared 1-6s after the launcher exited. A bare
+// existence check straight after the spawn therefore loses exactly when the
+// user has Edge open — which is when supervised runs happen. Wait for the
+// file to exist AND hold a stable non-zero size instead.
+const sleepMs = (ms) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+function settled(file, deadlineMs) {
+  const deadline = Date.now() + deadlineMs
+  let lastSize = -1
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) {
+      const size = fs.statSync(file).size
+      if (size > 0 && size === lastSize) return true
+      lastSize = size
+    }
+    sleepMs(150)
+  }
+  return fs.existsSync(file) && fs.statSync(file).size > 0
+}
+
+// A leftover PDF from a previous render would satisfy the settle check before
+// the browser wrote a byte, turning a failed re-render into a silent pass —
+// the old immediate existsSync had the same hole. Clear it first; a locked
+// file means the browser could not have replaced it either, so refuse.
+try {
+  fs.rmSync(outAbs, { force: true })
+} catch (e) {
+  console.error(
+    `Output is locked (close it and retry): ${outAbs} — ${e.message}`,
+  )
+  process.exit(1)
+}
+
+// A dedicated throwaway profile keeps the render out of the user's live Edge
+// session: without one, the launcher delegates the print job INTO the running
+// browser (same user-data-dir), contending with their real browsing.
+const pdfProfile = path.join(os.tmpdir(), "aj-pdf-profile")
+
 function tryRender(headlessFlag) {
   return spawnSync(
     browser,
@@ -116,6 +158,7 @@ function tryRender(headlessFlag) {
       "--no-first-run",
       "--no-default-browser-check",
       "--no-pdf-header-footer",
+      `--user-data-dir=${pdfProfile}`,
       `--print-to-pdf=${outAbs}`,
       htmlUrl,
     ],
@@ -124,9 +167,9 @@ function tryRender(headlessFlag) {
 }
 
 let res = tryRender("--headless=new")
-if (!fs.existsSync(outAbs)) res = tryRender("--headless")
+if (!settled(outAbs, 20_000)) res = tryRender("--headless")
 
-if (!fs.existsSync(outAbs)) {
+if (!settled(outAbs, 20_000)) {
   console.error(
     `PDF was not produced (browser exit ${res.status}). stderr:\n${res.stderr?.toString().slice(0, 500)}`,
   )

@@ -230,7 +230,7 @@ fields the human-readable summary leaves out.
 
 `--json` is honoured by: `status.mjs`, `screen.mjs`, `recommend.mjs`,
 `gate-audit.mjs`, `prep-queue.mjs`, `cluster.mjs`, `board-yield.mjs`,
-`discover-boards.mjs`, `find-boards.mjs`, `canonical.mjs`, `keyword-plan.mjs`,
+`discover-boards.mjs`, `find-boards.mjs`, `cc-boards.mjs`, `canonical.mjs`, `keyword-plan.mjs`,
 `assemble-resume.mjs`, `ats-lint.mjs`, `reuse-check.mjs`, `letter-plan.mjs`,
 `answer-bank.mjs`, `fill-plan.mjs`, `pending-questions.mjs`,
 `automatability.mjs`, `auth-sync.mjs`, `preflight.mjs`, `auto-apply.mjs`,
@@ -1778,6 +1778,39 @@ is not a productive board.
 
 Reports only. Removing a board is your call.
 
+### 10.5 `cc-boards.mjs` — enumerate board slugs from Common Crawl
+
+**WRITES `docs/candidates/cc-<crawl>-<host>.yaml` and resume state in `jobs/.cc/`**
+
+```
+node scripts/leads/cc-boards.mjs --crawl CC-MAIN-2026-30 --hosts ashby,greenhouse
+     [--out <file>] [--max-pages N] [--json]
+```
+
+The candidate source `find-boards.mjs` cannot be: instead of guessing slugs
+from company names, it reads every `jobs.ashbyhq.com/<slug>` and
+`*.greenhouse.io/<slug>` URL Common Crawl's CDX index captured (both hosts'
+robots.txt permit that crawl), counts captures per slug as a liveness signal,
+and writes a candidates file for `discover-boards.mjs` — deduped against
+`docs/job-sources.yaml`, ranked by `seen`. Get the newest `--crawl` id from
+<https://index.commoncrawl.org/collinfo.json>.
+
+**Lever is excluded by rule.** Lever's robots.txt disallows crawling, so
+Common Crawl carries no lawful index of it; Lever candidates come from
+`find-boards.mjs` name probing over `api.lever.co`, which lib.mjs's politeness
+gate paces at its declared 1-second crawl-delay.
+
+Every index request rides `fetchJson`/`fetchText`, so
+`index.commoncrawl.org`'s 1s spacing applies automatically. The index sheds
+load with transient 5xx; state is saved after **every** page, so the answer to
+a `HTTP 502/503` (or a `429`) is to re-run and resume — never a retry loop.
+The candidates YAML is regenerated from state on every run, including a
+`--max-pages` slice.
+
+**Exit codes:** `2` for a missing/unknown `--crawl`/`--hosts` (including
+`lever`, refused by name), `1` when the index refused mid-run (state saved,
+resumable).
+
 ---
 
 ## Part 11 — Maintain the store
@@ -2021,6 +2054,7 @@ Everything runnable, alphabetically within its folder, with what it changes.
 | --------------------- | ------------------------- | --------------------------------------------------------------------------------------- |
 | `board-yield.mjs`     | Add a job board           | **READ-ONLY**                                                                           |
 | `canonical.mjs`       | Maintain the store        | `leads` rows, with `--apply`                                                            |
+| `cc-boards.mjs`       | Add a job board           | `docs/candidates/cc-*.yaml`, `jobs/.cc/` state                                          |
 | `cluster.mjs`         | See what to do next       | **READ-ONLY**                                                                           |
 | `discover-boards.mjs` | Add a job board           | **READ-ONLY**                                                                           |
 | `enrich.mjs`          | Find jobs                 | `leads` + `lead_keywords`, with `--apply`                                               |

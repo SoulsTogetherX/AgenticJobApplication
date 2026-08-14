@@ -161,10 +161,12 @@ test("a fixture-sourced rule can NEVER fire on a real board", () => {
   }
 })
 
-test("every real board is unclassified today, and says why", () => {
+test("a real board with NO captures is unclassified, and says why", () => {
   // The corollary, asserted behaviourally rather than inferred from the rule
-  // table: feed a real-looking host the fixture's own confirmation bytes and it
-  // still refuses to call it a confirmation.
+  // table: feed a capture-less host the fixture's own confirmation bytes and
+  // it still refuses to call it a confirmation. boards.greenhouse.io is the
+  // sharpest host for this — same vendor, one label away from the evidenced
+  // job-boards.greenhouse.io, and still blind.
   const got = classify(
     "https://boards.greenhouse.io/acme/jobs/1",
     page("confirmation"),
@@ -174,6 +176,147 @@ test("every real board is unclassified today, and says why", () => {
     got.why,
     /no captured post-submit page for boards\.greenhouse\.io/,
   )
+})
+
+// --- the capture-sourced rules (first promotions 2026-08-13) -------------------
+
+const captureRules = () =>
+  shippedRules().filter((r) => r.evidence.source === "capture")
+
+const corpusSample = (id) => {
+  const manifest = readManifest(CORPUS_MANIFEST)
+  const s = manifest.samples.find((x) => x.id === id)
+  assert.ok(s, `corpus sample ${id} exists`)
+  return { ...s, html: fs.readFileSync(path.join(CORPUS_DIR, s.file), "utf8") }
+}
+
+test("a capture rule fires ONLY on its evidenced hosts", () => {
+  const rules = captureRules()
+  assert.ok(rules.length >= 3, "the promoted rules exist")
+  const foreign = [
+    "https://boards.greenhouse.io/acme/jobs/1",
+    "https://jobs.lever.co/acme/abc/apply",
+    "https://careers.example.com/apply",
+    "http://127.0.0.1:8123/fixture-submit/confirmation",
+  ]
+  for (const rule of rules) {
+    for (const h of rule.evidence.hosts)
+      assert.equal(
+        ruleApplies(rule, `https://${h}/x/y`),
+        true,
+        `${rule.id} applies on its own host ${h}`,
+      )
+    for (const live of foreign) {
+      const host = new URL(live).hostname
+      if (rule.evidence.hosts.includes(host)) continue
+      assert.equal(
+        ruleApplies(rule, live),
+        false,
+        `${rule.id} must not apply to ${live}`,
+      )
+    }
+  }
+})
+
+test("a REAL confirmation's bytes on an unevidenced host stay unclassified", () => {
+  // The sharpest poisoning case: genuine confirmation HTML, wrong host. If
+  // this ever passes as `confirmation`, host scoping is broken and a page
+  // served by anybody could record an application.
+  const s = corpusSample("greenhouse-250b54c4a7f1")
+  for (const live of [
+    "https://boards.greenhouse.io/acme/jobs/1",
+    "https://jobs.lever.co/acme/abc/apply",
+  ])
+    assert.equal(classify(live, s.html).kind, "unclassified", live)
+})
+
+test("the capture confirmation rules need BOTH signals", () => {
+  // Strip one of the two signals from a real capture and it must fall back to
+  // unclassified on its own host — a single phrase is how a thanks-but-closed
+  // page becomes a recorded application.
+  const gh = corpusSample("greenhouse-250b54c4a7f1")
+  assert.equal(classify(gh.url, gh.html).kind, "confirmation")
+  assert.equal(
+    classify(gh.url, gh.html.replace(/back to job post/gi, "")).kind,
+    "unclassified",
+    "greenhouse without the navigation signal",
+  )
+  assert.equal(
+    classify(gh.url, gh.html.replace(/thank you for applying/gi, "")).kind,
+    "unclassified",
+    "greenhouse without the thank-you signal",
+  )
+
+  const ab = corpusSample("ashby-2eb1b029f99d")
+  assert.equal(classify(ab.url, ab.html).kind, "confirmation")
+  assert.equal(
+    classify(
+      ab.url,
+      ab.html.replace(/application was successfully submitted/gi, ""),
+    ).kind,
+    "unclassified",
+    "ashby without the submitted signal",
+  )
+})
+
+test("the email-code capture outranks confirmation wording on the same page", () => {
+  // The ordering property, on the capture side this time: a page demanding an
+  // emailed code did NOT submit anything, however warmly it thanks the
+  // applicant further down.
+  const code = corpusSample("greenhouse-c894c4c48db0")
+  const conf = corpusSample("greenhouse-250b54c4a7f1")
+  const got = classify(code.url, code.html + conf.html)
+  assert.equal(got.kind, "email-code-challenge")
+  assert.equal(got.rule, "capture-greenhouse-email-code")
+})
+
+test("capture rules cite samples the manifest holds and hosts the manifest backs", () => {
+  // The rule table and the corpus must never drift apart: every cited sample
+  // id exists, and every host a rule may fire on is a host the user's own
+  // promoted captures actually came from.
+  const manifest = readManifest(CORPUS_MANIFEST)
+  const byId = new Map(manifest.samples.map((s) => [s.id, s]))
+  for (const rule of captureRules()) {
+    const cited = [rule.evidence.sample, ...(rule.evidence.samples ?? [])]
+    assert.ok(cited.length > 0, `${rule.id} cites at least one sample`)
+    const backedHosts = new Set()
+    for (const id of cited) {
+      const s = byId.get(id)
+      assert.ok(s, `${rule.id} cites ${id}, which the manifest holds`)
+      assert.equal(
+        s.kind,
+        rule.kind,
+        `${rule.id} cites ${id} whose promoted kind matches the rule's`,
+      )
+      for (const h of s.hosts ?? []) backedHosts.add(h.toLowerCase())
+    }
+    for (const h of rule.evidence.hosts)
+      assert.ok(
+        backedHosts.has(h.toLowerCase()),
+        `${rule.id} may fire on ${h} only because a cited capture came from it`,
+      )
+  }
+})
+
+test("every promoted greenhouse confirmation carries the rule's two signals", () => {
+  // Pins the measured claim the rule's comment makes: the thank-you and the
+  // navigation are present on ALL ten, whatever each employer's received-
+  // wording says. If a future capture breaks this, the rule needs remeasuring,
+  // not loosening.
+  const manifest = readManifest(CORPUS_MANIFEST)
+  const ghConfirmations = manifest.samples.filter(
+    (s) =>
+      s.kind === "confirmation" &&
+      (s.hosts ?? []).includes("job-boards.greenhouse.io"),
+  )
+  assert.ok(ghConfirmations.length >= 10, "the ten promotions are present")
+  for (const s of ghConfirmations) {
+    const t = visibleText(
+      fs.readFileSync(path.join(CORPUS_DIR, s.file), "utf8"),
+    )
+    assert.match(t, /thank you for applying/i, s.id)
+    assert.match(t, /back to job post/i, s.id)
+  }
 })
 
 test("ruleApplies fails CLOSED on anything it cannot reason about", () => {

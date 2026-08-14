@@ -151,10 +151,15 @@ export function visibleText(html) {
 
 // The shipped rules.
 //
-// EVERY ENTRY HERE IS FIXTURE-SOURCED TODAY, and therefore fires on loopback
-// only. That is not a placeholder to be filled in with better guesses — it is
-// the accurate state of this repository's evidence about what any real ATS
-// says after a submit, which is: nothing. `npm test` reports the gap by name
+// Two provenances now (first captures promoted by the user 2026-08-13):
+// fixture-sourced rules fire on loopback only, and capture-sourced rules fire
+// on exactly the two hosts their captures came from — job-boards.greenhouse.io
+// (10 confirmations + 1 email-code page) and jobs.ashbyhq.com (3
+// confirmations). Everything else — boards.greenhouse.io and jobs.lever.co
+// included — still classifies `unclassified` and hard-STOPs, because this
+// repository has never seen what those hosts say after a submit. That is not
+// a gap to fill with better guesses; it is the accurate state of the
+// evidence, and `npm test` reports what is still missing by kind
 // (tests/auto/classify.test.mjs).
 const SHIPPED = [
   // --- blocking signals, tested before confirmation ------------------------
@@ -204,6 +209,26 @@ const SHIPPED = [
         t,
       ),
   },
+  {
+    // A REAL page from the user's attended Reddit apply (2026-08-04, promoted
+    // 2026-08-13): mid-submit, Greenhouse held the application and demanded an
+    // 8-character code sent to the applicant's email address. Worth noting:
+    // the fixture email-code rule above would NOT have matched this page — it
+    // guesses "sent to your email", and the real page says "sent to
+    // <address>". That miss is the whole argument for captures over guessed
+    // wordings.
+    id: "capture-greenhouse-email-code",
+    kind: "email-code-challenge",
+    evidence: {
+      source: "capture",
+      sample: "greenhouse-c894c4c48db0",
+      samples: ["greenhouse-c894c4c48db0"],
+      hosts: ["job-boards.greenhouse.io"],
+    },
+    test: (_u, t) =>
+      /a verification code was sent to/i.test(t) &&
+      /enter the \d+[- ]character code/i.test(t),
+  },
 
   // --- confirmation, LAST and narrowest ------------------------------------
   //
@@ -221,6 +246,62 @@ const SHIPPED = [
       /(your )?application (has been |was )?(received|submitted|sent)|thank you for applying|we(’|')?ve received your application/i.test(
         t,
       ) && /application/i.test(t),
+  },
+  {
+    // Ten real job-boards.greenhouse.io confirmations (Reddit, Affirm ×3,
+    // Cloudflare, GitLab, Coinbase ×2, Twilio ×2), promoted by the user
+    // 2026-08-13. The second signal is the post-submit "Back to job post"
+    // navigation rather than an application-received sentence, and that is
+    // MEASURED, not stylistic: GitLab's whole message is "Thank you for
+    // applying to GitLab!", and Twilio's and Affirm's received-wordings each
+    // differ — the only pair present on all ten captures is the thank-you and
+    // the navigation. Both are absent from the one real non-confirmation this
+    // host has produced (the email-code page above), which the rule ordering
+    // also outranks.
+    id: "capture-greenhouse-confirmation",
+    kind: "confirmation",
+    evidence: {
+      source: "capture",
+      sample: "greenhouse-250b54c4a7f1",
+      samples: [
+        "greenhouse-250b54c4a7f1",
+        "greenhouse-2c457b41f353",
+        "greenhouse-3d6249906bcc",
+        "greenhouse-496f1e2ffe51",
+        "greenhouse-526858411c5a",
+        "greenhouse-6e653ac54297",
+        "greenhouse-90dde7222080",
+        "greenhouse-b399e76c43bc",
+        "greenhouse-cba054edde62",
+        "greenhouse-e089eb86d7c5",
+      ],
+      hosts: ["job-boards.greenhouse.io"],
+    },
+    test: (_u, t) =>
+      /thank you for applying/i.test(t) && /back to job post/i.test(t),
+  },
+  {
+    // Three real jobs.ashbyhq.com confirmations (OpenAI, Render, Tailor),
+    // promoted by the user 2026-08-13. Ashby confirms in place — the page
+    // keeps the whole job description and appends an "Application Success"
+    // block — so both signals come from that block, and the application FORM
+    // for the same job (the one staged capture the user did not promote)
+    // carries neither.
+    id: "capture-ashby-confirmation",
+    kind: "confirmation",
+    evidence: {
+      source: "capture",
+      sample: "ashby-2eb1b029f99d",
+      samples: [
+        "ashby-2eb1b029f99d",
+        "ashby-bca2995fb1cd",
+        "ashby-dfd533f3acb6",
+      ],
+      hosts: ["jobs.ashbyhq.com"],
+    },
+    test: (_u, t) =>
+      /application success\b/i.test(t) &&
+      /application was successfully submitted/i.test(t),
   },
 ]
 
@@ -242,10 +323,10 @@ export function ruleApplies(rule, url) {
   const src = rule?.evidence?.source
   if (src === "fixture") return isFixtureUrl(url)
   if (src === "capture") {
-    // A capture-sourced rule fires on the hosts its capture came from. Until
-    // the first capture is promoted there are none of these, and the branch is
-    // written now rather than later so the shape of a promoted rule is
-    // reviewable before one exists.
+    // A capture-sourced rule fires on the hosts its capture came from — since
+    // 2026-08-13 that is job-boards.greenhouse.io and jobs.ashbyhq.com, and
+    // nothing else. This branch predates the first promotion on purpose, so
+    // the shape of a promoted rule was reviewable before one existed.
     const hosts = rule.evidence.hosts
     if (!Array.isArray(hosts) || !hosts.length) return false
     let host
@@ -321,9 +402,10 @@ export function shippedRules() {
   }))
 }
 
-/** Which kinds this repository has REAL captured evidence for. The honest
- *  answer today is none, and the corpus test says so by name rather than
- *  passing quietly on an empty set. */
+/** Which kinds this repository has REAL captured evidence for. Since
+ *  2026-08-13: `confirmation` and `email-code-challenge`. The corpus test
+ *  still names what is missing (identity-verification, bot-challenge,
+ *  posting-gone, error) rather than passing quietly on the gap. */
 export function capturedKinds(rules = RULES) {
   return [
     ...new Set(

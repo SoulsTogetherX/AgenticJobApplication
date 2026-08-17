@@ -43,9 +43,15 @@
 // would "match greenhouse". So the ATS is not inferred from the URL at all
 // here. It is DECLARED, by the user, next to the domain in their own file, and
 // this gate only checks that the declared id is an adapter this repo ships.
+//
+// `resolveLeadForTrust` below DOES import detectAts, and the distinction is
+// the whole point: it uses the adapter to REWRITE the posting URL into the
+// form URL (Ashby /application, Greenhouse embed) before the gate sees it.
+// That is knowledge, and it opens nothing. The trust verdict is still
+// `trustBoard`'s, and `trustBoard` still reads the ATS off the user's file.
 import fs from "node:fs"
 
-import { ADAPTERS } from "../apply/ats/index.mjs"
+import { ADAPTERS, detectAts } from "../apply/ats/index.mjs"
 import { loadYamlFile } from "../lib/lib.mjs"
 import { submitOrigin } from "./authorize.mjs"
 import { isDisqualifying } from "../lib/untrusted.mjs"
@@ -399,6 +405,58 @@ export function trustBoard({
     entry: entry ? Object.freeze({ ...entry }) : null,
     origin: liveOrigin,
   })
+}
+
+/**
+ * Resolve a lead to the URL the runner will actually open, then ask the gate
+ * about THAT — with the origin it resolves to recorded, so `origin_stable` has
+ * something to compare against.
+ *
+ * ONE PLACE, TWO CALLERS. auto-apply's `selectEligible` did this inline; the
+ * cycle's prep loop called `trustBoard` bare, with the posting URL and no
+ * `recordedOrigin`. So on every cycle since the origin check was added, every
+ * board-hosted lead was skipped BEFORE a workspace existed with "no origin was
+ * recorded for this job when it was queued" — a message written for a queued
+ * row, fired at a lead that had never been queued — and `prepared=0` on every
+ * run. Measured 2026-08-17 in logs/cycle.log: Torc, Vytalize, Quora, Hims,
+ * Flock ×2, all skipped that way, while the Adzuna leads ahead of them fell on
+ * `allowlist`. The cycle prepared nothing, and looked healthy doing it.
+ *
+ * WHY THE POSTING AND THE FORM MUST BE RESOLVED HERE, ONCE: the trust gate,
+ * the board key, the submit token's origin binding and the navigation all have
+ * to agree on ONE url. Ashby serves the ad at /<org>/<id> and the form at
+ * /<org>/<id>/application; Greenhouse embeds. Resolving in one caller and not
+ * the other is exactly how a token bound to the posting's origin ended up on a
+ * page sitting on the form's, and how a filled form became unsubmittable.
+ *
+ * KNOWLEDGE, NOT BEHAVIOUR: `adapter.applicationUrl` returns a string and opens
+ * nothing; an unrecognised URL comes back unchanged. The gate's verdict is
+ * `trustBoard`'s, untouched — this only hands it the arguments it was designed
+ * to compare.
+ *
+ * Returns { applyUrl, origin, verdict } — `verdict` is trustBoard's frozen
+ * result, `origin` is what a queue row should record.
+ */
+export function resolveLeadForTrust(
+  lead,
+  { limits = null, screening = null, allowLoopbackHttp = false } = {},
+) {
+  const posted = lead?.apply_url ?? lead?.url ?? null
+  let applyUrl = posted
+  if (posted) {
+    const adapter = detectAts(posted)
+    if (typeof adapter?.applicationUrl === "function")
+      applyUrl = adapter.applicationUrl(posted)
+  }
+  const origin = submitOrigin(applyUrl)
+  const verdict = trustBoard({
+    lead: { ...(lead ?? {}), apply_url: applyUrl },
+    limits,
+    screening,
+    recordedOrigin: origin,
+    allowLoopbackHttp,
+  })
+  return { applyUrl, origin, verdict }
 }
 
 /** Read a limits file, or null when it is absent. Never throws on absence:

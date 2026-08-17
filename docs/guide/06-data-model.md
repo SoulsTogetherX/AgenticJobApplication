@@ -301,9 +301,15 @@ candidate".
 There are two variants, and this project uses both, deliberately:
 
 - **`DO UPDATE`** — overwrite. Used when re-finding a lead should refresh it.
-- **`DO NOTHING`** — leave the existing row alone. Used by `enqueueAutoJobs` in
-  `scripts/lib/db.mjs`, because re-running the planner over a queue another
-  worker is already working on must not reset a job somebody else holds.
+- **`DO NOTHING`** — leave the existing row alone. `enqueueAutoJobs` in
+  `scripts/lib/db.mjs` was this until 2026-08-17, because re-running the planner
+  over a queue another worker is already working on must not reset a job
+  somebody else holds. It is now the guarded form below with one narrow
+  condition — `state = 'deferred'` and the reason is one of
+  `AUTO_REQUEUEABLE_KINDS` — because a bare `DO NOTHING` made every deferral
+  permanent: a job that deferred once on an unprobed dropdown stayed deferred
+  after the probe was fixed, for thirteen days, with nothing able to notice.
+  Every other state still behaves as `DO NOTHING`.
 
 And there is a third form that is the heart of this project's concurrency
 design: a **guarded** `DO UPDATE`, which is `DO UPDATE … WHERE <condition>`. The

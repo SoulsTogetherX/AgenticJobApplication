@@ -56,9 +56,11 @@ import {
   JOBS_DIR as VERIFY_JOBS_DIR,
 } from "../lib/verification.mjs"
 import { boardKey } from "../apply/automatability.mjs"
-import { detectAts } from "../apply/ats/index.mjs"
-import { submitOrigin } from "./authorize.mjs"
-import { trustBoard, allowlistProblems, readLimits } from "./trust.mjs"
+import {
+  resolveLeadForTrust,
+  allowlistProblems,
+  readLimits,
+} from "./trust.mjs"
 import { preflight, EXIT, DEFAULT_LIMITS } from "./preflight.mjs"
 import { startRun } from "./audit.mjs"
 import { runPool, originCount } from "./pool.mjs"
@@ -222,26 +224,18 @@ export function selectEligible({
     // 2026-08-03. The adapter knows the mapping; it is knowledge, not
     // behaviour, and an unrecognised URL comes back unchanged.
     //
-    // RESOLVED HERE, ONCE, so the trust gate, the board key, the submit token's
-    // origin binding and the navigation all agree on ONE url. Resolving it
-    // later would leave the token bound to the posting's origin while the page
-    // sat on the form's, which on Greenhouse is exactly the mismatch that
-    // silently made a filled form unsubmittable.
-    const posted = lead.apply_url ?? url
-    const adapter = detectAts(posted)
-    const applyUrl =
-      typeof adapter?.applicationUrl === "function"
-        ? adapter.applicationUrl(posted)
-        : posted
-    const origin = submitOrigin(applyUrl)
+    // RESOLVED ONCE, in `resolveLeadForTrust`, so the trust gate, the board
+    // key, the submit token's origin binding and the navigation all agree on
+    // ONE url. Resolving it later would leave the token bound to the posting's
+    // origin while the page sat on the form's, which on Greenhouse is exactly
+    // the mismatch that silently made a filled form unsubmittable. The cycle's
+    // prep loop calls the SAME helper — it used to call trustBoard bare, and
+    // failed origin_stable on every board lead (2026-08-17).
     const screening = screeningFor(lead)
-    const verdict = trustBoard({
-      lead: { ...lead, apply_url: applyUrl },
-      limits,
-      screening,
-      recordedOrigin: origin,
-      allowLoopbackHttp,
-    })
+    const { applyUrl, origin, verdict } = resolveLeadForTrust(
+      { ...lead, apply_url: lead.apply_url ?? url },
+      { limits, screening, allowLoopbackHttp },
+    )
     if (!verdict.ok) {
       rejected.push({ slug, reason: verdict.reason })
       continue

@@ -17,6 +17,7 @@ import {
   readChallengeIncidence,
   readActiveBoardPauses,
   readQueueAges,
+  readStaleDeferred,
   readSubmitLatencies,
   readJobWallTimes,
   countAutoSubmissions,
@@ -95,6 +96,7 @@ export function buildAutoStatus(
 
   // --- the queue, by depth and by age ---------------------------------------
   const ages = readQueueAges(db, { now: at })
+  const staleDeferred = readStaleDeferred(db, { now: at })
   const ageOf = (state) =>
     ages.filter((a) => a.state === state).map((a) => a.age_ms)
   const queue = {
@@ -113,6 +115,16 @@ export function buildAutoStatus(
     // A row whose age nobody can compute is reported, not dropped. It is the
     // one row most likely to be the stuck one.
     age_unknown: ages.filter((a) => a.age_ms === null).length,
+    // Deferred rows older than three days. `outstanding` above counts only the
+    // resumable states, so this is where a job that deferred once and was
+    // never looked at again shows up — 2026-08-17: outstanding=0, three rows
+    // deferred for 13 days, two of them on a since-fixed reason.
+    stale_deferred: staleDeferred.length,
+    stale_deferred_oldest_ms: staleDeferred.length
+      ? (staleDeferred[0].age_ms ?? null)
+      : null,
+    stale_deferred_requeueable: staleDeferred.filter((s) => s.requeueable)
+      .length,
   }
 
   // --- the gap the product exists to close ----------------------------------
@@ -286,7 +298,9 @@ export function formatAutoTerse(a) {
     `auto submitted 24h=${a.submitted_24h} total=${a.submitted_total} challenged=${a.challenged} orphans=${a.orphans}`,
     `auto queue outstanding=${a.queue.outstanding} ${kv(a.queue.depth)} ` +
       `age_p95_queued=${a.queue.age_p95_ms.queued ?? "-"} age_p95_claimed=${a.queue.age_p95_ms.claimed ?? "-"} ` +
-      `age_unknown=${a.queue.age_unknown}`,
+      `age_unknown=${a.queue.age_unknown} ` +
+      `stale_deferred=${a.queue.stale_deferred} ` +
+      `(requeueable=${a.queue.stale_deferred_requeueable} oldest=${a.queue.stale_deferred_oldest_ms === null ? "-" : hours(a.queue.stale_deferred_oldest_ms) + "h"})`,
     `auto deferrals total=${a.deferrals.total} failures=${a.deferrals.failures} ${kv(a.deferrals.by_kind)}`,
     `auto class ${kv(a.deferrals.by_class)}`,
     `auto latency n=${a.latency.n} p50h=${a.latency.p50_hours ?? "-"} p95h=${a.latency.p95_hours ?? "-"}`,

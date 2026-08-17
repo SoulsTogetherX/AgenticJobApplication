@@ -1536,17 +1536,72 @@ function assertQueueState(state) {
     )
 }
 
+// The defer kinds a later enqueue may put back to 'queued'.
+//
+// WHY A LIST AT ALL. `deferred` is a terminal state and `enqueueAutoJobs` was
+// `ON CONFLICT(slug) DO NOTHING`, so a slug that deferred ONCE was dead in the
+// queue for good — nothing short of --reset-queue could ever look at it again.
+// Measured 2026-08-17: three rows deferred on 2026-08-04, attempt_no=1, two of
+// them Render jobs whose only blocker (an unprobed Ashby Location typeahead)
+// had been FIXED IN CODE on 2026-08-07. Fixed in code, still blocking in data,
+// for thirteen days, with nothing that could ever notice.
+//
+// WHY ONLY THESE. Each is a reason that the three lawful ways to defer less
+// (rule 6: an adapter, a probed option list, a banked answer) or a cleared
+// pause can change — the machine did not understand a control, or was told to
+// wait. Re-queuing costs one page visit per cycle and NEVER a click: the
+// re-plan runs the whole gate chain again, and a row whose reason still holds
+// simply defers again with attempt_no one higher. Kinds NOT here stay
+// terminal on purpose: `posting-gone`, `l3-rejected`, `cap-company`,
+// `board-untrusted`, `reconciled-not-sent` and the challenge kinds are the
+// board or the user's own policy speaking, and re-asking them daily is churn
+// with no new information. `attempted`, `submitted`, `challenged` and `failed`
+// rows are never touched — the CLAUDE.md §4.9 note and the "click unaccounted"
+// refusal both depend on that.
+export const AUTO_REQUEUEABLE_KINDS = Object.freeze([
+  "confirm-field",
+  "confirm-widget",
+  "consent-tickbox",
+  "unprobed-dropdown",
+  "unknown-field",
+  "fill-failed",
+  "doc-unverified",
+  "fact-base-changed",
+  // A board pause strands its jobs as deferred/board-paused; the pause clears
+  // on one success and nothing re-admitted the stranded rows. Same defect.
+  "board-paused",
+])
+const REQUEUEABLE_SQL = AUTO_REQUEUEABLE_KINDS.map((k) => `'${k}'`).join(", ")
+
 // Put slugs in the queue as 'queued'. Existing rows are left ALONE — re-running
 // the planner over a queue that is already being worked must not reset a job
-// another worker holds, and must not resurrect one that already finished.
-// Returns the number of rows actually added.
+// another worker holds, and must not resurrect one that already finished —
+// WITH ONE EXCEPTION: a 'deferred' row whose reason is one of
+// AUTO_REQUEUEABLE_KINDS goes back to 'queued' with its plan cleared and its
+// attempt count up by one, so a defer that code, a probe or a banked answer has
+// since resolved is looked at again. Returns the number of rows added OR
+// re-queued — the caller's next SELECT is what tells it which.
 export function enqueueAutoJobs(db, jobs, { now = new Date() } = {}) {
   const at = nowIso(now)
   const stmt = db.prepare(
     `INSERT INTO auto_queue
        (slug, run_id, board_key, origin, state, attempt_no, plan_sha256, posted_at, updated_at)
      VALUES ($slug, $run_id, $board_key, $origin, 'queued', 0, $plan_sha256, $posted_at, $updated_at)
-     ON CONFLICT(slug) DO NOTHING`,
+     ON CONFLICT(slug) DO UPDATE SET
+       state = 'queued',
+       run_id = excluded.run_id,
+       board_key = COALESCE(excluded.board_key, auto_queue.board_key),
+       origin = COALESCE(excluded.origin, auto_queue.origin),
+       -- attempt_no is NOT touched here: the claim increments it, so a
+       -- re-queued row reads attempt 2 the moment a worker picks it up.
+       plan_sha256 = NULL,
+       reason_kind = NULL,
+       reason_detail = NULL,
+       reason_stage = NULL,
+       claimed_at = NULL,
+       updated_at = excluded.updated_at
+     WHERE auto_queue.state = 'deferred'
+       AND auto_queue.reason_kind IN (${REQUEUEABLE_SQL})`,
   )
   let added = 0
   db.exec("BEGIN IMMEDIATE")
@@ -1919,6 +1974,44 @@ export function readQueueAges(db, { now = new Date() } = {}) {
       // Reporting it as fresh is how a stuck job hides in a p95.
       age_ms: r.since ? Math.max(0, t - new Date(r.since).getTime()) : null,
     }))
+}
+
+/**
+ * Deferred rows that have been sitting longer than `olderThanMs`, oldest first.
+ *
+ * `deferred` is terminal, so it is not "outstanding" and the queue line said
+ * `outstanding=0` on 2026-08-17 while three rows had been deferred since
+ * 2026-08-04 — two of them on a reason that code had fixed on 08-07. Nothing
+ * counted them, so nothing noticed. This is the count. `requeueable` says
+ * whether the next enqueue will look at the row again (AUTO_REQUEUEABLE_KINDS)
+ * or whether it is a decision that stands until a human changes something.
+ */
+export function readStaleDeferred(
+  db,
+  { now = new Date(), olderThanMs = 3 * 24 * 3600 * 1000 } = {},
+) {
+  const t = (now instanceof Date ? now : new Date()).getTime()
+  const requeueable = new Set(AUTO_REQUEUEABLE_KINDS)
+  return db
+    .prepare(
+      `SELECT slug, board_key, reason_kind, attempt_no, updated_at
+         FROM auto_queue
+        WHERE state = 'deferred'
+        ORDER BY updated_at, slug`,
+    )
+    .all()
+    .map((r) => ({
+      slug: r.slug,
+      board_key: r.board_key,
+      reason_kind: r.reason_kind,
+      attempt_no: r.attempt_no,
+      since: r.updated_at,
+      age_ms: r.updated_at
+        ? Math.max(0, t - new Date(r.updated_at).getTime())
+        : null,
+      requeueable: requeueable.has(r.reason_kind),
+    }))
+    .filter((r) => r.age_ms === null || r.age_ms >= olderThanMs)
 }
 
 /**

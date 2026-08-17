@@ -742,12 +742,27 @@ and runs each lead through the four ordered stages `l0`–`l3`. Verdicts are
 ```
 node scripts/leads/recommend.mjs [--top 10] [--status new|recommended|all]
      [--json] [--leads <path>] [--profile <path>] [--jobs-dir <path>]
+     [--applicable [--limits <path>]]
 ```
 
 Scores every lead against your profile — technology overlap, role-title fit,
 freshness, salary signal, minus risk flags — and prints the best N. This is the
 job an AI used to do by reading every lead; now the model only interprets a short
 ranked list, or nothing at all.
+
+**`--applicable` (2026-08-17)** ranks the same way, then lifts the leads the
+machine can actually finish — an `apply_url` on your `board_allowlist` — above
+the rest **before** cutting to N, so the top N is a list of things that can be
+sent rather than a list of things that fit. Every row carries its tier either
+way (`automatable` / `off-allowlist` / `manual-only`, the same tiers as
+`prep-queue.mjs`), in the terse output as a column before the URL and in
+`--json` as `applicability`; the URL printed is `apply_url` when there is one.
+Why: on 2026-08-17 four of the fit-ranked top five were Adzuna redirects that
+`canonical.mjs` cannot resolve — the host answers 403 to robots, a bot wall and
+not a parser gap, and it is not to be dressed around — and the morning digest
+read them out as recommendations nothing could act on. **The daily digest should
+run `--top 5 --applicable`** for the list of things to do, and plain `--top 5`
+only if it also wants the hand-apply supply.
 
 **One output detail worth understanding.** If every lead scores identically, the
 sort falls through to alphabetical-by-company, and a flat list _labelled_ as
@@ -808,12 +823,17 @@ fit-only ordering.
 
 **Exit codes:** `0` ok, `2` usage or missing store.
 
-> **Known defect (2026-08-05 audit).** `prep-queue.mjs` calls `rankLeads` without
-> the `keywords` map and without `limits`, and never folds in captured posting
-> text. Technology overlap is therefore whatever the bare title yields — usually
-> zero — so the queue is ordered by title keyword, freshness and salary presence
-> only. `recommend.mjs` fixed exactly this and documents the fix in a ten-line
-> comment; `prep-queue.mjs` calls the same function and did not get it.
+**Fixed 2026-08-17 (was a known defect from the 2026-08-05 audit):**
+`prep-queue.mjs` now ranks with the same `keywords` map and `limits` as
+`recommend.mjs` — both call `rankingContext()` in `recommend.mjs` — so one lead
+gets one score in both places (Torc Robotics read 19 in one and 5 in the other
+before). And it ranks **everything, partitions by applicability, then cuts** the
+window: it used to cut `max(top*4, 20)` by score first and partition inside,
+which at the default `--top 5` produced `manual_only=5 automatable=0` while
+seventeen automatable leads sat just outside the window. The summary line now
+also carries `supply=A/O/M` — the tier counts over the **whole** ranked store —
+so `manual_only=5` can never again read as "that is all there is". Captured
+posting text is still not folded in.
 
 ### 4.3 `cluster.mjs` — which leads are the same job twice
 
@@ -1397,10 +1417,43 @@ thing. It pins the working directory to the repository root and appends a
 timestamped log to `logs/cycle.log`. Registering it with Task Scheduler is your
 act, not the agent's — it changes a system setting.
 
+**Registering it (the 2026-08-13 split: the 7:00 task is prepare-only).** From
+an elevated PowerShell, with the repository path adjusted if yours differs:
+
+```powershell
+$act = New-ScheduledTaskAction -Execute "C:\Users\xalva\Documents\Projects\VibeCoded\AgenticJobApplication\scripts\auto\cycle.cmd" -Argument "--skip-apply"
+$trg = New-ScheduledTaskTrigger -Daily -At 07:00
+$set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+Register-ScheduledTask -TaskName "AgenticJobApplication" -Action $act -Trigger $trg -Settings $set -User $env:USERNAME -RunLevel Limited -Force
+```
+
+Then `Get-ScheduledTask AgenticJobApplication | Get-ScheduledTaskInfo` should
+show `LastTaskResult 0` after the next 07:00. **Why each flag is there:**
+`--skip-apply` is the user's decision that the scheduled run prepares and does
+not submit; `-AllowStartIfOnBatteries` because the task registered on
+2026-08-03 was refused with `0x800710E0` every morning the laptop was
+unplugged, and the log has one 07:00 entry in two weeks to show for it;
+`-StartWhenAvailable` so a missed 07:00 runs when the machine wakes rather than
+never; the two-hour limit because `find-jobs.mjs search --source all` can run
+long and a hung child should be killed, not left until the next trigger. The
+task registered on 2026-08-03 passed **no arguments** — it ran the full cycle,
+runner included, twice a day. Check `(Get-ScheduledTask AgenticJobApplication).Actions.Arguments`
+if in doubt.
+
+**Reading `logs/cycle.log`.** Each run is bracketed by `==== cycle <stamp> ====`
+and `==== exit <code> ====`. A stage line reads `search: ok — warn: …` or
+`apply: FAILED — <first stderr line> … <last two>`, and a failed stage is followed
+by an indented `stderr:` block holding the last 40 lines the child wrote. Until
+2026-08-17 the summary kept only the last three lines and nothing else, which
+turned the runner's launch error into the bottom edge of Playwright's boxed hint
+and a search timeout into `search: FAILED` with nothing after it. A child killed
+by the spawn timeout now reads `timed out after 600000ms (SIGTERM)`.
+
 > **Known defect (2026-08-05 audit).** `cycle.mjs` spawns five processes per job,
 > and `buildPlan` and `loadFactContext` each run twice. Document preparation is
-> fully sequential with two Chrome launches per lead. And the scheduled entry
-> point has no test file.
+> fully sequential with two Chrome launches per lead. The scheduled entry point
+> gained a test file on 2026-08-17 (`tests/auto/cycle.test.mjs`) covering the
+> step runner; the prep loop itself is still exercised only by hand.
 
 ### 6.8 `preflight.mjs` — would an unattended run be allowed?
 

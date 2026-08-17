@@ -50,13 +50,31 @@
 // Exit codes: 0 ok, 2 usage. A stage that fails for one lead is reported and
 // does not change the exit code — the cycle's job is to get as far as it can
 // and say exactly where each lead stopped.
+//
+// SCHEDULING IT (Windows Task Scheduler, via cycle.cmd) IS THE USER'S ACT — it
+// is a system setting, and the agent proposes the command and never runs it.
+// The command, so it does not live only in a session note (it did, and the
+// note was the only place — 2026-08-17). Elevated PowerShell:
+//
+//   $act = New-ScheduledTaskAction -Execute "<repo>\scripts\auto\cycle.cmd" -Argument "--skip-apply"
+//   $trg = New-ScheduledTaskTrigger -Daily -At 07:00
+//   $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+//   Register-ScheduledTask -TaskName "AgenticJobApplication" -Action $act -Trigger $trg -Settings $set -User $env:USERNAME -RunLevel Limited -Force
+//
+// `--skip-apply` is the 2026-08-13 decision: the scheduled run PREPARES, and a
+// human-facing session reports and applies. `-AllowStartIfOnBatteries` because
+// the task registered on 2026-08-03 was refused with 0x800710E0 on every
+// unplugged morning and produced one 07:00 entry in two weeks. That task also
+// passed NO arguments — full cycle, runner included, twice a day — which is
+// what the log's 19:00 entries were. docs/operate/01-commands.md §6.7 has the
+// same command with the flags explained.
 import fs from "node:fs"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { openDb, rowToLead, screenIndex } from "../lib/db.mjs"
 import { reverifySweep } from "../documents/reverify.mjs"
-import { trustBoard, readLimits } from "./trust.mjs"
+import { resolveLeadForTrust, readLimits } from "./trust.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")
@@ -69,13 +87,54 @@ const flag = (args, name, dflt = null) => {
     : dflt
 }
 
+// How much of a failed child's stderr the log keeps. Enough for a stack trace
+// and Playwright's boxed hint; not the 2,000-line dump a runaway loop writes.
+export const STDERR_TAIL_LINES = 40
+
+/**
+ * The one-line reason for a stage's failure, from what spawnSync returned.
+ *
+ * MEASURED 2026-08-17, on logs/cycle.log: `apply: FAILED — ║ … ║ <3 Playwright
+ * Team ║ ╚═══╝` and `search: FAILED` with nothing after it. Both were this
+ * function's predecessor keeping the LAST three lines of stderr and reading
+ * nothing else. The runner writes its reason on the FIRST line
+ * (`auto-apply: could not start a browser — <message>`) and Playwright appends
+ * a boxed hint below it, so the tail was the box's bottom edge and the reason
+ * was gone. And a child killed by the spawn timeout has `status === null`,
+ * `signal === "SIGTERM"` and an EMPTY stderr — which the tail rendered as a
+ * failure with no reason at all. So: the spawn error first, then the timeout,
+ * then the first non-empty stderr line plus the last two. Capped, because a
+ * stack trace in a summary line buries the summary; the full tail travels
+ * separately as `stderr` for the log.
+ */
+export function stepDetail(r, { timeout } = {}) {
+  // Timeout first: spawnSync reports one as BOTH `error` (ETIMEDOUT) and
+  // `status === null`, and "spawnSync node.exe ETIMEDOUT" names the runtime
+  // rather than the wait — measured writing this test.
+  const timedOut =
+    r?.error?.code === "ETIMEDOUT" ||
+    ((r?.status === null || r?.status === undefined) && !r?.error)
+  if (timedOut) {
+    const sig = r?.signal ? ` (${r.signal})` : ""
+    return `timed out after ${timeout}ms${sig}`.slice(0, 300)
+  }
+  if (r?.error?.message) return String(r.error.message).slice(0, 300)
+  const lines = String(r.stderr ?? "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  if (!lines.length) return ""
+  const picked = lines.length <= 3 ? lines : [lines[0], ...lines.slice(-2)]
+  return picked.join(" ").slice(0, 300)
+}
+
 /**
  * Run one pipeline step.
  *
  * NEVER THROWS. A stage is a step in a cycle, not an assertion: `keyword-plan`
  * exiting 2 on one posting is a fact about that posting, and turning it into an
- * exception would abandon every lead behind it. The exit code and the last of
- * stderr come back as data.
+ * exception would abandon every lead behind it. The exit code, a one-line
+ * reason and the tail of stderr come back as data.
  */
 export function step(script, args, { cwd = ROOT, timeout = 180_000 } = {}) {
   const r = spawnSync(NODE, [path.join(ROOT, script), ...args], {
@@ -86,14 +145,29 @@ export function step(script, args, { cwd = ROOT, timeout = 180_000 } = {}) {
     // output stays one readable log instead of five interleaved ones.
     stdio: ["ignore", "pipe", "pipe"],
   })
+  const ok = r.status === 0
   const err = String(r.stderr ?? "").trim()
   return {
-    ok: r.status === 0,
+    ok,
     code: r.status,
+    signal: r.signal ?? null,
     stdout: String(r.stdout ?? ""),
-    // Capped: a stack trace in a summary line buries the summary.
-    detail: err ? err.split(/\r?\n/).slice(-3).join(" ").slice(0, 300) : "",
+    detail: ok
+      ? err
+        ? stepDetail(r, { timeout })
+        : ""
+      : stepDetail(r, { timeout }),
+    // The whole tail, failure only. `detail` is for the summary line; this is
+    // for the person reading the log at 09:00 about a stage that failed at
+    // 07:00, who needs the message the summary line could not hold.
+    stderr: ok ? "" : err.split(/\r?\n/).slice(-STDERR_TAIL_LINES).join("\n"),
   }
+}
+
+// What a stage keeps of a step's result. `stderr` is empty on success, so the
+// JSON output and the log grow only when there is something to explain.
+export function stageRecord(r) {
+  return { ok: r.ok, detail: r.detail, stderr: r.stderr ?? "" }
 }
 
 /**
@@ -237,7 +311,7 @@ export async function runCycle(argv = []) {
         timeout: 600_000,
       },
     )
-    out.stages.search = { ok: r.ok, detail: r.detail }
+    out.stages.search = stageRecord(r)
   }
 
   // Screening is where hard rule 0 is enforced, and the runner refuses an
@@ -246,7 +320,7 @@ export async function runCycle(argv = []) {
     const r = step("scripts/leads/screen.mjs", ["--skip-screened"], {
       timeout: 600_000,
     })
-    out.stages.screen = { ok: r.ok, detail: r.detail }
+    out.stages.screen = stageRecord(r)
   }
 
   // Documents whose recorded verification predates the current fact base are
@@ -297,7 +371,7 @@ export async function runCycle(argv = []) {
     "--cluster",
     "--json",
   ])
-  out.stages.prep = { ok: prep.ok, detail: prep.detail }
+  out.stages.prep = stageRecord(prep)
   let queue = []
   try {
     queue = JSON.parse(prep.stdout || "[]")
@@ -384,8 +458,16 @@ export async function runCycle(argv = []) {
   for (const entry of queue) {
     const lead = byUrl.get(entry.url) ?? entry
     if (!anyBoard) {
-      const verdict = trustBoard({
-        lead,
+      // THE SAME RESOLUTION THE RUNNER DOES, not a bare trustBoard. This loop
+      // used to call trustBoard with the posting URL and no recordedOrigin, so
+      // check 5 (origin_stable) failed on EVERY board-hosted lead with a
+      // message written for a queued row — "no origin was recorded for this
+      // job when it was queued" — before any workspace existed. Every cycle
+      // from the check's introduction to 2026-08-17 reported prepared=0 while
+      // seven submittable leads sat in the top twenty. resolveLeadForTrust is
+      // the one function both callers now share, and its header has the
+      // measurement.
+      const { verdict } = resolveLeadForTrust(lead, {
         limits: limitsDoc,
         screening:
           screeningOf.get(entry.url) ??
@@ -424,7 +506,7 @@ export async function runCycle(argv = []) {
         timeout: 1_800_000,
       },
     )
-    out.stages.apply = { ok: r.ok, detail: r.detail }
+    out.stages.apply = stageRecord(r)
     try {
       out.run = JSON.parse(r.stdout.trim().split(/\r?\n/).pop() || "{}")
     } catch {
@@ -442,10 +524,22 @@ async function main(argv = process.argv.slice(2)) {
     process.stdout.write(`${JSON.stringify(out)}\n`)
     return 0
   }
-  for (const [name, s] of Object.entries(out.stages))
+  for (const [name, s] of Object.entries(out.stages)) {
     process.stdout.write(
       `${name}: ${s.ok ? "ok" : "FAILED"}${s.detail ? ` — ${s.detail}` : ""}\n`,
     )
+    // The tail of stderr, indented under the summary, FAILURE ONLY. The summary
+    // line above is capped at 300 chars and that cap is what hid the runner's
+    // launch error and the search timeout for four days (2026-08-13..17); the
+    // log is where the whole reason belongs.
+    if (!s.ok && s.stderr)
+      process.stdout.write(
+        `  stderr:\n${s.stderr
+          .split(/\r?\n/)
+          .map((l) => `    ${l}`)
+          .join("\n")}\n`,
+      )
+  }
   // Every document the sweep re-checked and the new fact base no longer
   // supports, by name. The job has dropped out of eligibility and this line is
   // the why — a silent count would read as housekeeping instead of a loss.

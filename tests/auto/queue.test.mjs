@@ -18,6 +18,9 @@ import {
   releaseStaleAutoClaims,
   withBusyRetry,
   AUTO_QUEUE_STATES,
+  AUTO_DEFER_KINDS,
+  AUTO_REQUEUEABLE_KINDS,
+  readStaleDeferred,
 } from "../../scripts/lib/db.mjs"
 
 // One temp store per test, with the handles tracked. Closing before removing
@@ -388,4 +391,103 @@ test("withBusyRetry never retries an error that is not contention", () => {
     /UNIQUE constraint failed/,
   )
   assert.equal(calls, 1, "a constraint violation is an answer, not a wait")
+})
+
+// --- re-queuing a defer that something may since have resolved ---------------
+//
+// MEASURED 2026-08-17: three rows deferred 2026-08-04, attempt_no=1, never
+// looked at again — because `deferred` is terminal and enqueue was a bare
+// DO NOTHING. Two of them were blocked on a reason the code had fixed on
+// 08-07. These pin the narrow exception and, more importantly, its edges.
+
+test("a deferred row on a requeueable kind goes back to 'queued' on the next enqueue, and its next claim is attempt 2", (t) => {
+  const db = store(t).open()
+  assert.equal(enqueueAutoJobs(db, slugs(1)), 1)
+  claimAutoJob(db, "co-000", { run_id: "r1", plan_sha256: "old" })
+  setAutoJobState(db, "co-000", "deferred", {
+    run_id: "r1",
+    reason_kind: "confirm-field",
+    reason_detail: "Are you legally authorized…",
+  })
+  assert.equal(readResumableAutoJobs(db).length, 0, "deferred is not resumable")
+
+  assert.equal(enqueueAutoJobs(db, slugs(1)), 1, "the row was re-queued")
+  const row = readAutoQueue(db)[0]
+  assert.equal(row.state, "queued")
+  assert.equal(row.reason_kind, null, "the old reason is cleared, not carried")
+  assert.equal(row.plan_sha256, null, "the old plan is forgotten — it is rebuilt on claim")
+  assert.equal(row.attempt_no, 1, "the enqueue itself does not count an attempt")
+
+  assert.equal(claimAutoJob(db, "co-000", { run_id: "r2", plan_sha256: "new" }), 1)
+  assert.equal(readAutoQueue(db)[0].attempt_no, 2, "the claim counts it")
+  assert.equal(readAutoQueue(db)[0].plan_sha256, "new")
+})
+
+test("every requeueable kind is re-queued; every other defer kind is left terminal", (t) => {
+  const db = store(t).open()
+  const kinds = [...AUTO_DEFER_KINDS]
+  const jobs = kinds.map((k, i) => ({ slug: `k-${i}`, origin: "o", board_key: "b" }))
+  enqueueAutoJobs(db, jobs)
+  kinds.forEach((kind, i) => {
+    claimAutoJob(db, `k-${i}`, { run_id: "r" })
+    setAutoJobState(db, `k-${i}`, "deferred", {
+      run_id: "r",
+      reason_kind: kind,
+      reason_detail: kind,
+    })
+  })
+  const n = enqueueAutoJobs(db, jobs)
+  assert.equal(n, AUTO_REQUEUEABLE_KINDS.length)
+  const byState = Object.fromEntries(
+    readAutoQueue(db).map((r) => [r.slug, r.state]),
+  )
+  kinds.forEach((kind, i) => {
+    const expect = AUTO_REQUEUEABLE_KINDS.includes(kind) ? "queued" : "deferred"
+    assert.equal(byState[`k-${i}`], expect, `${kind} -> ${expect}`)
+  })
+  // The ones a board or the user's policy decided are named here so widening
+  // the list is a visible act, not a drift.
+  for (const k of ["posting-gone", "l3-rejected", "cap-company", "board-untrusted", "reconciled-not-sent", "captcha"])
+    assert.ok(!AUTO_REQUEUEABLE_KINDS.includes(k), `${k} stays terminal`)
+})
+
+test("re-queuing never touches attempted, submitted, challenged or failed rows", (t) => {
+  const db = store(t).open()
+  const jobs = slugs(4)
+  enqueueAutoJobs(db, jobs)
+  for (const j of jobs) claimAutoJob(db, j.slug, { run_id: "r" })
+  setAutoJobState(db, "co-000", "attempted", { run_id: "r" })
+  setAutoJobState(db, "co-001", "submitted", { run_id: "r" })
+  setAutoJobState(db, "co-002", "challenged", { run_id: "r", reason_kind: "captcha", reason_detail: "x" })
+  setAutoJobState(db, "co-003", "failed", { run_id: "r", reason_kind: "nav-timeout", reason_detail: "x" })
+  assert.equal(enqueueAutoJobs(db, jobs), 0)
+  const byState = Object.fromEntries(readAutoQueue(db).map((r) => [r.slug, r.state]))
+  assert.deepEqual(byState, {
+    "co-000": "attempted",
+    "co-001": "submitted",
+    "co-002": "challenged",
+    "co-003": "failed",
+  })
+})
+
+test("readStaleDeferred counts deferred rows older than the threshold, oldest first, and says which will be looked at again", (t) => {
+  const db = store(t).open()
+  const jobs = slugs(3)
+  enqueueAutoJobs(db, jobs)
+  const old = new Date("2026-08-04T02:56:00Z")
+  const fresh = new Date("2026-08-17T04:00:00Z")
+  const now = new Date("2026-08-17T12:00:00Z")
+  claimAutoJob(db, "co-000", { run_id: "r", now: old })
+  setAutoJobState(db, "co-000", "deferred", { run_id: "r", reason_kind: "confirm-field", reason_detail: "x", now: old })
+  claimAutoJob(db, "co-001", { run_id: "r", now: old })
+  setAutoJobState(db, "co-001", "deferred", { run_id: "r", reason_kind: "posting-gone", reason_detail: "x", now: old })
+  claimAutoJob(db, "co-002", { run_id: "r", now: fresh })
+  setAutoJobState(db, "co-002", "deferred", { run_id: "r", reason_kind: "confirm-field", reason_detail: "x", now: fresh })
+
+  const stale = readStaleDeferred(db, { now })
+  assert.deepEqual(stale.map((s) => s.slug), ["co-000", "co-001"], "the fresh one is not stale")
+  assert.equal(stale[0].requeueable, true)
+  assert.equal(stale[1].requeueable, false, "posting-gone stands until a human changes something")
+  assert.ok(stale[0].age_ms > 13 * 24 * 3600 * 1000)
+  assert.equal(readStaleDeferred(db, { now, olderThanMs: 0 }).length, 3)
 })

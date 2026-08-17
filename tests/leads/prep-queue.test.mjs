@@ -327,3 +327,164 @@ test("buildQueue reports the tier and the resolved posting", () => {
   assert.equal(q[1].applicability, "manual-only")
   assert.equal(q[1].apply_url, null)
 })
+
+// --- partition BEFORE the window, and the same scores as recommend ----------
+//
+// Measured 2026-08-17 on the real store: at the default --top 5 the queue read
+// `manual_only=5 automatable=0` while `--top 20` read `automatable=17`. The
+// window (`max(top*4, 20)` by score) was cut BEFORE the applicability
+// partition, so twenty aggregator leads that outscore every board lead filled
+// it and the partition had nothing automatable left to lift. Same shape as the
+// 2026-08-09 defect above, one level up.
+
+test("CLI: an automatable lead outside the score window still makes the default queue", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prep-queue-window-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  // Twenty-two identical aggregator leads with company names that sort first,
+  // and one Greenhouse lead named to sort LAST — so on a tie the score-first
+  // window would hold exactly the twenty-two and never reach it.
+  const leads = []
+  for (let i = 0; i < 22; i++)
+    leads.push({
+      id: `adzuna:${i}`,
+      company: `Aaa Corp ${String(i).padStart(2, "0")}`,
+      title: "Full Stack Engineer",
+      url: `https://www.adzuna.com/land/ad/${i}`,
+      status: "new",
+      description: "React Node.js TypeScript",
+    })
+  leads.push({
+    id: "greenhouse:zzz:1",
+    company: "Zzz Robotics",
+    title: "Full Stack Engineer",
+    url: "https://job-boards.greenhouse.io/zzz/jobs/1",
+    apply_url: "https://job-boards.greenhouse.io/zzz/jobs/1",
+    status: "new",
+    description: "React Node.js TypeScript",
+  })
+  const leadsFile = path.join(dir, "leads.json")
+  fs.writeFileSync(leadsFile, JSON.stringify({ leads }))
+  const limitsFile = path.join(dir, "limits.yaml")
+  fs.writeFileSync(
+    limitsFile,
+    "auto_apply:\n  board_allowlist:\n    job-boards.greenhouse.io: greenhouse\n",
+  )
+  const r = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      "--leads",
+      leadsFile,
+      "--profile",
+      path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+      "--limits",
+      limitsFile,
+      "--jobs-dir",
+      path.join(dir, "jobs"),
+      "--applications",
+      path.join(dir, "applications.yaml"),
+      "--json",
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  )
+  assert.equal(r.status, 0, r.stderr)
+  const queue = JSON.parse(r.stdout)
+  assert.equal(queue.length, 5)
+  assert.equal(
+    queue[0].id,
+    "greenhouse:zzz:1",
+    "the one lead the machine can finish leads the queue, whatever the " +
+      "score window would have held",
+  )
+  assert.equal(queue[0].applicability, "automatable")
+
+  // --by-score is the old ordering and must still be the old ordering.
+  const byScore = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      "--leads",
+      leadsFile,
+      "--profile",
+      path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+      "--limits",
+      limitsFile,
+      "--jobs-dir",
+      path.join(dir, "jobs"),
+      "--applications",
+      path.join(dir, "applications.yaml"),
+      "--by-score",
+      "--json",
+    ],
+    { cwd: ROOT, encoding: "utf8" },
+  )
+  assert.equal(byScore.status, 0, byScore.stderr)
+  assert.ok(
+    JSON.parse(byScore.stdout).every((q) => q.applicability === "manual-only"),
+    "--by-score restores fit-only ordering, aggregators first",
+  )
+})
+
+test("CLI: the summary line reports the whole supply per tier, not just the queue", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prep-queue-supply-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const leads = [
+    {
+      id: "gh:1",
+      company: "A",
+      title: "Full Stack Engineer",
+      url: "https://job-boards.greenhouse.io/a/jobs/1",
+      apply_url: "https://job-boards.greenhouse.io/a/jobs/1",
+      status: "new",
+    },
+    {
+      id: "wd:1",
+      company: "B",
+      title: "Full Stack Engineer",
+      url: "https://b.wd1.myworkdayjobs.com/x/job/1",
+      apply_url: "https://b.wd1.myworkdayjobs.com/x/job/1",
+      status: "new",
+    },
+    {
+      id: "adzuna:1",
+      company: "C",
+      title: "Full Stack Engineer",
+      url: "https://www.adzuna.com/land/ad/1",
+      status: "new",
+    },
+  ]
+  const leadsFile = path.join(dir, "leads.json")
+  fs.writeFileSync(leadsFile, JSON.stringify({ leads }))
+  const limitsFile = path.join(dir, "limits.yaml")
+  fs.writeFileSync(
+    limitsFile,
+    "auto_apply:\n  board_allowlist:\n    job-boards.greenhouse.io: greenhouse\n",
+  )
+  const r = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      "--leads",
+      leadsFile,
+      "--profile",
+      path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+      "--limits",
+      limitsFile,
+      "--jobs-dir",
+      path.join(dir, "jobs"),
+      "--applications",
+      path.join(dir, "applications.yaml"),
+      "--top",
+      "1",
+    ],
+    { cwd: ROOT, encoding: "utf8", env: { ...process.env, CI: "1" } },
+  )
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /queued=1 /)
+  assert.match(r.stdout, /automatable=1 off_allowlist=0 manual_only=0/)
+  assert.match(
+    r.stdout,
+    /supply=1\/1\/1/,
+    "one of each tier exists in the store even though only one was queued",
+  )
+})

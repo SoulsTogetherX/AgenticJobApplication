@@ -173,16 +173,23 @@ Three to know without looking, because getting them wrong is expensive:
    and `advance.mjs` (a `next`-role control, never a submit). That is a real
    widening and `tests/auto/click-surface.test.mjs` is what keeps it at two.
 
-   **The classifier is built and deliberately blind on every real board.** Its
-   rules carry their evidence, and a rule justified by a fixture page may fire
-   only on loopback — so a real ATS classifies as `unclassified`, which is the
-   one remaining hard STOP. That is not a gap to route around: §4.10 requires a
-   corpus of real post-submit pages, and the only lawful source is the user's own
-   attended applies (`scripts/apply/capture-post-submit.mjs`: stage → review →
+   **The classifier's rules carry their evidence, and that evidence is the
+   only thing that lets one fire on a real host.** A rule justified by a
+   fixture page may fire only on loopback; a rule justified by a **captured**
+   real post-submit page fires only on the hosts it was captured from. A host
+   with no capture-sourced rule classifies as `unclassified`, which is a hard
+   STOP. That is not a gap to route around: §4.10 requires a corpus of real
+   post-submit pages, and the only lawful source is the user's own attended
+   applies (`scripts/apply/capture-post-submit.mjs`: stage → review →
    promote). Writing a plausible-looking regex instead is rule 0's forbidden
    guess with the model removed, failing silently in the one direction that
    cannot be recovered — a page misread as a confirmation records an application
-   that was never sent, and nothing later corrects it.
+   that was never sent, and nothing later corrects it. **Which hosts have
+   capture-sourced rules today is a fact about `scripts/auto/classify.mjs`, not
+   about this file** — read its `evidence.source === "capture"` entries and
+   their `hosts` before assuming a board is blind or sighted. This paragraph
+   said "every real board is blind" until 2026-08-17, four days after the user
+   had promoted captures for both allowlisted Greenhouse and Ashby hosts.
 
    **THE RUNNER IS ARMED. Do not repeat the sentence that used to be here.**
    This paragraph said, until 2026-08-06, that "nothing opens a browser
@@ -205,13 +212,16 @@ Three to know without looking, because getting them wrong is expensive:
    stale "it is switched off" and reasons from it will get the risk of its own
    changes exactly backwards, which is why this is written in the imperative.
 
-   **The capability check that is still worth running, because it is the one
-   that has not moved:** the classifier. Every real ATS still classifies as
-   `unclassified`, and that is a hard STOP — so a live run defers at the
-   post-submit step rather than recording an application. Verify that before
-   assuming a submit can complete, and re-derive the rest from the code rather
-   than from this file: **a capability paragraph decays within the hour, and
-   this one has now been wrong five times.**
+   **The capability check that is worth running before assuming a submit can
+   or cannot complete:** `node --test tests/auto/classify.test.mjs`, then read
+   the `capture`-sourced rules in `scripts/auto/classify.mjs` for the host in
+   question. Do not take the answer from this file. The sentence that stood
+   here until 2026-08-17 — "every real ATS still classifies as `unclassified`,
+   and that is a hard STOP" — was the sixth capability claim in this paragraph
+   to be found false by reading the code, and it was false in the direction
+   that makes an agent under-estimate what a live run will do. **A capability
+   paragraph decays within the hour; this one now points at the test instead
+   of making the claim.**
 
 7. **Git: `dev` branch only.** Never switch to, commit on, or push to
    `main`/`master` or anything else (`git checkout -b dev` if it doesn't exist).

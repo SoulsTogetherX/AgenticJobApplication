@@ -26,20 +26,11 @@ import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { loadYamlFile, isTerse } from "../lib/lib.mjs"
 import { profileText } from "../profile/profile-gaps.mjs"
-import { rankLeads } from "./recommend.mjs"
+import { rankLeads, rankingContext } from "./recommend.mjs"
 import { clusterLeads, coveredBy } from "./cluster.mjs"
-import {
-  openDb,
-  keywordMap,
-  readLeadStore,
-  resolveLeadSource,
-} from "../lib/db.mjs"
+import { readLeadStore, resolveLeadSource } from "../lib/db.mjs"
 import { readApplications } from "../lib/db.mjs"
-import {
-  readLimits,
-  normalizeAllowlist,
-  allowlistEntry,
-} from "../auto/trust.mjs"
+import { readLimits, normalizeAllowlist } from "../auto/trust.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -91,81 +82,24 @@ export function indexWorkspaces(jobsDir) {
 // states and equally done.
 const DONE_STATUSES = new Set(["verified", "approved", "rendered"])
 
-// --- applicability: can the machine actually finish this one? -----------------
+// --- applicability: lives in applicability.mjs, re-exported here ----------------
 //
-// WHY THIS EXISTS. Score alone ranks by fit, which is the right question for a
-// human reading a list and the wrong one for a queue whose output is a tailored
-// document. Measured on the real store 2026-08-09: 81 of 81 adzuna leads and
-// 14 of 14 jobicy leads carry no `apply_url`, because those two aggregators do
-// not expose the employer's posting to anything but a logged-in browser (four
-// resolution paths were tried and all are closed — see canonical.mjs). They are
-// 46% of the store, they outrank everything on fit, and they filled all ten
-// prep slots on the 2026-08-09 cycle while nine ready-to-apply leads — Cloudflare
-// x3, OpenAI x2, Twilio, Coinbase, Wynn Resorts — sat below the cut-off. Zero
-// documents were prepared that run.
-//
-// THEY ARE ORDERED, NOT DROPPED. An unresolvable lead is still a job the user
-// can apply to by hand, and the cycle report names them for exactly that reason.
-// Filtering them out would hide supply; ranking them below the leads the machine
-// can finish spends the ten slots on work that produces something.
-//
-// TIER 1 IS THE INTERESTING ONE. A lead can resolve to a real ATS posting and
-// still be refused by the gate because its board is not on the user's allowlist
-// — SmartRecruiters, Workday and Oracle Cloud all resolve here and none has an
-// adapter this repo ships. Those rank above the unresolvable ones (they are one
-// adapter away from automatable) and below the ones that work today.
-export const APPLICABILITY = Object.freeze({
-  AUTOMATABLE: 0, // resolved to an ATS posting on the user's allowlist
-  RESOLVED_OFF_ALLOWLIST: 1, // resolved, but no adapter/allowlist entry serves it
-  MANUAL_ONLY: 2, // never resolved past the aggregator — hand-apply only
-})
-
-/** Tier -> the name reported to agents and humans. Indexed by tier number. */
-export const APPLICABILITY_NAMES = Object.freeze([
-  "automatable",
-  "off-allowlist",
-  "manual-only",
-])
-
-/**
- * How far the machine can carry this lead. Pure; `entries` is a normalised
- * allowlist (an empty one collapses tier 0 into tier 1, which is correct — with
- * no allowlist nothing is automatable).
- */
-export function applicability(lead, entries = []) {
-  if (!lead?.apply_url) return APPLICABILITY.MANUAL_ONLY
-  let host
-  try {
-    host = new URL(lead.apply_url).hostname
-  } catch {
-    // An apply_url that does not parse is not one. Same door as canonical.mjs:
-    // never "resolved to whatever it gave us".
-    return APPLICABILITY.MANUAL_ONLY
-  }
-  return allowlistEntry(host, entries)
-    ? APPLICABILITY.AUTOMATABLE
-    : APPLICABILITY.RESOLVED_OFF_ALLOWLIST
-}
-
-/**
- * Stable partition of a ranked list by applicability, best tier first.
- *
- * MUST RUN BEFORE CLUSTERING, not inside buildQueue(). `buildQueue` relies on a
- * cluster leader appearing ahead of its members — it attaches a member to
- * `byLeader.get(leader)` with `?.`, so a member seen first is silently dropped.
- * Reordering upstream of clusterLeads() keeps leaders and members consistent
- * because the leaders are re-derived from this order.
- */
-export function preferApplicable(ranked, entries = []) {
-  return (
-    [...(ranked ?? [])]
-      .map((lead, i) => ({ lead, i, tier: applicability(lead, entries) }))
-      // Score order is preserved within a tier: `i` breaks every tie, so this is
-      // a reordering by applicability and nothing else.
-      .sort((a, b) => a.tier - b.tier || a.i - b.i)
-      .map((x) => x.lead)
-  )
-}
+// The tiers, `applicability()` and `preferApplicable()` moved out on 2026-08-17 so
+// recommend.mjs could use them without a static import cycle (prep-queue
+// imports rankLeads from recommend). Re-exported so every existing caller and
+// test keeps its import path.
+export {
+  APPLICABILITY,
+  APPLICABILITY_NAMES,
+  applicability,
+  preferApplicable,
+} from "./applicability.mjs"
+import {
+  applicability,
+  preferApplicable,
+  APPLICABILITY,
+  APPLICABILITY_NAMES,
+} from "./applicability.mjs"
 
 // Pure core (exported for tests).
 //
@@ -265,21 +199,40 @@ function main() {
 
   const all = readLeadStore(leadsPath).leads ?? []
   const leads = all.filter((l) => status === "all" || l.status === status)
-  // Rank generously, then filter — the top few by score are often already
-  // tailored, and we still want a full queue underneath them.
+
+  // THE SAME INPUTS recommend.mjs ranks with — the ingest-time keyword index
+  // and the user's limits. Without them the same lead scored 19 there and 5
+  // here (Torc Robotics, 2026-08-17), and this file is what the cycle is fed
+  // by, so the machine ranked on the degraded numbers while the human read
+  // the full ones.
+  const { keywords, limits } = rankingContext(leadsPath)
+
+  // RANK EVERYTHING, PARTITION, THEN WINDOW — in that order, and the order is
+  // the fix. This used to rank `max(top*4, 20)` by score FIRST and partition
+  // by applicability inside that window. Measured 2026-08-17: at the default
+  // --top 5 the twenty-by-score were all aggregator leads with no apply_url,
+  // so the queue printed `manual_only=5 automatable=0` while seventeen
+  // automatable leads sat just below the window; `--top 20` (window = whole
+  // store) showed them. Partitioning first means the window is spent on the
+  // leads the machine can finish, and score order still decides within a tier.
   const byScore = rankLeads(leads, profileText(loadYamlFile(profilePath)), {
-    top: Math.max(top * 4, 20),
+    top: leads.length,
+    keywords,
+    limits,
   })
 
-  // Then reorder by how far the machine can carry each one. The user's own
+  // Reorder by how far the machine can carry each one. The user's own
   // allowlist is the authority for tier 0 — this reads that file and never
   // second-guesses it. `--by-score` restores the pure fit ordering.
   const entries = normalizeAllowlist(
     readLimits(limitsPath)?.auto_apply?.board_allowlist,
   )
-  const ranked = args.includes("--by-score")
+  const ordered = args.includes("--by-score")
     ? byScore
     : preferApplicable(byScore, entries)
+  // Generous, then filtered — the top few are often already tailored, and we
+  // still want a full queue underneath them.
+  const ranked = ordered.slice(0, Math.max(top * 4, 20))
 
   const applied = readApplications(
     appsPath.endsWith("applications.yaml") ? null : appsPath,
@@ -289,15 +242,6 @@ function main() {
   // group leads it — that is the one worth tailoring for.
   let covered = new Map()
   if (args.includes("--cluster")) {
-    let keywords
-    if (leadsPath.endsWith(".db")) {
-      const db = openDb(leadsPath)
-      try {
-        keywords = keywordMap(db)
-      } finally {
-        db.close()
-      }
-    }
     covered = coveredBy(
       clusterLeads(ranked, {
         threshold: Number(flag(args, "--threshold") || 0.6),
@@ -326,10 +270,18 @@ function main() {
   // Counted per tier so "queued=10" can never again mean ten leads none of
   // which the machine could finish.
   const tally = (name) => queue.filter((q) => q.applicability === name).length
+  // And the same three over the WHOLE ranked supply, not just the queue: a
+  // line reading `manual_only=5` used to be the whole story, and the story
+  // was that seventeen automatable leads sat outside the window (2026-08-17).
+  const supplyTier = (t) =>
+    ordered.filter((l) => applicability(l, entries) === t).length
   const tiers =
     ` automatable=${tally("automatable")}` +
     ` off_allowlist=${tally("off-allowlist")}` +
-    ` manual_only=${tally("manual-only")}`
+    ` manual_only=${tally("manual-only")}` +
+    ` supply=${supplyTier(APPLICABILITY.AUTOMATABLE)}/` +
+    `${supplyTier(APPLICABILITY.RESOLVED_OFF_ALLOWLIST)}/` +
+    `${supplyTier(APPLICABILITY.MANUAL_ONLY)}`
 
   if (isTerse()) {
     for (const q of queue) {

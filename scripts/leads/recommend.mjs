@@ -8,6 +8,16 @@
 //
 // Usage: node scripts/leads/recommend.mjs [--top N] [--status new|recommended|all]
 //        [--json] [--leads <path>] [--profile <path>] [--jobs-dir <path>]
+//        [--applicable [--limits <path>]]
+//
+// --applicable ranks the same way and then lifts the leads the machine can
+// actually finish (an apply_url on the user's board_allowlist) above the rest,
+// so the top N is a list of things that can be SENT rather than a list of
+// things that fit. Measured 2026-08-17: four of the fit-ranked top five were
+// Adzuna redirects that canonical.mjs cannot resolve (the host answers 403 to
+// robots — a bot wall, not a parser gap, and never to be dressed around); the
+// digest read them out every morning as recommendations nothing could act on.
+// Each row carries its tier either way; --applicable only changes the order.
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -20,6 +30,12 @@ import {
   keywordMap,
 } from "../lib/db.mjs"
 import { matchTitleKeyword, loadLimits } from "./find-jobs.mjs"
+import { readLimits, normalizeAllowlist } from "../auto/trust.mjs"
+import {
+  applicability,
+  preferApplicable,
+  APPLICABILITY_NAMES,
+} from "./applicability.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -168,9 +184,52 @@ function flag(args, name) {
   return i !== -1 ? (args[i + 1] ?? true) : null
 }
 
+/**
+ * The two inputs `rankLeads` needs beyond the leads themselves: the ingest-time
+ * keyword index and the user's limits document. Best-effort on both, with a
+ * warning rather than an exit, because a ranking without them is degraded and
+ * a ranking that refuses to run is worse.
+ *
+ * ONE FUNCTION, TWO CALLERS, and that is the point. prep-queue.mjs called
+ * `rankLeads` with neither, so the same lead scored 19 here and 5 there —
+ * measured 2026-08-17 on Torc Robotics — and the cycle, which is fed by
+ * prep-queue, ranked on the degraded numbers while the human read the full
+ * ones. Two rankers producing two numbers for one lead is a bug whatever the
+ * numbers are; sharing the inputs is how they stay one ranker.
+ *
+ * Keywords were already extracted at ingest; re-deriving them from every stored
+ * description on every run is work the store has already done. Only available
+ * on the database store — a JSON fixture (what the tests point at) falls back
+ * to deriving from the text. Limits are optional too: an absent/unreadable file
+ * falls back to loadLimits' own built-in defaults, which is what keeps
+ * titleScore's DEFAULT_TITLE_RANK fallback reachable rather than throwing.
+ */
+export function rankingContext(leadsPath, { warn = console.error } = {}) {
+  let keywords = null
+  if (String(leadsPath ?? "").endsWith(".db")) {
+    try {
+      const db = openDb(leadsPath)
+      try {
+        keywords = keywordMap(db)
+      } finally {
+        db.close()
+      }
+    } catch (e) {
+      warn(`warn: keyword index unavailable (${e.message})`)
+    }
+  }
+  let limits = null
+  try {
+    limits = loadLimits()
+  } catch (e) {
+    warn(`warn: application-limits.yaml unavailable (${e.message})`)
+  }
+  return { keywords, limits }
+}
+
 // Attach the captured posting text when a job workspace exists — richer than
 // the title alone.
-function withJobText(leads, jobsDir) {
+export function withJobText(leads, jobsDir) {
   if (!fs.existsSync(jobsDir)) return leads
   const texts = new Map()
   for (const slug of fs.readdirSync(jobsDir)) {
@@ -218,39 +277,24 @@ function main() {
     process.exit(2)
   }
 
-  // Keywords were already extracted at ingest; re-deriving them from every
-  // stored description on every run is work the store has already done. Only
-  // available on the database store — a JSON fixture (what the tests point at)
-  // falls back to deriving from the text, which is why this is best-effort.
-  let keywords = null
-  if (String(leadsPath).endsWith(".db")) {
-    try {
-      const db = openDb(leadsPath)
-      try {
-        keywords = keywordMap(db)
-      } finally {
-        db.close()
-      }
-    } catch (e) {
-      console.error(`warn: keyword index unavailable (${e.message})`)
-    }
-  }
-
-  // Optional — an absent/unreadable file falls back to loadLimits' own
-  // built-in defaults, which is what keeps titleScore's DEFAULT_TITLE_RANK
-  // fallback reachable rather than throwing.
-  let limits = null
-  try {
-    limits = loadLimits()
-  } catch (e) {
-    console.error(`warn: application-limits.yaml unavailable (${e.message})`)
-  }
-
-  const ranked = rankLeads(leads, profileText(loadYamlFile(profilePath)), {
-    top,
-    keywords,
-    limits,
-  })
+  const { keywords, limits } = rankingContext(leadsPath)
+  const applicable = args.includes("--applicable")
+  const limitsPath =
+    flag(args, "--limits") || path.join(ROOT, "docs", "application-limits.yaml")
+  const allow = normalizeAllowlist(
+    readLimits(limitsPath)?.auto_apply?.board_allowlist,
+  )
+  const profileBlob = profileText(loadYamlFile(profilePath))
+  // --applicable: rank EVERYTHING, lift what the machine can finish, then cut.
+  // Cutting first and lifting inside the window is the defect prep-queue had
+  // (see its header); the same order is used here on purpose.
+  const ranked = applicable
+    ? preferApplicable(
+        rankLeads(leads, profileBlob, { top: leads.length, keywords, limits }),
+        allow,
+      ).slice(0, top)
+    : rankLeads(leads, profileBlob, { top, keywords, limits })
+  const tierOf = (r) => APPLICABILITY_NAMES[applicability(r, allow)]
   // Ties mean the sort fell through to alphabetical-by-company — a flat list
   // labelled as ranked is worse than a flat list labelled as flat (P2 interim,
   // retarget-readiness audit 2026-08). This is checked on every output mode
@@ -259,17 +303,23 @@ function main() {
   const flat = isFlatRanking(ranked)
 
   if (args.includes("--json")) {
-    console.log(JSON.stringify(ranked, null, 2))
+    console.log(
+      JSON.stringify(
+        ranked.map((r) => ({ ...r, applicability: tierOf(r) })),
+        null,
+        2,
+      ),
+    )
     return
   }
   if (isTerse()) {
     for (const r of ranked) {
       console.log(
-        `${r.score}|${r.id}|${r.company}|${r.title}|match:${r.matched_tech.join(",") || "-"}|gap:${r.missing_tech.join(",") || "-"}|${r.url}`,
+        `${r.score}|${r.id}|${r.company}|${r.title}|match:${r.matched_tech.join(",") || "-"}|gap:${r.missing_tech.join(",") || "-"}|${tierOf(r)}|${r.apply_url ?? r.url}`,
       )
     }
     console.log(
-      `ranked=${ranked.length} of=${leads.length}${flat ? " flat=true" : ""}`,
+      `ranked=${ranked.length} of=${leads.length}${applicable ? " applicable=true" : ""}${flat ? " flat=true" : ""}`,
     )
     return
   }
@@ -284,7 +334,7 @@ function main() {
   }
   for (const r of ranked) {
     console.log(
-      `[${r.score}] ${r.company} — ${r.title}\n  ${r.location || "location?"} | matches: ${r.matched_tech.join(", ") || "none"}\n  ${r.url}`,
+      `[${r.score}] ${r.company} — ${r.title}\n  ${r.location || "location?"} | ${tierOf(r)} | matches: ${r.matched_tech.join(", ") || "none"}\n  ${r.apply_url ?? r.url}`,
     )
   }
   console.log(

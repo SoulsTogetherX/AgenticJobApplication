@@ -12,6 +12,7 @@ import {
   isLoopbackHost,
   TRUST_CHECKS,
   ADAPTER_IDS,
+  resolveLeadForTrust,
 } from "../../scripts/auto/trust.mjs"
 
 const LIMITS = {
@@ -244,4 +245,80 @@ test("a lead with no apply_url is refused and says why", () => {
 
 test("the adapter ids are the ones the repo ships", () => {
   assert.deepEqual([...ADAPTER_IDS].sort(), ["ashby", "greenhouse", "lever"])
+})
+
+// --- resolveLeadForTrust: the one resolution both callers share --------------
+//
+// MEASURED 2026-08-17: the cycle's prep loop called trustBoard bare, with the
+// posting URL and no recordedOrigin, and check 5 refused every board-hosted
+// lead before a workspace existed. These pin the helper that both the runner
+// and the cycle now go through.
+
+test("resolveLeadForTrust: a posting URL is resolved to the form and its origin recorded", () => {
+  const { applyUrl, origin, verdict } = resolveLeadForTrust(
+    { apply_url: "https://boards.greenhouse.io/acme/jobs/1" },
+    { limits: LIMITS, screening: OK_SCREEN },
+  )
+  assert.match(applyUrl, /^https:\/\/boards\.greenhouse\.io\//)
+  assert.equal(origin, "https://boards.greenhouse.io")
+  assert.equal(verdict.ok, true, verdict.reason ?? "")
+  assert.ok(
+    !verdict.failed.includes("origin_stable"),
+    "a lead with an http(s) apply_url must never fail origin_stable at " +
+      "selection time — there is nothing queued to compare against yet, and " +
+      "the resolver is what records the origin",
+  )
+})
+
+test("resolveLeadForTrust: Ashby's posting resolves to /application on the same origin", () => {
+  const limits = {
+    auto_apply: {
+      enabled: true,
+      dry_run: true,
+      board_allowlist: { "jobs.ashbyhq.com": "ashby" },
+    },
+  }
+  const { applyUrl, origin, verdict } = resolveLeadForTrust(
+    {
+      apply_url:
+        "https://jobs.ashbyhq.com/render/06377f8a-a255-412a-8032-18ace1d005a5",
+    },
+    { limits, screening: OK_SCREEN },
+  )
+  assert.match(applyUrl, /\/application$/)
+  assert.equal(origin, "https://jobs.ashbyhq.com")
+  assert.equal(verdict.ok, true, verdict.reason ?? "")
+})
+
+test("resolveLeadForTrust: no apply_url still refuses on allowlist, not on origin", () => {
+  const { origin, verdict } = resolveLeadForTrust(
+    { url: null, apply_url: null },
+    { limits: LIMITS, screening: OK_SCREEN },
+  )
+  assert.equal(origin, null)
+  assert.equal(verdict.ok, false)
+  assert.equal(verdict.failed[0], "allowlist")
+})
+
+test("resolveLeadForTrust: the loopback exemption still needs the flag", () => {
+  const limits = {
+    auto_apply: {
+      enabled: true,
+      dry_run: true,
+      board_allowlist: { "127.0.0.1": "greenhouse" },
+    },
+  }
+  const lead = { apply_url: "http://127.0.0.1:9/acme/jobs/1" }
+  assert.equal(
+    resolveLeadForTrust(lead, { limits, screening: OK_SCREEN }).verdict.ok,
+    false,
+  )
+  assert.equal(
+    resolveLeadForTrust(lead, {
+      limits,
+      screening: OK_SCREEN,
+      allowLoopbackHttp: true,
+    }).verdict.ok,
+    true,
+  )
 })

@@ -397,3 +397,65 @@ test("the digest never fails the whole command when the auto tables are empty", 
   assert.deepEqual(a.wall.by_stage, {})
   assert.deepEqual(a.warnings, [])
 })
+
+// --- deferred rows nobody is going to look at ---------------------------------
+//
+// 2026-08-17: `outstanding=0` on a queue holding three rows deferred for 13
+// days, two of them on a reason code had fixed on 08-07. `outstanding` counts
+// the resumable states and a deferred row is terminal, so the digest had no
+// number for "deferred once, forgotten". This is that number.
+
+test("stale deferred rows are counted, with how many the next enqueue will revisit", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-digest-stale-"))
+  t.after(() => {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true })
+    } catch {
+      /* a leaked lock must not fail a passing assertion */
+    }
+  })
+  const file = path.join(dir, "leads.db")
+  const db = openDb(file)
+  const old = ago(13 * 24)
+  enqueueAutoJobs(db, [
+    { slug: "d-fixable", board_key: "ashby" },
+    { slug: "d-decided", board_key: "ashby" },
+    { slug: "d-fresh", board_key: "ashby" },
+  ])
+  claimAutoJob(db, "d-fixable", { run_id: "r", now: old })
+  setAutoJobState(db, "d-fixable", "deferred", {
+    run_id: "r",
+    reason_kind: "unprobed-dropdown",
+    reason_detail: "Location",
+    now: old,
+  })
+  claimAutoJob(db, "d-decided", { run_id: "r", now: old })
+  setAutoJobState(db, "d-decided", "deferred", {
+    run_id: "r",
+    reason_kind: "l3-rejected",
+    reason_detail: "x",
+    now: old,
+  })
+  claimAutoJob(db, "d-fresh", { run_id: "r", now: ago(1) })
+  setAutoJobState(db, "d-fresh", "deferred", {
+    run_id: "r",
+    reason_kind: "confirm-field",
+    reason_detail: "x",
+    now: ago(1),
+  })
+  const a = buildAutoStatus(db, { now: NOW, stopPath: path.join(dir, "STOP") })
+  db.close()
+  assert.equal(a.queue.outstanding, 0, "deferred is still not outstanding")
+  assert.equal(a.queue.stale_deferred, 2, "the fresh one is not stale")
+  assert.equal(a.queue.stale_deferred_requeueable, 1)
+  assert.ok(a.queue.stale_deferred_oldest_ms >= 13 * 24 * HOUR)
+
+  const out = execFileSync(process.execPath, [STATUS, "--db", file], {
+    encoding: "utf8",
+    cwd: ROOT,
+    env: { ...process.env, CI: "1" },
+  })
+  // The CLI measures against the real clock, so every row is stale by now;
+  // the shape of the line is what this pins.
+  assert.match(out, /stale_deferred=3 \(requeueable=2 oldest=\d+(\.\d+)?h\)/)
+})

@@ -246,10 +246,35 @@ export default async function scanPage(page, opts = {}) {
   // is the labels the fact base already resolves. A field nobody has told us
   // about is still probed — too little information is the expensive failure
   // here, not too much.
+  //
+  // `knownFor(scan)` IS THE SAME TWO MAPS, SUPPLIED LATE (Phase 5, 2026-08-14).
+  // The field cache keys what it knows on the form's FINGERPRINT — a hash of
+  // the fields' required labels — which no caller can compute before the
+  // structure scan above has run. So a caller that wants the cache to feed the
+  // probe hands over a function instead of a value: it is called here, once,
+  // with the structure scan, and returns `{knownOpts, skipProbe}` (or null)
+  // that merge over anything passed directly. Absent, this block is
+  // byte-for-byte the old behaviour. NON-FATAL: a callback that throws costs
+  // its hints, never the scan — the fallback is the full probe, which is the
+  // safe direction (a scan with too little information is expensive; a scan
+  // that did not happen is a job that defers "nothing to fill").
+  let late = null
+  if (typeof opts.knownFor === "function") {
+    try {
+      late = (await opts.knownFor(scan)) || null
+    } catch {
+      late = null
+    }
+  }
   const known = new Map(
-    Object.entries(opts.knownOpts || {}).map(([k, v]) => [key(k), v]),
+    Object.entries({
+      ...(opts.knownOpts || {}),
+      ...((late && late.knownOpts) || {}),
+    }).map(([k, v]) => [key(k), v]),
   )
-  const skip = new Set((opts.skipProbe || []).map(key))
+  const skip = new Set(
+    [...(opts.skipProbe || []), ...((late && late.skipProbe) || [])].map(key),
+  )
   // RAISED 18 -> 24, measured on Coinbase's Greenhouse form 2026-08-07: it has
   // 23 comboboxes, so the old cap skipped 5 of them outright and each one came
   // back NEEDS-CHOICE with no options — a deferral caused by the cap rather

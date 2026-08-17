@@ -301,6 +301,50 @@ export function applyCache(scan, entry) {
   return { hits, probed, miss }
 }
 
+// What the scanner may be told BEFORE it opens a single dropdown (Phase 5,
+// 2026-08-14): the option lists this entry remembers, keyed by label, in the
+// `{knownOpts, skipProbe}` shape scan-engine.mjs takes. A combo whose options
+// arrive this way is not probed — measured at 1.5-2.5s per dropdown, that is
+// the whole latency win of a warm cache — and applyCache() then reports it as
+// a hit rather than a probe (`opts_from: "cache"`).
+//
+// Three refusals, each load-bearing:
+//   * a TRUNCATED list is never served. `optsTruncated`, or an `optsTotal`
+//     larger than what was kept, means the cache holds 40 of 200; the scanner
+//     takes a supplied list as the WHOLE menu, so serving it would resolve an
+//     answer past the cut as "not on offer" — a silent deferral on every
+//     application to the board. A probe is what restores the true list, so
+//     these fields fall through to one.
+//   * a label two option-bearing fields share with DIFFERENT lists is dropped.
+//     The scanner keys knownOpts by label alone (it has no cache key), so it
+//     could hand either field the other's menu; ambiguity probes.
+//   * `skipProbe` is EMPTY, on purpose. A combo answer must ground against
+//     options (rule 1); nothing here may tell the scanner to skip a probe
+//     without also supplying what the probe would have found.
+export function knownOptsFromEntry(entry) {
+  const knownOpts = {}
+  const seen = new Map()
+  const ambiguous = new Set()
+  for (const [k, f] of Object.entries(entry?.fields ?? {})) {
+    if (!f || (f.t !== "combo" && f.t !== "select")) continue
+    if (!Array.isArray(f.opts) || !f.opts.length) continue
+    if (f.optsTruncated || (f.optsTotal && f.optsTotal > f.opts.length))
+      continue
+    const label = norm(f.l ?? k.split("|")[0])
+    if (!label) continue
+    const list = f.opts.slice()
+    const prior = seen.get(label)
+    if (prior && JSON.stringify(prior) !== JSON.stringify(list)) {
+      ambiguous.add(label)
+      continue
+    }
+    seen.set(label, list)
+    knownOpts[label] = list
+  }
+  for (const label of ambiguous) delete knownOpts[label]
+  return { knownOpts, skipProbe: [] }
+}
+
 // Remember whatever this scan did learn, merging over any earlier entry.
 //
 // `optsTruncated` travels with the options themselves: a field the scanner

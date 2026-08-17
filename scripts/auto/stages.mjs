@@ -36,6 +36,7 @@ import {
   recordVia,
   recordShapeHistory,
   promoteComboStrategy,
+  knownOptsFromEntry,
 } from "../apply/field-cache.mjs"
 import { loadDisclosureLimits } from "../apply/disclosure.mjs"
 import { detectAts } from "../apply/ats/index.mjs"
@@ -122,6 +123,28 @@ export function makeStages({
   // else has no entry and therefore no vouch.
   const vouchOf = new WeakMap()
 
+  // THE CACHE FEEDS THE PROBE (Phase 5, 2026-08-14). Phase 4 taught plan() to
+  // read and write the cache; every combo was still opened in the browser on
+  // every application, because the scanner runs first and knew nothing. This
+  // hands scan-engine a `knownFor` callback: once the structure scan exists it
+  // fingerprints it — the same fingerprint plan() will compute, from the same
+  // scan and the same adapter — loads the entry, and returns the complete
+  // option lists the cache remembers. Those combos are not clicked
+  // (`scan.probe.cached` counts them, `opts_from: "cache"` marks them); the
+  // rest are probed as before. What plan() then grounds an answer against is
+  // the cached list, which is exactly what applyCache has served the ATTENDED
+  // path since the cache existed — this is the unattended path catching up,
+  // not a new trust decision. Truncated lists are never served
+  // (knownOptsFromEntry refuses them), and skipProbe stays empty: a combo
+  // answer still grounds against options, rule 1.
+  const cachePath = path.join(jobsDir, ".field-cache.json")
+  const shapeHistoryPath = path.join(jobsDir, ".shape-history.jsonl")
+  const knownForUrl = (url) => (pageScan) => {
+    const adapter = detectAts(url ?? pageScan?.url)
+    const fp = fingerprint(pageScan, adapter.id)
+    return knownOptsFromEntry(loadCache(cachePath).forms[fp])
+  }
+
   async function scan(page, { url } = {}) {
     // WAIT FOR A CONTROL TO EXIST BEFORE SCANNING, because the runner navigates
     // with `domcontentloaded` and every board this repo adapts renders its form
@@ -148,6 +171,7 @@ export function makeStages({
     const result = await scanPage(page, {
       ...(scannerSrc === undefined ? {} : { scannerSrc }),
       url,
+      knownFor: knownForUrl(url),
     })
     // scanPage returns {scan, vouchedLabels}; older callers got a bare scan.
     // Both shapes are handled rather than assumed, because a shape mismatch
@@ -193,8 +217,8 @@ export function makeStages({
   // may have written since, and a stale in-memory copy would both miss their
   // learning and overwrite it on save. The write goes through updateCache,
   // which re-reads under the file lock and merges, for the same reason.
-  const cachePath = path.join(jobsDir, ".field-cache.json")
-  const shapeHistoryPath = path.join(jobsDir, ".shape-history.jsonl")
+  // (`cachePath` / `shapeHistoryPath` are declared above scan(), which now
+  // reads the cache too — see knownForUrl.)
 
   async function plan({ scan: pageScan, url, job, documents }) {
     const adapter = detectAts(url)

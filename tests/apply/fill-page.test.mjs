@@ -1988,6 +1988,95 @@ test("a remembered form shape is used instead of re-probing", async () => {
   )
 })
 
+// --- knownFor: the same two maps, supplied once the structure scan exists ---
+// (Phase 5, 2026-08-14.) The field cache keys its knowledge on the form's
+// fingerprint, which nobody can compute before the fields are known — so a
+// caller hands the scanner a FUNCTION of the structure scan instead of a value.
+
+test("knownFor is called with the structure scan and its options skip the probe", async () => {
+  const page = fakeScanPage({
+    scan: comboScan(3, ["Country", "How did you hear about us?", "Pronouns"]),
+  })
+  const seen = []
+  const { scan } = await scanPage(page, {
+    scannerSrc: "",
+    knownFor: (structure) => {
+      seen.push(structure)
+      return { knownOpts: { country: ["United States", "Canada"] } }
+    },
+  })
+  assert.equal(seen.length, 1, "called exactly once")
+  assert.equal(seen[0].fields.length, 3, "with the structure scan (all fields)")
+  assert.deepEqual(plain(scan.fields[0].opts), ["United States", "Canada"])
+  assert.equal(scan.fields[0].opts_from, "cache")
+  assert.equal(scan.probe.cached, 1)
+  assert.equal(scan.probe.probed, 2)
+  assert.deepEqual(
+    plain(page.log.filter((e) => e[0] === "click").map((e) => e[1])),
+    ['[data-aj="f2"]', '[data-aj="f3"]'],
+    "only the dropdowns nobody remembers are opened",
+  )
+})
+
+test("knownFor merges OVER direct knownOpts/skipProbe, and may be async", async () => {
+  const page = fakeScanPage({
+    scan: comboScan(3, ["Country", "Visa status", "Pronouns"]),
+  })
+  const { scan } = await scanPage(page, {
+    scannerSrc: "",
+    knownOpts: { Country: ["stale"] },
+    knownFor: async () => ({
+      knownOpts: { Country: ["fresh"] },
+      skipProbe: ["Pronouns"],
+    }),
+  })
+  assert.deepEqual(plain(scan.fields[0].opts), ["fresh"], "late value wins")
+  assert.equal(scan.fields[2].probe_skipped, "answer already known")
+  assert.equal(scan.probe.cached, 1)
+  assert.equal(scan.probe.skipped, 1)
+  assert.equal(scan.probe.probed, 1)
+})
+
+test("a knownFor that throws, or returns nothing, costs its hints and never the scan", async () => {
+  // The fallback is the full probe — the safe direction. A scan that did not
+  // happen is a job that defers "nothing to fill".
+  for (const knownFor of [
+    () => {
+      throw new Error("cache unreadable")
+    },
+    () => null,
+    () => undefined,
+    async () => ({}),
+  ]) {
+    const page = fakeScanPage({ scan: comboScan(2, ["Country", "Degree"]) })
+    const { scan } = await scanPage(page, { scannerSrc: "", knownFor })
+    assert.equal(scan.probe.probed, 2)
+    assert.equal(scan.probe.cached, 0)
+    assert.deepEqual(plain(scan.fields[0].opts), ["Yes", "No"])
+  }
+})
+
+test("without knownFor the probe selection is byte-identical to before it existed", async () => {
+  const run = async (extra) => {
+    const page = fakeScanPage({
+      scan: comboScan(3, ["Country", "Visa status", "Pronouns"]),
+    })
+    const { scan } = await scanPage(page, {
+      scannerSrc: "",
+      knownOpts: { Country: ["United States"] },
+      skipProbe: ["Pronouns"],
+      ...extra,
+    })
+    return {
+      scan: plain(scan),
+      clicks: plain(page.log.filter((e) => e[0] === "click")),
+    }
+  }
+  const before = await run({})
+  const withNoop = await run({ knownFor: () => null })
+  assert.deepEqual(withNoop, before)
+})
+
 test("an unfamiliar dropdown is still probed — less information is the expensive failure", async () => {
   const page = fakeScanPage({ scan: comboScan(1, ["Something new"]) })
   const { scan } = await scanPage(page, {

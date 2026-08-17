@@ -159,7 +159,9 @@ test("cold application writes fp/opts/via; warm application is served them; answ
   const apply = async (slug) => {
     const url = site.url(slug)
     await session.goto(url)
+    const tScan = Date.now()
     const scan = await stages.scan(session.page, { url })
+    const scanMs = Date.now() - tScan
     const plan = await stages.plan({
       scan,
       url,
@@ -168,7 +170,7 @@ test("cold application writes fp/opts/via; warm application is served them; answ
     })
     const t0 = Date.now()
     const report = await stages.fill(session.page, plan)
-    return { scan, plan, report, fillMs: Date.now() - t0 }
+    return { scan, plan, report, scanMs, fillMs: Date.now() - t0 }
   }
 
   // ---- COLD -----------------------------------------------------------------
@@ -240,6 +242,20 @@ test("cold application writes fp/opts/via; warm application is served them; answ
   // ---- WARM (a different job, same form) ------------------------------------
   const warm = await apply(SLUGS[1])
   assert.equal(warm.plan.fp, cold.plan.fp, "same form, same fingerprint")
+
+  // Phase 5: the cache fed the PROBE. The scanner was handed the remembered
+  // option list before it opened anything, so the combo was not clicked —
+  // and the list it was handed is the one the cold probe read.
+  assert.equal(
+    warm.scan.probe.cached,
+    1,
+    "warm: the combo's options came from the cache " +
+      JSON.stringify(warm.scan.probe),
+  )
+  assert.equal(warm.scan.probe.probed, 0, "warm: nothing was opened")
+  const warmField = warm.scan.fields.find((f) => f.t === "combo")
+  assert.equal(warmField.opts_from, "cache")
+  assert.deepEqual(warmField.opts, COMBO_OPTS, "the same list the probe read")
   const warmItem = warm.plan.items.find((i) => i.how === "combo")
   assert.equal(warmItem.via, "type-click", "warm: the per-field hint is served")
   assert.deepEqual(
@@ -273,7 +289,9 @@ test("cold application writes fp/opts/via; warm application is served them; answ
   // Timings on a shared box are not evidence (the contention gotcha), so this
   // is a number for the log rather than a gate.
   console.log(
-    `  stages-cache: fill cold=${cold.fillMs}ms warm=${warm.fillMs}ms ` +
+    `  stages-cache: scan cold=${cold.scanMs}ms warm=${warm.scanMs}ms ` +
+      `(warm: ${warm.scan.probe.cached} combo served from cache, 0 opened); ` +
+      `fill cold=${cold.fillMs}ms warm=${warm.fillMs}ms ` +
       `(cold order tries type-enter first and loses; warm starts on type-click)`,
   )
 })

@@ -20,6 +20,7 @@ import {
   recordVia,
   recordShapeHistory,
   promoteComboStrategy,
+  knownOptsFromEntry,
   CACHE_VERSION,
 } from "../../scripts/apply/field-cache.mjs"
 import { lockPathFor } from "../../scripts/lib/lock.mjs"
@@ -543,6 +544,80 @@ test("recordVia stores only identifier-shaped strategy names — a page-shaped v
     undefined,
     "an over-long board-level name is not stored either",
   )
+})
+
+// --- Phase 5 (2026-08-14): what the cache may tell the scanner before a probe
+
+test("knownOptsFromEntry serves complete option lists by label, and nothing else", () => {
+  const entry = {
+    ats: "greenhouse",
+    fields: {
+      "country|combo": { t: "combo", l: "Country", opts: ["US", "CA"] },
+      "degree|select": { t: "select", l: "Degree", opts: ["BS", "MS"] },
+      // A text input remembers a selector, never options — not served.
+      "first name|text": { t: "text", l: "First Name", sel: "#fn" },
+      // A combo the cache knows the shape of but never got options for.
+      "school|combo": { t: "combo", l: "School" },
+    },
+  }
+  const out = knownOptsFromEntry(entry)
+  assert.deepEqual(out, {
+    knownOpts: { country: ["US", "CA"], degree: ["BS", "MS"] },
+    skipProbe: [],
+  })
+  // Copies, not the cache's own arrays: the scanner writes f.opts = cached
+  // straight onto the scan, and a later mutation must not reach the file.
+  out.knownOpts.country.push("MX")
+  assert.deepEqual(entry.fields["country|combo"].opts, ["US", "CA"])
+})
+
+test("knownOptsFromEntry never serves a truncated list — a probe restores the true one", () => {
+  const entry = {
+    fields: {
+      "country|combo": {
+        t: "combo",
+        l: "Country",
+        opts: ["US", "CA"],
+        optsTruncated: true,
+      },
+      "state|combo": {
+        t: "combo",
+        l: "State",
+        opts: ["NV", "CA"],
+        // The scanner recorded the real total: 40 of 52 were kept.
+        optsTotal: 52,
+      },
+      "degree|combo": { t: "combo", l: "Degree", opts: ["BS"], optsTotal: 1 },
+    },
+  }
+  assert.deepEqual(knownOptsFromEntry(entry).knownOpts, { degree: ["BS"] })
+})
+
+test("knownOptsFromEntry drops a label two option-bearing fields share with different lists", () => {
+  // The scanner keys knownOpts by label alone; two fields under one label
+  // with different menus could each be handed the other's. Ambiguity probes.
+  const entry = {
+    fields: {
+      "phone|combo": { t: "combo", l: "Phone", opts: ["+1", "+44"] },
+      "phone|select": { t: "select", l: "Phone", opts: ["Mobile", "Home"] },
+      // Same label, SAME list on both types: not ambiguous, served once.
+      "country|combo": { t: "combo", l: "Country", opts: ["US"] },
+      "country|select": { t: "select", l: "Country", opts: ["US"] },
+    },
+  }
+  assert.deepEqual(knownOptsFromEntry(entry).knownOpts, { country: ["US"] })
+})
+
+test("knownOptsFromEntry on nothing is an empty answer, never a throw", () => {
+  assert.deepEqual(knownOptsFromEntry(undefined), {
+    knownOpts: {},
+    skipProbe: [],
+  })
+  assert.deepEqual(knownOptsFromEntry({}), { knownOpts: {}, skipProbe: [] })
+  assert.deepEqual(knownOptsFromEntry({ fields: { "x|combo": null } }), {
+    knownOpts: {},
+    skipProbe: [],
+  })
 })
 
 test("promoteComboStrategy moves the remembered winner to the head and never invents one", () => {

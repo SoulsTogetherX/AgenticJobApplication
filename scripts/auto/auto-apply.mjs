@@ -56,11 +56,7 @@ import {
   JOBS_DIR as VERIFY_JOBS_DIR,
 } from "../lib/verification.mjs"
 import { boardKey } from "../apply/automatability.mjs"
-import {
-  resolveLeadForTrust,
-  allowlistProblems,
-  readLimits,
-} from "./trust.mjs"
+import { resolveLeadForTrust, allowlistProblems, readLimits } from "./trust.mjs"
 import { preflight, EXIT, DEFAULT_LIMITS } from "./preflight.mjs"
 import { startRun } from "./audit.mjs"
 import { runPool, originCount } from "./pool.mjs"
@@ -510,6 +506,22 @@ export async function runCampaign({
       skipped: pool.skipped.length,
       results: pool.results,
       counts: autoQueueCounts(db),
+      // THE TALLIES, and they have to be here rather than left for the caller
+      // to derive. `run.finish()` already computed them and wrote them to the
+      // run JSONL; omitting them from this object made the one line a human
+      // reads after an unattended run print `submitted=0 deferred=0 failed=0`
+      // unconditionally, because the caller's `result.deferred ?? 0` had no
+      // `deferred` to find. Caught 2026-08-17 by the first dry-run rehearsal:
+      // the audit log said deferred=1, stdout said deferred=0.
+      //
+      // Under-reporting in this direction is the dangerous one. `submitted=0`
+      // after a run that really did submit reads as "nothing went out", which
+      // is the one thing an operator must never be told wrongly — and it would
+      // have said exactly that on the first live submit.
+      planned: state.planned ?? 0,
+      submitted: state.submitted ?? 0,
+      deferred: state.deferred ?? 0,
+      failed: state.failed ?? 0,
       stop_reason: state.stop_reason ?? null,
       // §4.6: paused boards are a FIRST-CLASS RUN OUTCOME, reported as a
       // number rather than as an absence. A run that quietly held back a third
@@ -707,11 +719,17 @@ async function main(argv) {
       openPage: makeOpenPage(session, { localOnly: !!args.fixture }),
       ...stages,
       profileApproved: profileDoc?.meta?.approved_by_user === true,
+      // `r.kind`, not `r.reason_kind` — the per-job result from job.mjs's
+      // `done()` names it `kind`, so the old key was never present and this
+      // line printed a bare state for every job in every run. The detail is
+      // what makes it actionable ("confirm-field: 3 field(s) need a human;
+      // first: <label>"), so it is included and bounded rather than dropped.
       onResult: args.json
         ? null
         : (r) =>
             process.stderr.write(
-              `  ${r.slug}: ${r.state}${r.reason_kind ? ` (${r.reason_kind})` : ""}\n`,
+              `  ${r.slug}: ${r.state}${r.kind ? ` (${r.kind})` : ""}` +
+                `${r.detail ? ` — ${String(r.detail).replace(/\s+/g, " ").slice(0, 160)}` : ""}\n`,
             ),
     })
     process.stdout.write(

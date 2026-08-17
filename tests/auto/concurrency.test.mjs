@@ -324,3 +324,64 @@ test("two jobs on the same origin are NEVER in flight together", async () => {
   })
   assert.equal(overlap, 0, "same-origin overlap is the C9 hazard, not a nuance")
 })
+
+// --- the operator's one line must agree with the durable record --------------
+//
+// Found by the first dry-run rehearsal against a real board (2026-08-17): the
+// run JSONL said `deferred: 1` and stdout said `deferred=0`. Not a formatting
+// slip — `runCampaign` returned no tallies AT ALL, so auto-apply.mjs's
+// `result.deferred ?? 0` had nothing to read and printed 0 for every run ever
+// made. The same line prints `submitted=`, which means a real live submit would
+// have reported `submitted=0`: an operator told nothing went out when an
+// application just did. That is the one direction this must never fail in.
+test("runCampaign's tallies agree with the run's own JSONL", async (t) => {
+  const s = sandbox(t)
+  const out = await runCampaign({
+    dbFile: s.dbFile,
+    limits: LIMITS,
+    mode: "dry_run",
+    concurrency: N,
+    limit: APPS,
+    jobs: s.jobs,
+    jobsDir: s.jobsDir,
+    autoDir: s.autoDir,
+    allowLoopbackHttp: true,
+    profileApproved: true,
+    ...stages(),
+  })
+
+  const KEYS = ["planned", "submitted", "deferred", "failed"]
+  for (const k of KEYS) {
+    assert.equal(
+      typeof out[k],
+      "number",
+      `runCampaign must return ${k} — the caller prints it and cannot derive it`,
+    )
+  }
+
+  const file = path.join(s.autoDir, "runs", `${out.run_id}.jsonl`)
+  const events = fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l))
+  const finish = events.find((e) => e.t === "run.finish")
+  assert.ok(finish, "the run must have written a run.finish event")
+
+  for (const k of KEYS) {
+    assert.equal(
+      out[k],
+      finish[k] ?? 0,
+      `${k} disagrees: stdout would print ${out[k]}, the audit log recorded ${finish[k]}`,
+    )
+  }
+
+  // Without this the agreement could be a vacuous 0 === 0 on every key, which
+  // is exactly what the broken version would have passed.
+  assert.ok(
+    KEYS.some((k) => out[k] > 0),
+    `every tally was 0, so the agreement proves nothing: ${JSON.stringify(
+      Object.fromEntries(KEYS.map((k) => [k, out[k]])),
+    )}`,
+  )
+})

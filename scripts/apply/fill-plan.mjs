@@ -86,12 +86,13 @@ import { probeRefusal } from "./scan-engine.mjs"
 import {
   fingerprint,
   loadCache,
-  saveCache,
+  updateCache,
   applyCache,
   recordCache,
   invalidate,
   recordVia,
   recordShapeHistory,
+  promoteComboStrategy,
 } from "./field-cache.mjs"
 import {
   embedLiteral,
@@ -2338,7 +2339,41 @@ ${installScanner}  // One eval, of a string that came off OUR OWN DISK. The engi
   // into the page and never read back out of it, so a board that defines
   // window.__ajFillSrc gets to do exactly nothing.
   const runFill = (0, eval)(ENGINE)
-  return await runFill(page, PLAN)
+  const report = await runFill(page, PLAN)
+  // WHAT THE FILL LEARNED, stashed so the attended path can persist it without
+  // retyping a report (Phase 4, 2026-08-14). The MCP vm has no fs, so the
+  // learning reaches disk the same way the scan does:
+  //   browser_evaluate { function: "() => window.__ajLastFill",
+  //                      filename: "jobs/<slug>/fill-via-p<N>.json" }
+  //   node scripts/apply/fill-plan.mjs <slug> --record-via <that file>
+  // ONLY comboVia (item key -> strategy name) and comboStrategy go into the
+  // page — never the report. \`uploads[].file\` carries local filesystem paths,
+  // and a third-party page has no business seeing them. Anything read back out
+  // through this global is page-controlled: recordVia() accepts only
+  // identifier-shaped strategy names, and a strategy name can only reorder
+  // attempts, never choose a value. defineProperty rather than assignment so a
+  // page that pre-declared a setter on the name does not get handed the write;
+  // a page that made it non-configurable keeps its own value and the read is
+  // simply the lie the comment above already prices in. Non-fatal throughout:
+  // the report is returned whatever the page does.
+  try {
+    await page.evaluate(
+      (learned) => {
+        try {
+          Object.defineProperty(window, "__ajLastFill", {
+            value: learned,
+            configurable: true,
+            writable: true,
+          })
+        } catch {}
+      },
+      {
+        comboVia: (report && report.comboVia) || {},
+        comboStrategy: (report && report.comboStrategy) || null,
+      },
+    )
+  } catch {}
+  return report
 }
 `
 }
@@ -2478,9 +2513,12 @@ function main() {
       process.exit(2)
     }
     const cachePath = path.join(jobsDir, ".field-cache.json")
-    const cache = loadCache(cachePath)
-    const updated = recordVia(cache, plan.fp, plan, report)
-    saveCache(cachePath, cache)
+    // Locked: the unattended runner may be writing this same file from
+    // another process at this moment (stages.mjs records through the same
+    // helper), and an unlocked read-modify-write here would drop its write.
+    const updated = updateCache(cachePath, (cache) =>
+      recordVia(cache, plan.fp, plan, report),
+    )
     console.log(
       isTerse()
         ? `recorded-via=${updated} fp=${plan.fp}`
@@ -2523,12 +2561,17 @@ function main() {
   // Reuse the remembered shape of this form so a second application to the
   // same board does not have to re-probe every dropdown in the browser.
   const cachePath = path.join(jobsDir, ".field-cache.json")
-  const cache = noCache ? { v: 1, forms: {} } : loadCache(cachePath)
   const fp = fingerprint(scan, adapter.id)
-  if (wantInvalidate && invalidate(cache, fp)) {
-    saveCache(cachePath, cache)
+  if (
+    wantInvalidate &&
+    !noCache &&
+    updateCache(cachePath, (cache) => invalidate(cache, fp))
+  ) {
     console.error(`evicted cached shape ${fp} — the next scan will re-probe`)
   }
+  // A plain read for the apply step; the write below re-reads under the lock,
+  // so a concurrent writer's entry is merged rather than overwritten.
+  const cache = noCache ? { v: 1, forms: {} } : loadCache(cachePath)
   const cachedEntry = cache.forms[fp]
   const cacheStats = noCache
     ? { hits: 0, probed: 0, miss: 0 }
@@ -2563,23 +2606,15 @@ function main() {
     limits,
     bankSize,
   })
-  // A board-level hint: even a combo the fact base could not resolve (so it
-  // never became a plan item and has no per-field `via`) is worth trying
-  // with whatever strategy usually wins on this form first.
-  if (
-    cachedEntry?.comboStrategy &&
-    plan.comboStrategies?.includes(cachedEntry.comboStrategy)
-  ) {
-    plan.comboStrategies = [
-      cachedEntry.comboStrategy,
-      ...plan.comboStrategies.filter((s) => s !== cachedEntry.comboStrategy),
-    ]
-  }
+  // A board-level hint — the same helper stages.mjs uses, so the attended and
+  // unattended paths promote the remembered strategy identically.
+  promoteComboStrategy(plan, cachedEntry)
   const probeNeeded = combosNeedingProbe(scan.fields ?? [], resolved)
 
   if (!noCache) {
-    recordCache(cache, { fp, scan, atsId: adapter.id, url })
-    saveCache(cachePath, cache)
+    updateCache(cachePath, (fresh) =>
+      recordCache(fresh, { fp, scan, atsId: adapter.id, url }),
+    )
     // Sidecar for counting only (0.12) — see recordShapeHistory()'s own
     // header. Never read back by this file or by automatability.mjs.
     recordShapeHistory(path.join(jobsDir, ".shape-history.jsonl"), {

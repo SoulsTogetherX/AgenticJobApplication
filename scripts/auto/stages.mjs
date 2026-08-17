@@ -27,6 +27,16 @@ import { fileURLToPath } from "node:url"
 import scanPage from "../apply/scan-engine.mjs"
 import fillPage from "../apply/fill-engine.mjs"
 import { resolveFields, buildPlan } from "../apply/fill-plan.mjs"
+import {
+  fingerprint,
+  loadCache,
+  updateCache,
+  applyCache,
+  recordCache,
+  recordVia,
+  recordShapeHistory,
+  promoteComboStrategy,
+} from "../apply/field-cache.mjs"
 import { loadDisclosureLimits } from "../apply/disclosure.mjs"
 import { detectAts } from "../apply/ats/index.mjs"
 import { classify as classifyPage } from "./classify.mjs"
@@ -154,15 +164,52 @@ export function makeStages({
     return bare
   }
 
+  // THE FIELD CACHE, ON THE UNATTENDED PATH (Phase 4, 2026-08-14).
+  //
+  // Until this landed the runner did not participate in jobs/.field-cache.json
+  // at all: plan() never loaded, applied or recorded, and recordVia's only
+  // caller was a CLI flag nobody ran. Every dropdown was re-probed on every
+  // application and every strategy re-discovered — 1.5-2.5s per combo,
+  // measured — and the cache file's `via`/`comboStrategy` columns stayed
+  // empty across 21 remembered forms. The learning was produced on every run
+  // and written nowhere.
+  //
+  // What plan() now does is exactly the CLI's sequence in fill-plan.mjs
+  // main(): fingerprint → apply the remembered shape → build → promote the
+  // remembered combo strategy → record what this scan learned → carry the
+  // fingerprint on the plan. Same functions, same order, so the two paths
+  // cannot disagree about what the cache means.
+  //
+  // WHAT THE CACHE MAY AND MAY NOT CHANGE. It supplies option lists a scan did
+  // not probe, a selector, and a strategy hint — the SHAPE of the form. It
+  // never supplies an answer: values still come from resolveFields against the
+  // fact base, and buildPlan grounds a combo answer against the option list
+  // exactly as before. A warm plan therefore resolves the same items to the
+  // same values as a cold one (tests/auto/stages-cache.test.mjs asserts that
+  // pairwise); only `via` and the strategy order may differ.
+  //
+  // The cache is RE-READ on every plan(), not held from makeStages(): an
+  // earlier job in this same run — or the attended CLI in another process —
+  // may have written since, and a stale in-memory copy would both miss their
+  // learning and overwrite it on save. The write goes through updateCache,
+  // which re-reads under the file lock and merges, for the same reason.
+  const cachePath = path.join(jobsDir, ".field-cache.json")
+  const shapeHistoryPath = path.join(jobsDir, ".shape-history.jsonl")
+
   async function plan({ scan: pageScan, url, job, documents }) {
     const adapter = detectAts(url)
     const slug = job?.slug ?? documents?.slug
     const files = slug ? renderedFiles(slug, { jobsDir }) : {}
+
+    const fp = fingerprint(pageScan, adapter.id)
+    const cachedEntry = loadCache(cachePath).forms[fp]
+    applyCache(pageScan, cachedEntry)
+
     const resolved = resolveFields(pageScan.fields, {
       profile: profilePath,
       answers: answersPath,
     })
-    return buildPlan({
+    const built = buildPlan({
       scan: pageScan,
       resolved,
       adapter,
@@ -172,10 +219,65 @@ export function makeStages({
       limits,
       bankSize,
     })
+    promoteComboStrategy(built, cachedEntry)
+
+    // Learning is an optimisation and must never fail an application: a cache
+    // that cannot be written (lock timeout, disk full) is reported and the
+    // plan proceeds exactly as it would have on a cold cache. Reported, not
+    // swallowed — a silent cache is the silent-amber failure this file's own
+    // loadCache() header describes.
+    try {
+      updateCache(cachePath, (cache) =>
+        recordCache(cache, { fp, scan: pageScan, atsId: adapter.id, url }),
+      )
+      recordShapeHistory(shapeHistoryPath, {
+        fp,
+        ats: adapter.id,
+        scan: pageScan,
+      })
+    } catch (e) {
+      console.error(`warn: field cache not updated for ${fp}: ${e.message}`)
+    }
+
+    // Carried on the plan so fill() can find its way back to this entry when
+    // it records which combo strategy won — the same reason the CLI writes it
+    // into fill-plan.json for --record-via. Attached BEFORE the runner takes
+    // the plan's sha (multipage.mjs hashes the returned object), so the sha
+    // covers it like every other plan field.
+    built.fp = fp
+    return built
   }
 
+  // After the fill, remember which combo strategy actually worked on this
+  // form. `comboVia` only ever holds combos whose set SUCCEEDED (fill-engine
+  // records it after the strategy's own verification), so a partial fill
+  // records safely by construction: what it learned is true for the combos it
+  // did fill, and nothing is recorded for the ones it did not. The report is
+  // returned unchanged — the runner reads it for authorisation and submit —
+  // and a cache failure never turns a filled page into a failed one.
+  //
+  // This runs HERE, on the per-page plan and report, and not later on the
+  // walk's merged result, because multipage.mjs's mergePages() rebuilds the
+  // merged plan and report from scratch and carries neither `fp` nor
+  // `comboVia` — by the time the runner sees the merged objects the learning
+  // is gone. The per-page objects are the only place it still exists.
   async function fill(page, pagePlan) {
-    return fillPage(page, pagePlan)
+    const report = await fillPage(page, pagePlan)
+    const learned =
+      pagePlan?.fp &&
+      (report?.comboStrategy || Object.keys(report?.comboVia ?? {}).length)
+    if (learned) {
+      try {
+        updateCache(cachePath, (cache) =>
+          recordVia(cache, pagePlan.fp, pagePlan, report),
+        )
+      } catch (e) {
+        console.error(
+          `warn: combo strategy not recorded for ${pagePlan.fp}: ${e.message}`,
+        )
+      }
+    }
+    return report
   }
 
   // `(url, html) -> outcome`, pure. submit.mjs REQUIRES this in live mode and

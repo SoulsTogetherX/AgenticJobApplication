@@ -122,11 +122,21 @@ session and returns the page inventory: fields with labels, required flags and
 buttons; and signals. Every element is stamped `data-aj="<key>"`, so
 `[data-aj="f7"]` is a valid `target` for every Playwright tool.
 
-After the first run, re-scan with the ~30-token call
+To re-read the **same** page (after an `ad` click, after the user logs in, after
+a remount), re-scan with the ~30-token call
 `browser_evaluate () => window.__ajScan(false)` (`false` skips re-opening
 dropdowns). It survives navigation. Only if that throws — or if
 `browser_run_code_unsafe` is unavailable — paste the function from
 `scan-page.js` into `browser_evaluate` instead.
+
+**A new page — page 2 onward of a multi-step form — is scanned with the driver
+again, never with `__ajScan(false)`.** The driver is idempotent (it installs the
+scanner once and probes every dropdown), and the probe is the point: a
+structure-only re-scan leaves every dropdown on that page without options, so
+each one comes back `needs-choice` and is deferred to you for no reason. That
+was measured before this rule existed — later pages never probed at all, a
+capability hole that looked like a latency saving. The unattended runner has
+always probed every page; this brings the attended path level with it.
 
 **On a board you have applied to before, skip the probe.** Opening every
 dropdown is the slow half of a scan, and `fill-plan.mjs` remembers each form's
@@ -403,10 +413,39 @@ safe. Two automatic retries, then take it to the user.
 `browser_fill_form` or clicking dropdown options one at a time, you have left
 this flow — go back to B.
 
+**Persist what the fill learned — before you advance.** If the report's
+`comboVia` is non-empty (or `comboStrategy` is set), the engine discovered which
+strategy opens this board's dropdowns, at 1.5–2.5 s per combo. That knowledge is
+worth nothing unless it reaches `jobs/.field-cache.json`, where the planner
+promotes it to the head of the strategy list on the next application to this
+form (the unattended runner records it automatically; this path has to ask).
+Two calls, ~30 tokens:
+
+```
+mcp__playwright__browser_evaluate
+  { function: "() => window.__ajLastFill", filename: "jobs/<slug>/fill-via-p<N>.json" }
+```
+
+```bash
+node scripts/apply/fill-plan.mjs <slug> --record-via jobs/<slug>/fill-via-p<N>.json
+```
+
+Do it **before clicking `next`**: `--record-via` keys on the **last** plan built
+for the slug, and page N+1's plan overwrites `fill-plan.json`, after which page
+N's keys would land on page N+1's fields. `__ajLastFill` carries **only**
+`comboVia` and `comboStrategy` — never the report (which holds local file paths
+that no third-party page should see) — so **write your summary from the report
+the fill call returned, never from this file**; and because it is read back out
+of the page, `recordVia` accepts only identifier-shaped strategy names, which can
+reorder attempts and nothing else. Skip this when `comboVia` is `{}` — there is
+nothing to record.
+
 ### F. Advance, or submit
 
 - A `r: "next"` button exists → `browser_click` it, then go back to A for the
-  next page (the scanner is already installed — just re-scan). New unknowns on a
+  next page — **run `scan.driver.mjs` again, not `__ajScan(false)`**: it is
+  idempotent and it probes, and a structure-only re-scan leaves every dropdown
+  on the new page without options (each becomes a deferral). New unknowns on a
   later page get their own batched question round.
 - Only a `r: "submit"` button is left → **write the summary below FIRST, then
   click it.** The user gave you the URL; the application gets sent. Then run

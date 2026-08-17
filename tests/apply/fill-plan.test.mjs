@@ -1701,9 +1701,26 @@ test("buildDriverSource never regresses to the CSP-broken loader", () => {
   // running the engine — nothing is injected and nothing is read. That is
   // stronger than the property this test originally asserted, back when the
   // engine itself was pushed into the page.
+  //
+  // AFTER the engine has run there is exactly one page touch, and it is a
+  // WRITE: the learned combo strategies stashed on window.__ajLastFill for
+  // the attended path to persist (Phase 4). Nothing is read back, and nothing
+  // page-owned can reach the fill, because the fill is already over.
+  const [beforeEngine, afterEngine] = code.split(/runFill\(page,\s*PLAN\)/)
   assert.ok(
-    !/page\.evaluate/.test(code),
-    "with no scanner there is nothing to put in the page",
+    afterEngine !== undefined,
+    "the driver runs the engine exactly once",
+  )
+  assert.ok(
+    !/page\.evaluate/.test(beforeEngine),
+    "with no scanner there is nothing to put in the page before the engine",
+  )
+  const touchesAfter = afterEngine.match(/page\.evaluate/g) ?? []
+  assert.equal(touchesAfter.length, 1, "one post-fill touch: the stash")
+  assert.match(afterEngine, /defineProperty\(window,\s*"__ajLastFill"/)
+  assert.ok(
+    !/window\.__ajLastFill/.test(afterEngine),
+    "the stash is a defineProperty write, never a read of the page's global",
   )
 
   // The scanner is the one thing that genuinely runs page-side, and it must go

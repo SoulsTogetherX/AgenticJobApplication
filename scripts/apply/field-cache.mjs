@@ -16,6 +16,7 @@
 // in profile/answers.yaml and go through save-answer.mjs.
 import fs from "node:fs"
 import crypto from "node:crypto"
+import { withLock, lockPathFor } from "../lib/lock.mjs"
 
 // Bumped 2 -> 3: a checkbox/radio group whose COMPLETE visible label exceeds
 // 120 chars and now earns the scan-page.js vouch gets a new, longer `f.l` —
@@ -154,8 +155,87 @@ export function loadCache(file) {
   }
 }
 
+// Written whole-then-renamed, so a reader that lands mid-write sees the
+// previous complete file rather than half a JSON document. That matters now
+// that the unattended runner writes this file from up to eight workers while
+// an attended `fill-plan.mjs` may be reading it (Phase 4, 2026-08-14):
+// `loadCache` treats an unparseable file as a discard, so a torn read would
+// silently drop every remembered form to amber for that one plan.
+//
+// Rename can fail on Windows while another process has the file open for
+// reading (EPERM/EBUSY, a race measured in microseconds). The retry covers
+// that; the direct-write fallback after it keeps the save from being lost —
+// writers are already serialised by `updateCache`'s lock, so the fallback can
+// only race a READER, and only in that vanishing window.
 export function saveCache(file, cache) {
-  fs.writeFileSync(file, JSON.stringify(cache, null, 2) + "\n")
+  const bytes = JSON.stringify(cache, null, 2) + "\n"
+  const tmp = `${file}.${process.pid}.tmp`
+  fs.writeFileSync(tmp, bytes)
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(tmp, file)
+      return
+    } catch (e) {
+      if (attempt < 5 && (e.code === "EPERM" || e.code === "EBUSY")) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
+        continue
+      }
+      try {
+        fs.unlinkSync(tmp)
+      } catch {}
+      fs.writeFileSync(file, bytes)
+      return
+    }
+  }
+}
+
+// One locked read-modify-write of the cache file. `mutator(cache)` runs with
+// the file's lock held and MUST be synchronous — `withLock` throws if it
+// returns a promise, and that refusal is load-bearing here: `acquire` waits
+// with a blocking sleep, so a second worker in the SAME process reaching this
+// lock while a first worker was parked on an `await` inside the hold would
+// stall the whole event loop — first worker included — until the lock timed
+// out. A synchronous body cannot yield, so the hold is over before any other
+// worker can reach the acquire. Everything this file does under the lock is
+// synchronous fs, so nothing is lost by the rule.
+//
+// Why a lock at all: the runner fills up to eight applications concurrently
+// and each records what it learned; without this, two workers loading, merging
+// and saving at once lose one worker's write (the classic lost update), and
+// the attended CLI writing the same file from another process loses it too.
+// Both paths — `stages.mjs` and `fill-plan.mjs` main() — write through this
+// helper, because a lock only one side takes is not a lock.
+export function updateCache(file, mutator, lockOpts = {}) {
+  return withLock(
+    lockPathFor(file),
+    () => {
+      const cache = loadCache(file)
+      const result = mutator(cache)
+      saveCache(file, cache)
+      return result
+    },
+    lockOpts,
+  )
+}
+
+// A board-level hint: even a combo the fact base could not resolve (so it
+// never became a plan item and has no per-field `via`) is worth trying with
+// whatever strategy usually wins on this form first. Reorders IN PLACE and
+// only when the remembered strategy is one the adapter still offers — a
+// strategy the adapter dropped must not be resurrected from the cache.
+// Extracted from fill-plan.mjs main() so the unattended path (stages.mjs)
+// promotes the same way the CLI does, instead of a second copy that drifts.
+// Returns true when the order changed.
+export function promoteComboStrategy(plan, entry) {
+  const want = entry?.comboStrategy
+  if (!want || !Array.isArray(plan?.comboStrategies)) return false
+  if (!plan.comboStrategies.includes(want)) return false
+  if (plan.comboStrategies[0] === want) return false
+  plan.comboStrategies = [
+    want,
+    ...plan.comboStrategies.filter((s) => s !== want),
+  ]
+  return true
 }
 
 // Fill in what this scan did not capture. Never overwrites live data — a fresh
@@ -174,18 +254,34 @@ export function saveCache(file, cache) {
 //           nothing. `hits + probed + miss` is the true total of fields that
 //           need an option list, so a caller can tell "nothing to probe" (all
 //           three zero) from "everything needs probing" (miss > 0) apart.
+//
+// THE STRATEGY HINT AND SELECTOR ARE MERGED WHETHER OR NOT THE SCAN PROBED
+// (Phase 4, 2026-08-14). This used to `continue` past a field that already
+// carried options, which was right for the OPTIONS — a fresh probe wins — but
+// also skipped the `via`/`sel` merge below it, so a combo the scanner had just
+// re-probed never received the strategy learned on the last application. On
+// the unattended path every combo is re-probed on every application until the
+// scanner is handed the cache's options, which made the hint unreachable on
+// exactly the path that most needed it. `via` and `sel` are never something a
+// probe produces, so a probe cannot be "fresher" than the cache about them.
+//
+// And options the SCANNER took from the cache (`opts_from: "cache"`, set by
+// scan-engine.mjs when a caller supplies knownOpts) are a hit, not a probe —
+// the browser did no work for them. Counting them as probed would report a
+// warm scan as cold.
 export function applyCache(scan, entry) {
   let hits = 0
   let probed = 0
   let miss = 0
   for (const f of scan.fields ?? []) {
     const wantsOptions = f.t === "combo" || f.t === "select"
-    if (Array.isArray(f.opts) && f.opts.length) {
-      if (wantsOptions) probed++
-      continue
-    }
     const known = entry?.fields?.[fieldKey(f)]
-    if (known && Array.isArray(known.opts) && known.opts.length) {
+    if (Array.isArray(f.opts) && f.opts.length) {
+      if (wantsOptions) {
+        if (f.opts_from === "cache") hits++
+        else probed++
+      }
+    } else if (known && Array.isArray(known.opts) && known.opts.length) {
       f.opts = known.opts.slice()
       if (known.optsTruncated) f.optsTruncated = true
       // The REAL count, when the scanner (or a previous field-cache write)
@@ -326,16 +422,46 @@ export function invalidate(cache, fp) {
 // string for such a field would silently stop finding it — not a wrong
 // answer, just a missed optimisation (the combo strategy hint would not be
 // remembered), so this reads the matched string when it is available.
+//
+// THE TYPE SUFFIX COMES FROM THE ITEM'S VERB, WITH A CROSS-TYPE FALLBACK
+// (Phase 4, 2026-08-14). This used to be a hard-coded `|combo`, and the
+// entry it looked for is written by `recordCache` under `fieldKey(f)` —
+// `label|<scan type>`. Those two agree only while the scanner classifies the
+// control the same way on every scan; the two widget types that carry an
+// option list, `combo` and `select`, are exactly the pair it has read both
+// ways (a library-drawn dropdown over a native <select>, seen before and
+// after hydration). When they disagreed the lookup missed and the strategy
+// was learned and thrown away, every run — a missed optimisation, never a
+// wrong answer, which is why nobody saw it. Deriving the suffix from the
+// verb and falling back to the sibling type finds the entry either way.
+// Stored bytes are unchanged, so CACHE_VERSION does not move: a bump would
+// discard every remembered form for a fix that changes only how a key is
+// looked up.
+const OPTION_TYPES = { combo: "select", select: "combo" }
+
+// A strategy name is an identifier — `type-enter`, `click-option`. On the
+// attended path the report reaches this function through the page
+// (window.__ajLastFill, see fill-plan.mjs's driver), so a value here may be
+// whatever a board chose to hand back. A name that is not identifier-shaped is
+// not a strategy the engine has and is dropped rather than stored; a name that
+// IS one can at most reorder which strategies are tried first (fill-engine
+// skips names it does not know), never choose a value.
+const VIA_NAME = /^[a-z][a-z0-9_-]{0,39}$/i
+const viaName = (v) => (typeof v === "string" && VIA_NAME.test(v) ? v : null)
+
 export function recordVia(cache, fp, plan, report) {
   const entry = cache.forms[fp]
   if (!entry) return 0
   const comboVia = report?.comboVia ?? {}
   let updated = 0
   for (const item of plan?.items ?? []) {
-    if (item.how !== "combo") continue
-    const via = comboVia[item.k]
+    if (!Object.hasOwn(OPTION_TYPES, item.how ?? "")) continue
+    const via = viaName(comboVia[item.k])
     if (!via) continue
-    const field = entry.fields[`${norm(item.matchedLabel ?? item.label)}|combo`]
+    const label = norm(item.matchedLabel ?? item.label)
+    const field =
+      entry.fields[`${label}|${item.how}`] ??
+      entry.fields[`${label}|${OPTION_TYPES[item.how]}`]
     if (!field) continue
     field.via = via
     updated++
@@ -343,6 +469,7 @@ export function recordVia(cache, fp, plan, report) {
   // The board-level summary: even a combo the fact base could not resolve
   // (so it never became a plan item, and therefore never got a per-field
   // `via`) benefits from trying the board's usual winner first.
-  if (report?.comboStrategy) entry.comboStrategy = report.comboStrategy
+  const strategy = viaName(report?.comboStrategy)
+  if (strategy) entry.comboStrategy = strategy
   return updated
 }

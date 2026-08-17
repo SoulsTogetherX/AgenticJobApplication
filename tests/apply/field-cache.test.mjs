@@ -13,13 +13,16 @@ import {
   hostOf,
   loadCache,
   saveCache,
+  updateCache,
   applyCache,
   recordCache,
   invalidate,
   recordVia,
   recordShapeHistory,
+  promoteComboStrategy,
   CACHE_VERSION,
 } from "../../scripts/apply/field-cache.mjs"
+import { lockPathFor } from "../../scripts/lib/lock.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -364,6 +367,303 @@ test("recordVia uses item.matchedLabel when the plan showed the user a different
     cache.forms[fp].fields["school (internal)|combo"].via,
     "type-click",
   )
+})
+
+// --- Phase 4 (2026-08-14): the recordVia key, the shared promotion helper,
+// and the locked read-modify-write the unattended path writes through -----
+
+test("recordVia finds the entry when the scanner typed the control as `select` but the plan filled it as a combo", () => {
+  // The scanner has read the same library-drawn dropdown both ways across
+  // scans (native <select> before hydration, combo after). recordCache keyed
+  // the entry `label|select`; the plan item is `how: "combo"`. The old
+  // hard-coded `|combo` lookup missed here and the strategy was learned and
+  // dropped on every run — never a wrong answer, which is why nobody saw it.
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const scan = scanOf([
+    { k: "f1", t: "select", l: "Country", req: true, opts: ["US", "CA"] },
+  ])
+  const fp = fingerprint(scan, "greenhouse")
+  recordCache(cache, { fp, scan, atsId: "greenhouse" })
+  assert.ok(
+    cache.forms[fp].fields["country|select"],
+    "keyed as the scan typed it",
+  )
+
+  const plan = {
+    items: [{ k: "f1", how: "combo", label: "Country", value: "US" }],
+  }
+  const report = { comboVia: { f1: "type-enter" }, comboStrategy: "type-enter" }
+  assert.equal(recordVia(cache, fp, plan, report), 1, "cross-type fallback hit")
+  assert.equal(cache.forms[fp].fields["country|select"].via, "type-enter")
+})
+
+test("recordVia's cross-type fallback works in the other direction too, and prefers the exact type when both exist", () => {
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const scan = scanOf([
+    { k: "f1", t: "combo", l: "Country", req: true, opts: ["US"] },
+    { k: "f2", t: "select", l: "Country", req: true, opts: ["US"] },
+  ])
+  const fp = fingerprint(scan, "greenhouse")
+  recordCache(cache, { fp, scan, atsId: "greenhouse" })
+  // A select-verb item with a via (the engine never emits one today, but the
+  // key derivation must not depend on that): exact `|select` key wins.
+  recordVia(
+    cache,
+    fp,
+    { items: [{ k: "f2", how: "select", label: "Country" }] },
+    { comboVia: { f2: "native" } },
+  )
+  assert.equal(cache.forms[fp].fields["country|select"].via, "native")
+  assert.equal(
+    cache.forms[fp].fields["country|combo"].via,
+    undefined,
+    "the exact-type entry was found, so the sibling was not touched",
+  )
+})
+
+test("recordVia's plain-combo behaviour is unchanged, and non-option verbs are still skipped", () => {
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const scan = scanOf([
+    { k: "f1", t: "combo", l: "School", req: true, opts: ["UNLV"] },
+    { k: "f2", t: "text", l: "School", req: true },
+  ])
+  const fp = fingerprint(scan, "greenhouse")
+  recordCache(cache, { fp, scan, atsId: "greenhouse" })
+  const updated = recordVia(
+    cache,
+    fp,
+    {
+      items: [
+        { k: "f1", how: "combo", label: "School", value: "UNLV" },
+        // A `fill` item can never carry a via; even if a report claimed one it
+        // must not be written onto the text input's entry.
+        { k: "f2", how: "fill", label: "School", value: "UNLV" },
+      ],
+    },
+    { comboVia: { f1: "type-click", f2: "type-click" } },
+  )
+  assert.equal(updated, 1)
+  assert.equal(cache.forms[fp].fields["school|combo"].via, "type-click")
+  assert.equal(cache.forms[fp].fields["school|text"].via, undefined)
+})
+
+test("a re-probed combo still receives the remembered via and sel — a probe is not fresher about those", () => {
+  // The old `continue` past a field that already had options also skipped the
+  // via/sel merge, so on the unattended path — which re-probes every combo
+  // until the scanner is handed the cache's options — the strategy learned on
+  // the last application was never served. Options: fresh probe wins,
+  // unchanged. Hint and selector: from the cache, because no probe produces
+  // them.
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const first = scanOf([
+    { k: "f1", t: "combo", l: "School", req: true, opts: ["UNLV"], sel: "#s" },
+  ])
+  const fp = fingerprint(first, "greenhouse")
+  recordCache(cache, { fp, scan: first, atsId: "greenhouse" })
+  recordVia(
+    cache,
+    fp,
+    { items: [{ k: "f1", how: "combo", label: "School" }] },
+    { comboVia: { f1: "type-click" }, comboStrategy: "type-click" },
+  )
+
+  // The next scan probed the same combo again (fresh, and different, options).
+  const again = scanOf([
+    { k: "f9", t: "combo", l: "School", req: true, opts: ["UNLV", "UNR"] },
+  ])
+  const stats = applyCache(again, cache.forms[fp])
+  assert.deepEqual(stats, { hits: 0, probed: 1, miss: 0 })
+  assert.deepEqual(again.fields[0].opts, ["UNLV", "UNR"], "fresh options win")
+  assert.equal(again.fields[0].via, "type-click", "the hint is still served")
+  assert.equal(again.fields[0].sel, "#s", "and so is the remembered selector")
+})
+
+test("options the scanner took from the cache count as hits, not probes", () => {
+  // scan-engine.mjs marks a combo it filled from knownOpts with
+  // `opts_from: "cache"`. The browser did no work for those, so applyCache
+  // must not report the scan as cold.
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const scan = scanOf([
+    { k: "f1", t: "combo", l: "School", req: true, opts: ["UNLV"] },
+  ])
+  const fp = fingerprint(scan, "greenhouse")
+  recordCache(cache, { fp, scan, atsId: "greenhouse" })
+  const warm = scanOf([
+    {
+      k: "f1",
+      t: "combo",
+      l: "School",
+      req: true,
+      opts: ["UNLV"],
+      opts_from: "cache",
+    },
+    { k: "f2", t: "combo", l: "Degree", req: true, opts: ["BS"] },
+  ])
+  assert.deepEqual(applyCache(warm, cache.forms[fp]), {
+    hits: 1,
+    probed: 1,
+    miss: 0,
+  })
+})
+
+test("recordVia stores only identifier-shaped strategy names — a page-shaped value is dropped, not remembered", () => {
+  // On the attended path the report reaches recordVia through the page
+  // (window.__ajLastFill), so a board can hand back anything. A strategy is
+  // an identifier; a paragraph, a script, or a 10MB string is not one and must
+  // not land in the cache file.
+  const cache = { v: CACHE_VERSION, forms: {} }
+  const scan = scanOf([
+    { k: "f1", t: "combo", l: "School", req: true, opts: ["UNLV"] },
+    { k: "f2", t: "combo", l: "Degree", req: true, opts: ["BS"] },
+  ])
+  const fp = fingerprint(scan, "greenhouse")
+  recordCache(cache, { fp, scan, atsId: "greenhouse" })
+  const updated = recordVia(
+    cache,
+    fp,
+    {
+      items: [
+        { k: "f1", how: "combo", label: "School" },
+        { k: "f2", how: "combo", label: "Degree" },
+      ],
+    },
+    {
+      comboVia: {
+        f1: "type-click",
+        f2: "<img src=x onerror=alert(1)> ".repeat(3),
+      },
+      comboStrategy: "x".repeat(500),
+    },
+  )
+  assert.equal(updated, 1, "only the real name was recorded")
+  assert.equal(cache.forms[fp].fields["school|combo"].via, "type-click")
+  assert.equal(cache.forms[fp].fields["degree|combo"].via, undefined)
+  assert.equal(
+    cache.forms[fp].comboStrategy,
+    undefined,
+    "an over-long board-level name is not stored either",
+  )
+})
+
+test("promoteComboStrategy moves the remembered winner to the head and never invents one", () => {
+  const plan = { comboStrategies: ["type-enter", "type-click", "click-option"] }
+  assert.equal(
+    promoteComboStrategy(plan, { comboStrategy: "click-option" }),
+    true,
+  )
+  assert.deepEqual(plan.comboStrategies, [
+    "click-option",
+    "type-enter",
+    "type-click",
+  ])
+  // Already at the head: no change reported, order intact.
+  assert.equal(
+    promoteComboStrategy(plan, { comboStrategy: "click-option" }),
+    false,
+  )
+  // A strategy the adapter no longer offers is NOT resurrected from the cache.
+  assert.equal(promoteComboStrategy(plan, { comboStrategy: "retired" }), false)
+  assert.deepEqual(plan.comboStrategies, [
+    "click-option",
+    "type-enter",
+    "type-click",
+  ])
+  // Nothing remembered, or nothing to reorder: safe no-ops.
+  assert.equal(promoteComboStrategy(plan, undefined), false)
+  assert.equal(promoteComboStrategy({}, { comboStrategy: "type-enter" }), false)
+})
+
+test("a via/comboStrategy written under v4 loads without a discard — the key fix moves no bytes", (t) => {
+  // The fix is in how recordVia LOOKS UP an entry, not in what is stored, so
+  // CACHE_VERSION must not have moved: a cache written before the fix must
+  // load whole. A bump here would discard every remembered form (the silent-
+  // amber cost loadCache's own header documents) for nothing.
+  assert.equal(CACHE_VERSION, 4, "no bump — the on-disk shape is unchanged")
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-fc-v4-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, ".field-cache.json")
+  const preFix = {
+    v: 4,
+    forms: {
+      abc: {
+        ats: "greenhouse",
+        comboStrategy: "type-click",
+        fields: {
+          "school|combo": {
+            t: "combo",
+            l: "School",
+            opts: ["UNLV"],
+            via: "type-click",
+          },
+        },
+      },
+    },
+  }
+  fs.writeFileSync(file, JSON.stringify(preFix))
+  const loaded = loadCache(file)
+  assert.equal(loaded.discarded, undefined, "no discard")
+  assert.equal(loaded.forms.abc.comboStrategy, "type-click")
+  assert.equal(loaded.forms.abc.fields["school|combo"].via, "type-click")
+  // And it round-trips through save (atomic now) and load byte-for-byte in
+  // meaning: same forms, same version.
+  saveCache(file, loaded)
+  assert.deepEqual(loadCache(file), loaded)
+  assert.ok(
+    !fs.readdirSync(dir).some((f) => f.endsWith(".tmp")),
+    "the temp file used for the atomic write is gone",
+  )
+})
+
+test("updateCache is a locked read-modify-write: two writers both land, and the lock is released", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-fc-lock-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, ".field-cache.json")
+  const scanA = scanOf([{ k: "a", t: "combo", l: "A", req: true, opts: ["1"] }])
+  const scanB = scanOf([{ k: "b", t: "combo", l: "B", req: true, opts: ["2"] }])
+  const fpA = fingerprint(scanA, "greenhouse")
+  const fpB = fingerprint(scanB, "greenhouse")
+
+  // The lost-update shape: both callers hold a stale in-memory copy. Through
+  // updateCache each re-reads under the lock, so both entries survive.
+  const staleA = loadCache(file)
+  const staleB = loadCache(file)
+  recordCache(staleA, { fp: fpA, scan: scanA, atsId: "greenhouse" })
+  recordCache(staleB, { fp: fpB, scan: scanB, atsId: "greenhouse" })
+  updateCache(file, (c) =>
+    recordCache(c, { fp: fpA, scan: scanA, atsId: "greenhouse" }),
+  )
+  updateCache(file, (c) =>
+    recordCache(c, { fp: fpB, scan: scanB, atsId: "greenhouse" }),
+  )
+  const final = loadCache(file)
+  assert.ok(
+    final.forms[fpA] && final.forms[fpB],
+    "both writers' entries present",
+  )
+
+  // The mutator's return value comes back out (recordVia's count rides it).
+  assert.equal(
+    updateCache(file, () => 42),
+    42,
+  )
+  // Released: the lock file does not linger after the hold.
+  assert.equal(fs.existsSync(lockPathFor(file)), false, "lock released")
+})
+
+test("updateCache refuses an async mutator — a yield inside the hold would stall sibling workers", (t) => {
+  // withLock throws on a promise-returning body, and updateCache leans on
+  // that refusal: acquire() waits with a BLOCKING sleep, so a second worker
+  // in the same process reaching the lock while the first was parked on an
+  // await inside the hold would freeze the event loop — first worker
+  // included — until the lock timed out. Synchronous bodies cannot yield.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-fc-async-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, ".field-cache.json")
+  assert.throws(
+    () => updateCache(file, async () => {}),
+    /promise|async|synchronous/i,
+  )
+  assert.equal(fs.existsSync(lockPathFor(file)), false, "released even so")
 })
 
 test("a fresh probe always beats a remembered one", () => {

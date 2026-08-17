@@ -4,8 +4,9 @@ description:
   Batch-process stored job leads with one subagent per job so the main
   context stays small - optionally screen each posting for ghost-job/scam/bad-
   workplace signals, tailor the resume and (optionally) cover letter, and prep
-  the application for the user's review and final submit. Use when the user says
-  to pipeline, batch-process, screen, or work through multiple saved leads.
+  the application for the user's review before the agent submits it. Use when the
+  user says to pipeline, batch-process, screen, or work through multiple saved
+  leads.
 ---
 
 Process several stored leads end-to-end without flooding the main context
@@ -172,8 +173,12 @@ inside `jobs/<slug>/` (CLAUDE.md rule 9).
 
 Only when the user asked for the apply stage: the subagent stops after
 tailoring; actual form-filling happens back in the main session one job at a
-time via the apply-job skill, with the user watching the browser and clicking
-Submit. Never let a subagent drive the application form unattended.
+time via the apply-job skill. **The agent submits** — CLAUDE.md rule 6, decided
+2026-08-03. Do not hand the browser back at the submit button; that hand-off has
+been removed twice and reinstating it overrides a decision the user has made
+about their own job search. What still stops a submit is unchanged and is not a
+hand-off: a required field the fact base cannot answer truthfully is deferred
+and said out loud. Never let a subagent drive the application form.
 
 ## Wrap-up (main session)
 
@@ -186,13 +191,20 @@ node scripts/apply/pending-questions.mjs
 ```
 
 It merges what every prepped workspace still cannot answer, drops consent boxes
-(the user ticks those in the browser) and anything the fact base already covers,
-and predicts what these boards will ask from the remembered form shapes. Put the
-whole list in ONE message, then save each answer with
-`scripts/profile/save-answer.mjs`. Asking per job at apply time is N-1 avoidable
-interruptions with the user waiting at a form.
+and anything the fact base already covers, and predicts what these boards will
+ask from the remembered form shapes. Put the whole list in ONE message, then save
+each answer with `scripts/profile/save-answer.mjs`. Asking per job at apply time
+is N-1 avoidable interruptions with the user waiting at a form.
 
-Present one compact table: company | screen verdict | tailor status | next
-step. Ask which prepped jobs to review; then run apply-job per approved job.
+**One message for the whole wrap-up.** The selection table, the merged question
+list and the per-job approval sections all go out together — this is the batch
+envelope, specified in the apply-job skill's Phase 4. Combining them is the
+saving; what must NOT collapse into a summary is the per-job half, because that
+is what the user is approving: each job keeps its own section with its rule-5
+tailoring diff and its rule-6 quoted consent / `confirm-widget` labels.
+Approval covers exactly the jobs named, never "all matching" or future ones.
+
+The table is one compact row per job: company | screen verdict | tailor status |
+next step. Ask which prepped jobs to review; then run apply-job per approved job.
 Mark statuses in the lead store as the user decides. Report total
 skipped/failed honestly.

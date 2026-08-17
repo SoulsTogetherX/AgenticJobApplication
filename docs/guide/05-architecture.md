@@ -364,9 +364,12 @@ instead of a text scan.
 `board_stats`, so pruning an unproductive board can be driven by history rather
 than by one bad day.
 
-> **Known defect (2026-08-05 audit).** `board_stats` is written on every sweep and
-> read by nothing. `recordSweep` also ignores the `--leads` flag and writes to
-> the real database even when a test points the store elsewhere.
+> **Partly closed (P6, 2026-08-17).** `board_stats` now has a reader —
+> `board-yield.mjs --history` — and two additive counters (`sweeps`,
+> `zero_streak`) so a dry spell is countable rather than inferred. Still open:
+> `recordSweep` ignores the `--leads` flag and writes to the real database even
+> when a test points the store elsewhere, and `leads_produced` accumulates
+> pre-dedupe counts so it is not a lead count.
 
 #### Then screening proper
 

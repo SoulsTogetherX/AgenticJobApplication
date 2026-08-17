@@ -535,8 +535,9 @@ broke.
 > Batch-process stored job leads with one subagent per job so the main context
 > stays small - optionally screen each posting for ghost-job/scam/bad- workplace
 > signals, tailor the resume and (optionally) cover letter, and prep the
-> application for the user's review and final submit. Use when the user says to
-> pipeline, batch-process, screen, or work through multiple saved leads.
+> application for the user's review before the agent submits it. Use when the
+> user says to pipeline, batch-process, screen, or work through multiple saved
+> leads.
 
 **What it is for.** Process several stored leads without flooding the main
 conversation. The body states the point in one line: "Token discipline is the

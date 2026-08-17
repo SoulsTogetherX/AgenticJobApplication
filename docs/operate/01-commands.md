@@ -1821,15 +1821,34 @@ It prints the `manage-sources.mjs add` command to run for anything that passes.
 ```
 node scripts/leads/board-yield.mjs [--query "full stack"] [--json]
      [--concurrency 6] [--min-qualifying 0]
+
+node scripts/leads/board-yield.mjs --history [--live] [--json]
+     [--dead-days 30] [--zero-streak 5] [--min-sweeps 5]
 ```
 
-Fetches every board in `docs/job-sources.yaml` live and reports, per board: how
-many postings it has, how many pass your limits, how many are confirmed reachable
-("solid"), the yield percentage, and how many were hard-filtered. Ranked on
-confirmed-reachable postings, because a board whose only hits are unverified-remote
-is not a productive board.
+The default mode fetches every board in `docs/job-sources.yaml` live and reports,
+per board: how many postings it has, how many pass your limits, how many are
+confirmed reachable ("solid"), the yield percentage, and how many were
+hard-filtered. Ranked on confirmed-reachable postings, because a board whose only
+hits are unverified-remote is not a productive board.
 
-Reports only. Removing a board is your call.
+`--history` answers the different question — **not "what is on this board today"
+but "has this board ever been worth sweeping"** — by reading the accumulated
+`board_stats` counters instead of the network. It is offline and effectively
+instant (measured 2026-08-17 on 57 boards: **5 ms**, against **22.6 s** for the
+live audit), and it prints per board: last swept, last time it yielded something
+reachable, `leads_produced`, and `zero_streak/sweeps`. Add `--live` to join
+today's snapshot onto that history, at the live audit's cost.
+
+A board is proposed for removal when **any** of three thresholds trips:
+`--zero-streak` consecutive dry sweeps, never having yielded across at least
+`--min-sweeps` counted sweeps, or a last yield older than `--dead-days`. It takes
+all three because the counters start at zero: only the `--dead-days` rule can
+fire on history recorded before the counters existed, and a `?` in the
+`DRY/SWEEPS` column marks exactly those rows.
+
+Reports only, both modes. Removing a board is your call — the proposals print as
+ready-to-run `manage-sources.mjs remove` lines and nothing is changed.
 
 ### 10.5 `cc-boards.mjs` — enumerate board slugs from Common Crawl
 

@@ -13,6 +13,17 @@
 //
 // Usage: node scripts/leads/board-yield.mjs [--query "full stack"] [--json]
 //                                     [--concurrency N] [--min-qualifying N]
+//        node scripts/leads/board-yield.mjs --history [--live] [--json]
+//                                     [--dead-days 30] [--zero-streak 5]
+//                                     [--min-sweeps 5]
+//
+// Two modes, and the difference is the whole point of --history. The default
+// mode fetches every board and scores THIS MOMENT: it needs the network, takes
+// tens of seconds, and cannot tell a board that is permanently dead from one
+// that happens to be between reqs today. --history reads the accumulated
+// board_stats counters instead — offline, sub-second — so a removal proposal
+// rests on how a board has behaved over weeks. --live joins today's snapshot
+// onto that history when you want both in one table.
 import {
   loadSources,
   loadLimits,
@@ -22,8 +33,18 @@ import {
   DEFAULT_SEARCH_QUERY,
 } from "./find-jobs.mjs"
 import { isTerse, mapPool } from "../lib/lib.mjs"
+import { openDb, resolveLeadSource, readBoardStats } from "../lib/db.mjs"
 
 const DEFAULT_CONCURRENCY = 6
+
+// Thresholds for a removal proposal. Deliberately generous: this prints shell
+// lines for a human to run, and the cost of proposing a live board is that the
+// user deletes a board they wanted, while the cost of missing a dead one is a
+// few seconds of sweep time.
+export const DEFAULT_DEAD_DAYS = 30
+export const DEFAULT_ZERO_STREAK = 5
+export const DEFAULT_MIN_SWEEPS = 5
+const DAY_MS = 86_400_000
 
 function getFlag(args, name, fallback = null) {
   const i = args.indexOf(name)
@@ -101,8 +122,195 @@ export async function auditBoards(boards, limits, opts = {}) {
   })
 }
 
+// Pure core, exported for tests: which boards has history earned a removal
+// proposal for? Three triggers, and it takes all three because each alone has
+// a blind spot:
+//
+//   1. zero_streak >= N — the direct signal, but useless on a fresh install
+//      and on any row healed into this shape, where the streak starts at 0.
+//   2. never yielded across N counted sweeps — catches the board that was
+//      wrong from the day it was added, which rule 1 also catches eventually
+//      but only after the counter has had time to run.
+//   3. last yield older than --dead-days — the only rule that can fire on
+//      HISTORICAL data, since last_qualifying_at predates the counters. It is
+//      what makes this useful on the first run rather than five sweeps later.
+//
+// NULL counters mean "swept before counting existed", not zero sweeps, so they
+// read as 0 here and hold the board back from rules 1 and 2 until it has a
+// real record. Erring toward proposing nothing is the right direction: an
+// unproposed dead board costs sweep seconds, a wrongly proposed live one costs
+// the user a source they wanted.
+export function proposeRemovals(rows, opts = {}) {
+  const {
+    deadDays = DEFAULT_DEAD_DAYS,
+    zeroStreak = DEFAULT_ZERO_STREAK,
+    minSweeps = DEFAULT_MIN_SWEEPS,
+    now = new Date(),
+  } = opts
+  const out = []
+  for (const r of rows) {
+    const sweeps = r.sweeps ?? 0
+    const streak = r.zero_streak ?? 0
+    const reasons = []
+    if (streak >= zeroStreak) {
+      reasons.push(`${streak} consecutive sweeps with nothing reachable`)
+    }
+    if (!r.last_qualifying_at && sweeps >= minSweeps) {
+      reasons.push(`never yielded a reachable posting in ${sweeps} sweeps`)
+    }
+    if (r.last_qualifying_at) {
+      const at = new Date(r.last_qualifying_at)
+      const days = Math.floor((now.getTime() - at.getTime()) / DAY_MS)
+      // An unparseable timestamp gives NaN, and NaN > deadDays is false — so a
+      // corrupt value proposes nothing rather than proposing everything.
+      if (days > deadDays) {
+        reasons.push(`last reachable posting ${days}d ago`)
+      }
+    }
+    if (reasons.length) out.push({ ...r, reasons })
+  }
+  return out
+}
+
+function loadHistory() {
+  const src = resolveLeadSource()
+  if (src.kind !== "db") return []
+  const db = openDb(src.file)
+  try {
+    return readBoardStats(db)
+  } finally {
+    db.close()
+  }
+}
+
+async function historyMain(args) {
+  const asJson = args.includes("--json")
+  const opts = {
+    deadDays: Number(getFlag(args, "--dead-days", DEFAULT_DEAD_DAYS)),
+    zeroStreak: Number(getFlag(args, "--zero-streak", DEFAULT_ZERO_STREAK)),
+    minSweeps: Number(getFlag(args, "--min-sweeps", DEFAULT_MIN_SWEEPS)),
+  }
+  const t0 = Date.now()
+  const rows = loadHistory()
+
+  // --live is the expensive half and stays opt-in: it re-fetches every board
+  // so the table can show what is on them right now next to what they have
+  // produced over time. Measured 2026-08-17 on 57 boards: 5 ms offline,
+  // 22.6 s with --live. That ratio is why history is the default.
+  //
+  // Joined on board_id, which is the label find-jobs recorded the sweep under.
+  // The join is NOT total, and the miss is reported rather than hidden: a
+  // board_stats row survives a board's removal from job-sources.yaml (that is
+  // the point of history), and the two labels can also simply disagree — a
+  // board with no slug is `jobicy:undefined` in board_stats but `jobicy:` out
+  // of scoreBoard, so it silently matched nothing until this said so. Fixing
+  // that by changing either label would re-key the history and orphan it,
+  // which costs more than the mismatch does.
+  const wantLive = args.includes("--live")
+  if (wantLive) {
+    const query = parseQueries(getFlag(args, "--query")) ?? DEFAULT_SEARCH_QUERY
+    const concurrency = Number(
+      getFlag(args, "--concurrency", DEFAULT_CONCURRENCY),
+    )
+    const live = await auditBoards(loadSources(), loadLimits(), {
+      query,
+      concurrency,
+    })
+    const byLabel = new Map(live.map((r) => [r.label, r]))
+    for (const r of rows) {
+      const l = byLabel.get(r.board_id)
+      r.matched_live = Boolean(l)
+      r.live_now = l && !l.error ? l.live : null
+      r.solid_now = l && !l.error ? l.solid : null
+      r.error = l?.error ?? null
+    }
+  }
+  const ms = Date.now() - t0
+  const proposals = proposeRemovals(rows, opts)
+
+  if (asJson) {
+    console.log(JSON.stringify({ ms, rows, proposals }, null, 2))
+    return
+  }
+
+  const day = (s) => (s ? String(s).slice(0, 10) : "never")
+  // Only meaningful under --live: how many history rows found no board to join
+  // against. Printed even when it is 0, so the absence of a warning is
+  // evidence rather than the two cases looking alike.
+  const unmatched = wantLive ? rows.filter((r) => !r.matched_live) : []
+  const liveCol = (r) =>
+    !wantLive
+      ? ""
+      : r.matched_live
+        ? `|live=${r.live_now ?? "err"}|solid=${r.solid_now ?? "err"}`
+        : "|live=no-board"
+  if (isTerse()) {
+    for (const r of rows) {
+      console.log(
+        `${r.board_id}|${r.company ?? ""}|swept=${day(r.last_swept)}|last_ok=${day(r.last_qualifying_at)}` +
+          `|leads=${r.leads_produced ?? 0}|streak=${r.zero_streak ?? "?"}/${r.sweeps ?? "?"}` +
+          liveCol(r),
+      )
+    }
+    for (const p of proposals) {
+      console.log(`propose-remove|${p.board_id}|${p.reasons.join("; ")}`)
+    }
+    console.log(
+      `boards=${rows.length} proposals=${proposals.length} ms=${ms} offline=${!wantLive}` +
+        (wantLive ? ` unmatched=${unmatched.length}` : ""),
+    )
+    return
+  }
+
+  const pad = (s, n) => String(s).padEnd(n)
+  console.log(
+    `\nBoard history — ${rows.length} boards from board_stats (${ms} ms)\n`,
+  )
+  console.log(
+    `${pad("COMPANY", 28)}${pad("SWEPT", 12)}${pad("LAST OK", 12)}${pad("LEADS", 7)}${pad("DRY/SWEEPS", 12)}`,
+  )
+  console.log("-".repeat(72))
+  for (const r of rows) {
+    console.log(
+      `${pad(r.company ?? r.board_id, 28)}${pad(day(r.last_swept), 12)}${pad(day(r.last_qualifying_at), 12)}` +
+        `${pad(r.leads_produced ?? 0, 7)}${pad(`${r.zero_streak ?? "?"}/${r.sweeps ?? "?"}`, 12)}` +
+        liveCol(r).replace(/\|/g, " ").trim(),
+    )
+  }
+
+  if (!rows.length) {
+    console.log("  (no rows yet — board_stats fills in as sweeps run)")
+  }
+  console.log(
+    "\nA '?' in DRY/SWEEPS means the board was swept before these counters " +
+      "existed;\ncounting starts at the next sweep.",
+  )
+  if (unmatched.length) {
+    console.log(
+      `\n${unmatched.length} history row(s) matched no board in docs/job-sources.yaml ` +
+        `(shown as live=no-board).\nEither the board was removed — history outliving it is intended — ` +
+        `or its\nrecorded label differs from the one the audit builds.`,
+    )
+  }
+  if (proposals.length) {
+    console.log(
+      `\n${proposals.length} board(s) look dead on history. Proposed removals ` +
+        `(review first — nothing was changed):`,
+    )
+    for (const p of proposals) {
+      console.log(
+        `  node scripts/leads/manage-sources.mjs remove "${p.company ?? p.board_id}"   # ${p.reasons.join("; ")}`,
+      )
+    }
+  } else {
+    console.log(`\nNo board meets the removal thresholds.`)
+  }
+  console.log("")
+}
+
 async function main() {
   const args = process.argv.slice(2)
+  if (args.includes("--history")) return historyMain(args)
   // Comma-separated --query becomes a list here for the same reason it does in
   // cmdSearch: measuring a Workday board with one query measures one slice of
   // it, which is what made three tracked gaming boards look nearly empty.

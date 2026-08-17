@@ -40,12 +40,17 @@
 //
 // Usage:
 //   node scripts/auto/cycle.mjs [--top N] [--limit N] [--json]
-//        [--skip-search] [--skip-apply] [--jobs-dir jobs]
+//        [--skip-search] [--skip-apply] [--any-board] [--jobs-dir jobs]
 //
 //   --top N        leads to tailor this cycle (default 10)
 //   --limit N      applications the runner may attempt (default: --top)
 //   --skip-search  reuse the leads already in the store
 //   --skip-apply   prepare documents and stop before the runner
+//   --any-board    tailor for leads whose board fails the trust gate too. This
+//                  widens what gets PREPARED, never what gets submitted: the
+//                  trust gate still binds inside the runner, so an untrusted
+//                  board's job ends up with documents ready and no unattended
+//                  submit. Use it when the user intends to apply attended.
 //
 // Exit codes: 0 ok, 2 usage. A stage that fails for one lead is reported and
 // does not change the exit code — the cycle's job is to get as far as it can

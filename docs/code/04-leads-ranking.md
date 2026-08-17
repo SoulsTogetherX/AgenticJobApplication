@@ -1748,28 +1748,36 @@ workday, oracle_cloud, jobvite, successfactors, jobicy, remotive, remoteok`.
 
 ### 4.7 Traps and things not to "fix"
 
-**(a) It refetches every board live on every run, and never reads
-`board_stats`.** `jobs/leads.db` has a `board_stats` table with almost exactly the
-columns this script computes:
+**(a) The DEFAULT mode refetches every board live on every run — that is
+correct, and `--history` is the mode that does not.** `jobs/leads.db` has a
+`board_stats` table with almost exactly the columns this script computes, plus
+two counters the live audit cannot produce:
 
 ```sql
 CREATE TABLE IF NOT EXISTS board_stats (
   board_id TEXT PRIMARY KEY, type TEXT, slug TEXT, company TEXT,
   last_swept TEXT, live_postings INTEGER DEFAULT 0, qualifying INTEGER DEFAULT 0,
-  solid INTEGER DEFAULT 0, leads_produced INTEGER DEFAULT 0, last_qualifying_at TEXT
+  solid INTEGER DEFAULT 0, leads_produced INTEGER DEFAULT 0, last_qualifying_at TEXT,
+  sweeps INTEGER DEFAULT 0, zero_streak INTEGER DEFAULT 0
 );
 ```
 
 The schema comment states the intent: _"A single audit is a snapshot; pruning a
 board should be driven by history, so every sweep appends its counts here."_
 
-> **Known defect (2026-08-05 audit).** `board-yield.mjs` — the only consumer that
-> would want that history — imports nothing from `db.mjs` and never opens the
-> table. So the history accumulates on every sweep and is never read. The audit
-> also records a second-order problem in what is written: `leads_produced` is
-> accumulated with `leads_produced + excluded.leads_produced`, and postings the
-> sweep had already stored are counted again every time, so the number grows
-> without bound and does not mean "leads produced".
+> **Closed (P6, 2026-08-17).** `board-yield.mjs --history` now imports
+> `readBoardStats` from `db.mjs`, reads the table offline and proposes removals
+> from it — 5 ms against the live audit's 22.6 s on 57 boards. Do **not**
+> "simplify" the two modes into one: the live audit and the history read answer
+> different questions, and folding history into the live path would put a network
+> fetch behind a question that does not need one.
+>
+> **Still open — the second-order problem in what is written.**
+> `leads_produced` is accumulated with `leads_produced + excluded.leads_produced`
+> over pre-dedupe counts, so postings the sweep had already stored are counted
+> again every time: the number grows without bound and does not mean "leads
+> produced". `proposeRemovals` deliberately keys off `zero_streak`, `sweeps` and
+> `last_qualifying_at` instead, none of which have that flaw.
 
 **(b) `passesLimits` is the same gate the real sweep uses.** That is what makes
 the yield number honest. This file deliberately does not reimplement the gate; it

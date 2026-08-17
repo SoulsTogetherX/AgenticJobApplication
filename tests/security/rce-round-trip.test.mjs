@@ -119,7 +119,10 @@ test("the generated driver never touches a page-owned global (engine only)", asy
   const result = await driver(page)
 
   assert.equal(win.__ajGetterReads, 0, "the driver read a page-owned global")
-  assert.deepEqual(log.clicks, [], "hard rule 6: only the user clicks submit")
+  // Rule 6 lets the AGENT submit; it never lets page-supplied code do it. The
+  // click surface is submit.mjs + advance.mjs and nothing else, so a click from
+  // in here is a click from an attacker.
+  assert.deepEqual(log.clicks, [], "the fill driver must never click anything")
   assert.deepEqual(log.uploads, [], "no file may be uploaded by attacker code")
   assert.equal(result.sawSlug, "fixture-widgets", "the real plan must be used")
 })

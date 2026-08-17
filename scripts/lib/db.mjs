@@ -167,7 +167,18 @@ CREATE TABLE IF NOT EXISTS board_stats (
   qualifying         INTEGER DEFAULT 0,
   solid              INTEGER DEFAULT 0,
   leads_produced     INTEGER DEFAULT 0,
-  last_qualifying_at TEXT
+  last_qualifying_at TEXT,
+  -- The row is a SNAPSHOT: one row per board, upserted. Every counter above
+  -- except leads_produced is overwritten each sweep, so "has this board been
+  -- quiet for a while?" was not answerable from it — the only durable trace of
+  -- a dry sweep was last_qualifying_at failing to move, which reads the same
+  -- after one dry sweep as after twenty. These two make the streak additive:
+  -- sweeps counts data points, zero_streak counts consecutive dry ones and
+  -- resets to 0 the moment a board yields something reachable. A removal
+  -- proposal needs both, because a streak of 0 is ambiguous on its own — it
+  -- means "just yielded" AND "never counted yet".
+  sweeps             INTEGER DEFAULT 0,
+  zero_streak        INTEGER DEFAULT 0
 );
 
 -- Unattended auto-apply runs. One row per run of scripts/auto/auto-apply.mjs.
@@ -447,6 +458,7 @@ export function openDb(file = DB_PATH) {
     healScreens(db)
     healAutoSubmissions(db)
     healAutoQueue(db)
+    healBoardStats(db)
     db.exec(SCHEMA)
   } catch (e) {
     // An open that throws must not leave the handle behind. On Windows a
@@ -542,6 +554,26 @@ function healAutoQueue(db) {
   // anything recorded a duration.
   if (!have.has("wall_ms"))
     db.exec("ALTER TABLE auto_queue ADD COLUMN wall_ms INTEGER")
+}
+
+// The same additive story again, for board_stats's sweeps/zero_streak.
+//
+// Deliberately NO `DEFAULT 0` here, unlike the fresh-table SCHEMA above. A
+// database that predates these columns has been sweeping for weeks, and 0
+// would be a claim about that history — "this board has never been swept" —
+// that is simply false, and false in the direction that matters: the removal
+// rules key off these counters, and a fabricated 0 would make every existing
+// board look brand new. NULL says "not counted", which is the truth, and
+// recordBoardStats COALESCEs it to 0 on the next sweep so counting starts here
+// rather than pretending to reach backwards.
+function healBoardStats(db) {
+  const cols = db.prepare("PRAGMA table_info(board_stats)").all()
+  if (!cols.length) return // fresh database — SCHEMA is about to create it
+  const have = new Set(cols.map((c) => c.name))
+  if (!have.has("sweeps"))
+    db.exec("ALTER TABLE board_stats ADD COLUMN sweeps INTEGER")
+  if (!have.has("zero_streak"))
+    db.exec("ALTER TABLE board_stats ADD COLUMN zero_streak INTEGER")
 }
 
 // How much a row looks like a real application, for the collision above.
@@ -2320,11 +2352,27 @@ export function companySubmissionBreakdown(db, company, sinceIso) {
   return out
 }
 
+// Every board's accumulated history, newest-yielding first. Ordered here rather
+// than at the call site so the one consumer that matters — the removal
+// proposal — reads boards in the order a human would review them: the ones
+// that have gone quiet longest, first.
+export function readBoardStats(db) {
+  return db
+    .prepare(
+      `SELECT board_id, type, slug, company, last_swept, live_postings,
+              qualifying, solid, leads_produced, last_qualifying_at,
+              sweeps, zero_streak
+         FROM board_stats
+        ORDER BY COALESCE(zero_streak, 0) DESC, leads_produced ASC, company ASC`,
+    )
+    .all()
+}
+
 export function recordBoardStats(db, row) {
   db.prepare(
     `INSERT INTO board_stats
-       (board_id, type, slug, company, last_swept, live_postings, qualifying, solid, leads_produced, last_qualifying_at)
-     VALUES ($board_id, $type, $slug, $company, $last_swept, $live_postings, $qualifying, $solid, $leads_produced, $last_qualifying_at)
+       (board_id, type, slug, company, last_swept, live_postings, qualifying, solid, leads_produced, last_qualifying_at, sweeps, zero_streak)
+     VALUES ($board_id, $type, $slug, $company, $last_swept, $live_postings, $qualifying, $solid, $leads_produced, $last_qualifying_at, 1, $zero_streak)
      ON CONFLICT(board_id) DO UPDATE SET
        last_swept = excluded.last_swept,
        live_postings = excluded.live_postings,
@@ -2333,7 +2381,14 @@ export function recordBoardStats(db, row) {
        leads_produced = board_stats.leads_produced + excluded.leads_produced,
        last_qualifying_at = CASE
          WHEN excluded.solid > 0 THEN excluded.last_swept
-         ELSE board_stats.last_qualifying_at END`,
+         ELSE board_stats.last_qualifying_at END,
+       -- COALESCE, not a bare +1: a row healed into this shape carries NULL
+       -- for both, and NULL + 1 is NULL in SQL, so without it a pre-existing
+       -- board would stay uncounted forever and never become proposable.
+       sweeps = COALESCE(board_stats.sweeps, 0) + 1,
+       zero_streak = CASE
+         WHEN excluded.solid > 0 THEN 0
+         ELSE COALESCE(board_stats.zero_streak, 0) + 1 END`,
   ).run({
     board_id: row.board_id,
     type: row.type ?? null,
@@ -2352,5 +2407,10 @@ export function recordBoardStats(db, row) {
       ((row.solid ?? 0) > 0
         ? (row.last_swept ?? new Date().toISOString())
         : null),
+    // Seeded here for the same reason, and it is not symmetric with `sweeps`:
+    // a board's first sweep is 1 sweep either way, but its first streak is 1
+    // only if that sweep was dry. Seeding 0 unconditionally would hide the
+    // very first dry sweep of every board added to the list.
+    zero_streak: (row.solid ?? 0) > 0 ? 0 : 1,
   })
 }

@@ -899,12 +899,24 @@ Written by `recordBoardStats`, from `scripts/leads/find-jobs.mjs`.
 | `solid`              | `INTEGER` | yes (0)  | Postings that looked genuinely good. **Replaced.**          |
 | `leads_produced`     | `INTEGER` | yes (0)  | **Accumulates** across sweeps.                              |
 | `last_qualifying_at` | `TEXT`    | yes      | When this board last yielded something solid.               |
+| `sweeps`             | `INTEGER` | yes      | **Accumulates.** Data points counted. `NULL` = pre-P6 row.  |
+| `zero_streak`        | `INTEGER` | yes      | Consecutive dry sweeps; **resets to 0** on any yield.       |
 
 **Primary key:** `board_id`. **No secondary indexes** — it is read whole.
 
-Two different update semantics in one upsert, on purpose:
-`leads_produced = board_stats.leads_produced + excluded.leads_produced`
-accumulates, while the three snapshot counters take the newest sweep's numbers.
+Three different update semantics in one upsert, on purpose. `leads_produced` and
+`sweeps` accumulate; the three snapshot counters take the newest sweep's numbers;
+`zero_streak` does neither — it is
+`CASE WHEN excluded.solid > 0 THEN 0 ELSE zero_streak + 1 END`, a counter that
+resets rather than one that only grows.
+
+`sweeps` and `zero_streak` (P6, 2026-08-17) exist because **the row is a
+snapshot**: every counter but `leads_produced` is overwritten each sweep, so "has
+this board been quiet for a while?" was not answerable from it — one dry sweep
+and twenty look identical. Both are nullable rather than `DEFAULT 0` on healed
+rows on purpose; `healBoardStats` in
+[01-lib-foundation.md](../code/01-lib-foundation.md) has the reasoning, and
+`board-yield.mjs --history` is the reader.
 
 The `last_qualifying_at` value is decided on the _insert_ side as well as in the
 conflict clause, and the comment records why:
@@ -1573,6 +1585,11 @@ and the ledger silently loses its indexes.
 **`healAutoQueue`** — purely additive: `ADD COLUMN reason_stage TEXT` and
 `ADD COLUMN posted_at TEXT` when missing. Existing rows get `NULL`, which reads
 as "stage unknown" and is the truth.
+
+**`healBoardStats`** — the same idiom for `sweeps` and `zero_streak`, and
+deliberately **without** the `DEFAULT 0` the fresh-table schema carries: a
+pre-existing row has been swept for weeks, so 0 would assert "never swept" about
+every board in the file, and the removal proposals key off these counters.
 
 ---
 

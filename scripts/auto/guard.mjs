@@ -65,7 +65,9 @@
 // So: the token makes the guards unskippable BY CONSTRUCTION for the code that
 // clicks. What keeps that from being merely a design commitment is
 // tests/auto/click-surface.test.mjs — `.click(` appears under scripts/auto/
-// only in submit.mjs — not this comment.
+// only in submit.mjs and advance.mjs — not this comment. (Two files, not one:
+// advance.mjs joined the surface in Phase 5 W3 and may click only a
+// `next`-role control, never a submit. The test is what holds it at two.)
 //
 // The three sentences that runner must satisfy are written in authorize.mjs's
 // header under "THE RUNNER'S CONTRACT". They are load-bearing for every

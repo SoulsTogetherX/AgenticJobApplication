@@ -1721,12 +1721,12 @@ plan and commit.
 
 **Writes:**
 
-| Table / path         | What                                                                                                                                                                        |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `leads`              | One row per lead. Columns: `id` (primary key), `status`, `company`, `title`, `posted_at`, `doc`.                                                                            |
-| `lead_keywords`      | `(lead_id, keyword)` — one row per tech term found in the lead's title + description + requirements.                                                                        |
-| `board_stats`        | One row per board, upserted per sweep: `board_id`, `type`, `slug`, `company`, `last_swept`, `live_postings`, `qualifying`, `solid`, `leads_produced`, `last_qualifying_at`. |
-| `jobs/leads.db.lock` | The lock file, created and removed by `withLock`.                                                                                                                           |
+| Table / path         | What                                                                                                                                                                                                 |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `leads`              | One row per lead. Columns: `id` (primary key), `status`, `company`, `title`, `posted_at`, `doc`.                                                                                                     |
+| `lead_keywords`      | `(lead_id, keyword)` — one row per tech term found in the lead's title + description + requirements.                                                                                                 |
+| `board_stats`        | One row per board, upserted per sweep: `board_id`, `type`, `slug`, `company`, `last_swept`, `live_postings`, `qualifying`, `solid`, `leads_produced`, `last_qualifying_at`, `sweeps`, `zero_streak`. |
+| `jobs/leads.db.lock` | The lock file, created and removed by `withLock`.                                                                                                                                                    |
 
 The `leads` table's shape is unusual and deliberate: four denormalized columns
 for indexing, plus `doc TEXT NOT NULL` holding the complete lead object as JSON,
@@ -1754,15 +1754,23 @@ an imported lead (captured by hand) carries its qualifications as a separate
 array rather than folded into the description, "and those bullets are precisely
 where the demanded stack is named."
 
-> **Known defect (2026-08-05 audit): `board_stats` is written on every sweep and
-> read by nothing.** The only would-be consumer, `board-yield.mjs`, re-fetches
-> all 44 boards live and never opens the table. There is a second-order bug in
-> what is written, too: `recordSweep` computes `solid` by re-running
-> `passesLimits` over the raw postings _before_ dedupe, stores that as
-> `leads_produced`, and `recordBoardStats` **accumulates** it
+> **Half-closed (P6, 2026-08-17). `board_stats` now HAS a reader:**
+> `board-yield.mjs --history` reads the table offline and proposes removals from
+> it, and the table gained `sweeps` + `zero_streak` so a dry spell is countable
+> instead of merely implied by `last_qualifying_at` failing to move. Measured on
+> 57 boards: 5 ms offline vs 22.6 s for the live audit, which is why history is
+> the default and `--live` is opt-in.
+>
+> **The second-order bug in what is WRITTEN is still open.** `recordSweep`
+> computes `solid` by re-running `passesLimits` over the raw postings _before_
+> dedupe, stores that as `leads_produced`, and `recordBoardStats`
+> **accumulates** it
 > (`leads_produced = board_stats.leads_produced + excluded.leads_produced`). So
 > postings already in the store are counted again every sweep, and
-> `leads_produced` grows without bound and does not mean "leads produced".
+> `leads_produced` grows without bound and does not mean "leads produced". Read
+> that column as "how often this board has had something reachable on it", never
+> as a lead count — and note the removal rules deliberately do **not** key off
+> it for exactly this reason.
 
 > **Known defect (2026-08-05 audit): `recordSweep` ignores `--leads`.** It calls
 > `resolveLeadSource()` with no argument, so

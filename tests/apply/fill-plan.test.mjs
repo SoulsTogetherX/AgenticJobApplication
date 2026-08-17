@@ -1825,7 +1825,10 @@ test("a hostile page that defines __ajFillSrc/__ajPlan getters owns nothing", as
 
   assert.equal(touched, 0, "the driver must never read a page-owned global")
   assert.ok(!ctx.__PWNED && !globalThis.__PWNED, "attacker code must not run")
-  assert.ok(!submitClicked, "hard rule 6: only the user clicks submit")
+  // Not "only the user clicks submit" — rule 6 has let the agent submit since
+  // 2026-08-03. What holds here is narrower and did not change: the fill driver
+  // is not part of the click surface (submit.mjs + advance.mjs are).
+  assert.ok(!submitClicked, "the fill driver must never click submit")
 
   // ...and it still does its actual job, from the literal it was given.
   assert.equal(result.ok, 1)

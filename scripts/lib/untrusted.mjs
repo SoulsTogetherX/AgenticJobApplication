@@ -1273,8 +1273,9 @@ export function describeSensitive(findings) {
 // fix — ask whether the CLASS should have been declared at save time instead.
 export const CLASS_LIMITS =
   "pattern matching on the recorded question: a reworded or non-English consent clause classifies as " +
-  "datum and stays auto-fillable. The controls are hard rule 6 (the user submits) and that a declared " +
-  "class outranks an inferred one — not the completeness of this list."
+  "datum and stays auto-fillable. The controls are hard rule 6 (an assertion-class field defers rather " +
+  "than being answered) and that a declared class outranks an inferred one — not the completeness of " +
+  "this list."
 
 export const ANSWER_CLASSES = new Set(["datum", "assertion"])
 

@@ -5,6 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { spawn } from "node:child_process"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import { DatabaseSync } from "node:sqlite"
 import {
   openDb,
   keywordMap,
@@ -415,6 +416,104 @@ test("board_stats accumulates history", (t) => {
     "a barren sweep must not look productive",
   )
   db.close()
+})
+
+test("board_stats counts sweeps and consecutive dry ones", (t) => {
+  const db = openDb(tmpDb(t))
+  const base = {
+    board_id: "greenhouse:acme",
+    company: "Acme",
+    live_postings: 10,
+    qualifying: 2,
+    solid: 0,
+    leads_produced: 0,
+    last_swept: "2026-07-28T00:00:00Z",
+  }
+  const row = () => db.prepare("SELECT * FROM board_stats").get()
+
+  // The seed is the asymmetric case: one sweep either way, but the streak is
+  // 1 only because this first sweep found nothing. Seeding 0 here would lose
+  // the first dry sweep of every board ever added.
+  recordBoardStats(db, base)
+  assert.equal(row().sweeps, 1, "first sweep counts")
+  assert.equal(row().zero_streak, 1, "a dry first sweep starts the streak at 1")
+
+  recordBoardStats(db, { ...base, last_swept: "2026-07-29T00:00:00Z" })
+  assert.equal(row().sweeps, 2)
+  assert.equal(row().zero_streak, 2, "consecutive dry sweeps accumulate")
+
+  // One reachable posting resets the streak — not decrements it.
+  recordBoardStats(db, {
+    ...base,
+    solid: 3,
+    leads_produced: 3,
+    last_swept: "2026-07-30T00:00:00Z",
+  })
+  assert.equal(row().sweeps, 3, "sweeps keeps counting through a yield")
+  assert.equal(row().zero_streak, 0, "a yielding sweep resets the streak")
+
+  recordBoardStats(db, { ...base, last_swept: "2026-07-31T00:00:00Z" })
+  assert.equal(row().zero_streak, 1, "the streak restarts from the reset")
+
+  // A productive FIRST sweep seeds 0, mirroring last_qualifying_at above.
+  recordBoardStats(db, {
+    ...base,
+    board_id: "ashby:beta",
+    solid: 1,
+    leads_produced: 1,
+  })
+  const beta = db
+    .prepare("SELECT * FROM board_stats WHERE board_id = 'ashby:beta'")
+    .get()
+  assert.equal(beta.sweeps, 1)
+  assert.equal(beta.zero_streak, 0, "a productive first sweep has no streak")
+  db.close()
+})
+
+test("healBoardStats adds the counters without inventing history", (t) => {
+  const file = tmpDb(t)
+  // Build the pre-P6 shape by hand: a board with real history and no counters.
+  // NULL is the honest value for it — the row was swept, we just never counted.
+  const seed = new DatabaseSync(file)
+  seed.exec(`CREATE TABLE board_stats (
+    board_id TEXT PRIMARY KEY, type TEXT, slug TEXT, company TEXT,
+    last_swept TEXT, live_postings INTEGER DEFAULT 0, qualifying INTEGER DEFAULT 0,
+    solid INTEGER DEFAULT 0, leads_produced INTEGER DEFAULT 0, last_qualifying_at TEXT)`)
+  seed
+    .prepare(
+      "INSERT INTO board_stats (board_id, company, leads_produced, last_qualifying_at) VALUES (?, ?, ?, ?)",
+    )
+    .run("greenhouse:legacy", "Legacy", 7, "2026-06-01T00:00:00Z")
+  seed.close()
+
+  const db = openDb(file)
+  const row = () => db.prepare("SELECT * FROM board_stats").get()
+  assert.equal(row().sweeps, null, "an existing row must not claim 0 sweeps")
+  assert.equal(row().zero_streak, null)
+  assert.equal(row().leads_produced, 7, "the heal preserves real history")
+
+  // NULL + 1 is NULL in SQL, so without the COALESCE this board would stay
+  // uncounted forever and could never become proposable.
+  recordBoardStats(db, {
+    board_id: "greenhouse:legacy",
+    company: "Legacy",
+    solid: 0,
+    leads_produced: 0,
+    last_swept: "2026-08-17T00:00:00Z",
+  })
+  assert.equal(row().sweeps, 1, "counting starts at the heal, not at zero+1")
+  assert.equal(row().zero_streak, 1)
+  assert.equal(
+    row().last_qualifying_at,
+    "2026-06-01T00:00:00Z",
+    "the heal must not erase when the board last yielded",
+  )
+  db.close()
+
+  // Idempotent: opening again must not throw on a duplicate ADD COLUMN.
+  const again = openDb(file)
+  assert.equal(again.prepare("SELECT * FROM board_stats").get().sweeps, 1)
+  again.close()
 })
 
 // --- updateApplication under concurrency (autonomy phase 1, item 1.5) ---------

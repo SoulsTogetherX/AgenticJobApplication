@@ -3531,6 +3531,18 @@ fail:
 | `healScreens`         | `screens` gained a `source` column after being created       | drop and rebuild — **refuses** if the table has any rows               |
 | `healAutoSubmissions` | `outcome` and `apply_url` columns; then the primary key move | `ALTER TABLE ADD COLUMN`, then a full rebuild that must not lose a row |
 | `healAutoQueue`       | `reason_stage` and `posted_at` columns                       | `ALTER TABLE ADD COLUMN`, purely additive                              |
+| `healBoardStats`      | `sweeps` and `zero_streak` columns                           | `ALTER TABLE ADD COLUMN`, purely additive — **no `DEFAULT 0`**         |
+
+`healBoardStats`'s omitted default is the interesting one, and it is a
+truthfulness choice rather than a style one: the fresh-table `SCHEMA` does carry
+`DEFAULT 0`, but a database that predates these columns has been sweeping for
+weeks, and backfilling 0 would assert "never swept" about every board in it.
+NULL says "not counted", which is what actually happened, and
+`recordBoardStats` COALESCEs it so counting starts at the heal instead of
+pretending to reach backwards. This matters because the removal proposals in
+`board-yield.mjs --history` key off these counters — a fabricated 0 would make
+the never-yielded rule condemn the whole board list on the first run after the
+migration.
 
 The choice of strategy is not stylistic. `healScreens` drops a table because that
 table was empty in every database in existence, so _"Rebuilding an empty table is
@@ -4006,7 +4018,8 @@ oversight:
 | `readVerifications(db, slug?)`                                           | rows                                                                     |
 | `readWorkspaceStacks(db)`                                                | `Map<slug, { job_sha256, title, company, stack: Set, title_toks: Set }>` |
 | `upsertWorkspaceStack(db, w)`                                            | `changes`. **Throws** without `job_sha256`                               |
-| `recordBoardStats(db, row)`                                              | nothing; accumulates `leads_produced` across sweeps                      |
+| `recordBoardStats(db, row)`                                              | nothing; accumulates `leads_produced` and `sweeps`, resets `zero_streak` |
+| `readBoardStats(db)`                                                     | rows, longest dry streak first                                           |
 
 `recordVerification` refuses a row missing either hash with an explanatory
 message — _"a row missing either is not evidence of anything"_ — which is the

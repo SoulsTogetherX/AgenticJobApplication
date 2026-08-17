@@ -300,6 +300,47 @@ only thing here that compounds: the defer list shrinks as you apply.
 **Never save a pick the user did not see in the message above.** Saving what
 they approved is not a new trust assumption; saving a silent guess is.
 
+### Batch envelope — N jobs, ONE message
+
+When several reviewed jobs are waiting (the pipeline-jobs wrap-up, or the user
+prepped a queue), they share **one** approval message rather than one each. The
+saving is real and it is the whole point: N jobs used to cost N+ round-trips
+with the user sitting at a form between each.
+
+What merges and what does not:
+
+- **Merged once, at the top:** the unknown-question list. `profile/answers.yaml`
+  is global, so "Do you require sponsorship?" answered once is answered for
+  every application that will ever be filed. The machinery already exists —
+  `node scripts/apply/pending-questions.mjs` merges the outstanding questions
+  across every prepped workspace and predicts what these boards will ask from
+  the remembered form shapes.
+- **Never merged — one section per job, headed by company and slug:** the
+  rule-5 tailoring diff (emphasized / dropped / rephrased vs. the general
+  resume) and the rule-6 record (every consent tickbox and `confirm-widget`
+  control the fill will actuate, each with its **label quoted verbatim**), plus
+  that job's picks and its will-fill / will-leave-blank statement.
+
+The per-job half cannot merge because it is what the user is actually
+approving. A tailoring diff is specific to one résumé going out under their
+name, and a quoted consent label is specific to one thing they are assenting
+to. Collapsing five jobs into "the usual consents" would turn the batch from
+one message covering five decisions into one message hiding five — the
+opposite of what the envelope is for.
+
+**Approval covers exactly the jobs named in the message, and nothing else.** Do
+not offer, accept, or infer "approve all of them", "approve any that look like
+this one", or a standing approval for future jobs — those are not a shorter way
+to say the same thing, they are a different thing: an approval for documents and
+assents the user has not read. If the user replies with a blanket approval
+anyway, apply it to the jobs listed in that message and ask again for anything
+later.
+
+The rule above holds inside the envelope with no softening: **never save a pick
+the user did not see in the message.** A batch is where this is easiest to get
+wrong, because the per-job sections are long and the temptation is to summarize
+one away.
+
 Then render the PDFs — only now, only if the form needs files:
 
 ```bash

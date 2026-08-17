@@ -189,7 +189,18 @@ Three to know without looking, because getting them wrong is expensive:
    about this file** — read its `evidence.source === "capture"` entries and
    their `hosts` before assuming a board is blind or sighted. This paragraph
    said "every real board is blind" until 2026-08-17, four days after the user
-   had promoted captures for both allowlisted Greenhouse and Ashby hosts.
+   had promoted captures for an allowlisted Greenhouse host and the Ashby one.
+
+   **THE ALLOWLIST AND THE EVIDENCE LIST ARE DIFFERENT LISTS, and that is the
+   durable point here.** A board being on `board_allowlist` says the user trusts
+   the vendor; a host having a `capture`-sourced rule says this repo can read
+   that vendor's post-submit page. Neither implies the other, so a board can
+   clear the trust gate and still hard-STOP at `unclassified` — which is the
+   system working, not a gap to route around. Do not reason from "it is
+   allowlisted" to "a submit will complete", or from one host of a vendor to
+   another: they are separate hosts to `evidence.hosts` even when the same
+   company runs both. Which hosts are on which list is, again, a fact about
+   `docs/application-limits.yaml` and `scripts/auto/classify.mjs`.
 
    **THE RUNNER IS ARMED. Do not repeat the sentence that used to be here.**
    This paragraph said, until 2026-08-06, that "nothing opens a browser

@@ -669,14 +669,41 @@ export default async function fillPage(page, plan, opts = {}) {
     return g.startsWith(w) && /[\s(,\-:/]/.test(g.charAt(w.length))
   }
 
-  const setCombo = async (loc, item) => {
+  // WHICH LADDER THIS FIELD CLIMBS, AND WHY A HINT ONLY REORDERS IT.
+  //
+  // `plan.comboStrategies` is the BOARD's order — an adapter's list, with the
+  // board-level cached winner already hoisted to the front by fill-plan.mjs.
+  // `item.via` is narrower and is better evidence: the strategy that actually
+  // committed THIS field on THIS form last time. field-cache.mjs's applyCache
+  // serves it back onto the scan (`f.via`) and buildPlan copies it onto the
+  // item, and since Phase 4 both the attended CLI and the unattended stages
+  // record it — but nothing here read it, so every application re-paid for the
+  // board's losing strategy on a field whose winner was already known. That is
+  // 1.5-2.5s per combo, the same cost plan.comboStrategies exists to avoid,
+  // and a board whose per-field widgets disagree (one picker filters, another
+  // does not) cannot be fixed by a single board-level order at all.
+  //
+  // REORDER, NEVER SHORTEN. A hint goes stale exactly when a board changes its
+  // widget — which is the moment trusting it would fail the field outright —
+  // so the whole ladder still runs behind it: a wrong hint costs one extra
+  // attempt, never an unfilled field. A name no strategy implements (a retired
+  // strategy still sitting in an old cache entry) is dropped rather than run.
+  // And the array returned is always a NEW one: plan.comboStrategies is the
+  // board's, shared by every item, and one field's hint must not reorder it
+  // for the rest of the form.
+  const comboOrder = (first) => {
     const order = plan.comboStrategies || [
       "type-enter",
       "type-click",
       "click-option",
     ]
+    if (!first || !strategies[first]) return order
+    return [first, ...order.filter((n) => n !== first)]
+  }
+
+  const setCombo = async (loc, item) => {
     let last = "no strategy ran"
-    for (const name of order) {
+    for (const name of comboOrder(item.via)) {
       const run = strategies[name]
       if (!run) continue
       try {
@@ -780,11 +807,6 @@ export default async function fillPage(page, plan, opts = {}) {
   // value that lands on no token fails the whole item — a partial selection
   // reported ok would ship an answer the user never gave.
   const setComboMulti = async (loc, item) => {
-    const order = plan.comboStrategies || [
-      "type-enter",
-      "type-click",
-      "click-option",
-    ]
     const wants = (item.values || []).map((v) => String(v))
     const tokensNow = async () => {
       try {
@@ -795,19 +817,26 @@ export default async function fillPage(page, plan, opts = {}) {
       }
     }
     const has = (tokens, want) => tokens.some((t) => accepts(t, want))
-    // WHAT WORKED FOR VALUE 1 IS TRIED FIRST FOR VALUE 2. A strategy this
-    // widget ignores still costs 1.5-2.5s before it is ruled out (the same
-    // measurement plan.comboStrategies exists because of), and a multi field
-    // walks the ladder once PER VALUE — so a 3-value picker on a board whose
-    // first strategy does not work paid that failure three times. The order
-    // is only reordered, never shortened: if the remembered winner stops
-    // working mid-field the rest of the ladder still runs.
+    // WHAT WORKED FOR VALUE 1 IS TRIED FIRST FOR VALUE 2, and VALUE 1 STARTS
+    // FROM THE CACHED HINT. A strategy this widget ignores still costs 1.5-2.5s
+    // before it is ruled out (the same measurement plan.comboStrategies exists
+    // because of), and a multi field walks the ladder once PER VALUE — so a
+    // 3-value picker on a board whose first strategy does not work paid that
+    // failure three times. The order is only reordered, never shortened: if
+    // either the remembered winner or this run's own winner stops working
+    // mid-field, the rest of the ladder still runs.
+    //
+    // `via` is what THIS run proved and `item.via` is only what a previous one
+    // remembered, so `via` wins once it exists — and only `via` is returned. A
+    // field whose tokens were all already present ran no strategy and therefore
+    // reports nothing, rather than re-asserting the hint as a fresh measurement
+    // and feeding it to the board-level count in fillPage().
     let via = null
     for (const value of wants) {
       if (has(await tokensNow(), value)) continue
       let done = false
       let last = "no strategy ran"
-      const tryOrder = via ? [via, ...order.filter((n) => n !== via)] : order
+      const tryOrder = comboOrder(via ?? item.via)
       for (const name of tryOrder) {
         const run = strategies[name]
         if (!run) continue

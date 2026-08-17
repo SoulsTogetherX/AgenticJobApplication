@@ -3242,6 +3242,133 @@ test("MEASURED: a cached combo strategy skips the losing attempt", async (t) => 
   )
 })
 
+// --- the PER-FIELD hint (item.via) -----------------------------------------
+// The test above reorders the BOARD's list, which is all the engine could act
+// on. `item.via` is the narrower thing: the strategy that committed THIS field
+// on THIS form last time, served onto the scan by field-cache.mjs's applyCache
+// and copied onto the item by buildPlan. Both the attended CLI and the
+// unattended stages have recorded it since Phase 4 (c47848c) and setCombo /
+// setComboMulti ignored it, so the cost the test above measures was still
+// being paid on any form whose pickers disagree with the board's usual order.
+//
+// ATTEMPTS ARE COUNTED, NOT TIMED. Every strategy calls open() first, which
+// clicks the control, and the option rows are outside it — so a capture-phase
+// listener on #loc counts strategy attempts exactly. The ordering property is
+// then asserted as an integer instead of as a duration, which cannot flake on
+// a fast machine the way the ms comparison above has to be written loosely to
+// avoid.
+const BOARD_ORDER = ["type-enter", "type-click", "click-option"]
+
+const locItem = (extra = {}) => ({
+  k: "f1",
+  how: "combo",
+  sel: "#loc",
+  value: "Las Vegas, NV",
+  label: "Where are you located?",
+  ...extra,
+})
+
+const runCounted = (comboStrategies, items) =>
+  withPage(async (page) => {
+    await page.setContent(CLICK_ONLY_COMBO)
+    await page.evaluate(() => {
+      window.__opens = 0
+      document.getElementById("loc").addEventListener(
+        "click",
+        () => {
+          window.__opens++
+        },
+        true,
+      )
+    })
+    const plan = { comboStrategies, items }
+    const out = await fillPage(page, plan)
+    return { out, plan, opens: await page.evaluate(() => window.__opens) }
+  })
+
+test("a per-field combo hint is tried FIRST, ahead of the board's order", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  const cold = await runCounted(BOARD_ORDER, [locItem()])
+  const hinted = await runCounted(BOARD_ORDER, [locItem({ via: "type-click" })])
+
+  // Both land the value and both report the same winner — the hint changes
+  // what is tried first and nothing else about the outcome.
+  assert.equal(cold.out.ok, 1, JSON.stringify(cold.out.failures))
+  assert.equal(hinted.out.ok, 1, JSON.stringify(hinted.out.failures))
+  assert.equal(cold.out.comboVia.f1, "type-click")
+  assert.equal(hinted.out.comboVia.f1, "type-click")
+
+  // type-enter never commits on this widget, so the board's order pays for it
+  // before type-click wins. The hint skips exactly that attempt.
+  assert.equal(cold.opens, 2, "board order: type-enter loses, type-click wins")
+  assert.equal(hinted.opens, 1, "the hinted strategy won on the first attempt")
+  assert.ok(hinted.opens < cold.opens)
+})
+
+test("a stale or wrong combo hint reorders nothing away — it still lands", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // A cache entry naming a strategy this engine no longer implements. It
+  // cannot be run, and failing the field over a stale hint would be far worse
+  // than the problem, so it is dropped: the ladder runs exactly as if the item
+  // carried no hint at all.
+  const stale = await runCounted(BOARD_ORDER, [locItem({ via: "retired" })])
+  assert.equal(stale.out.ok, 1, JSON.stringify(stale.out.failures))
+  assert.equal(stale.out.comboVia.f1, "type-click")
+  assert.equal(stale.opens, 2, "identical to an unhinted run — nothing skipped")
+
+  // And a hint that IS a real strategy but is WRONG for this widget (the board
+  // changed its picker since the cache was written) must fall THROUGH to the
+  // rest of the ladder rather than narrow it. Ordered so the hint's rung is
+  // last on the board's own list: an engine that trusted the hint instead of
+  // merely trying it first would fail the field outright here.
+  const wrong = await runCounted(
+    ["type-click", "click-option", "type-enter"],
+    [locItem({ via: "type-enter" })],
+  )
+  assert.equal(wrong.out.ok, 1, JSON.stringify(wrong.out.failures))
+  assert.equal(wrong.out.comboVia.f1, "type-click")
+  assert.equal(wrong.opens, 2, "the losing hint, then the board's first choice")
+})
+
+test("a per-field hint reorders one field, never the plan's board order", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // plan.comboStrategies is the BOARD's list and every item shares it, so a
+  // hint that reordered it in place would silently re-point every other combo
+  // on the form. Two items against the one widget (a second value on the same
+  // picker) is the cheapest way to observe that: the hinted field costs one
+  // attempt, and the unhinted one must still cost two, because the board's
+  // order is still type-enter-first for anything without a hint of its own.
+  // Read `ok`, not `verify` — two items sharing a selector necessarily leaves
+  // the first one's value overwritten, which the verify pass reports as a
+  // mismatch and is an artifact of the two-items-one-widget setup, not of the
+  // fill.
+  const run = await runCounted(
+    [...BOARD_ORDER],
+    [
+      locItem({ via: "type-click" }),
+      {
+        k: "f2",
+        how: "combo",
+        sel: "#loc",
+        value: "Remote (US)",
+        label: "Where are you located?",
+      },
+    ],
+  )
+
+  assert.equal(run.out.ok, 2, JSON.stringify(run.out.failures))
+  assert.equal(run.out.comboVia.f1, "type-click")
+  assert.equal(run.out.comboVia.f2, "type-click")
+  assert.equal(run.opens, 3, "1 hinted attempt + 2 for the unhinted field")
+  // A copy went in and the literal is compared, so an in-place reorder of the
+  // caller's array cannot hide behind sharing the same object.
+  assert.deepEqual(
+    run.plan.comboStrategies,
+    ["type-enter", "type-click", "click-option"],
+    "the board's list is shared by every item and must come back untouched",
+  )
+})
+
 test("MEASURED: a 3,000-char cover letter is one fill(), not 45 seconds", async (t) => {
   if (NO_BROWSER) return t.skip(NO_BROWSER)
   // The largest single item in the plan's table. The old richtext verb was

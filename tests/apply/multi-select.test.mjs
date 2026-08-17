@@ -428,6 +428,44 @@ test("a react-select multi picker gets one token per value, verified per token",
   assert.ok(out.comboVia.f2, "the strategy that worked is recorded")
 })
 
+test("a per-field hint seeds the token picker's ladder, and a stale one does not", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // The multi twin of the single-select case in fill-page.test.mjs, where the
+  // saving is measured. Here the READOUT is what matters rather than the
+  // clock: every strategy commits on this widget, so the strategy `comboVia`
+  // names IS the one that was tried first. `item.via` seeds value 1; from
+  // value 2 on, what this run itself proved takes over (a hint is a memory of
+  // the last application, and this field just produced better evidence).
+  const item = (extra = {}) => ({
+    k: "f2",
+    sel: "#skills",
+    how: "combo",
+    value: "JavaScript, Python",
+    values: ["JavaScript", "Python"],
+    ...extra,
+  })
+
+  const cold = await run([item()])
+  assert.equal(cold.out.comboVia.f2, "type-enter", "the ladder's first rung")
+
+  const hinted = await run([item({ via: "click-option" })])
+  assert.equal(hinted.out.ok, 1, JSON.stringify(hinted.out.failures))
+  assert.deepEqual(hinted.state.skillsTokens, ["JavaScript", "Python"])
+  assert.equal(
+    hinted.out.comboVia.f2,
+    "click-option",
+    "the hinted rung ran before type-enter ever did",
+  )
+
+  // A name no strategy implements cannot be run, and must not narrow the
+  // ladder either: the field falls back to the board's order exactly as if it
+  // carried no hint, and still lands every value.
+  const stale = await run([item({ via: "retired" })])
+  assert.equal(stale.out.ok, 1, JSON.stringify(stale.out.failures))
+  assert.deepEqual(stale.state.skillsTokens, ["JavaScript", "Python"])
+  assert.equal(stale.out.comboVia.f2, "type-enter")
+})
+
 test("a single value on a multi picker still fills through the single path", async (t) => {
   if (NO_BROWSER) return t.skip(NO_BROWSER)
   const { out, state } = await run([

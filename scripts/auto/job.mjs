@@ -104,6 +104,10 @@ const CHECK_TO_KIND = new Map([
   ["submit_readiness", "unknown-field"],
   ["company_known", "unknown-field"],
   ["caps", "cap-company"],
+  // Without this entry the fallback makes a duplicate refusal read as
+  // `plan-error` — a malfunction kind. Nothing malfunctioned: the queue was
+  // stale and the gate did its job.
+  ["not_already_applied", "already-applied"],
 ])
 
 /** submitOnce's precondition names -> taxonomy kinds, same reasoning. */

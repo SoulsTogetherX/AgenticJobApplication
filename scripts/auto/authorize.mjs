@@ -98,7 +98,7 @@ import { safeText } from "./untrusted-text.mjs"
 import { capCheck } from "./caps.mjs"
 import { submitReadiness } from "../apply/fill-plan.mjs"
 import { isDisqualifying } from "../lib/untrusted.mjs"
-import { DB_PATH } from "../lib/db.mjs"
+import { DB_PATH, openDb, findPriorApplication } from "../lib/db.mjs"
 
 /** A caller wired this wrong. Never a defer. */
 export class AuthorizationInputError extends TypeError {
@@ -133,6 +133,7 @@ export const SUBMIT_CHECKS = Object.freeze([
   "submit_readiness",
   "company_known",
   "caps",
+  "not_already_applied",
 ])
 
 const HEX64 = /^[0-9a-f]{64}$/
@@ -529,6 +530,60 @@ function evaluate(input) {
       "caps not evaluated: no company name or no auto_apply block",
     )
   }
+
+  // 12. the user has not already applied to this posting.
+  //
+  //     SEPARATE FROM `caps` ON PURPOSE, though both read the ledgers. A cap is
+  //     a volume limit and it is answered per COMPANY; this is an identity
+  //     question answered per POSTING, and the two cannot substitute. Measured
+  //     2026-08-17: three already-applied Cloudflare jobs sat in the queue under
+  //     a `per_company_max_per_week` of 5, so the cap was nowhere near tripping
+  //     and would not have stopped one of them.
+  //
+  //     AND SEPARATE FROM the `auto_submissions` (slug, mode) claim, which only
+  //     knows what this runner sent. Every application on record when this was
+  //     written had been filed attended, so that table was empty and the claim
+  //     was guarding nothing at all.
+  //
+  //     A REFUSAL HERE IS NOT A FAILURE. It means the pipeline found a job the
+  //     user already pursued, which is the queue being stale rather than
+  //     anything going wrong — and `follow-ups` may well be tracking a reply to
+  //     the very application this would have duplicated.
+  let prior = null
+  try {
+    const db = openDb(dbFile)
+    try {
+      prior = findPriorApplication(db, {
+        slug: lead.slug ?? null,
+        urls: [lead.apply_url, lead.url].filter(Boolean),
+      })
+    } finally {
+      db.close()
+    }
+  } catch (e) {
+    // An unreadable ledger must REFUSE, never wave the job through: "we could
+    // not check whether this was already sent" is not a licence to send it.
+    //
+    // Note that a database which cannot be OPENED at all never reaches here —
+    // `capCheck` above opens the same file and lets the error escape, so
+    // authorizeSubmit throws instead, which also fails closed. This branch is
+    // for the readable-database-unreadable-table case, and for not depending on
+    // the order of these checks.
+    push(
+      "not_already_applied",
+      false,
+      `could not read the application ledger to check for a duplicate — ${safeText(e.message, 160)}`,
+    )
+    return { checks, mode, company }
+  }
+  push(
+    "not_already_applied",
+    prior === null,
+    prior === null
+      ? "no prior application on record for this posting"
+      : `already applied on ${safeText(prior.applied_at ?? "an unrecorded date", 40)} ` +
+          `(matched by ${prior.matched}) — re-sending would be a duplicate application`,
+  )
 
   return { checks, mode, company }
 }

@@ -1458,6 +1458,13 @@ export const AUTO_DEFER_KINDS = Object.freeze([
   "board-untrusted",
   "l3-rejected",
   "cap-company",
+  // The user already applied to this posting. NOT `cap-company`, though both
+  // are policy refusals read off the ledgers: a cap says "too many to this
+  // employer this week", this says "this exact posting, already sent". Reusing
+  // the cap kind would send a user to check a weekly budget that is nowhere
+  // near tripping — measured 2026-08-17, three already-applied Cloudflare jobs
+  // under a per_company_max_per_week of 5.
+  "already-applied",
   "posting-gone",
   // Written to every job a board pause STRANDS. Without it those jobs sit in
   // 'queued' carrying no kind at all, so the largest single loss bucket in a
@@ -2366,6 +2373,58 @@ export function readBoardStats(db) {
         ORDER BY COALESCE(zero_streak, 0) DESC, leads_produced ASC, company ASC`,
     )
     .all()
+}
+
+/**
+ * Has this posting already been applied to? Returns the matching application
+ * row (`{slug, company, title, applied_at, source_url}`) or null.
+ *
+ * WHY THIS HAS TO EXIST, and it is not a tidy-up. Nothing on the unattended
+ * path consulted the application ledger: `selectEligible` filters on a passing
+ * verification and the trust gate, and the submit gate's checks are about
+ * authorisation, readiness and volume — none of them asks "did the user already
+ * send this one?". The `auto_submissions` `(slug, mode)` claim looks like it
+ * covers this, but it only knows about submissions THIS RUNNER made, and every
+ * application on record so far was filed through the attended path, so that
+ * table was empty and the claim guarded nothing.
+ *
+ * Measured 2026-08-17: 12 of 21 queued jobs had already been applied to, and a
+ * dry-run rehearsal selected one of them (applied 12 days earlier) and drove it
+ * through scan, plan and fill to the submit gate. What stopped it was an
+ * unrelated CONFIRM deferral on a sponsorship question. With `per_run_max: 10`
+ * a live run could have re-sent ten.
+ *
+ * MATCHES ON SLUG OR SOURCE URL, and not on company+title. The slug is exact
+ * and is what both stores already key by. The URL catches the same posting
+ * re-slugged. Fuzzy company+title matching is deliberately NOT here: two real
+ * openings at one employer often differ only by a level or a team name, and a
+ * false positive silently withholds an application the user wanted — the same
+ * class of harm as the duplicate, in the other direction. A near-miss is the
+ * user's to judge, which is what `check-applied.mjs` is for.
+ */
+export function findPriorApplication(db, { slug = null, urls = [] } = {}) {
+  const rows = db.prepare("SELECT * FROM applications").all()
+  const wanted = new Set(
+    (Array.isArray(urls) ? urls : [urls]).filter(
+      (u) => typeof u === "string" && u.trim(),
+    ),
+  )
+  for (const r of rows) {
+    let doc = {}
+    try {
+      doc = r.doc ? JSON.parse(r.doc) : {}
+    } catch {
+      // A row whose doc will not parse still has a usable slug column, and a
+      // duplicate check that threw on one bad row would fail open.
+    }
+    const rowSlug = r.slug ?? doc.slug ?? null
+    if (slug && rowSlug === slug)
+      return { ...doc, slug: rowSlug, matched: "slug" }
+    const src = doc.source_url ?? null
+    if (src && wanted.has(src))
+      return { ...doc, slug: rowSlug, matched: "source_url" }
+  }
+  return null
 }
 
 export function recordBoardStats(db, row) {

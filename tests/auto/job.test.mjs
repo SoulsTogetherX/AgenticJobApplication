@@ -364,3 +364,50 @@ test("every typed exit uses a kind from the closed taxonomy", async (t) => {
     assert.ok(out.detail, "and it carries a stated, actionable reason")
   }
 })
+
+// --- every submit check must map to a truthful kind --------------------------
+
+test("CHECK_TO_KIND covers every SUBMIT_CHECKS entry", async () => {
+  // `CHECK_TO_KIND.get(first) ?? "plan-error"` means an unmapped check name is
+  // reported as a MALFUNCTION. That is not a hypothetical: `not_already_applied`
+  // was added to SUBMIT_CHECKS and, until this gate existed, would have made
+  // every duplicate-application refusal read as `plan-error` — sending someone
+  // to debug the runner over a stale queue row.
+  //
+  // The fallback stays, because a crash is worse than a wrong label. This test
+  // is what keeps the fallback from being how new checks are reported.
+  const { CHECK_TO_KIND } = await import("../../scripts/auto/job.mjs")
+  const { SUBMIT_CHECKS } = await import("../../scripts/auto/authorize.mjs")
+  const { AUTO_DEFER_KINDS, AUTO_FAILURE_KINDS } = await import(
+    "../../scripts/lib/db.mjs"
+  )
+
+  const unmapped = SUBMIT_CHECKS.filter((c) => !CHECK_TO_KIND.has(c))
+  assert.deepEqual(
+    unmapped,
+    [],
+    `these submit checks would be reported as plan-error: ${unmapped.join(", ")}`,
+  )
+
+  // And each mapped kind must be a real one, or reasonRecord throws at the
+  // moment the check finally fires — which is the worst possible time.
+  const known = new Set([...AUTO_DEFER_KINDS, ...AUTO_FAILURE_KINDS])
+  for (const [check, kind] of CHECK_TO_KIND) {
+    assert.ok(
+      known.has(kind),
+      `${check} maps to "${kind}", which is not in the closed taxonomy`,
+    )
+  }
+})
+
+test("a duplicate refusal is reported as already-applied, not a malfunction", async () => {
+  const { CHECK_TO_KIND } = await import("../../scripts/auto/job.mjs")
+  const { reasonClass } = await import("../../scripts/auto/taxonomy.mjs")
+  const kind = CHECK_TO_KIND.get("not_already_applied")
+  assert.equal(kind, "already-applied")
+  assert.equal(
+    reasonClass(kind),
+    "policy",
+    "a posting the user already applied to is our rule deciding, not a fault",
+  )
+})

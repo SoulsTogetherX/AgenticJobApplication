@@ -101,6 +101,7 @@ export const REASON_CLASSES = Object.freeze({
     "board-untrusted",
     "l3-rejected",
     "cap-company",
+    "already-applied",
   ]),
   malfunction: AUTO_FAILURE_KINDS,
 })
@@ -153,6 +154,11 @@ export const DEFER_PRIORITY = Object.freeze([
   // 3. policy
   "l3-rejected",
   "board-untrusted",
+  // Ahead of the rest of the tier: of every reason in this list it is the one
+  // least worth reporting as work outstanding, because there is nothing to do.
+  // The user already applied; the queue was stale. A backlog item here would
+  // ask someone to fix a job that is finished.
+  "already-applied",
   "cap-company",
   "doc-unverified",
   "fact-base-changed",

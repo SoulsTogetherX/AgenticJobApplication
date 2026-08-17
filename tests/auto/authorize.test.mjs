@@ -1042,3 +1042,121 @@ test("an unflagged plan passes the mirror, and every check still runs", () => {
     "no field label carried an instruction-shaped finding",
   )
 })
+
+// --- check 12: not_already_applied -------------------------------------------
+//
+// Found 2026-08-17, on the eve of go-live: NOTHING on the unattended path asked
+// whether the user had already applied. 12 of 21 queued jobs had been, and a
+// dry-run rehearsal drove one of them (applied 12 days earlier) all the way to
+// this gate. What stopped it was an unrelated CONFIRM deferral, not a duplicate
+// check — there wasn't one.
+//
+// `caps` is not this check and cannot stand in for it: caps are per COMPANY and
+// per WEEK, and the three already-applied Cloudflare jobs sat under a
+// per_company_max_per_week of 5. The `auto_submissions` (slug, mode) claim is
+// not it either — it only knows what this runner sent, and every application on
+// record had been filed attended, so that table was empty.
+
+function seedApplication(s, app) {
+  const db = openDb(s.dbFile)
+  try {
+    upsertApplications(db, [app])
+  } finally {
+    db.close()
+  }
+}
+
+test("a posting already applied to is REFUSED, however clear everything else is", () => {
+  const s = sandbox()
+  // Same input that yields a token in the happy path above — the only thing
+  // different is the ledger.
+  seedApplication(s, {
+    slug: "acme-dev",
+    company: "Acme",
+    title: "Developer",
+    applied_at: "2026-08-05",
+    status: "applied",
+  })
+
+  const r = authorizeSubmit(input(s))
+  assert.equal(r.deferred, true, "a duplicate application must never be sent")
+  const c = named(r, "not_already_applied")
+  assert.equal(c.ok, false)
+  assert.match(c.detail, /already applied on 2026-08-05/)
+  assert.match(c.detail, /matched by slug/)
+})
+
+test("a re-slugged posting is caught by its source_url", () => {
+  const s = sandbox()
+  // The same opening, recorded under a slug the queue no longer uses. Slug
+  // equality alone would miss it and send a second application.
+  seedApplication(s, {
+    slug: "acme-developer-old-slug",
+    company: "Acme",
+    title: "Developer",
+    applied_at: "2026-08-05",
+    status: "applied",
+    source_url: "https://b.test/1",
+  })
+
+  const r = authorizeSubmit(input(s))
+  assert.equal(r.deferred, true)
+  assert.match(named(r, "not_already_applied").detail, /matched by source_url/)
+})
+
+test("a DIFFERENT posting at the same employer still passes", () => {
+  const s = sandbox()
+  // The non-trigger, and the reason company+title matching is deliberately not
+  // in findPriorApplication: two real openings at one employer often differ
+  // only by team or level, and withholding an application the user wanted is
+  // the same class of harm as the duplicate, pointing the other way.
+  seedApplication(s, {
+    slug: "acme-something-else",
+    company: "Acme",
+    title: "Developer",
+    applied_at: "2026-08-05",
+    status: "applied",
+    source_url: "https://b.test/999",
+  })
+
+  const r = authorizeSubmit(input(s))
+  assert.equal(named(r, "not_already_applied").ok, true)
+  assert.equal(r.deferred, false, "a fresh posting must still be submittable")
+})
+
+test("an empty ledger passes the check rather than erroring on it", () => {
+  const s = sandbox()
+  const r = authorizeSubmit(input(s))
+  const c = named(r, "not_already_applied")
+  assert.equal(c.ok, true)
+  assert.match(c.detail, /no prior application on record/)
+})
+
+test("an unreadable ledger yields NO token — it does not fail open", () => {
+  const s = sandbox()
+  // A directory where the database should be, so openDb cannot open it.
+  fs.mkdirSync(s.dbFile, { recursive: true })
+
+  // It THROWS rather than deferring, and the throw comes from `capCheck` at
+  // check 11 — which runs first and does not catch. So the duplicate check's
+  // own try/catch is unreachable by this particular route; it is kept because
+  // a readable database with an unreadable `applications` table is a different
+  // failure that would otherwise reach it, and because the ordering of these
+  // checks is not something this file should depend on.
+  //
+  // What the test actually pins is the property that matters either way: an
+  // unanswerable "has this already been sent?" must not produce a token.
+  // "We could not check" is never a licence to submit.
+  assert.throws(
+    () => authorizeSubmit(input(s)),
+    /unable to open database file/,
+    "an unreadable ledger must stop the submit, by any mechanism",
+  )
+})
+
+test("SUBMIT_CHECKS names the duplicate check, so coverage tests see it", () => {
+  assert.ok(
+    SUBMIT_CHECKS.includes("not_already_applied"),
+    "a check that is emitted but unlisted is invisible to anything auditing the gate",
+  )
+})

@@ -47,6 +47,7 @@ import {
   releaseStaleAutoClaims,
   rowToLead,
   screenIndex,
+  findPriorApplication,
 } from "../lib/db.mjs"
 import { loadYamlFile } from "../lib/lib.mjs"
 import {
@@ -234,6 +235,29 @@ export function selectEligible({
     )
     if (!verdict.ok) {
       rejected.push({ slug, reason: verdict.reason })
+      continue
+    }
+    // ALREADY APPLIED, CHECKED HERE TOO. The submit gate has the load-bearing
+    // copy of this check (`not_already_applied`), because a job already sitting
+    // in auto_queue is resumed without passing through selection at all. This
+    // one is the cheap half: it keeps a posting the user has already pursued
+    // from being enqueued and then spending a browser lane and ~26 s of real
+    // form-filling only to be refused at the end.
+    //
+    // Rejected rather than silently dropped, for the same reason the trust gate
+    // reports its refusals: "we found you a job and it is one you already
+    // applied to" is information about a stale queue, not noise.
+    const prior = findPriorApplication(db, {
+      slug,
+      urls: [applyUrl, lead.apply_url, lead.url].filter(Boolean),
+    })
+    if (prior) {
+      rejected.push({
+        slug,
+        reason:
+          `already applied on ${prior.applied_at ?? "an unrecorded date"} ` +
+          `(matched by ${prior.matched})`,
+      })
       continue
     }
     out.push({

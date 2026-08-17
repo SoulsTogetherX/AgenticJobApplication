@@ -18,6 +18,7 @@ import {
   recordVerification,
   upsertLeads,
   recordScreens,
+  upsertApplications,
   DB_PATH,
 } from "../../scripts/lib/db.mjs"
 import { detectAts } from "../../scripts/apply/ats/index.mjs"
@@ -436,4 +437,57 @@ test("a MODEL verdict wins over the mechanical one", (t) => {
   const out = selectEligible({ db, limits: LIMITS, jobsDir: w.jobsDir })
   db.close()
   assert.deepEqual(out.jobs, [], "the model verdict must decide")
+})
+
+// --- already-applied postings never enter the queue --------------------------
+//
+// The cheap half of the duplicate guard; the load-bearing copy is the submit
+// gate's `not_already_applied`, because a row already in auto_queue is resumed
+// without passing through selection at all. This half stops a posting the user
+// already pursued from costing a browser lane and ~26 s of real form-filling
+// before being refused at the end.
+
+test("a posting already applied to is not selected, and says why", (t) => {
+  const w = world(t)
+  workspace(w, "ok-job", "https://boards.greenhouse.io/a/jobs/1")
+  lead(w, "ok-job", "https://boards.greenhouse.io/a/jobs/1")
+  const db = openDb(w.dbFile)
+  upsertApplications(db, [
+    {
+      slug: "ok-job",
+      company: "Acme",
+      title: "Developer",
+      applied_at: "2026-08-05",
+      status: "applied",
+    },
+  ])
+  const out = selectEligible({ db, limits: LIMITS, jobsDir: w.jobsDir })
+  db.close()
+
+  assert.deepEqual(out.jobs, [], "a duplicate must not be enqueued")
+  assert.equal(out.rejected.length, 1, "and it must be REPORTED, not dropped")
+  assert.match(out.rejected[0].reason, /already applied on 2026-08-05/)
+})
+
+test("selection is unchanged for a posting with no prior application", (t) => {
+  const w = world(t)
+  workspace(w, "ok-job", "https://boards.greenhouse.io/a/jobs/1")
+  lead(w, "ok-job", "https://boards.greenhouse.io/a/jobs/1")
+  const db = openDb(w.dbFile)
+  // A recorded application for a DIFFERENT posting must not suppress this one —
+  // the guard keys on the posting, never on the employer.
+  upsertApplications(db, [
+    {
+      slug: "some-other-job",
+      company: "Acme",
+      title: "Developer",
+      applied_at: "2026-08-05",
+      status: "applied",
+    },
+  ])
+  const out = selectEligible({ db, limits: LIMITS, jobsDir: w.jobsDir })
+  db.close()
+
+  assert.equal(out.jobs.length, 1, "an unapplied posting is still eligible")
+  assert.equal(out.jobs[0].slug, "ok-job")
 })

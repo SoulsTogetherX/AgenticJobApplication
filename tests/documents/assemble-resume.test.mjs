@@ -387,7 +387,7 @@ test("the selection diff names every fact id, in or out, with a reason", () => {
     assert.ok(text.includes(d.id), `${d.id} missing from the diff`)
     assert.match(
       d.reason,
-      /budget exhausted|no bullet under it/,
+      /budget exhausted|no bullet under it|summary variant not chosen/,
       `${d.id}'s reason is not mechanical: ${d.reason}`,
     )
   }
@@ -439,13 +439,17 @@ test("rephraseAudit classifies verbatim, rephrased, dropped and added lines", ()
   assert.equal(by.get("exp-acme-b2"), "rephrased")
   assert.equal(by.get("exp-acme-b1"), "dropped")
   assert.equal(by.get("prj-dash-b1"), "added")
-  assert.equal(by.get("skill-lang"), "verbatim")
+  // skill-fw, not skill-lang: since skills groups compete (2026-08-17), the
+  // node-backend posting keeps skill-fw as its floor (it lists Node.js and
+  // PostgreSQL) and skill-lang is the group that loses at the golden budget.
+  // The anchor has to be a line that is actually on the page.
+  assert.equal(by.get("skill-fw"), "verbatim")
   assert.equal(audit.ok, true)
 })
 
 test("rephraseAudit refuses a citation the fact base does not know", () => {
   const baseline = assemble("node-backend").markdown
-  const edited = baseline.replace("fact:skill-lang", "fact:skill-invented")
+  const edited = baseline.replace("fact:skill-fw", "fact:skill-invented")
   const audit = rephraseAudit({ baseline, edited, factIndex })
   assert.equal(audit.ok, false)
   assert.equal(audit.counts["unknown-fact"], 1)

@@ -80,6 +80,11 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { openDb, rowToLead, screenIndex } from "../lib/db.mjs"
 import { reverifySweep } from "../documents/reverify.mjs"
 import { resolveLeadForTrust, readLimits } from "./trust.mjs"
+// The CONSTANT only. The assembler still runs as a child process below (its
+// import graph is pure and `isMain`-guarded, so importing it here spawns
+// nothing); this is so a refusal is recognised by its exit code rather than by
+// grepping stderr, and so the two files cannot disagree on what 3 means.
+import { EXIT_NO_FIT } from "../documents/assemble-resume.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")
@@ -215,16 +220,16 @@ export function slugFor(lead, { jobsDir, taken = new Set() } = {}) {
  * runner's own verification check reads one, and the runner would then be
  * authorised by a row that vouches for bytes nobody checked.
  */
-export function prepareDocuments(slug, lead, { jobsDir }) {
+export function prepareDocuments(slug, lead, { jobsDir, run = step }) {
   const dir = path.join(jobsDir, slug)
   const stages = []
-  const record = (name, r) => {
-    stages.push({ stage: name, ok: r.ok, detail: r.detail })
+  const record = (name, r, extra = {}) => {
+    stages.push({ stage: name, ok: r.ok, detail: r.detail, ...extra })
     return r.ok
   }
 
   if (!fs.existsSync(path.join(dir, "job.json"))) {
-    const r = step("scripts/documents/new-job.mjs", [
+    const r = run("scripts/documents/new-job.mjs", [
       slug,
       "--from-lead",
       lead.url,
@@ -236,17 +241,23 @@ export function prepareDocuments(slug, lead, { jobsDir }) {
   // first — hard rule 0. What it produces can move which of the user's own
   // facts are selected and can never contribute a word of text.
   if (
-    !record("keyword-plan", step("scripts/documents/keyword-plan.mjs", [slug]))
+    !record("keyword-plan", run("scripts/documents/keyword-plan.mjs", [slug]))
   )
     return { slug, ok: false, stages }
 
-  if (
-    !record(
-      "assemble-resume",
-      step("scripts/documents/assemble-resume.mjs", [slug]),
-    )
-  )
-    return { slug, ok: false, stages }
+  // A REFUSAL IS NOT A FAILURE, and the two must read differently. Exit
+  // EXIT_NO_FIT means the profile has several summary variants and none covers
+  // a term this posting asks for — the assembler did its job and the answer
+  // was "not this one". It is recorded as `skipped` so the digest can count
+  // it as a screening signal, and it stops the pipeline here for the same
+  // reason a real failure does: nothing may reach verify-claims, so no pass
+  // row is written and the runner never sees the lead.
+  {
+    const r = run("scripts/documents/assemble-resume.mjs", [slug])
+    const skipped = !r.ok && r.code === EXIT_NO_FIT ? "no-summary-fit" : null
+    if (!record("assemble-resume", r, skipped ? { skipped } : {}))
+      return { slug, ok: false, ...(skipped ? { skipped } : {}), stages }
+  }
 
   // The durable pass row this writes is what `selectEligible` later reads to
   // decide the job may be applied to at all. Without it the runner will not
@@ -254,7 +265,7 @@ export function prepareDocuments(slug, lead, { jobsDir }) {
   if (
     !record(
       "verify-claims",
-      step("scripts/documents/verify-claims.mjs", [
+      run("scripts/documents/verify-claims.mjs", [
         "resume",
         path.join(dir, "resume.md"),
         "--job",
@@ -267,7 +278,7 @@ export function prepareDocuments(slug, lead, { jobsDir }) {
   if (
     !record(
       "render-pdf",
-      step("scripts/documents/render-pdf.mjs", [
+      run("scripts/documents/render-pdf.mjs", [
         path.join(dir, "resume.md"),
         path.join(dir, "resume.pdf"),
       ]),
@@ -290,7 +301,7 @@ export function prepareDocuments(slug, lead, { jobsDir }) {
   if (fs.existsSync(coverMd)) {
     record(
       "render-cover-pdf",
-      step("scripts/documents/render-pdf.mjs", [
+      run("scripts/documents/render-pdf.mjs", [
         coverMd,
         path.join(dir, "cover-letter.pdf"),
       ]),
@@ -500,6 +511,11 @@ export async function runCycle(argv = []) {
     })
   }
   out.prepared = out.leads.filter((l) => l.ok).length
+  // Leads the assembler refused because no summary variant addressed the
+  // posting. Counted separately from failures because it IS a different thing:
+  // nothing broke, the profile just has no track for this job. A rising number
+  // here says the sweep is bringing in postings the user is not tailored for.
+  out.unfit = out.leads.filter((l) => l.skipped).length
 
   if (!argv.includes("--skip-apply")) {
     // The runner reads the user's own enabled/dry_run. Nothing above this line
@@ -557,7 +573,13 @@ async function main(argv = process.argv.slice(2)) {
   for (const l of out.leads) {
     const failed = l.stages.find((s) => !s.ok)
     process.stdout.write(
-      `  ${l.slug}: ${l.ok ? "documents ready" : `stopped at ${failed?.stage} — ${failed?.detail}`}\n`,
+      `  ${l.slug}: ${
+        l.ok
+          ? "documents ready"
+          : l.skipped
+            ? `skipped — ${l.skipped}: ${failed?.detail}`
+            : `stopped at ${failed?.stage} — ${failed?.detail}`
+      }\n`,
     )
   }
   // Named, never a silent count. A lead the runner cannot take is still a lead
@@ -569,6 +591,7 @@ async function main(argv = process.argv.slice(2)) {
     )
   process.stdout.write(
     `prepared=${out.prepared ?? 0}` +
+      (out.unfit ? ` unfit=${out.unfit}` : "") +
       (out.run
         ? ` run=${out.run.run_id} mode=${out.run.mode} submitted=${out.run.submitted ?? 0}`
         : "") +

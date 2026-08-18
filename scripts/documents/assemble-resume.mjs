@@ -31,8 +31,22 @@
 //        [--out <file>] [--stdout] [--json] [--diff] [--no-selection-file]
 //   node scripts/documents/assemble-resume.mjs <slug> --audit-rephrase <file.md>
 //
+// WHAT THE POSTING SELECTS. Bullets, by keyword coverage — and, since
+// 2026-08-17, WHICH summary variant and WHICH skills groups. A profile may bank
+// several approved summary paragraphs (one per track); exactly one is emitted,
+// the one whose terms best cover what the posting asks for, ties to profile
+// order. Skills groups compete the same way with a floor of one. Before this,
+// every variant was mandatory: five stacked summaries ate the budget and six
+// unrelated jobs got byte-identical resumes with no bullets under four of five
+// jobs. When a profile has two or more variants and NONE covers a term the
+// posting asks for, assembly REFUSES (exit 3, `no-summary-fit`) — the user's
+// call, in their words: "if nothing matches, I shouldn't have applied to this
+// job in the first place." That refusal guards a CHOICE: a single variant is
+// always carried, because with one there is nothing to mis-choose.
+//
 // Exit codes: 0 = assembled (or the rephrase audit passed), 1 = the rephrase
-// audit failed, 2 = usage / refused.
+// audit failed, 2 = usage / refused, 3 = refused: no summary variant fits the
+// posting (`no-summary-fit`; nothing is written).
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -68,13 +82,49 @@ const WEIGHT_MENTIONED = 1
 
 const ANNOTATION = (id) => `<!-- fact:${id} -->`
 
+// The exit code for a refused assembly, exported so cycle.mjs can tell "no
+// summary variant fits this posting" apart from every other failure without
+// parsing stderr. Distinct from 2 (usage/refused) on purpose: 2 means the
+// caller got something wrong, 3 means the caller did everything right and the
+// posting simply is not one this profile can be tailored to.
+export const EXIT_NO_FIT = 3
+
+/**
+ * Thrown by selectItems when the profile carries two or more summary variants
+ * and none of them covers a single term the posting asks for. Carries the
+ * ranked variants and the must_use list so the refusal is auditable: the user
+ * can see every score was 0 rather than take the word for it.
+ */
+export class NoSummaryFit extends Error {
+  constructor({ mustUse, variants }) {
+    const asked = [...mustUse.entries()]
+      .map(([t, req]) => (req ? `${t}*` : t))
+      .sort()
+    const scored = variants.map((v) => `${v.id} ${v.score}`)
+    super(
+      `no summary variant covers a term the posting asked for — must_use: ` +
+        `${asked.join(", ") || "(none)"}; variants scored: ${scored.join(", ")}`,
+    )
+    this.name = "NoSummaryFit"
+    this.code = "no-summary-fit"
+    this.must_use = asked
+    this.variants = variants.map((v) => ({ id: v.id, score: v.score }))
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Item model
 //
 // Every line the document can contain is an ITEM with a fact id, a rendered
-// line, and a content cost. Items are either MANDATORY (a resume without a
-// skills block or an employment history is not a resume, whatever the budget
-// says) or SELECTABLE (bullets, which is where the posting gets its say).
+// line, and a content cost. Items come in three kinds:
+//
+//   MANDATORY   the contact header, every employment heading, education — a
+//               resume without an employment history is not a resume,
+//               whatever the budget says. Charged first, unconditionally.
+//   SELECTABLE  bullets, which is where the posting gets most of its say.
+//   POOLED      `pool: "summary"` — the banked summary variants, of which
+//               EXACTLY ONE is emitted; `pool: "skills"` — the skills groups,
+//               of which AT LEAST ONE is emitted. The posting picks which.
 // ---------------------------------------------------------------------------
 
 const joinNonEmpty = (parts, sep) =>
@@ -140,11 +190,16 @@ export function planItems(profile, factIndex) {
     covers: [],
   })
 
+  // Summary VARIANTS, not summaries: the user banks one approved paragraph per
+  // track and selection emits exactly one. `mandatory: true` here is the bug
+  // this file carried until 2026-08-17 — every variant went in, ~2,100 chars
+  // of a 3,800 budget, and the bullets got 9.
   for (const s of profile.summary ?? []) {
     push({
       id: s.id,
       section: "summary",
-      mandatory: true,
+      mandatory: false,
+      pool: "summary",
       fact: s.id,
       lines: [`${s.text} ${ANNOTATION(s.id)}`],
       text: String(s.text),
@@ -211,11 +266,18 @@ export function planItems(profile, factIndex) {
   for (const sk of profile.skills ?? []) {
     // The fact index's text for a skills group IS "Group: a, b, c", so this
     // line is the fact verbatim, not a re-rendering of it.
+    //
+    // Pooled with a floor of one rather than mandatory: a resume needs A skills
+    // block, not every group the user ever banked. The best-scoring group is
+    // always kept; the rest compete for what the bullets leave. Deliberately
+    // NOT `contextual` — see selectItems on why the skills block never seeds
+    // coverage.
     const text = factIndex.get(sk.id)?.text ?? ""
     push({
       id: sk.id,
       section: "skills",
-      mandatory: true,
+      mandatory: false,
+      pool: "skills",
       fact: sk.id,
       lines: [`- ${text} ${ANNOTATION(sk.id)}`],
       text,
@@ -265,30 +327,50 @@ export function planItems(profile, factIndex) {
 // ---------------------------------------------------------------------------
 
 /**
- * Choose which selectable items fit, by keyword coverage, under `budget`.
+ * Choose which items fit, by keyword coverage, under `budget`.
  *
- * Two phases, in this order and for this reason:
+ * Phases, in this order and for these reasons:
  *
- *   COVERAGE  greedy on MARGINAL gain — the bullet that adds the most
- *             not-yet-covered must_use terms per line. This is the phase the
- *             posting drives, and it is the only place the posting has any
- *             influence at all.
- *   FILL      whatever is left, in profile order, while budget remains. A
- *             bullet that matches no keyword is still the user's real work,
- *             and a page with room on it should carry it.
+ *   STRUCTURAL   every mandatory item — contact, employment headings,
+ *                education. Charged unconditionally.
+ *   SUMMARY      the banked variants ranked by RAW weighted overlap with
+ *                must_use; the best is taken. Ties break to profile order, so
+ *                the order of `summary:` in profile.yaml is load-bearing: the
+ *                one listed first is the tie-break default. With two or more
+ *                variants and a best score of 0 this THROWS NoSummaryFit — a
+ *                posting none of the user's tracks addresses is not one to
+ *                pick a paragraph for. A single variant is always taken: there
+ *                is nothing to mis-choose.
+ *   SKILLS FLOOR the best-scoring skills group, always. A resume needs a
+ *                skills block; it does not need every group ever banked.
+ *   COVERAGE     bullets, greedy on MARGINAL gain — the one that adds the most
+ *                not-yet-covered must_use terms per line. This is the phase
+ *                the posting drives hardest.
+ *   SKILLS       the remaining groups that score above 0, on RAW score, while
+ *                budget remains. Raw, not marginal: the skills block is the
+ *                literal parser's keyword region (keyword-plan.mjs's header),
+ *                and marginal scoring would shrink it for exactly the postings
+ *                the bullets cover well. After COVERAGE, not before, or an
+ *                18-term group out-scores any bullet and eats the freed budget
+ *                before the prose both gatekeepers actually reward.
+ *   FILL         whatever is left — bullets and zero-score groups alike — in
+ *                profile order, while budget remains. A bullet that matches
+ *                no keyword is still the user's real work, and a page with
+ *                room on it should carry it.
  *
  * Emission order is always PROFILE order, never selection order: the posting
  * decides what is on the page, never how the page reads.
  *
- * COVERAGE COUNTS CONTEXT ONLY — the summary and the bullets, never the skills
- * block. That is not a detail: the skills block lists every term the user has,
- * so counting it made every must_use term "already covered" before the first
- * bullet was considered, the greedy phase found zero marginal gain every time,
- * and selection silently degenerated to "profile order until the budget runs
- * out" — the posting had no influence on the document at all. It also matches
- * what the two gatekeepers actually reward (keyword-plan.mjs's header): the
- * literal parser wants the term listed, the LLM layer wants it used in a
- * sentence about real work, and only bullets do the second job.
+ * COVERAGE COUNTS CONTEXT ONLY — the chosen summary and the bullets, never the
+ * skills block. That is not a detail: the skills block lists every term the
+ * user has, so counting it made every must_use term "already covered" before
+ * the first bullet was considered, the greedy phase found zero marginal gain
+ * every time, and selection silently degenerated to "profile order until the
+ * budget runs out" — the posting had no influence on the document at all. It
+ * also matches what the two gatekeepers actually reward: the literal parser
+ * wants the term listed, the LLM layer wants it used in a sentence about real
+ * work, and only bullets do the second job. Skills groups now compete for
+ * INCLUSION, in their own phase, and they still never seed `covered`.
  *
  * Fully deterministic. Ties break on cost, then on profile order.
  */
@@ -296,11 +378,20 @@ export function selectItems(items, mustUse, budget) {
   const weight = (t) =>
     mustUse.get(t) === true ? WEIGHT_REQUIRED : WEIGHT_MENTIONED
   const relevant = (it) => it.covers.filter((t) => mustUse.has(t))
+  const score = (it) => relevant(it).reduce((s, t) => s + weight(t), 0)
+  // A pool ranked best-first. `order` is unique per item, so nothing beyond it
+  // is needed to make the sort total.
+  const ranked = (pool) =>
+    items
+      .filter((it) => it.pool === pool)
+      .map((it) => ({ it, id: it.id, score: score(it), terms: relevant(it) }))
+      .sort((a, b) => b.score - a.score || a.it.order - b.it.order)
 
   const byId = new Map(items.map((it) => [it.id, it]))
   const chosen = new Map() // id -> { how, covers, reason }
   let spent = 0
 
+  // --- STRUCTURAL ---
   const mandatory = items.filter((it) => it.mandatory)
   for (const it of mandatory) {
     spent += costOf(it.text)
@@ -313,7 +404,55 @@ export function selectItems(items, mustUse, budget) {
     })
   }
 
-  const selectable = items.filter((it) => !it.mandatory && !it.conditional)
+  // --- SUMMARY ---
+  //
+  // `how: "mandatory"` for the chosen one, deliberately. It IS structural
+  // that a summary exists; what the posting decided is which text fills the
+  // slot, and the reason line carries that. Keeping the `how` vocabulary at
+  // its four values also keeps every reader of resume-selection.json honest.
+  const variants = ranked("summary")
+  let summary = null
+  if (variants.length === 1) {
+    summary = variants[0]
+    spent += costOf(summary.it.text)
+    chosen.set(summary.id, {
+      how: "mandatory",
+      covers: summary.terms,
+      reason: "the only summary variant — carried for every posting",
+    })
+  } else if (variants.length > 1) {
+    if (variants[0].score === 0) throw new NoSummaryFit({ mustUse, variants })
+    summary = variants[0]
+    const runnerUp = variants[1]
+    spent += costOf(summary.it.text)
+    chosen.set(summary.id, {
+      how: "mandatory",
+      covers: summary.terms,
+      reason:
+        `summary variant chosen for this posting — scored ${summary.score} ` +
+        `(${summary.terms.join(", ")}); ${runnerUp.id} scored ${runnerUp.score}`,
+    })
+  }
+
+  // --- SKILLS FLOOR ---
+  const groups = ranked("skills")
+  if (groups.length) {
+    const g = groups[0]
+    spent += costOf(g.it.text)
+    chosen.set(g.id, {
+      how: "mandatory",
+      covers: g.terms,
+      reason:
+        g.score > 0
+          ? `skills block — lists ${g.terms.join(", ")} (scored ${g.score}), the best match for this posting`
+          : "skills block — no group lists a term the posting asked for; first in profile order kept because a resume without a skills block is not a resume",
+    })
+  }
+
+  // --- COVERAGE ---
+  const bullets = items.filter(
+    (it) => !it.mandatory && !it.conditional && !it.pool,
+  )
   // A bullet drags its project heading in with it the first time.
   const extraCost = (it) =>
     it.parent && byId.get(it.parent)?.conditional && !chosen.has(it.parent)
@@ -333,13 +472,13 @@ export function selectItems(items, mustUse, budget) {
     chosen.set(it.id, { how, covers: relevant(it), reason })
   }
 
-  const covered = new Set()
-  for (const it of mandatory)
-    if (it.contextual) for (const t of relevant(it)) covered.add(t)
+  // Seeded from the CHOSEN summary only. Never from a skills group — see the
+  // header — and never from the un-chosen variants, which are not on the page.
+  const covered = new Set(summary ? summary.terms : [])
 
   for (;;) {
     let best = null
-    for (const it of selectable) {
+    for (const it of bullets) {
       if (chosen.has(it.id)) continue
       const gain = relevant(it)
         .filter((t) => !covered.has(t))
@@ -365,8 +504,28 @@ export function selectItems(items, mustUse, budget) {
     for (const t of added) covered.add(t)
   }
 
+  // --- SKILLS --- the scoring groups beyond the floor, raw score, `covered`
+  // untouched.
+  for (const g of groups.slice(1)) {
+    if (g.score === 0) continue
+    const cost = costOf(g.it.text)
+    if (spent + cost > budget) continue
+    take(
+      g.it,
+      "coverage",
+      `lists ${g.terms.join(", ")} — terms the posting asked for (scored ${g.score})`,
+    )
+  }
+
+  // --- FILL --- everything still standing, in profile order: bullets and the
+  // zero-score skills groups alike. That is what "compete" means at a tight
+  // budget — a group listing nothing the posting asked for waits its turn
+  // behind the user's real work.
   const dropped = []
-  for (const it of selectable) {
+  const fillable = items.filter(
+    (it) => !it.mandatory && !it.conditional && it.pool !== "summary",
+  )
+  for (const it of fillable) {
     if (chosen.has(it.id)) continue
     const cost = costOf(it.text) + extraCost(it)
     if (spent + cost <= budget) {
@@ -376,18 +535,36 @@ export function selectItems(items, mustUse, budget) {
         "no term the posting asked for; included to fill the page",
       )
     } else {
+      const terms = relevant(it)
+      const isGroup = it.pool === "skills"
       dropped.push({
         id: it.id,
         section: it.section,
         chars: cost,
-        covers: relevant(it),
+        covers: terms,
         reason:
           `budget exhausted — needs ${cost} chars, ${Math.max(0, budget - spent)} left` +
-          (relevant(it).length
-            ? `; its terms (${relevant(it).join(", ")}) are already covered`
-            : "; covers nothing the posting asked for"),
+          (terms.length
+            ? isGroup
+              ? `; lists ${terms.join(", ")}, which the posting asked for`
+              : `; its terms (${terms.join(", ")}) are already covered`
+            : isGroup
+              ? "; lists nothing the posting asked for"
+              : "; covers nothing the posting asked for"),
       })
     }
+  }
+
+  // --- DROPPED --- the un-chosen summary variants, with the score that lost.
+  for (const v of variants) {
+    if (chosen.has(v.id)) continue
+    dropped.push({
+      id: v.id,
+      section: "summary",
+      chars: costOf(v.it.text),
+      covers: v.terms,
+      reason: `summary variant not chosen — scored ${v.score} against the posting; ${summary.id} scored ${summary.score}`,
+    })
   }
   for (const it of items) {
     if (it.conditional && !chosen.has(it.id))
@@ -400,7 +577,21 @@ export function selectItems(items, mustUse, budget) {
       })
   }
 
-  return { chosen, dropped, spent, budget, over_budget: spent > budget }
+  return {
+    chosen,
+    dropped,
+    spent,
+    budget,
+    over_budget: spent > budget,
+    summary_choice: {
+      chosen: summary ? summary.id : null,
+      ranked: variants.map((v) => ({
+        id: v.id,
+        score: v.score,
+        terms: v.terms,
+      })),
+    },
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -473,7 +664,7 @@ export function assembleResume({
   const mustUse = new Map(
     (plan?.must_use ?? []).map((m) => [m.skill, m.required === true]),
   )
-  const { chosen, dropped, spent, over_budget } = selectItems(
+  const { chosen, dropped, spent, over_budget, summary_choice } = selectItems(
     items,
     mustUse,
     budget,
@@ -505,6 +696,10 @@ export function assembleResume({
       })),
     dropped,
     not_emitted: notEmitted,
+    // Which summary variant was chosen and how every variant scored, so the
+    // rule-5 diff can show the choice was mechanical and the runner-up was
+    // not close — or was, and profile order decided.
+    summary_choice,
     keyword_coverage: {
       must_use: mustUse.size,
       placed: mustUse.size - missing.length,
@@ -531,6 +726,21 @@ export function formatSelectionDiff(selection) {
     `SELECTION for ${selection.slug ?? "(no slug)"} — ${selection.chars_used}/${selection.budget} chars` +
       (selection.over_budget ? " (OVER BUDGET)" : ""),
   )
+  // The summary choice gets its own line because it is the one decision a
+  // reader most wants to check: which of the user's own paragraphs went out,
+  // and how close the others came.
+  const sc = selection.summary_choice
+  if (sc?.chosen) {
+    const ranked = sc.ranked ?? []
+    const winner = ranked.find((v) => v.id === sc.chosen)
+    const others = ranked.filter((v) => v.id !== sc.chosen)
+    L.push(
+      ranked.length === 1
+        ? `SUMMARY   ${sc.chosen} — the only variant`
+        : `SUMMARY   ${sc.chosen} chosen (scored ${winner?.score ?? "?"}: ${(winner?.terms ?? []).join(", ") || "no terms"}); ` +
+            others.map((v) => `${v.id} ${v.score}`).join(", "),
+    )
+  }
   L.push("")
   L.push(`INCLUDED (${selection.included.length})`)
   for (const i of selection.included)
@@ -683,14 +893,31 @@ export function main(argv = process.argv.slice(2)) {
     targets: limits.roles?.title_keywords ?? [],
   })
 
-  const { markdown, selection } = assembleResume({
-    job,
-    profile: ctx.profile,
-    answers: ctx.answers,
-    plan,
-    budget,
-    factIndex: ctx.factIndex,
-  })
+  let markdown, selection
+  try {
+    ;({ markdown, selection } = assembleResume({
+      job,
+      profile: ctx.profile,
+      answers: ctx.answers,
+      plan,
+      budget,
+      factIndex: ctx.factIndex,
+    }))
+  } catch (e) {
+    // The refusal is decided before anything is written: no resume.md, no
+    // resume-selection.json, so a workspace that fit yesterday keeps
+    // yesterday's document rather than losing it to today's posting. Its own
+    // exit code, so cycle.mjs can record "this posting is not one the profile
+    // addresses" without parsing this message.
+    if (e?.code === "no-summary-fit") {
+      console.error(`refused: no-summary-fit — ${e.message}`)
+      // process.exit here, matching `die` above, rather than a return value:
+      // main()'s return is discarded by the entry wrapper, and a refusal that
+      // exits 0 is a refusal cycle.mjs would count as a prepared document.
+      process.exit(EXIT_NO_FIT)
+    }
+    throw e
+  }
 
   if (rephraseFile) return auditRephrase({ argv, rephraseFile, ctx, markdown })
 
@@ -717,7 +944,8 @@ export function main(argv = process.argv.slice(2)) {
     if (isTerse()) {
       console.log(
         `assembled=${outFile} facts=${selection.included.length} dropped=${selection.dropped.length} ` +
-          `chars=${selection.chars_used}/${selection.budget} keywords=${kc.placed}/${kc.must_use} model_turns=0`,
+          `chars=${selection.chars_used}/${selection.budget} keywords=${kc.placed}/${kc.must_use} ` +
+          `summary=${selection.summary_choice?.chosen ?? "none"} model_turns=0`,
       )
     } else {
       console.log(formatSelectionDiff(selection))

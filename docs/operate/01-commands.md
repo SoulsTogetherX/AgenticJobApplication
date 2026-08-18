@@ -989,22 +989,32 @@ cannot invent a skill, an employer, a date or a metric, so rules R1–R7 hold by
 construction. It takes **zero model turns**.
 
 The posting influences exactly one thing: **which** of your own facts get
-selected. It can never contribute a word of text to the document.
+selected. It can never contribute a word of text to the document. That includes
+**which summary paragraph** goes out: if you bank several in `profile.yaml`
+(one per track), exactly one is emitted — the one whose terms best cover what
+the posting asks for, ties going to whichever you listed first. So the order of
+`summary:` in your profile is a preference: put your general one first.
 
-**Guard:** it refuses to run unless `profile.yaml` has `meta.approved_by_user:
-true`, and says so rather than guessing.
+**Guards:** it refuses to run unless `profile.yaml` has `meta.approved_by_user:
+true`, and says so rather than guessing. And when you have two or more summary
+variants and **none** covers a term the posting asks for, it refuses to
+assemble at all (`no-summary-fit`, exit `3`, nothing written) — a posting none of
+your tracks addresses is not one to pick a paragraph for. With a single variant
+it always assembles; there is nothing to mis-choose.
 
 **Output modes:** `--json` prints the selection record; `--diff` prints a
-human-readable "what was emphasised, dropped, rephrased" table; `--stdout` writes
-the markdown to the terminal instead of a file. Default terse output looks like:
+human-readable "what was emphasised, dropped, rephrased" table, with the summary
+choice and every variant's score on its second line; `--stdout` writes the
+markdown to the terminal instead of a file. Default terse output looks like:
 
 ```
-assembled=jobs/acme/resume.md facts=18 dropped=7 chars=3612/3800 keywords=9/11 model_turns=0
+assembled=jobs/acme/resume.md facts=18 dropped=7 chars=3612/3800 keywords=9/11 summary=summary-fs model_turns=0
 ```
 
 **Exit codes:** `2` for usage, a missing workspace, a missing profile, a bad
-`--budget`, or an unapproved fact base. Under `--audit-rephrase`, `0` means the
-rephrase both preserved the facts and still verifies; `1` means it did not.
+`--budget`, or an unapproved fact base; `3` for `no-summary-fit`. Under
+`--audit-rephrase`, `0` means the rephrase both preserved the facts and still
+verifies; `1` means it did not.
 
 ### 5.4 `verify-claims.mjs` — the truthfulness gate
 

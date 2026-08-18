@@ -2267,7 +2267,7 @@ export const TECH_LEXICON = SKILLS.map((s) => ({
   name: s.canonical,
   group: s.group,
   re: new RegExp(
-    `(^|[^a-z0-9+#.])(${(s.aliases ?? []).join("|")})($|[^a-z0-9+#])`,
+    `(^|[^a-z0-9+#.])(${(s.aliases ?? []).join("|")})${s.versioned ? "\\d*" : ""}($|[^a-z0-9+#])`,
     "i",
   ),
 }))
@@ -2275,6 +2275,17 @@ export const TECH_LEXICON = SKILLS.map((s) => ({
 
 **131 entries**, each `{ name, group, re }`. The alias fragments are joined with
 `|` (regex alternation, meaning "any of these") and wrapped in boundary groups.
+
+The `\d*` for `versioned` entries is 2026-08-17, and it fixes a miss on **both
+sides** of every match: the trailing boundary refuses any word character after
+the term, `1` is one, so `"C++17"` never read as C++ — the user's own profile
+line "Built a C++17 slot-machine math engine" evidenced no C++, and a posting
+saying "Modern C++17 required" demanded none. Only `C++` and `C#` carry the flag.
+It is opt-in per entry rather than a blanket relaxation because for a plain-word
+alias a trailing digit is more often a different token (`Go2`, `Java11` are
+fine, but "Spring 2027" is not), and those entries keep the strict boundary they
+were curated under. `usesForm` in `checkWrittenForm` mirrors the rule for forms
+ending in `+`/`#`, so the two never disagree about whether "C++17" was written.
 
 Note that these boundaries are **characters**, not zero-width assertions:
 `(^|[^a-z0-9+#.])` consumes one character. That is a different technique from

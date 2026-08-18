@@ -81,8 +81,8 @@ export const SKILLS = [
   { canonical: "TypeScript", group: "Languages", surface: ["TypeScript"], aliases: ["typescript", "ts"], ats: ["TypeScript"], adjacent: ["JavaScript", "Node.js", "React"] },
   { canonical: "JavaScript", group: "Languages", surface: ["JavaScript"], aliases: ["javascript", "es6", "ecmascript"], ats: ["JavaScript"], adjacent: ["TypeScript", "Node.js", "HTML/CSS"] },
   { canonical: "Python", group: "Languages", surface: ["Python"], aliases: ["python"], ats: ["Python"], adjacent: ["Pandas", "NumPy", "FastAPI"] },
-  { canonical: "C++", group: "Languages", surface: ["C++"], aliases: ["c\\+\\+", "cpp"], ats: ["C++"], adjacent: [] },
-  { canonical: "C#", group: "Languages", surface: ["C#"], aliases: ["c#", "\\.net", "dotnet"], ats: ["C#"], adjacent: [] },
+  { canonical: "C++", group: "Languages", surface: ["C++"], aliases: ["c\\+\\+", "cpp"], ats: ["C++"], adjacent: [], versioned: true },
+  { canonical: "C#", group: "Languages", surface: ["C#"], aliases: ["c#", "\\.net", "dotnet"], ats: ["C#"], adjacent: [], versioned: true },
   { canonical: "Java", group: "Languages", surface: ["Java"], aliases: ["java"], ats: ["Java"], adjacent: [] },
   { canonical: "Go", group: "Languages", surface: ["Golang", "Go"], aliases: ["golang"], ats: ["Go"], adjacent: [] },
   { canonical: "Rust", group: "Languages", surface: ["Rust"], aliases: ["rust"], ats: ["Rust"], adjacent: [] },
@@ -414,8 +414,18 @@ export const TECH_LEXICON = SKILLS.map((s) => ({
   // Same boundary shape as the original lexicon in profile-gaps.mjs: a term
   // may not be preceded or followed by another word character, but "+", "#"
   // and "." are allowed INSIDE a term so C++, C# and Node.js match.
+  //
+  // `versioned` entries may also be followed by a standard number: "C++17",
+  // "C++20", "C#12" name the language, and the trailing boundary alone was
+  // refusing them because "1" is a word character. Found 2026-08-17 when the
+  // profile's own "Built a C++17 slot-machine math engine" extracted no C++ —
+  // and a posting saying "Modern C++17 required" extracted nothing either, so
+  // the miss was on both sides of every match. Opt-in per entry, not blanket:
+  // for a plain-word alias a trailing digit is more often a different token
+  // ("Go2", "Java11" is fine but "Spring 2027" is not), and those entries keep
+  // the strict boundary they were curated under.
   re: new RegExp(
-    `(^|[^a-z0-9+#.])(${(s.aliases ?? []).join("|")})($|[^a-z0-9+#])`,
+    `(^|[^a-z0-9+#.])(${(s.aliases ?? []).join("|")})${s.versioned ? "\\d*" : ""}($|[^a-z0-9+#])`,
     "i",
   ),
 }))
@@ -531,10 +541,16 @@ const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 // Does `text` contain `form` as a standalone token? Tolerates "." "+" "#"
 // inside a term the way techTermsIn does, so "Node.js" and "C++" work.
+//
+// A form ending in "+" or "#" may carry a standard number ("C++17", "C#12"),
+// mirroring TECH_LEXICON's `versioned` entries. The two must agree: if the
+// lexicon reads "C++17" as C++ but this did not, checkWrittenForm would flag
+// "c++17" as a spelling nobody wrote and miss "C++17" as one they did.
 function usesForm(text, form) {
-  return new RegExp(`(?<![A-Za-z0-9+#.])${escRe(form)}(?![A-Za-z0-9+#])`).test(
-    text,
-  )
+  const versioned = /[+#]$/.test(form) ? "\\d*" : ""
+  return new RegExp(
+    `(?<![A-Za-z0-9+#.])${escRe(form)}${versioned}(?![A-Za-z0-9+#])`,
+  ).test(text)
 }
 
 // Check a FINISHED document for written-form problems.

@@ -193,6 +193,36 @@ test("detection does not fire on ambiguous prose", () => {
   }
 })
 
+test("a versioned language name still names the language", () => {
+  // Found 2026-08-17: the trailing boundary refused any word character after
+  // the term, and "1" is one, so "C++17" — the profile's own slot-machine
+  // engine — extracted no C++, and a posting saying "Modern C++17" extracted
+  // nothing. The miss was on both sides of every match.
+  for (const [text, name] of [
+    ["Built a C++17 slot-machine math engine", "C++"],
+    ["Modern C++20 required", "C++"],
+    ["C#12 with .NET 8", "C#"],
+    ["plain C++ works too", "C++"],
+  ]) {
+    assert.ok(extractTech(text).has(name), `"${text}" did not read as ${name}`)
+  }
+  // Opt-in per entry, NOT a blanket relaxation: a plain-word alias followed by
+  // a digit is more often a different token, and those keep the strict
+  // boundary they were curated under. Pins today's behaviour so widening it is
+  // a deliberate act rather than a side effect.
+  assert.ok(!extractTech("Go2 release").has("Go"))
+  assert.ok(!extractTech("Java11 shop").has("Java"))
+  // The written-form checker must agree with the lexicon, or "C++17" would be
+  // flagged as a spelling nobody wrote while "c++17" went unflagged.
+  assert.deepEqual(checkWrittenForm("Built a C++17 engine"), [])
+  assert.ok(
+    checkWrittenForm("Built a c++17 engine").some(
+      (i) => i.issue === "noncanonical_spelling" && i.prefer === "C++",
+    ),
+    "a lowercase versioned form is still the wrong spelling",
+  )
+})
+
 // --- what R6 is allowed to treat as the same claim ---------------------------
 //
 // Both lists feed the truthfulness gate, so both are tested for the same thing:

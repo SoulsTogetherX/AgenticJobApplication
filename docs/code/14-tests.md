@@ -292,6 +292,25 @@ all nine files and commit. That is not always wrong — but it must be a decisio
 made after **reading the diff**, not a reflex. A regenerated golden that nobody
 read is a test that has been switched off.
 
+It happened on 2026-08-17, and it is worth having the record. Skills groups
+started competing for budget instead of all being mandatory, and **five** of the
+nine goldens moved — `cloud-platform`, `graphql-api`, `node-backend`,
+`python-data`, `react-frontend` — the four `fullstack-*` files and the
+default-budget one byte-identical. The change was predicted per file _before_
+regenerating (a table of "this group out, this bullet in"), each diff was read
+against the prediction, and every one was exactly one or two zero-relevance
+`- Group: …` lines out and one real bullet in. That is what "regenerate after
+reading" looks like in practice.
+
+The same change also needed a fixture the existing one could not provide:
+`profile.yaml` has **one** summary variant, and with one there is nothing to
+choose. `profile-multi.yaml` has five, ordered so a tie is observable, and
+`tests/documents/assemble-variants.test.mjs` is the suite over it — one variant
+emitted, the others dropped with a mechanical reason, a tie going to profile
+order and not to cost, a posting no variant addresses **refused** (exit 3,
+nothing written), a hostile posting unable to steer the pick, and a hand-built
+proof that a skills group never seeds coverage.
+
 ## 1.5 What a boundary case is
 
 A **boundary case** is an input at the edge of what the code is supposed to

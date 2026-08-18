@@ -15,8 +15,10 @@ import {
   step,
   stepDetail,
   stageRecord,
+  prepareDocuments,
   STDERR_TAIL_LINES,
 } from "../../scripts/auto/cycle.mjs"
+import { EXIT_NO_FIT } from "../../scripts/documents/assemble-resume.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")
@@ -139,4 +141,98 @@ test("stageRecord carries ok, detail and the stderr tail", () => {
     detail: "",
     stderr: "",
   })
+})
+
+// --- prepareDocuments: a refusal is a skip, a failure is a failure -----------
+//
+// The assembler exits EXIT_NO_FIT when the profile has several summary
+// variants and none covers a term the posting asks for. That is the assembler
+// working, not breaking, and the cycle must say so — a digest that lumps
+// "your profile has no track for this job" in with "verify-claims crashed"
+// hides a screening signal inside a bug count. `run` is injected so these
+// drive the sequence without spawning anything.
+
+function workspaceWithJob(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-cycle-prep-"))
+  fs.mkdirSync(path.join(dir, "acme-dev"))
+  fs.writeFileSync(
+    path.join(dir, "acme-dev", "job.json"),
+    JSON.stringify({ slug: "acme-dev", company: "Acme", title: "Dev" }),
+  )
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  return dir
+}
+
+const ok = () => ({ ok: true, code: 0, detail: "", stderr: "" })
+
+test("prepareDocuments records a no-summary-fit refusal as SKIPPED and stops", (t) => {
+  const jobsDir = workspaceWithJob(t)
+  const calls = []
+  const run = (script) => {
+    calls.push(script)
+    if (script.includes("assemble-resume"))
+      return {
+        ok: false,
+        code: EXIT_NO_FIT,
+        detail:
+          "refused: no-summary-fit — no summary variant covers a term the posting asked for",
+        stderr: "",
+      }
+    return ok()
+  }
+  const out = prepareDocuments("acme-dev", {}, { jobsDir, run })
+
+  assert.equal(out.ok, false)
+  assert.equal(out.skipped, "no-summary-fit")
+  assert.deepEqual(
+    out.stages.map((s) => s.stage),
+    ["keyword-plan", "assemble-resume"],
+    "it stops at the refusal",
+  )
+  assert.equal(out.stages.at(-1).skipped, "no-summary-fit")
+  assert.ok(
+    !calls.some((s) => s.includes("verify-claims")),
+    "no pass row may be written for a document that was never assembled",
+  )
+  assert.ok(!calls.some((s) => s.includes("render-pdf")))
+})
+
+test("prepareDocuments treats any OTHER assembler exit as a plain failure", (t) => {
+  const jobsDir = workspaceWithJob(t)
+  const run = (script) =>
+    script.includes("assemble-resume")
+      ? { ok: false, code: 2, detail: "usage: something wrong", stderr: "" }
+      : ok()
+  const out = prepareDocuments("acme-dev", {}, { jobsDir, run })
+  assert.equal(out.ok, false)
+  assert.equal(out.skipped, undefined, "exit 2 is not a fit refusal")
+  assert.equal(out.stages.at(-1).stage, "assemble-resume")
+  assert.equal(out.stages.at(-1).skipped, undefined)
+})
+
+test("prepareDocuments runs the stages in order and passes each the right arguments", (t) => {
+  const jobsDir = workspaceWithJob(t)
+  const calls = []
+  const run = (script, args) => {
+    calls.push({ script, args })
+    return ok()
+  }
+  const out = prepareDocuments("acme-dev", {}, { jobsDir, run })
+  assert.equal(out.ok, true)
+  assert.deepEqual(
+    calls.map((c) => c.script),
+    [
+      "scripts/documents/keyword-plan.mjs",
+      "scripts/documents/assemble-resume.mjs",
+      "scripts/documents/verify-claims.mjs",
+      "scripts/documents/render-pdf.mjs",
+    ],
+    "job.json exists so new-job is skipped; no cover-letter.md so no cover render",
+  )
+  assert.deepEqual(calls[1].args, ["acme-dev"])
+  assert.equal(calls[2].args[0], "resume")
+  // path.join, so the separator is the platform's; compare the tail as parts.
+  const tail = (p) => p.split(/[\\/]/).slice(-2).join("/")
+  assert.equal(tail(calls[2].args[1]), "acme-dev/resume.md")
+  assert.equal(tail(calls[3].args[1]), "acme-dev/resume.pdf")
 })

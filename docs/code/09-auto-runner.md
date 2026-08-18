@@ -2250,9 +2250,18 @@ reverify: ok — 33 stale job(s): 54 re-passed, 0 failed, 0 missing (411ms)
 prep: ok
   render-swe-compute-infra: documents ready
   acme-backend-engineer: stopped at verify-claims — 2 unsupported claims
+  initech-mainframe-cobol: skipped — no-summary-fit: refused: no-summary-fit — no summary variant covers a term the posting asked for — must_use: COBOL*, JCL*; variants scored: summary-fs 0, summary-gaming 0, …
   skipped Globex — Staff Engineer: board not on the allowlist (www.adzuna.com)
-prepared=1 run=2026-08-04T02-55-53-304Z-c1900f mode=live submitted=0
+prepared=1 unfit=1 run=2026-08-04T02-55-53-304Z-c1900f mode=live submitted=0
 ```
+
+The `skipped — no-summary-fit` line and the `unfit=` count are 2026-08-17: the
+assembler exits `EXIT_NO_FIT` (3) when the profile banks two or more summary
+variants and none covers a term the posting asks for. That is the assembler
+working, not breaking, and the cycle keeps the two apart — a digest that lumped
+"your profile has no track for this job" in with "verify-claims crashed" would
+hide a screening signal inside a bug count. `unfit=` is printed only when it is
+non-zero.
 
 Nothing in `package.json` runs it; it is meant for an operating-system scheduler.
 Exit codes: 0 ok, 2 usage. In practice `main` always returns 0 — "A stage that
@@ -2260,12 +2269,12 @@ fails for one lead is reported and does not change the exit code."
 
 ### 3. Everything it exposes
 
-| export                                    | shape                                                                             |
-| ----------------------------------------- | --------------------------------------------------------------------------------- |
-| `step(script, args, {cwd, timeout})`      | `{ok, code, stdout, detail}` — **never throws**                                   |
-| `slugFor(lead, {jobsDir, taken})`         | `string` — a filesystem-safe workspace name                                       |
-| `prepareDocuments(slug, lead, {jobsDir})` | `{slug, ok, stages: [{stage, ok, detail}]}`                                       |
-| `runCycle(argv)`                          | `Promise<{started, stages, reverify?, leads, skipped, prepared, run?, finished}>` |
+| export                                                | shape                                                                                                                                                                                                   |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `step(script, args, {cwd, timeout})`                  | `{ok, code, stdout, detail}` — **never throws**                                                                                                                                                         |
+| `slugFor(lead, {jobsDir, taken})`                     | `string` — a filesystem-safe workspace name                                                                                                                                                             |
+| `prepareDocuments(slug, lead, {jobsDir, run = step})` | `{slug, ok, skipped?, stages: [{stage, ok, detail, skipped?}]}` — `skipped: "no-summary-fit"` when the assembler exited `EXIT_NO_FIT`; `run` is injectable so tests drive the sequence without spawning |
+| `runCycle(argv)`                                      | `Promise<{started, stages, reverify?, leads, skipped, prepared, unfit, run?, finished}>`                                                                                                                |
 
 `step` runs a child process with `spawnSync` and returns its exit code and the
 last three lines of stderr (truncated to 300 characters) as **data**:

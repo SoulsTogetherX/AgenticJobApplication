@@ -1687,7 +1687,10 @@ node scripts/documents/assemble-resume.mjs <slug> --audit-rephrase <file.md> [--
 ```
 
 Exit codes: **0** assembled (or the rephrase audit passed) · **1** the rephrase
-audit failed · **2** usage or refused.
+audit failed · **2** usage or refused · **3** refused, `no-summary-fit` — the
+profile has two or more summary variants and none covers a term the posting
+asks for; nothing is written (`EXIT_NO_FIT`, exported so `cycle.mjs` can tell it
+from a failure without parsing stderr).
 
 ### E.1 The item model
 
@@ -1698,6 +1701,7 @@ Every line the document can contain is an **item**:
   id: "exp-acme-b1",       // the fact id, or "__contact"
   section: "experience",   // header | summary | experience | projects | skills | education
   mandatory: false,        // true = always emitted, whatever the budget
+  pool: "summary",         // "summary" (exactly one emitted) | "skills" (at least one) | absent
   conditional: true,       // true = a project heading, emitted only if a child survives
   parent: "exp-acme",      // for bullets: the heading they belong to
   fact: "exp-acme-b1",     // the id cited in the annotation (null for __contact)
@@ -1721,13 +1725,18 @@ Three rendering helpers produce the exact markdown:
 - `prjHeading(prj)` → `### Demo Dashboard (React, PostgreSQL)`
 - `eduLine(edu)` → `State University — B.S. Computer Science, Jun 2023, GPA 3.50`
 
-**Mandatory vs selectable:**
+**Mandatory, selectable, pooled** (the third kind since 2026-08-17):
 
-- **Mandatory** — `__contact`, every summary item, every experience heading, every
-  skills group, every education line. _"a resume without a skills block or an
-  employment history is not a resume, whatever the budget says."_
+- **Mandatory** — `__contact`, every experience heading, every education line.
+  _"a resume without an employment history is not a resume, whatever the budget
+  says."_ Charged first, unconditionally.
 - **Selectable** — experience bullets and project bullets. This is where the
-  posting gets its say.
+  posting gets most of its say.
+- **Pooled** — `pool: "summary"`: the banked summary variants, of which
+  **exactly one** is emitted; `pool: "skills"`: the skills groups, of which **at
+  least one** is emitted. The posting picks which, by term overlap with
+  `must_use`. Until 2026-08-17 both were mandatory, and five stacked summaries
+  ate the whole budget (the resolved defect below).
 - **Conditional** — project headings. _"A project heading is emitted only if one
   of its bullets survives selection — a project with nothing relevant under it is
   a line of noise."_
@@ -1768,32 +1777,62 @@ Annotations and list markers are not charged:
 **3800** is a one-page resume at a normal body size; _"the number is a knob
 because page density is a per-user judgement, not a fact about the pipeline."_
 
-Two phases, in this order:
+Seven phases, in this order (the summary/skills phases are 2026-08-17; before
+that there were two, COVERAGE and FILL, and every summary and skills line was
+mandatory):
 
-1. **COVERAGE** — greedy on **marginal gain**. Repeatedly pick the unselected
-   bullet that adds the most not-yet-covered `must_use` terms, weighted, that
-   still fits the remaining budget. "Greedy" means: take the best-looking option
-   right now, do not search for a globally optimal set. Ties break on **cost**
-   (cheaper wins), then on **profile order** (earlier wins), which is what makes
-   the result fully deterministic.
-2. **FILL** — everything left, in profile order, while budget remains. _"A bullet
-   that matches no keyword is still the user's real work, and a page with room on
-   it should carry it."_
+1. **STRUCTURAL** — every mandatory item, charged unconditionally.
+2. **SUMMARY** — the `pool: "summary"` variants ranked by **raw** weighted
+   overlap with `must_use` (`score = Σ weight(t)` over the variant's relevant
+   terms), best first, ties to **profile order**. Zero variants → no summary;
+   one → taken whatever it scores (_"the only summary variant — carried for
+   every posting"_); two or more → the best is taken, and **if the best scores
+   0 the function throws `NoSummaryFit`**. The reason line names the score, the
+   terms, and the runner-up's score, so the diff shows how close it was.
+3. **SKILLS FLOOR** — the best-scoring `pool: "skills"` group, always. A resume
+   needs a skills block; it does not need every group ever banked.
+4. **COVERAGE** — bullets, greedy on **marginal gain**. Repeatedly pick the
+   unselected bullet that adds the most not-yet-covered `must_use` terms,
+   weighted, that still fits. "Greedy" means: take the best-looking option right
+   now, do not search for a globally optimal set. Ties break on **cost** (cheaper
+   wins), then on **profile order** (earlier wins).
+5. **SKILLS** — the remaining groups that score above 0, on **raw** score, while
+   budget remains. Raw rather than marginal because the skills block is the
+   literal parser's keyword region and marginal scoring would shrink it for
+   exactly the postings the bullets cover well. After COVERAGE, not before: an
+   18-term group would out-score any bullet and eat the freed budget before the
+   prose both gatekeepers actually reward.
+6. **FILL** — everything left — bullets and zero-score groups alike — in profile
+   order, while budget remains. _"A bullet that matches no keyword is still the
+   user's real work, and a page with room on it should carry it."_ A group
+   listing nothing the posting asked for waits its turn behind that work; that
+   is what "compete" means at a tight budget.
+7. **DROPPED** — un-chosen variants (_"summary variant not chosen — scored N
+   against the posting; \<winner\> scored W"_), then FILL's leftovers, then unused
+   conditional headings.
 
 **Emission order is always profile order, never selection order** — _"the posting
 decides what is on the page, never how the page reads."_
 
 **Coverage counts context only**, and this is the load-bearing subtlety:
 
-> the summary and the bullets, never the skills block. That is not a detail: the
-> skills block lists every term the user has, so counting it made every
-> `must_use` term "already covered" before the first bullet was considered, the
-> greedy phase found zero marginal gain every time, and selection silently
+> the chosen summary and the bullets, never the skills block. That is not a
+> detail: the skills block lists every term the user has, so counting it made
+> every `must_use` term "already covered" before the first bullet was considered,
+> the greedy phase found zero marginal gain every time, and selection silently
 > degenerated to "profile order until the budget runs out" — the posting had no
 > influence on the document at all.
 
-Mechanically: `covered` is seeded only from mandatory items with
-`contextual: true` (the summary), and a skills item's `covers` is never added.
+Mechanically: `covered` is seeded from the **chosen** summary variant's terms
+only. A skills group's `covers` is never added (that is the old rule), and
+neither are the un-chosen variants' — they are not on the page. Skills groups
+compete for _inclusion_ in phase 5; they still never seed coverage.
+
+**The tie-break is load-bearing.** Integer scores tie often on real profiles
+(measured on the six re-prepped jobs: two of six were ties), and profile order
+decides — so the order of `summary:` in `profile.yaml` is now a preference the
+user expresses, with the first-listed variant as the default. That file is
+theirs; say so, never reorder it.
 
 A bullet drags its conditional project heading in with it, and the heading's cost
 is charged at that moment — recorded as `how: "carried"` with
@@ -1814,10 +1853,16 @@ then takes `exp-beta-b2` (gain 1, cost 34, 90 − 23 = 67 left, so it fits). FIL
 then adds anything else that still fits, in profile order.
 
 The return value: `{ chosen: Map<id, {how, covers, reason}>, dropped, spent,
-budget, over_budget }`, where `how` is one of `"mandatory"`, `"coverage"`,
-`"fill"`, `"carried"`. Dropped reasons are mechanical strings, e.g.
-`"budget exhausted — needs 118 chars, 42 left; its terms (React) are already
-covered"`, and for an unused project heading, `"no bullet under it was selected"`.
+budget, over_budget, summary_choice: { chosen, ranked: [{id, score, terms}] } }`,
+where `how` is one of `"mandatory"`, `"coverage"`, `"fill"`, `"carried"`. The
+chosen summary and the skills floor are `how: "mandatory"` — it _is_ structural
+that a summary and a skills block exist; what the posting decided is which text
+fills the slot, and the reason line carries that. Keeping the `how` vocabulary
+at four values keeps every reader of `resume-selection.json` honest. Dropped
+reasons are mechanical strings, e.g. `"budget exhausted — needs 118 chars, 42
+left; its terms (React) are already covered"`, `"summary variant not chosen —
+scored 0 against the posting; summary-fs scored 6"`, and for an unused project
+heading, `"no bullet under it was selected"`.
 
 ### E.3 Emission and the blank-line discipline
 
@@ -1856,6 +1901,17 @@ emphasised, dropped and rephrased. The comment:
 > Until now that was a model describing its own work, which is the one source
 > that cannot be checked. This is the selection itself: fact ids in, fact ids out,
 > and the reason each one moved. Nothing here is generated text.
+
+Since 2026-08-17 the second line is the summary choice, because it is the one
+decision a reader most wants to check — which of the user's own paragraphs went
+out, and how close the others came:
+
+```
+SUMMARY   summary-fs chosen (scored 6: AWS, Docker, Git); summary-godot 3, summary-gaming 2, summary-qa 2, summary-tutor 0
+```
+
+or `SUMMARY   summary-fs — the only variant` on a single-variant profile. It
+reads `selection.summary_choice` and is omitted when there is no summary at all.
 
 The output ends with the line:
 
@@ -1967,14 +2023,33 @@ failure"_.
 > computations each run twice. The re-derivation is defensible on purity grounds;
 > the process-per-stage structure is not.
 
-> **Known defect (2026-08-05 audit).** `planItems()` marks every `profile.summary`
-> entry `mandatory: true`, so all of them are emitted for every job and none
-> competes for space — meaning the deterministic path cannot use the
-> highest-weighted region of the document as a lever at all. Making summary items
-> selectable-by-coverage (keeping at least one, still verbatim, still cited)
-> would let the owner bank several approved summary variants and have the
-> posting-appropriate one chosen mechanically. That adds no model, no posting
-> bytes and no new claim.
+> **Resolved 2026-08-17** (was: Known defect, 2026-08-05 audit — "every
+> `profile.summary` entry is `mandatory: true`, so all of them are emitted for
+> every job and none competes for space"). It stopped being theoretical the day
+> it was fixed: with five banked variants (~2,100 of 3,800 chars) the bullets had
+> **9 characters** left, and six unrelated jobs assembled **byte-identically** —
+> five stacked summaries, four of five jobs with no bullets under them, all
+> eleven projects dropped. `verify-claims` passed every one, correctly: it checks
+> truthfulness, not quality.
+>
+> Now: summary variants are `pool: "summary"` and **exactly one** is emitted —
+> the one whose `covers` best overlap `must_use` (required ×2, mentioned ×1),
+> ties to profile order. Skills groups are `pool: "skills"` with a floor of one
+> and compete for the rest. When a profile has **two or more** variants and none
+> scores above 0, `selectItems` throws `NoSummaryFit` and the CLI exits **3**
+> (`no-summary-fit`) without writing — the user's rule: "if nothing matches, I
+> shouldn't have applied to this job in the first place." A single variant is
+> always carried; the refusal guards a _choice_, and with one there is nothing to
+> mis-choose. Still no model, still no posting bytes, still verbatim and cited;
+> `resume-selection.json` gains `summary_choice: {chosen, ranked}` so the rule-5
+> diff shows how close the runner-up came.
+>
+> **Two traps this created.** (1) The order of `summary:` in `profile.yaml` is
+> now load-bearing — integer scores tie often, and the variant listed first wins
+> a tie. That file is the user's; tell them, never reorder it. (2) `covered` is
+> seeded from the **chosen** summary only. A skills group never seeds it (see
+> E.2 — that is the older bug), and neither do the un-chosen variants, which are
+> not on the page.
 
 ---
 
@@ -2762,7 +2837,6 @@ in [`../audit-2026-08-05.md`](../audit-2026-08-05.md).
 | `scripts/auto/cycle.mjs`                | five processes per job; `buildPlan` and `loadFactContext` each run twice | high   | ~1.2 s of pure startup per lead, serially                               |
 | `letter-plan.mjs`                       | nothing consumes the cluster plan                                        | medium | the per-call token floor is paid N times                                |
 | `keyword-plan.mjs` / `ats-lint.mjs`     | `density_cap` published, never enforced anywhere                         | medium | the one penalised ATS behaviour is unchecked                            |
-| `assemble-resume.mjs` `planItems`       | every summary entry is mandatory                                         | medium | the highest-weighted region cannot be tailored                          |
 | `new-job.mjs` `--from-lead`             | drops `posted_at`, salary and the remote flag                            | medium | freshness and comp data unavailable downstream                          |
 | `keyword-plan.mjs` `main`               | a flag value before the slug is taken as the slug                        | medium | confusing failure naming a path nobody asked for                        |
 | `ats-lint.mjs` `main`                   | same bug, and it can silently lint the wrong file                        | medium | a confident report about a file nobody asked about                      |

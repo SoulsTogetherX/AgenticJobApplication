@@ -19,6 +19,7 @@ Full-stack developer building web apps with React, Node.js and Python. <!-- fact
 ### Backend Engineer — Beta Systems <span class="dates">Jun 2022 – Dec 2023</span> <!-- fact:exp-beta -->
 
 - Wrote Python services on Django that processed 4,000 orders a day against MySQL. <!-- fact:exp-beta-b1 -->
+- Moved batch jobs onto AWS Lambda and S3, removing 2 always-on EC2 instances. <!-- fact:exp-beta-b2 -->
 - Introduced Redis caching for the catalogue endpoint and halved its p95 response time. <!-- fact:exp-beta-b3 -->
 - Published an OpenAPI specification for 12 endpoints and generated the client from it. <!-- fact:exp-beta-b4 -->
 
@@ -29,7 +30,6 @@ Full-stack developer building web apps with React, Node.js and Python. <!-- fact
 - Languages: TypeScript, JavaScript, Python, SQL <!-- fact:skill-lang -->
 - Frameworks: React, Node.js, Express, Django, GraphQL <!-- fact:skill-fw -->
 - Data: PostgreSQL, MySQL, MongoDB, Redis <!-- fact:skill-data -->
-- Cloud and Infrastructure: AWS, Docker, Kubernetes, Terraform, CI/CD, Git <!-- fact:skill-infra -->
 
 ## Education
 

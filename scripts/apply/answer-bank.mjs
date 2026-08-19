@@ -511,16 +511,146 @@ const tokens = (s) =>
       .filter((t) => t && !STOP.has(t)),
   )
 
+// SUFFIX-ONLY morphological folding, so a banked question and a form label
+// that say the same thing in different word-forms score as the same thing.
+//
+// MEASURED 2026-08-19, on a live Torc Robotics Greenhouse form. The bank held
+// a-013 "What is your earliest available start date / notice period?"; the
+// form asked "What is your availability or desired start date?*". Three
+// content tokens are shared literally (what / start / date) and one is shared
+// only in meaning (available / availability), which scored 0.54 — under the
+// 0.7 gate, so an answered question deferred, and on the unattended path a
+// defer is a whole application not sent. Folding the fourth token scores it
+// 0.72 and it resolves.
+//
+// SUFFIX-ONLY IS THE SAFETY PROPERTY, NOT AN IMPLEMENTATION DETAIL. English
+// negates with PREFIXES — un-, non-, in-, dis-, ir- — so a rule set that only
+// ever strips or rewrites the END of a word cannot fold a word into its own
+// negation: "unable" and "able", "unwilling" and "willing", "nonexempt" and
+// "exempt" stay distinct stems by construction. Do not add a prefix rule here;
+// the polarity guard below assumes this one cannot invert a truth value.
+//
+// The 3-character floor on every rule keeps a short word from being eaten down
+// to a fragment that collides with unrelated words ("need" -> "ne").
+export function stem(w) {
+  if (w.length <= 3) return w
+  let s = w
+  // -bility -> -ble, so availability/available and eligibility/eligible fold
+  // together. This is the pair the bug was actually about.
+  const bility = /^(.{3,})bility$/.exec(s)
+  if (bility) s = bility[1] + "ble"
+  const cut = (re, add = "") => {
+    const m = re.exec(s)
+    if (m && m[1].length >= 3) s = m[1] + add
+  }
+  cut(/^(.+)ies$/, "y")
+  // "ss"/"us"/"is" endings are not plurals (address, status, analysis).
+  if (!/(?:ss|us|is)$/.test(s)) cut(/^(.+)s$/)
+  cut(/^(.+)ation$/, "ate") // relocation -> relocate
+  cut(/^(.+)ment$/) // employment -> employ
+  cut(/^(.+)ing$/)
+  cut(/^(.+)ed$/)
+  cut(/^(.+)ly$/) // currently -> current
+  cut(/^(.+)e$/) // relocate -> relocat, experience -> experienc
+  return s
+}
+
+// Token overlap between a form label and a banked question, scored on folded
+// stems but GATED on literal evidence — see the containment rule below.
 function similarity(a, b) {
-  const A = tokens(a)
-  const B = tokens(b)
-  if (!A.size || !B.size) return 0
+  const Araw = tokens(a)
+  const Braw = tokens(b)
+  if (!Araw.size || !Braw.size) return { score: 0, inter: 0, jaccard: 0 }
+  const A = new Set([...Araw].map(stem))
+  const B = new Set([...Braw].map(stem))
   let inter = 0
   for (const t of A) if (B.has(t)) inter++
-  const union = A.size + B.size - inter
-  const jaccard = inter / union
-  const containment = inter / Math.min(A.size, B.size)
-  return Math.max(jaccard, containment * 0.9)
+  let literal = 0
+  for (const t of Araw) if (Braw.has(t)) literal++
+  const jaccard = inter / (A.size + B.size - inter)
+  // WHY THE CONTAINMENT TERM IS GATED, and why the gate arrived with the
+  // stemmer rather than before it. Containment divides by the SHORTER side, so
+  // a single shared token between a one-token label and a long question scores
+  // 0.9 — over the OK gate — on one word. That was survivable while matching
+  // was literal, because a one-word coincidence across two literal vocabularies
+  // is rare. Folding makes it common, and this stemmer folds `state`, `states`
+  // and `statement` onto one stem, which is exactly the kind of collision a
+  // form label of one or two words cannot survive.
+  //
+  // VERIFIED BY EXECUTION 2026-08-19, and pinned by answer-bank-rewording's
+  // "one STEM-ONLY shared token" case: with this gate removed, a field labelled
+  // "Statement" resolves OK at 0.90 with the answer to "Do you hold a security
+  // clearance issued by the United States government?" — one shared stem, no
+  // shared word. (The live sighting was the Greenhouse field "State" reaching
+  // 0.90 against a banked "...United States?" question; that one is caught
+  // twice over now, because the contact rules answer "State" before this tier
+  // runs and intents.mjs fences that particular banked question out of it. The
+  // COLLISION is real regardless of which entry it lands on, which is why the
+  // guard is on the shortcut and not on a word.)
+  //
+  // So the shortcut now needs either a second shared stem or one token shared
+  // LITERALLY — a lone stem-only coincidence is not evidence. Both real cases
+  // that motivated this file keep their shortcut: "Discipline*" sits literally
+  // inside "Discipline/Field of Study", and the start-date pair above shares
+  // three tokens literally.
+  const containment =
+    inter >= 2 || literal >= 1 ? (inter / Math.min(A.size, B.size)) * 0.9 : 0
+  return { score: Math.max(jaccard, containment), inter, jaccard }
+}
+
+// Words that flip the truth value of the proposition around them. Kept to
+// unambiguous negators: bare "no"/"none" are excluded because forms say them
+// constantly as option text ("Check Yes or No to indicate...") where they
+// negate nothing.
+const NEGATORS = new Set([
+  "not",
+  "never",
+  "neither",
+  "nor",
+  "without",
+  "cannot",
+  "unable",
+  "unwilling",
+])
+
+// Parity, not a count: "not ... without" is two negations and means the
+// positive, which is the same polarity as saying neither.
+function negationParity(s) {
+  let n = 0
+  const words = String(s ?? "")
+    .toLowerCase()
+    .replace(/n[\u2019']t\b/g, " not ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+  for (const w of words) if (NEGATORS.has(w)) n++
+  return n % 2
+}
+
+// THE POLARITY GUARD ON THE TOKEN TIER.
+//
+// Token overlap is a bag of words and a bag of words has no truth value: "Are
+// you authorized to work in the U.S.?" and "Are you authorized to work in the
+// U.S. WITHOUT company sponsorship?" differ by one token and mean different
+// things, and a banked bare "Yes"/"No" answers exactly one of them. intents.mjs
+// fences the classic propositions out of this tier entirely, but the fence is a
+// CLOSED set and any question outside it lands here, where the only thing
+// standing between a reworded label and an inverted answer is this check.
+//
+// Scoped to a BARE boolean answer on purpose. That is the only shape where the
+// stored answer carries nothing but a truth value, so a polarity mismatch
+// between the two questions inverts it. A substantive answer ("Bachelor's
+// degree", "I do not want to answer", "None/Not applicable") means the same
+// thing whichever way the question was phrased, and the incidental "not" in a
+// long label ("Do not include degrees in progress") must not demote it —
+// MEASURED: an unscoped parity check demoted four real, correct matches.
+//
+// A mismatch DEMOTES to the MAYBE tier rather than dropping the entry. The
+// candidate is still the best thing the bank has and the user should see it;
+// what it must not do is fill and submit unattended.
+const BARE_BOOLEAN = /^(?:y|yes|true|1|n|no|false|0)$/i
+function polarityMismatch(label, entry) {
+  if (!BARE_BOOLEAN.test(String(entry?.answer ?? "").trim())) return false
+  return negationParity(label) !== negationParity(entry?.question)
 }
 
 // RETIRED (item 2.1): `CONCEPTS` + `conceptOf` used to bucket a label into
@@ -1083,16 +1213,44 @@ export function createResolver(profile = {}, answersDoc = {}) {
   // drift. (In practice such a label has already been answered by the exact
   // lookup at the top of resolveField, so this is belt and braces — and it
   // stays correct if that ordering is ever changed.)
+  // TIE-BREAKING IS PART OF THE RANKING, not a detail. The containment term
+  // saturates at 0.9, so several entries routinely tie there and the loop used
+  // to keep whichever profile/answers.yaml happened to list first — an
+  // ordering nobody chose and that shifts every time an answer is banked.
+  // Folding stems together makes ties commoner still. Ranked, in order: the
+  // score, then the number of shared tokens (more shared content is more
+  // evidence), then jaccard (the tighter fit of two equally-covered
+  // candidates). Bank order breaks only a full three-way tie.
   function bestAnswer(label, { fuzzy = true } = {}) {
     const wanted = fuzzy ? null : normalizeQuestion(label)
     let best = null
     for (const a of untypedBank) {
       if (wanted !== null && normalizeQuestion(a.question) !== wanted) continue
-      const score = similarity(label, a.question)
-      if (!best || score > best.score) best = { ...a, score }
+      const { score, inter, jaccard } = similarity(label, a.question)
+      const better =
+        !best ||
+        score > best.score ||
+        (score === best.score &&
+          (inter > best.inter ||
+            (inter === best.inter && jaccard > best.jaccard)))
+      if (better)
+        best = {
+          ...a,
+          score,
+          inter,
+          jaccard,
+          polarityMismatch: polarityMismatch(label, a),
+        }
     }
     return best
   }
+
+  // The OK gate for the token tier. A polarity mismatch does not disqualify the
+  // candidate, it caps it: the caller falls through to the MAYBE tier, where
+  // the user sees the banked question next to the field and decides. See
+  // polarityMismatch() for why this is scoped to bare yes/no answers.
+  const bankTierOk = (best) =>
+    !!best && best.score >= 0.7 && !best.polarityMismatch
 
   // Resolves ONE field. `ctx.hasFieldFor`/`ctx.otherLinksValue` close over the
   // CURRENT batch of fields (see resolveAll) — a catch-all "Other links" box
@@ -1367,7 +1525,7 @@ export function createResolver(profile = {}, answersDoc = {}) {
       // the user. A banked answer that does not ground to an option on offer
       // defers, which is the wording mismatch being surfaced, not a value.
       const banked = bestAnswer(label, { fuzzy: bankFuzzyAllowed })
-      if (banked && banked.score >= 0.7) {
+      if (bankTierOk(banked)) {
         // MEASURED 2026-08-06, on a live Twilio application: profile/answers.yaml
         // banks EEO declines under several boards' own wording ("I do not want
         // to answer", "Decline to self-identify", "I don't wish to answer") —
@@ -1558,7 +1716,7 @@ export function createResolver(profile = {}, answersDoc = {}) {
     const best = ownJobBankSilenced
       ? null
       : bestAnswer(label, { fuzzy: bankFuzzyAllowed })
-    if (best && best.score >= 0.7) {
+    if (bankTierOk(best)) {
       const m = matchOption(best.answer, opts, matchOpts)
       return push(
         m.needsChoice ? "NEEDS-CHOICE" : "OK",
@@ -1573,7 +1731,9 @@ export function createResolver(profile = {}, answersDoc = {}) {
         "MAYBE",
         `${best.id}@${best.score.toFixed(2)}`,
         best.answer,
-        `bank asks: ${best.question}`,
+        best.polarityMismatch
+          ? `bank asks (opposite polarity — check before using): ${best.question}`
+          : `bank asks: ${best.question}`,
       )
     }
     return push(

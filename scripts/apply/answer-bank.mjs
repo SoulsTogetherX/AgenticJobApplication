@@ -555,9 +555,44 @@ export function stem(w) {
   return s
 }
 
+// THE FAR-COVERAGE FLOOR. Containment answers "is the shorter side used up?"
+// and says nothing at all about how much of the LONGER side was ignored, so a
+// one-token label sitting inside a fifteen-token banked question scores the
+// same 0.9 as two questions that genuinely say the same thing.
+//
+// MEASURED 2026-08-19 over every label the field cache has ever recorded (265),
+// resolved through the real resolver: seven fields resolved OK to an answer
+// about something else entirely. A field labelled "Office" was filled with the
+// "No" banked for "Are you able to work from our San Francisco office three
+// days per week?"; "Application" and a bare "Yes" were filled with "No - I do
+// not consent to receiving text messages"; "Additional Information" with
+// "None/Not applicable" from an export-control checkbox question. Each is a
+// wrong CLAIM on a document going out over the user's name, which is worse
+// than the defer it replaced — rule 1's whole point.
+//
+// So the shortcut additionally requires the LONGER side to be at least 30%
+// explained by the overlap. That is what separates the pairs above (5-13%)
+// from the real matches it must not touch: "Discipline*" inside
+// "Discipline/Field of Study" is 33%, and the reworded start-date pair is 57%.
+const FAR_COVERAGE_MIN = 0.3
+
 // Token overlap between a form label and a banked question, scored on folded
 // stems but GATED on literal evidence — see the containment rule below.
-function similarity(a, b) {
+//
+// `requireFarCoverage: false` is passed by the EEO tier and NOWHERE else. That
+// is not an exemption for convenience, it is a different failure cost, and the
+// measurement says so: applying the floor there cost SEVEN correct self-ID
+// answers, including a banked "Hispanic or Latino" reached from the label
+// "Race". Everywhere else a lost match falls through to a defer, and a defer is
+// strictly safer than a wrong fill. In the EEO tier a lost match falls through
+// to an AUTO-DECLINE, which silently overwrites an answer the user actually
+// gave with "prefer not to say" — the exact bug measured on 2026-08-06 and
+// fixed by putting the fuzzy pass ahead of the decline (see that branch's
+// comment). Raising precision there LOWERS correctness. These labels also carry
+// their whole option list in the text on several boards ("Gender Select ...
+// Male Female Decline to self-identify"), so the far side is long by
+// construction and the floor could never be met.
+function similarity(a, b, { requireFarCoverage = true } = {}) {
   const Araw = tokens(a)
   const Braw = tokens(b)
   if (!Araw.size || !Braw.size) return { score: 0, inter: 0, jaccard: 0 }
@@ -593,8 +628,11 @@ function similarity(a, b) {
   // that motivated this file keep their shortcut: "Discipline*" sits literally
   // inside "Discipline/Field of Study", and the start-date pair above shares
   // three tokens literally.
+  const evidence = inter >= 2 || literal >= 1
+  const covered =
+    !requireFarCoverage || inter / Math.max(A.size, B.size) >= FAR_COVERAGE_MIN
   const containment =
-    inter >= 2 || literal >= 1 ? (inter / Math.min(A.size, B.size)) * 0.9 : 0
+    evidence && covered ? (inter / Math.min(A.size, B.size)) * 0.9 : 0
   return { score: Math.max(jaccard, containment), inter, jaccard }
 }
 
@@ -1221,12 +1259,14 @@ export function createResolver(profile = {}, answersDoc = {}) {
   // score, then the number of shared tokens (more shared content is more
   // evidence), then jaccard (the tighter fit of two equally-covered
   // candidates). Bank order breaks only a full three-way tie.
-  function bestAnswer(label, { fuzzy = true } = {}) {
+  function bestAnswer(label, { fuzzy = true, requireFarCoverage = true } = {}) {
     const wanted = fuzzy ? null : normalizeQuestion(label)
     let best = null
     for (const a of untypedBank) {
       if (wanted !== null && normalizeQuestion(a.question) !== wanted) continue
-      const { score, inter, jaccard } = similarity(label, a.question)
+      const { score, inter, jaccard } = similarity(label, a.question, {
+        requireFarCoverage,
+      })
       const better =
         !best ||
         score > best.score ||
@@ -1524,7 +1564,13 @@ export function createResolver(profile = {}, answersDoc = {}) {
       // weak match is not worth a question, and declining asserts nothing about
       // the user. A banked answer that does not ground to an option on offer
       // defers, which is the wording mismatch being surfaced, not a value.
-      const banked = bestAnswer(label, { fuzzy: bankFuzzyAllowed })
+      // requireFarCoverage: false — see similarity()'s comment. The fallback
+      // here is an auto-decline, not a defer, so a match lost to a precision
+      // guard overwrites the user's own answer instead of asking them.
+      const banked = bestAnswer(label, {
+        fuzzy: bankFuzzyAllowed,
+        requireFarCoverage: false,
+      })
       if (bankTierOk(banked)) {
         // MEASURED 2026-08-06, on a live Twilio application: profile/answers.yaml
         // banks EEO declines under several boards' own wording ("I do not want

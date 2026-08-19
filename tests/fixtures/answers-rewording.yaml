@@ -34,3 +34,17 @@ answers:
     question: Discipline
     answer: Computer Science
     added: 2026-08-19
+  # A LONG question sharing exactly one token with a one-word label. Containment
+  # divides by the shorter side, so without the far-coverage floor this answer
+  # lands on any field labelled "Office" — measured on the real fact base.
+  - id: a-006
+    question: Are you able to work from our San Francisco office three days per week?
+    answer: "No"
+    added: 2026-08-19
+  # A self-ID answer the user actually GAVE. The EEO tier's fallback is an
+  # auto-decline rather than a defer, so a match lost there does not ask the
+  # user — it overwrites them.
+  - id: a-007
+    question: "EEO self-identification: race/ethnicity"
+    answer: Hispanic or Latino
+    added: 2026-08-19

@@ -191,7 +191,51 @@ test("SUCCESS SIDE: one LITERAL shared token still carries the shortcut", () => 
   // The guard is about stem-only coincidences. A banked question sitting
   // literally inside the label is the case containment was added for, and it
   // has to keep working or the guard costs more than folding gained.
+  //
+  // This pair also sits just above the far-coverage floor below: one shared
+  // token out of the label's three is 33%, against a floor of 30%. That is
+  // deliberate and it is why the floor is 0.3 and not 0.4.
   const r = one("Discipline / Field of Study")
   assert.equal(r.status, "OK", `deferred with ${r.source}: ${r.note ?? ""}`)
   assert.equal(r.value, "Computer Science")
+})
+
+// ---------------------------------------------------------------------------
+// THE FAR-COVERAGE FLOOR — a wrong fill is worse than a defer
+// ---------------------------------------------------------------------------
+
+test("BOUNDARY: a one-word label does not take the answer to a long question", () => {
+  // MEASURED 2026-08-19 across all 265 labels the field cache has recorded:
+  // "Office" resolved OK to the "No" banked for "Are you able to work from our
+  // San Francisco office three days per week?" — one shared token out of nine,
+  // scored 0.90 because containment divides by the shorter side. Six fields
+  // were being filled this way with an answer about something else.
+  const r = one("Office")
+  assert.notEqual(r.status, "OK", `filled ${r.value} from ${r.source}`)
+})
+
+test("EEO IS EXEMPT, and this is the measurement that says why", () => {
+  // The floor costs SEVEN correct self-ID answers when applied here, because
+  // these labels carry their whole option list in the text on several boards
+  // and the banked question is a few words — the far side can never be 30%
+  // explained. Everywhere else a lost match falls through to a defer. Here it
+  // falls through to an AUTO-DECLINE, which does not ask the user anything: it
+  // replaces the answer they gave with "prefer not to say". That is the bug
+  // measured 2026-08-06 and fixed by putting the fuzzy pass ahead of the
+  // decline, and the floor would have re-opened it.
+  const r = resolveAll([
+    {
+      k: "f",
+      t: "select",
+      l: "Race",
+      opts: ["Hispanic or Latino", "White", "Decline to self-identify"],
+      req: true,
+    },
+  ]).get("f")
+  assert.equal(r.status, "OK", `deferred with ${r.source}: ${r.note ?? ""}`)
+  assert.equal(
+    r.value,
+    "Hispanic or Latino",
+    "auto-declined over an answer the user actually gave",
+  )
 })

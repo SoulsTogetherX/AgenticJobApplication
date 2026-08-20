@@ -349,6 +349,15 @@ reasoning, and the reasoning is what stops you re-introducing the bug — so
 - `answers.yaml` question text is **not** evidence — use `evidenceText()`.
 - A fuzzy yes/no match can return the right concept with the **wrong truth
   value** ("authorized to work _without_ sponsorship"). Defer, never auto-invert.
+- The answer-bank stemmer is **suffix-only** by design, never prefix: English
+  negates with prefixes, so that is what stops it folding `unable` onto `able`.
+  The polarity guard behind it fires only on a **bare** yes/no banked answer —
+  an unscoped parity check demoted four correct matches (2026-08-19).
+- The **EEO tier is exempt from the far-coverage floor** on containment, and
+  that is not a convenience. Everywhere else a lost fuzzy match falls through
+  to a defer, which asks the user; there it falls through to an **auto-decline**,
+  which asks nobody and overwrites the answer they gave. Applying the floor
+  there cost seven correct self-ID answers when measured.
 - `auto_submissions` is keyed **`(slug, mode)`** — `(run_id, slug)` let one slug
   be submitted once per run, `(slug)` alone lets a dry run eat the live claim.
 - A **0** from `claimAutoJob`/`recordAutoSubmission` means another worker owns

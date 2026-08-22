@@ -1758,8 +1758,9 @@ const breaker = makeBreaker({ db, runId: run.id, now: () => now() })
 
 ```text
 confirm-field, confirm-widget, consent-tickbox, unknown-field, unprobed-dropdown,
-freetext-disclosure, doc-unverified, fact-base-changed, board-untrusted,
-l3-rejected, cap-company, board-paused, reconciled-not-sent
+freetext-disclosure, doc-unverified, doc-unrendered, board-unsighted,
+fact-base-changed, board-untrusted, l3-rejected, cap-company, board-paused,
+reconciled-not-sent, already-applied
 ```
 
 > "A run whose every job defers because the user has not banked an answer yet is a
@@ -2674,7 +2675,7 @@ employer."_
 | `understanding` | `unknown-field`, `unprobed-dropdown`, `fill-failed`, `multipage-unresolvable`                                                      | _"THE ONLY CLASS THAT SHRINKS WITH ENGINEERING, and the only sanctioned throughput lever: an adapter, a probed option list, or a banked answer. Never a model reading the field."_ |
 | `assent`        | `confirm-field`, `confirm-widget`, `consent-tickbox`, `freetext-disclosure`                                                        | _"Does not shrink with engineering and MUST NOT: shrinking it is the failure mode hard rule 6 is written to prevent."_                                                             |
 | `environment`   | `captcha`, `bot-challenge`, `email-code-challenge`, `identity-verification`, `posting-gone`, `board-paused`, `reconciled-not-sent` | The board or the posting declined. Not ours, not a bug.                                                                                                                            |
-| `policy`        | `doc-unverified`, `fact-base-changed`, `board-untrusted`, `l3-rejected`, `cap-company`                                             | _"Working exactly as intended."_                                                                                                                                                   |
+| `policy`        | `doc-unverified`, `doc-unrendered`, `fact-base-changed`, `board-untrusted`, `board-unsighted`, `l3-rejected`, `cap-company`, `already-applied`                                        | _"Working exactly as intended."_                                                                                                                                                   |
 | `malfunction`   | every kind in `AUTO_FAILURE_KINDS`                                                                                                 | _"The only class worth waking for."_                                                                                                                                               |
 
 **Two module-load assertions** — not tests; they throw at `import` time:
@@ -2722,8 +2723,10 @@ matched by **prefix, never substring**:
 > is also how a hostile label could steer its own classification."
 
 `unsupported field type`→`unknown-field`,
-`optional and not in the fact base`→`unknown-field`, `no rendered`→`doc-unverified`,
-`unrecognised attachment slot`→`doc-unverified`. The last two were added after a
+`optional and not in the fact base`→`unknown-field`, `no rendered`→`doc-unrendered`,
+`unrecognised attachment slot`→`unknown-field` (both re-typed 2026-08-18: they
+used to map to `doc-unverified`, which is about verification, and the digest
+sent readers to verify-claims for a missing PDF). The last two were added after a
 real run:
 
 > "a workspace that simply had not been rendered to PDF yet reported as a code

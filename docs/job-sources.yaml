@@ -162,3 +162,5 @@ boards:
   - { type: jobicy, company: Jobicy (remote US), geo: usa, industry: engineering }
   # - { type: remotive, company: "Remotive (remote)", category: software-dev }
   # - { type: remoteok, company: "RemoteOK (remote)" }
+  - { type: greenhouse, slug: chime, company: Chime }
+  - { type: greenhouse, slug: databricks, company: Databricks }

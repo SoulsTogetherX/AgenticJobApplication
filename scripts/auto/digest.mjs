@@ -21,6 +21,7 @@ import {
   readSubmitLatencies,
   readJobWallTimes,
   countAutoSubmissions,
+  readAutoAssents,
   latestAutoRun,
 } from "../lib/db.mjs"
 import { stopActive, readStop } from "./guard.mjs"
@@ -268,6 +269,10 @@ export function buildAutoStatus(
     run_started_at: latest?.started_at ?? null,
     submitted_24h: countAutoSubmissions(db, since24h),
     submitted_total: counts.submitted,
+    // What the machine ASSERTED on the user's behalf in the last day, per
+    // submission — rule 6's record, surfaced where the user reads. Empty when
+    // no confirmed submission actuated anything.
+    assents_24h: readAutoAssents(db, since24h),
     challenged: counts.challenged,
     orphans: orphans.length,
     deferrals: {
@@ -321,6 +326,15 @@ export function formatAutoTerse(a) {
       : []),
     `auto paused ${a.paused_boards.map((p) => `${p.board_key}(${p.held})`).join(" ") || "none"}`,
   ]
+  // One line per submission that actuated an assent, and one per assent under
+  // it: label, value, grant. Terse but COMPLETE — the record is the point.
+  for (const s of a.assents_24h ?? []) {
+    lines.push(`auto assent ${s.slug} n=${s.assents.length}`)
+    for (const x of s.assents)
+      lines.push(
+        `auto assent ${s.slug} ${JSON.stringify(x.label ?? "?")}=${JSON.stringify(x.value ?? null)} grant=${x.grant ?? "-"}${x.legalWeight ? " LEGAL-WEIGHT" : ""}`,
+      )
+  }
   for (const w of a.warnings) lines.push(`auto WARN ${w.kind} n=${w.n}`)
   return lines
 }
@@ -373,6 +387,22 @@ export function formatAutoProse(a) {
     lines.push(
       `  PAUSED ${p.board_key} since ${p.since} — holding ${p.held} job(s)`,
     )
+  // Every assent the runner made for the user in the last day, in full. Not
+  // truncated to a count: "the user is delegating assent, not waiving the
+  // record of it" (rule 6), and a record that only says "3 assents" is not one.
+  if (a.assents_24h?.length) {
+    lines.push(`  Asserted on your behalf (last 24h):`)
+    for (const s of a.assents_24h) {
+      lines.push(
+        `    ${s.company ?? "?"} — ${s.title ?? s.slug} (${s.assents.length}):`,
+      )
+      for (const x of s.assents)
+        lines.push(
+          `      • ${x.label ?? "?"} → ${x.value === true ? "ticked" : (x.value ?? "?")}` +
+            ` [${x.grant ?? "no grant"}${x.legalWeight ? ", LEGAL-WEIGHT" : ""}]`,
+        )
+    }
+  }
   for (const w of a.warnings) lines.push(`  WARN ${w.detail}`)
   return lines
 }

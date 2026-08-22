@@ -491,3 +491,103 @@ test("readStaleDeferred counts deferred rows older than the threshold, oldest fi
   assert.ok(stale[0].age_ms > 13 * 24 * 3600 * 1000)
   assert.equal(readStaleDeferred(db, { now, olderThanMs: 0 }).length, 3)
 })
+
+// ---------------------------------------------------------------------------
+// The row is SELF-DESCRIBING (2026-08-18). A queued job carries the apply_url it
+// was trusted on, the lead id its screening verdict is keyed by, and the
+// company/title the report names it by — so a row this invocation did not
+// itself select (enqueued earlier, beyond --limit, or left by a crash) can be
+// resumed from the database alone. The Torc Robotics defect: a lead with a
+// perfectly good apply_url in the store deferred board-untrusted because the
+// queue row knew nothing about it.
+// ---------------------------------------------------------------------------
+
+test("enqueue persists apply_url, lead_id, company and title on the row, and readResumableAutoJobs hands them back", (t) => {
+  const db = store(t).open()
+  assert.equal(
+    enqueueAutoJobs(db, [
+      {
+        slug: "torc-build-tools",
+        board_key: "job-boards.greenhouse.io/embed?for=torcrobotics",
+        origin: "https://job-boards.greenhouse.io",
+        apply_url: "https://job-boards.greenhouse.io/torcrobotics/jobs/8654323002",
+        lead_id: "greenhouse:torcrobotics:8654323002",
+        company: "Torc Robotics",
+        title: "Software Engineer II - Build Tools",
+      },
+    ]),
+    1,
+  )
+  const [row] = readResumableAutoJobs(db)
+  assert.equal(row.apply_url, "https://job-boards.greenhouse.io/torcrobotics/jobs/8654323002")
+  assert.equal(row.lead_id, "greenhouse:torcrobotics:8654323002")
+  assert.equal(row.company, "Torc Robotics")
+  assert.equal(row.title, "Software Engineer II - Build Tools")
+})
+
+test("re-queuing a deferred row keeps its identity when the new batch carries none, and fills it in when the row had none", (t) => {
+  const db = store(t).open()
+  enqueueAutoJobs(db, [
+    { slug: "a", apply_url: "https://jobs.ashbyhq.com/x/1/application", lead_id: "ashby:x:1" },
+    { slug: "b" }, // an anonymous row, as every row was before the columns existed
+  ])
+  for (const s of ["a", "b"]) {
+    claimAutoJob(db, s, { run_id: "r1" })
+    setAutoJobState(db, s, "deferred", { run_id: "r1", reason_kind: "unknown-field", reason_detail: "x" })
+  }
+  // A re-queue that says nothing about identity must not erase what is there.
+  assert.equal(enqueueAutoJobs(db, [{ slug: "a" }]), 1)
+  let row = readAutoQueue(db).find((r) => r.slug === "a")
+  assert.equal(row.state, "queued")
+  assert.equal(row.apply_url, "https://jobs.ashbyhq.com/x/1/application", "COALESCE keeps the row's value")
+  assert.equal(row.lead_id, "ashby:x:1")
+
+  // A re-queue that DOES know the identity fills a blank row in.
+  assert.equal(enqueueAutoJobs(db, [{ slug: "b", apply_url: "https://jobs.lever.co/y/2/apply", lead_id: "lever:y:2", company: "Y" }]), 1)
+  row = readAutoQueue(db).find((r) => r.slug === "b")
+  assert.equal(row.apply_url, "https://jobs.lever.co/y/2/apply")
+  assert.equal(row.lead_id, "lever:y:2")
+  assert.equal(row.company, "Y")
+})
+
+test("identity is backfilled onto a row already in the queue without touching its state or attempt count", (t) => {
+  const db = store(t).open()
+  enqueueAutoJobs(db, [{ slug: "legacy" }])
+  claimAutoJob(db, "legacy", { run_id: "r1" }) // held by a worker: the DO UPDATE branch must not fire
+  assert.equal(
+    enqueueAutoJobs(db, [{ slug: "legacy", apply_url: "https://jobs.ashbyhq.com/z/3/application", lead_id: "ashby:z:3", title: "T" }]),
+    0,
+    "a held row is neither added nor re-queued",
+  )
+  const row = readAutoQueue(db)[0]
+  assert.equal(row.state, "claimed", "state untouched")
+  assert.equal(row.attempt_no, 1, "attempt count untouched")
+  assert.equal(row.apply_url, "https://jobs.ashbyhq.com/z/3/application", "but the row now knows its URL")
+  assert.equal(row.lead_id, "ashby:z:3")
+  assert.equal(row.title, "T")
+})
+
+test("an existing database without the identity columns is healed on open, and old rows read NULL", (t) => {
+  const s = store(t)
+  // Build the pre-2026-08-18 table by hand, then open through openDb.
+  const { DatabaseSync } = require_sqlite()
+  const raw = new DatabaseSync(s.file)
+  raw.exec(`CREATE TABLE auto_queue (
+    slug TEXT PRIMARY KEY, run_id TEXT, board_key TEXT, origin TEXT, state TEXT NOT NULL,
+    attempt_no INTEGER NOT NULL DEFAULT 0, plan_sha256 TEXT, reason_kind TEXT, reason_detail TEXT,
+    claimed_at TEXT, updated_at TEXT)`)
+  raw.exec(`INSERT INTO auto_queue (slug, state) VALUES ('old', 'queued')`)
+  raw.close()
+  const db = s.open()
+  const cols = new Set(db.prepare("PRAGMA table_info(auto_queue)").all().map((c) => c.name))
+  for (const c of ["apply_url", "lead_id", "company", "title"]) assert.ok(cols.has(c), `${c} added`)
+  const [row] = readResumableAutoJobs(db)
+  assert.equal(row.slug, "old")
+  assert.equal(row.apply_url, null, "an old row is honestly blank, not invented")
+})
+
+function require_sqlite() {
+  // node:sqlite is what db.mjs itself uses; reached the same way the tests
+  // for healAutoQueue's siblings reach it.
+  return process.getBuiltinModule("node:sqlite")
+}

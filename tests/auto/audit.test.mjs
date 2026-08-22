@@ -1164,6 +1164,80 @@ test("beginSubmit refuses a slug the ledger already holds, and stops the runner"
   assert.equal(ev.slug, "one")
 })
 
+test("a second dry run over a slug already rehearsed is a repeat rehearsal, not a STOP", () => {
+  // MEASURED 2026-08-18: the day's second dry run reached a slug the first
+  // had rehearsed; the (slug, 'dry_run') claim reported 0 and beginSubmit
+  // braked the company with "this application may already exist" — for a
+  // rehearsal, which sends nothing. Now: no STOP, the attempt stays open, the
+  // rehearsal proceeds and refreshes the same row.
+  const s = sandbox()
+  const first = startRun({ mode: "dry_run", ...s.opts })
+  attempt(first, s, { slug: "one", url: "https://board.test/apply/one" })
+  first.recordRehearsal({ slug: "one" })
+  first.finish()
+  fs.rmSync(s.stopPath, { force: true })
+  fs.rmSync(at(s, "company", "Acme"), { force: true })
+
+  const second = startRun({ mode: "dry_run", ...s.opts })
+  const token = tokenFor(s, { slug: "one", mode: "dry_run" })
+  let again
+  assert.doesNotThrow(() => {
+    again = second.beginSubmit(
+      { slug: "one", company: "Acme" },
+      PLAN_SHA,
+      "https://board.test/apply/one",
+      token,
+    )
+  })
+  assert.equal(again.repeat, true, "the attempt says it is a repeat")
+  assert.equal(fs.existsSync(s.stopPath), false, "no global STOP")
+  assert.equal(
+    fs.existsSync(at(s, "company", "Acme")),
+    false,
+    "no company brake",
+  )
+  const ev = lines(second.jsonl).find((e) => e.t === "submit.rehearsal-repeat")
+  assert.equal(ev?.slug, "one", "the repeat is said in the audit log")
+  // and the rehearsal can be resolved as usual — the same row, refreshed
+  assert.doesNotThrow(() => second.recordRehearsal({ slug: "one" }))
+  const db = openDb(s.dbFile)
+  try {
+    const rows = db.prepare("SELECT * FROM auto_submissions").all()
+    assert.equal(rows.length, 1, "one (slug, dry_run) row, not two")
+    assert.equal(rows[0].outcome, "submitted")
+    assert.equal(rows[0].mode, "dry_run")
+  } finally {
+    db.close()
+  }
+})
+
+test("BOUNDARY: a dry run colliding with a LIVE row still stops — that application may exist", () => {
+  const s = sandbox()
+  const live = startRun({ mode: "live", ...s.opts })
+  attempt(live, s, { slug: "one", url: "https://board.test/apply/one" })
+  live.recordSubmission(fullSubmission("one"))
+  fs.rmSync(s.stopPath, { force: true })
+  fs.rmSync(at(s, "company", "Acme"), { force: true })
+  // The dry-run claim is a different key, so it is NOT a collision at all: the
+  // rehearsal proceeds (a rehearsal never consumes or reads the live claim).
+  const dry = startRun({ mode: "dry_run", ...s.opts })
+  assert.doesNotThrow(() => attempt(dry, s, { slug: "one" }))
+  // But a LIVE run colliding with a live row still stops, repeat handling or
+  // not — the exemption above is dry-run-on-dry-run only.
+  fs.rmSync(at(s, "company", "Acme"), { force: true })
+  const live2 = startRun({ mode: "live", ...s.opts })
+  assert.throws(
+    () =>
+      live2.beginSubmit(
+        { slug: "one", company: "Acme" },
+        PLAN_SHA,
+        "https://board.test/apply/one",
+        tokenFor(s, { slug: "one", mode: "live" }),
+      ),
+    StopError,
+  )
+})
+
 test("a rehearsal does not consume the live claim for the same slug", () => {
   // The dry run's whole point is that it exercises the arithmetic the live run
   // will. It must not also spend the live run's one claim on that posting.

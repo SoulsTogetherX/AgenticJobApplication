@@ -97,6 +97,7 @@ import { CHECKPOINTS, STOP_PATH, assertNotStopped } from "./guard.mjs"
 import { safeText } from "./untrusted-text.mjs"
 import { capCheck } from "./caps.mjs"
 import { submitReadiness } from "../apply/fill-plan.mjs"
+import { normalizeAssentPolicy } from "../apply/assent-policy.mjs"
 import { isDisqualifying } from "../lib/untrusted.mjs"
 import { DB_PATH, openDb, findPriorApplication } from "../lib/db.mjs"
 
@@ -480,7 +481,16 @@ function evaluate(input) {
   //    required-empty, and nothing the fill revealed that the plan never knew
   //    about.
   //    readiness.reason names the offending field, so it too carries page text.
-  const readiness = submitReadiness(plan, report)
+  //
+  //    THE ASSENT POLICY IS READ OFF THE USER'S OWN BLOCK, here, independently
+  //    of the planner (2026-08-18). buildPlan recorded the grant each
+  //    actuation was made under; submitReadiness admits an entry only when
+  //    the policy THIS gate reads enables that grant. Two keys, deliberately —
+  //    a plan built under one policy and submitted under a stricter one is
+  //    refused, and `config` absent means every grant is off.
+  const readiness = submitReadiness(plan, report, {
+    assent: config?.unattended_assent ?? null,
+  })
   push(
     "submit_readiness",
     readiness.ready === true,
@@ -684,6 +694,14 @@ export function authorizeSubmit(input) {
     runId,
     issued_at: new Date().toISOString(),
     checks: Object.freeze(checks.map((c) => Object.freeze(c))),
+    // THE POLICY THIS CLICK WAS AUTHORISED UNDER (2026-08-18). The click site
+    // re-runs submitReadiness as its own precondition 8 and has no limits
+    // file in hand; the token is what binds the click to this authorisation,
+    // so the assent policy check 9 read from the user's block rides on it —
+    // frozen, so the click site can only re-check against what the gate saw.
+    assent: Object.freeze(
+      normalizeAssentPolicy(input.config?.unattended_assent ?? null),
+    ),
   })
 }
 

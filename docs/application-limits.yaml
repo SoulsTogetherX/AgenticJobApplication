@@ -321,6 +321,12 @@ auto_apply:
   per_company_max_per_week: 5
   cache_max_age_days: 30
 
+  unattended_assent:
+    required_assertions: true
+    required_widgets: true
+    required_consent: all
+    optional: skip
+
   # The boards the trust gate will consider. NESTED UNDER auto_apply ON
   # PURPOSE — trust.mjs and auto-apply.mjs both read `auto_apply.board_allowlist`,
   # so the same four lines at the top level of this file are read by nothing and

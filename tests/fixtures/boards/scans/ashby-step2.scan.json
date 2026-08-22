@@ -47,6 +47,7 @@
       "k": "f1",
       "t": "combo",
       "l": "Where are you located? *",
+      "labelExact": true,
       "req": true,
       "v": "Select a location"
     },

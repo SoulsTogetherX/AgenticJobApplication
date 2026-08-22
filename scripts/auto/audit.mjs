@@ -627,6 +627,31 @@ function makeRun(ctx, state) {
       } finally {
         db.close()
       }
+      // A REHEARSAL COLLIDING WITH A REHEARSAL IS NOT AN APPLICATION THAT MAY
+      // EXIST. MEASURED 2026-08-18: the second dry run of the day over the same
+      // queue reached a slug that the morning's dry run had already rehearsed,
+      // the (slug, 'dry_run') claim reported 0, and the brake below fired —
+      // "this application may already exist" — braking the company, throwing
+      // StopError out of the pool and taking a second worker's job down with
+      // it as `db-write-failed`. Nothing had reached any employer: a dry-run
+      // row means "a rehearsal reached the submit", and rehearsing again is
+      // exactly what a second dry run is for. So in dry-run mode a collision
+      // with a DRY-RUN row is a repeat rehearsal: it is said in the audit log,
+      // the open attempt is kept, and recordRehearsal() refreshes the row
+      // through the acknowledgement path (an upsert on the same key). The
+      // claim itself is untouched — db.mjs still refuses every outcome but
+      // reconciled-not-sent, in either mode — and a LIVE collision, or a
+      // dry-run colliding with a live row, still stops the runner exactly as
+      // below.
+      if (
+        claimed === 0 &&
+        state.mode === "dry_run" &&
+        existing &&
+        existing.mode === "dry_run"
+      ) {
+        event("submit.rehearsal-repeat", { slug, existing })
+        return { ...attempt, repeat: true }
+      }
       if (claimed === 0) {
         pendingAttempts.delete(slug)
         const reason =

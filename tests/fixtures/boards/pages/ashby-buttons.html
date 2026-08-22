@@ -114,6 +114,38 @@
           </div>
         </div>
 
+        <!--
+          THE INSTRUCTION-PHRASED QUESTION (2026-08-21). Ashby's texting
+          consent renders its question as an instruction with no "?" —
+          "Check Yes or No to indicate…" — above a Yes/No pair. questionIn()
+          requires a literal "?", so the pair detector adopted nothing, the
+          buttons fell to the widget sweep, and the scan reported TWO separate
+          fields labelled "Yes" and "No" (measured on the live Quora and Flock
+          Safety forms; jobs/.field-cache.json holds the captures). The fix is
+          the firstSentence fallback the native-group pass already had, gated
+          on the answer set being CLOSED — which this Yes/No pair is, and a
+          Bold/Italic toolbar is not. The question here is deliberately NOT
+          consent-shaped: this fixture pins the detector, and consent policy
+          on this widget shape is pinned by consent-shapes.test.mjs.
+        -->
+        <div class="ashby-application-form-field-entry">
+          <label id="_q_texting">
+            Check Yes or No to indicate whether you have previously worked for
+            Fixture Compute in any role.<span aria-hidden="true">*</span>
+          </label>
+          <div class="_container_1svni_28 _yesno_1e3gg_148">
+            <input
+              type="checkbox"
+              class="_input_1svni_78"
+              tabindex="-1"
+              name="question_7097054006"
+              style="display: none"
+            />
+            <button type="button" class="_option_1svni_20">Yes</button>
+            <button type="button" class="_option_1svni_20">No</button>
+          </div>
+        </div>
+
         <div class="ashby-toolbar">
           <button type="button" id="next_app">Next</button>
           <button type="submit" id="submit_app">Submit Application</button>

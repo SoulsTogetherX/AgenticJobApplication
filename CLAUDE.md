@@ -121,7 +121,40 @@ Three to know without looking, because getting them wrong is expensive:
    - any consent tickbox;
    - any `UNKNOWN` field, unprobed dropdown, or failed fill;
    - `verify-claims` not passing, or the document not yet user-approved;
-   - the board failing the trust gate, or the lead carrying an L3 rejection.
+   - the board failing the trust gate, or the lead carrying an L3 rejection;
+   - a board whose live host has no **captured** post-submit page
+     (`board-unsighted`, checked before the click since 2026-08-18 — see the
+     allowlist-vs-evidence paragraph below).
+
+   **THE FIRST THREE ARE NOW GOVERNED BY THE USER'S OWN KEYS (2026-08-18).**
+   The 2026-08-17 live run submitted 0 of 9 and seven of the eight deferrals
+   were those three; the user decided the policy in their own words — _"If
+   required, fuzzy exact. Otherwise leave them alone"_ and, for consent boxes,
+   _"tick required, except legal-weight"_. It lives in
+   `docs/application-limits.yaml` under `auto_apply.unattended_assent`
+   (`scripts/apply/assent-policy.mjs` has the keys and the record), **defaults
+   entirely off**, and when on means exactly this:
+
+   - a **REQUIRED** `CONFIRM` answer or radio/checkbox group is filled when
+     answer-bank resolved it at status **OK** (fuzzy wording allowed; OK is the
+     polarity/intent-checked, option-grounded status — `MAYBE`,
+     `NEEDS-CHOICE` and `UNKNOWN` still defer);
+   - a **REQUIRED** consent box with a **vouched** label is ticked, **except**
+     legal-weight ones (`isHardConsent`: arbitration, background check,
+     e-signature), which defer unless the file says `all`;
+   - an **OPTIONAL** assent field is left empty and no longer blocks
+     (`optional: skip`);
+   - every act is recorded in `plan.actuated` **with its grant**, admitted by
+     `submitReadiness` only under a policy that enables that grant, written
+     into the submission record, and named in the digest. The user delegates
+     assent, not the record of it.
+
+   The security analysis in `fill-plan.mjs` (a lying label deceives the machine
+   exactly as it deceives a human) is unchanged and was put in front of the
+   user before they chose; the accepted residual is asserted as never-silent
+   in `tests/security/hostile-forms.test.mjs`. `fieldIdentityMismatch` still
+   runs before every grant. **Do not widen a grant in code** — the keys are the
+   user's, and a grant nobody can find in that file is not one.
 
    **`UNKNOWN` still blocks on BOTH paths.** It is the one entry above that is
    not about assent: it means nothing deterministic understood the field, and
@@ -195,12 +228,16 @@ Three to know without looking, because getting them wrong is expensive:
    durable point here.** A board being on `board_allowlist` says the user trusts
    the vendor; a host having a `capture`-sourced rule says this repo can read
    that vendor's post-submit page. Neither implies the other, so a board can
-   clear the trust gate and still hard-STOP at `unclassified` — which is the
-   system working, not a gap to route around. Do not reason from "it is
-   allowlisted" to "a submit will complete", or from one host of a vendor to
-   another: they are separate hosts to `evidence.hosts` even when the same
-   company runs both. Which hosts are on which list is, again, a fact about
-   `docs/application-limits.yaml` and `scripts/auto/classify.mjs`.
+   clear the trust gate and still be blind — which is the system working, not
+   a gap to route around. **Since 2026-08-18 the runner asks this BEFORE the
+   click:** `job.mjs` checks `classify.mjs`'s `isHostSighted(liveUrl)` after
+   navigation and defers `board-unsighted` on a live run rather than filling,
+   clicking and hard-STOPping at `unclassified` with the application possibly
+   sent and unrecorded. Do not reason from "it is allowlisted" to "a submit
+   will complete", or from one host of a vendor to another: they are separate
+   hosts to `evidence.hosts` even when the same company runs both. Which hosts
+   are on which list is, again, a fact about `docs/application-limits.yaml`
+   and `scripts/auto/classify.mjs` (`sightedHosts()` prints the second).
 
    **THE RUNNER IS ARMED. Do not repeat the sentence that used to be here.**
    This paragraph said, until 2026-08-06, that "nothing opens a browser
@@ -341,9 +378,35 @@ reasoning, and the reasoning is what stops you re-introducing the bug — so
 - Bootstrap loads by `filename`, **never** `addScriptTag` (nonce-CSP boards).
 - Fill and scan run **Playwright-side**; nothing is read back out of the page,
   and `scan-engine.mjs` installs the scanner **unconditionally**.
-- **A checkbox or radio group never auto-acts unattended**, whatever the class —
-  and `confirm-widget` is a different marker from `confirm` on purpose.
-- A consent box defers on its **shape** as well as its topic; nothing auto-ticks.
+- **A checkbox or radio group never auto-acts unattended** — whatever the class
+  — **unless the user's `unattended_assent` keys grant it** (required field,
+  answer-bank status OK, a real pick; 2026-08-18) — and `confirm-widget` is a
+  different marker from `confirm` on purpose. A grant is recorded on the
+  actuation; a tick with no grant still blocks the unattended click.
+- A consent box defers on its **shape** as well as its topic; nothing auto-ticks
+  **except a required, vouched, non-legal-weight box under those same keys**,
+  and legal-weight (arbitration / background check / e-signature) never does
+  unless the file says `all`.
+- **A KEY THAT IS ON IS NOT A KEY THAT CAN REACH ANYTHING** — measured
+  2026-08-20, when a live run submitted 0 of 10 with `required_consent: all`
+  set since 2026-08-18. Two shapes made the grant unreachable and both are now
+  fixed; do not "fix" either back. (1) **Ashby wraps every consent box in its
+  own `<fieldset>`**, and a legend-sourced label was refused the vouch, so
+  `jobs.ashbyhq.com/openai` scanned `vouched=0`. A fieldset holding **exactly
+  one** control is now that control's label, vouched on the fieldset's
+  **complete** text — legend alone would vouch a heading while the terms sat
+  underneath it, which is the truncation attack renamed. Still never vouched:
+  two or more controls, or a legend over a **bare answer token** ("Yes"), which
+  is a question plus its answer and folding them appends an affirmative to a
+  question whose honest answer may be no. (2) **A consent can be a dropdown**,
+  not a checkbox, so `singleBox` never matched it; a required consent combo now
+  resolves when its **probed** option list holds exactly one affirmative, with
+  negation checked on both sides of the verb. Zero or two affirmatives, an
+  unprobed list, or an unvouched label all still defer.
+  `tests/apply/consent-shapes.test.mjs` holds both halves.
+- **A confirmed live click resolves its own ledger row** (`submit.mjs` →
+  `run.recordSubmission`); it did not until 2026-08-18, and a successful
+  submit read as an unresolved attempt with a company brake.
 - `ok` never says a file reached the right field — attachments are reported from
   `report.uploads`, never from the plan.
 - `answers.yaml` question text is **not** evidence — use `evidenceText()`.
@@ -402,5 +465,16 @@ reasoning, and the reasoning is what stops you re-introducing the bug — so
 - **documents** — PDF rendering shells out to local Edge/Chrome (`PDF_BROWSER`);
   `checkWrittenForm`'s pair list is deliberately short.
 - **apply / fill** — non-upload fills retry on a stale locator (Ashby remounts).
+  **Enter is a submit**: `type-enter` presses it only when the page reports a
+  focused row, and `fillPage` holds a window-capture submit guard for its
+  whole run (measured 2026-08-18: Enter in an unfocused react-select input
+  ran Greenhouse's whole-form submit) — do not remove either half, and never
+  read `report.submitsBlocked > 0` as harmless.
+- **scan / probe** — Greenhouse's embed form **replaces its document root
+  ~200ms after `load`** and every stamp dies with it; the probe detects the
+  loss and re-scans **once** — do not add a wait before scanning. A radio
+  group's `l` is its **question**, never one of its options; an Ashby checkbox
+  named after its own option groups by `<fieldset>`; a dry run colliding with
+  a dry-run ledger row is a repeat rehearsal, not a STOP.
 - **field cache** — a `v` mismatch against `CACHE_VERSION` discards every
   remembered shape **silently**, dropping the whole pipeline to amber.

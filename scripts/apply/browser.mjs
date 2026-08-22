@@ -68,8 +68,19 @@ const DEFAULT_EXPORT =
 // fill-plan.mjs's buildDriverSource() for every value it embeds.
 const LINE_SEPARATORS = new RegExp("[\\u2028\\u2029]", "g")
 
+// A RegExp becomes `{}` under JSON.stringify. The plan's `valueAliases` (an
+// adapter's "this board shows a chosen value differently" knowledge) are
+// RegExps, and the engine that reads them accepts `{source, flags}` for
+// exactly this reason — see fill-engine.mjs's toRe(). Same replacer for every
+// value embedded here and for fill-plan.json.
+export function jsonReplacer(key, value) {
+  return value instanceof RegExp
+    ? { source: value.source, flags: value.flags }
+    : value
+}
+
 export function embedLiteral(value) {
-  return JSON.stringify(value).replace(
+  return JSON.stringify(value, jsonReplacer).replace(
     LINE_SEPARATORS,
     (c) => "\\u" + c.charCodeAt(0).toString(16),
   )

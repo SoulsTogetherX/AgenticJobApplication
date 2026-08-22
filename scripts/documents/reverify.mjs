@@ -44,7 +44,12 @@ import {
   PROFILE_PATH,
   ANSWERS_PATH,
 } from "../lib/verification.mjs"
-import { recordVerification, readVerifications } from "../lib/db.mjs"
+import {
+  recordVerification,
+  readVerifications,
+  orphanVerificationCandidates,
+  deleteVerifications,
+} from "../lib/db.mjs"
 
 // The documents a workspace can hold a verification for, in report order.
 const MODE_FILES = [
@@ -94,6 +99,7 @@ export function reverifySweep({
   jobsDir = JOBS_DIR,
   profilePath = PROFILE_PATH,
   answersPath = ANSWERS_PATH,
+  pruneOrphans = false,
 } = {}) {
   if (!db)
     throw new TypeError(
@@ -101,6 +107,26 @@ export function reverifySweep({
         "store there is nothing to re-check",
     )
   const current = factBaseSha256({ profilePath, answersPath })
+
+  // --- orphans: rows for a workspace that no longer exists ------------------
+  //
+  // The sweep is row-driven by design, so a verification row whose workspace
+  // was hand-deleted re-reports as `missing` on every run, forever — nothing
+  // else in the repo can delete a verifications row (measured on
+  // essex-street-cheese-frontend-dev, three rows re-reported since
+  // 2026-08-10). Three conditions, all required: no jobs/<slug>/ directory
+  // (checked HERE — db.mjs does not touch the disk), no documents row, no
+  // applications row. An applications row means the verification history is
+  // evidence of a real application and is never prunable. Reported always;
+  // deleted only under the flag, BEFORE the sweep reads verifications, so a
+  // pruned slug vanishes from stale/missing in the same run.
+  const orphaned = orphanVerificationCandidates(db).filter(
+    (slug) => !fs.existsSync(path.join(jobsDir, slug)),
+  )
+  let pruned = 0
+  if (pruneOrphans)
+    for (const slug of orphaned) pruned += deleteVerifications(db, slug)
+
   const newest = newestVerifications(readVerifications(db))
 
   const staleSlugs = new Set()
@@ -114,6 +140,8 @@ export function reverifySweep({
     missing: [],
     repassed: 0,
     refailed: 0,
+    orphaned,
+    pruned,
   }
   if (!staleSlugs.size) return out
 
@@ -225,6 +253,7 @@ async function main(args = process.argv.slice(2)) {
       jobsDir: flag("--jobs-dir", JOBS_DIR),
       profilePath: flag("--profile", PROFILE_PATH),
       answersPath: flag("--answers", ANSWERS_PATH),
+      pruneOrphans: args.includes("--prune-orphans"),
     })
   } finally {
     db.close()
@@ -243,6 +272,15 @@ async function main(args = process.argv.slice(2)) {
     )
   for (const m of sweep.missing)
     console.log(`  missing ${m.slug} (${m.mode}): ${m.file}`)
+  if (sweep.pruned)
+    console.log(
+      `pruned ${sweep.pruned} verification row(s) for ${sweep.orphaned.length} orphaned slug(s)`,
+    )
+  else
+    for (const slug of sweep.orphaned)
+      console.log(
+        `  orphaned (no workspace): ${slug} — rerun with --prune-orphans to delete its verification rows`,
+      )
   // Exit 0 either way: a re-fail is the sweep doing its job (the document is
   // correctly dead and named above), not a sweep failure.
   return 0

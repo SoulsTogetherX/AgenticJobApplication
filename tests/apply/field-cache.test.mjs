@@ -281,14 +281,16 @@ test("optsTruncated survives a cache round trip", () => {
 
 test("field-cache's own cap flags truncation even without an incoming signal", () => {
   const cache = { v: CACHE_VERSION, forms: {} }
-  const longList = Array.from({ length: 90 }, (_, i) => `Country ${i}`)
+  // 310 exceeds MAX_CACHED_OPTS=300 (raised with the scanner cap 2026-08-21
+  // so a full country list stays servable instead of buying a re-probe).
+  const longList = Array.from({ length: 310 }, (_, i) => `Country ${i}`)
   const scan = scanOf([
     { k: "f1", t: "combo", l: "Country", req: true, opts: longList },
   ])
   const fp = fingerprint(scan, "greenhouse")
   recordCache(cache, { fp, scan, atsId: "greenhouse" })
   const stored = cache.forms[fp].fields["country|combo"]
-  assert.equal(stored.opts.length, 60, "still capped, for file size")
+  assert.equal(stored.opts.length, 300, "still capped, for file size")
   assert.equal(stored.optsTruncated, true)
 })
 
@@ -1066,4 +1068,62 @@ test("end to end: a second run reuses the shape the first one learned", (t) => {
     )
     assert.equal(l.ats, "greenhouse")
   }
+})
+
+// --- lFull rides the cache as display-only shape ---------------------------
+
+test("lFull round-trips through recordCache -> saveCache -> loadCache", (t) => {
+  const long =
+    "This role is about the infrastructure ML models run on - distributed systems, GPU serving, and developer tooling - working closely with research teams."
+  const cut = long.slice(0, 120)
+  const scan = scanOf([
+    { k: "f1", sel: "#q", t: "textarea", l: cut, lFull: long, req: true },
+  ])
+  const fp = fingerprint(scan, "greenhouse")
+  const cache = { v: CACHE_VERSION, forms: {} }
+  recordCache(cache, { fp, scan, atsId: "greenhouse", url: scan.url })
+
+  const entry = cache.forms[fp]
+  const stored = Object.values(entry.fields)[0]
+  assert.equal(stored.l, cut, "the matching key stays the 120-cut label")
+  assert.equal(stored.lFull, long, "the display companion is carried")
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-lfull-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, "cache.json")
+  saveCache(file, cache)
+  const loaded = loadCache(file)
+  assert.equal(Object.values(loaded.forms[fp].fields)[0].lFull, long)
+})
+
+test("a v4 entry without lFull loads unchanged — no version bump, no discard", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-lfull-old-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const file = path.join(dir, "cache.json")
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      v: CACHE_VERSION,
+      forms: {
+        abc: {
+          ats: "greenhouse",
+          fields: { "degree*|combo": { t: "combo", l: "Degree*", req: true } },
+        },
+      },
+    }),
+  )
+  const loaded = loadCache(file)
+  assert.ok(loaded.forms.abc, "an old-shape entry must survive the load")
+  assert.equal(loaded.forms.abc.fields["degree*|combo"].lFull, undefined)
+})
+
+test("a short label never grows an lFull in the cache", () => {
+  const scan = scanOf([
+    { k: "f1", sel: "#n", t: "text", l: "Full name", req: true },
+  ])
+  const fp = fingerprint(scan, "greenhouse")
+  const cache = { v: CACHE_VERSION, forms: {} }
+  recordCache(cache, { fp, scan, atsId: "greenhouse", url: scan.url })
+  const stored = Object.values(cache.forms[fp].fields)[0]
+  assert.equal("lFull" in stored, false)
 })

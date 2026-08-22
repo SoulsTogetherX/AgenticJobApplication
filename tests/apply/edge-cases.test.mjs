@@ -108,11 +108,13 @@ const withPage = async (fn) => {
 // E1 — a 200-option dropdown
 // ---------------------------------------------------------------------------
 
-// E1 CLOSED (the scanner half) 2026-07-31 by w2-engine. The cut is still 40 —
-// that is a latency decision, not the defect — but it is no longer SILENT:
+// E1 CLOSED (the scanner half) 2026-07-31 by w2-engine. The cut moved 40 ->
+// 250 on 2026-08-21 (a real 197-row country list lost its banked answer to
+// the old cap) — the cap is a bound on pathological lists, not the defect —
+// and it is no longer SILENT:
 // both scanners now record `optsTruncated` and the real `optsTotal`, so the
 // flag field-cache.mjs has always read defensively finally arrives.
-test("E1 HANDLED [w2-engine]: the 200 -> 40 cut still happens but is now RECORDED, in both scanners", () => {
+test("E1 HANDLED [w2-engine]: the over-cap cut still happens but is now RECORDED, in both scanners", () => {
   // GREP, DELIBERATELY, AND SAID SO: scan-page.js is DOM-only and cannot be
   // executed here. Its behavioural sibling is the very next test, which runs
   // scan-engine.mjs against an instrumented page and reads the flag off the
@@ -121,7 +123,11 @@ test("E1 HANDLED [w2-engine]: the 200 -> 40 cut still happens but is now RECORDE
   const engine = src("scripts/apply/scan-engine.mjs")
   const scanner = src(".claude/skills/apply-job/scan-page.js")
 
-  assert.match(scanner, /const MAX_OPTS = 40/, "scan-page.js still cuts at 40")
+  assert.match(
+    scanner,
+    /const MAX_OPTS = 250/,
+    "scan-page.js cuts at 250 (raised from 40, 2026-08-21)",
+  )
   // Both of scan-page.js's option branches — the native <select> and the
   // react-select probe — must set it. One of two is the shape of a half-fix,
   // and a count is how this notices.
@@ -188,7 +194,8 @@ test("FINDING (w3-resolution): E1 BREAKS — 40 of 200 is cached as if it were t
   // A 61-option list DOES get flagged, which is what makes the gap specific
   // rather than a blanket absence — the machinery exists, it just never fires
   // for the case that matters.
-  const long = Array.from({ length: 61 }, (_, i) => "Option " + (i + 1))
+  // 301 exceeds MAX_CACHED_OPTS=300 (raised with the scanner cap 2026-08-21).
+  const long = Array.from({ length: 301 }, (_, i) => "Option " + (i + 1))
   const cache2 = { v: 1, forms: {} }
   const scan2 = { ...scan, fields: [{ ...scan.fields[0], opts: long }] }
   const fp2 = fingerprint(scan2, "greenhouse")

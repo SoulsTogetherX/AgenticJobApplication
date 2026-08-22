@@ -85,12 +85,20 @@ const NOT_A_MALFUNCTION = new Set([
   "unprobed-dropdown",
   "freetext-disclosure",
   "doc-unverified",
+  // A PDF nobody rendered and a board nobody has captured a page for are the
+  // user's pipeline lagging, not the board misbehaving — same as the two above.
+  "doc-unrendered",
+  "board-unsighted",
   "fact-base-changed",
   "board-untrusted",
   "l3-rejected",
   "cap-company",
   "board-paused",
   "reconciled-not-sent",
+  // Read off the ledgers, like cap-company: the queue was stale, nothing
+  // malfunctioned. (Was missing here; a stale queue of ten already-applied
+  // rows moved the breaker as if a board had failed ten times.)
+  "already-applied",
 ])
 
 /**

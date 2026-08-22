@@ -463,3 +463,51 @@ test("the challenge kinds are the ones job.mjs treats as unconfirmed", () => {
   assert.ok(!CHALLENGE_KINDS.includes("confirmation"))
   assert.ok(!CHALLENGE_KINDS.includes("posting-gone"))
 })
+
+// ---------------------------------------------------------------------------
+// Sightedness (2026-08-18): the pre-click question job.mjs now asks.
+// ---------------------------------------------------------------------------
+
+test("sightedHosts is exactly the hosts a capture-sourced CONFIRMATION rule names — the evidence list, not the allowlist", async () => {
+  const { sightedHosts, isHostSighted } = await import(
+    "../../scripts/auto/classify.mjs"
+  )
+  const hosts = sightedHosts()
+  // Derived from the same rules, so this can never disagree with SHIPPED.
+  const expected = [
+    ...new Set(
+      shippedRules()
+        .filter(
+          (r) => r.evidence.source === "capture" && r.kind === "confirmation",
+        )
+        .flatMap((r) => r.evidence.hosts ?? []),
+    ),
+  ].sort()
+  assert.deepEqual(hosts, expected)
+  assert.ok(hosts.length >= 1, "at least one host has been captured")
+  for (const h of hosts)
+    assert.equal(isHostSighted(`https://${h}/x/jobs/1`), true, h)
+  // Allowlisted on the user's file, but no captured page: NOT sighted. This is
+  // the pair the run report named — a board can clear the trust gate and still
+  // be blind here.
+  assert.equal(isHostSighted("https://jobs.lever.co/acme/1234abcd/apply"), false)
+  assert.equal(isHostSighted("not a url"), false, "fails closed")
+})
+
+test("a loopback url is sighted iff a fixture-sourced confirmation rule ships — the harness reads the same evidence as the gate", async () => {
+  const { isHostSighted } = await import("../../scripts/auto/classify.mjs")
+  const fixtureConfirmation = shippedRules().some(
+    (r) => r.evidence.source === "fixture" && r.kind === "confirmation",
+  )
+  assert.equal(
+    isHostSighted("http://127.0.0.1:4599/fixture-submit/confirmation"),
+    fixtureConfirmation,
+  )
+  // A synthetic rule set with NO fixture confirmation: loopback is blind too.
+  assert.equal(
+    isHostSighted("http://127.0.0.1:4599/x", [
+      { kind: "error", evidence: { source: "fixture", sample: "x" } },
+    ]),
+    false,
+  )
+})

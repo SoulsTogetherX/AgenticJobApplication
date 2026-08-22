@@ -826,6 +826,10 @@ test("LANDS: the escalation buys 3 fewer identity defers and 2 more fills than t
     },
     {
       base: { identityDefers: 3, fills: 0 },
+      // Note (2026-08-21): the answer-bank time pass briefly answered
+      // "Preferred start date" here (a third fill, into `salary_floor`);
+      // narrowing the pass to date-shaped controls and banked date LITERALS
+      // un-landed it. If this goes to 3 again, the pass has re-widened.
       escalated: { identityDefers: 0, fills: 2 },
     },
   )
@@ -1247,6 +1251,163 @@ test("FIX (B and C): both plans defer the assertion, so readiness() refuses the 
       1,
     ],
   ])
+})
+
+// ---------------------------------------------------------------------------
+// THE USER'S 2026-08-18 POLICY, AGAINST THE SAME TWO SHAPES.
+//
+// scripts/apply/assent-policy.mjs: under `required_assertions`, a REQUIRED
+// assertion the bank resolved at status OK is filled unattended. The user was
+// told, in the question that decided this, exactly what B and C demonstrate —
+// "a page whose visible label lies about which field it is would receive the
+// same answer a human reading that label would give" — and chose it. So the
+// tests below do not pretend the shapes are closed under the policy. They pin
+// the two things that ARE still true and that make the acceptance honest:
+//
+//   1. THE POLICY ONLY WIDENS WHAT IS REQUIRED. The shipped fixtures are not
+//      marked required, and "otherwise leave them alone" means they are left
+//      EMPTY under the policy — no tick, no action, no defer to nag about.
+//   2. WHEN THE FIELD IS REQUIRED AND THE POLICY IS ON, THE TICK IS NAMED.
+//      `plan.actuated` carries it with its grant, and submitReadiness admits
+//      it only under a policy that enables that grant. Silent, it is not.
+//   3. THE POLICY OFF IS THE FIX ABOVE, UNCHANGED — asserted by the B/C tests
+//      that precede this block, which pass no policy.
+// ---------------------------------------------------------------------------
+
+const USER_POLICY_2026_08_18 = Object.freeze({
+  required_assertions: true,
+  required_widgets: true,
+  required_consent: "non-legal",
+  optional: "skip",
+})
+
+test("POLICY ON, shapes B and C as shipped (not required): left EMPTY — no tick, no action, and no defer", async () => {
+  for (const n of ["escalated-tickbox-yes", "escalated-radio-yesno"]) {
+    const s = scan(n)
+    const plan = planFrom(s, { assent: USER_POLICY_2026_08_18 })
+    const page = recordingPage({ url: plan.urlGuard })
+    await fillPage(page, plan)
+    assert.deepEqual(
+      {
+        n,
+        waiverActions: actionsAgainst(
+          page,
+          selectorsWritingTo(s, "agree_arbitration"),
+        ),
+        g1: plan.items.filter((i) => i.k === "g1").map((i) => i.how),
+        deferred: plan.defer.map((x) => x.why),
+        actuated: plan.actuated,
+      },
+      {
+        n,
+        waiverActions: [],
+        g1: ["skip"],
+        deferred: [],
+        actuated: [],
+      },
+      "an OPTIONAL assertion is left alone under the policy — that is the user's 'otherwise'",
+    )
+  }
+})
+
+test("POLICY ON, shapes B and C marked REQUIRED: the tick lands on the waiver — the accepted residual risk — and it is NAMED, never silent", async () => {
+  // This is the risk the user accepted, stated as a test so nobody reads the
+  // policy as closing it. What the test insists on is the record: the act is
+  // in `actuated` with its grant, the item says `assent: true`, and the
+  // unattended gate admits it only under the policy that granted it.
+  for (const n of ["escalated-tickbox-yes", "escalated-radio-yesno"]) {
+    const s = scan(n)
+    for (const f of s.fields) if (f.k === "g1") f.req = true
+    const plan = planFrom(s, { assent: USER_POLICY_2026_08_18 })
+    const page = recordingPage({ url: plan.urlGuard })
+    await fillPage(page, plan)
+    const waiver = selectorsWritingTo(s, "agree_arbitration")
+    assert.deepEqual(
+      {
+        n,
+        // actionsAgainst renders "<op> <sel>[ = value]"; a scroll precedes the
+        // check and is an interaction too, so only the ops are compared, and
+        // deduplicated so the shape reads as "it was checked".
+        waiverActions: [
+          ...new Set(
+            actionsAgainst(page, waiver)
+              .map((a) => a.split(" ")[0])
+              .filter((op) => op !== "scroll"),
+          ),
+        ],
+        item: plan.items
+          .filter((i) => i.k === "g1")
+          .map((i) => ({ how: i.how, assent: i.assent, grant: i.grant })),
+        actuated: plan.actuated.map((a) => ({
+          k: a.k,
+          grant: a.grant,
+          value: a.value,
+        })),
+        deferred: plan.defer.map((x) => x.why),
+        unattendedWithoutPolicy: submitReadiness(plan).ready,
+        unattendedWithPolicy: submitReadiness(plan, null, {
+          assent: USER_POLICY_2026_08_18,
+        }).ready,
+      },
+      {
+        n,
+        waiverActions: ["check"],
+        item: [{ how: "check", assent: true, grant: "required-assertion" }],
+        actuated: [{ k: "g1", grant: "required-assertion", value: "Yes" }],
+        deferred: [],
+        unattendedWithoutPolicy: false,
+        unattendedWithPolicy: true,
+      },
+      "the accepted risk must be on record, and admitted only under the policy that accepted it",
+    )
+  }
+})
+
+test("POLICY ON does not touch fieldIdentityMismatch — a control whose identity contradicts its label still defers first, required or not", () => {
+  // The identity guard runs before every grant is consulted, so the policy
+  // cannot reach a field it has already stopped. fieldIdentityMismatch is a
+  // CATEGORY guard (a label naming one tracked category over a selector naming
+  // another — its own tests document that the work-authorisation wording names
+  // no category, which is the documented limit the B/C shapes exploit), so
+  // the field here is one it tracks: a "Phone number" label over an
+  // `input[name="ssn"]`, resolved as a REQUIRED assertion the policy would
+  // otherwise fill.
+  const s = {
+    url: "https://boards.greenhouse.io/x/jobs/1",
+    fields: [
+      {
+        k: "f1",
+        t: "text",
+        l: "Phone number",
+        sel: 'input[name="ssn"]',
+        req: true,
+      },
+    ],
+  }
+  const plan = buildPlan({
+    scan: s,
+    resolved: [
+      {
+        k: "f1",
+        status: "CONFIRM",
+        value: "702-555-0100",
+        sel: 'input[name="ssn"]',
+        source: "a-002@fuzzy",
+        classDescription: "assertion",
+      },
+    ],
+    adapter: GENERIC,
+    url: s.url,
+    assent: USER_POLICY_2026_08_18,
+  })
+  assert.deepEqual(
+    plan.items,
+    [],
+    "no item may exist for a field the identity guard stopped",
+  )
+  assert.equal(plan.actuated.length, 0)
+  assert.equal(plan.defer.length, 1)
+  assert.match(plan.defer[0].why, /"phone".*"ssn"/)
 })
 
 test("FIX (B and C): a confirm defer is reviewed once, not re-asked forever — asserted at pending-questions.mjs", async () => {
@@ -1879,7 +2040,10 @@ test("shape G (honest): the question the scanner used to swallow now reaches the
   const plan = planFrom(s)
   const d = plan.defer.find((x) => x.label === SPONSOR_Q)
 
-  assert.ok(d, "if this is undefined the silent miss is BACK, not a fixture drift")
+  assert.ok(
+    d,
+    "if this is undefined the silent miss is BACK, not a fixture drift",
+  )
   // It defers as `confirm`, carrying the answer: work authorisation is an
   // assertion the user makes, so the class gate holds it whatever the widget
   // is. What the pair detector bought is the `value`/`pick` riding along —
@@ -1900,7 +2064,10 @@ test("shape G (honest): the question the scanner used to swallow now reaches the
   // so none of the above is the vacuous pass a defer-everything plan gives.
   assert.deepEqual(
     plan.items.map((i) => `${i.sel} = ${i.value}`),
-    ["#_systemfield_name = Jane Test", "#_systemfield_email = jane@test.example"],
+    [
+      "#_systemfield_name = Jane Test",
+      "#_systemfield_email = jane@test.example",
+    ],
   )
   assert.equal(readiness(plan).ready, false)
 })
@@ -1954,7 +2121,7 @@ test("shape G: a button pair is kept out of `items` even when the bank answers i
   const banked = path.join(os.tmpdir(), "aj-shape-g-answers.yaml")
   fs.writeFileSync(
     banked,
-    'answers:\n  - id: a-900\n    question: Have you previously worked at this company?\n' +
+    "answers:\n  - id: a-900\n    question: Have you previously worked at this company?\n" +
       '    answer: "No"\n    added: 2026-08-01\n',
   )
   const s = {

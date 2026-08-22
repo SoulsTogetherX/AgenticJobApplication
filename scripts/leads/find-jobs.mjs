@@ -1321,14 +1321,29 @@ function explainTitles(rejected, top = 30) {
   }
 }
 
-function summarize(kept, rejected, opts = {}) {
+// `counts` (2026-08-18) says where the candidates WENT, because `stored=0`
+// alone cannot be told apart from a broken sweep: a healthy sweep of boards
+// this store already holds stores nothing and drops everything as a
+// duplicate, and a sweep whose every fetch failed stores nothing too. Read
+// together — fetched, duplicates, gate-rejected, stored — the four say which
+// it was. Duplicates were never counted before; dedupeLeads() dropped them
+// silently between the fetch and the gate.
+export function summarize(kept, rejected, opts = {}) {
   if (opts.explain) explainTitles(rejected, opts.explainTop ?? 30)
+  const c = opts.counts ?? {}
+  const fetched = c.fetched ?? kept.length + rejected.length
+  const duplicates = c.duplicates ?? 0
   if (isTerse()) {
     for (const l of kept) {
       const f = l.flags?.length ? `|${l.flags.join(",")}` : ""
       console.log(`+${l.id}|${l.company}|${l.title}|${l.location || "?"}${f}`)
     }
-    console.log(`stored=${kept.length} rejected=${rejected.length}`)
+    console.log(
+      `fetched=${fetched} duplicates=${duplicates} gate_rejected=${rejected.length} stored=${kept.length}` +
+        // Kept for anything that greps the old line; same number as
+        // gate_rejected.
+        ` rejected=${rejected.length}`,
+    )
     return
   }
   for (const l of kept) {
@@ -1343,12 +1358,13 @@ function summarize(kept, rejected, opts = {}) {
     byReason[cat] = (byReason[cat] ?? 0) + 1
   }
   console.log(
-    `\nStored ${kept.length} new lead(s); rejected ${rejected.length} ` +
+    `\nFetched ${fetched} posting(s): ${duplicates} already in the store, ` +
+      `${rejected.length} rejected by the gates ` +
       `(${
         Object.entries(byReason)
           .map(([k, v]) => `${k}: ${v}`)
           .join(", ") || "none"
-      }).`,
+      }), ${kept.length} stored.`,
   )
 }
 
@@ -1617,6 +1633,14 @@ async function ingest(
   summarize(committed, rejected, {
     explain: ei !== -1,
     explainTop: Number.isFinite(eN) && eN > 0 ? eN : 30,
+    counts: {
+      fetched: candidates.length,
+      // Everything the planning dedupe dropped against the store and the
+      // application history — plus the few a concurrent sweep beat this one
+      // to, which the locked commit dropped for the same reason.
+      duplicates:
+        candidates.length - deduped.length + (kept.length - committed.length),
+    },
   })
   if (enriched.attempted) {
     console.log(

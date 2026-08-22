@@ -466,7 +466,11 @@ test("a per-field hint seeds the token picker's ladder, and a stale one does not
   assert.equal(stale.out.comboVia.f2, "type-enter")
 })
 
-test("a single value on a multi picker still fills through the single path", async (t) => {
+test("LEGACY tolerance: a values-less item on a multi picker fills through the single path", async (t) => {
+  // A plan built by today's buildPlan always carries values[] for a multi
+  // field (single answers ride as a one-element list — see fill-plan.mjs).
+  // A RAW item with no values is the legacy/cached-plan shape; it keeps the
+  // single path, which works only on a widget with no committed tokens.
   if (NO_BROWSER) return t.skip(NO_BROWSER)
   const { out, state } = await run([
     { k: "f2", sel: "#skills", how: "combo", value: "Go" },
@@ -518,6 +522,86 @@ test("replay is idempotent: a token already present is skipped, not doubled or t
     state.stackTokens,
     ["React", "Node"],
     "exactly one React token — the pre-existing one — plus the new Node",
+  )
+  assert.ok(out.verify.landed.includes("f3"))
+})
+
+// --- a single answer on a multi widget takes the multi path ----------------
+//
+// The EEO tier resolves a SINGLE decline string, and a plan that carried it
+// bare walked the single-select path on Chime's multi-select react-select:
+// type-enter committed a token, the next rung's centre-click hit that token's
+// × remove control, the menu never opened, and click-option waited out its
+// timeout — three byte-identical runs, 2026-08-22. buildPlan now rides a
+// single grounded answer on a scanner-flagged multi field as a one-element
+// values list, so the engine opens via the inner input and verifies per token.
+
+test("a SINGLE grounded answer on a multi combo plans values[] of one", () => {
+  const scan = scanOf([
+    {
+      k: "f1",
+      sel: "#eeo",
+      t: "combo",
+      multi: true,
+      l: "I identify my race/ethnicity as (please mark all that apply)",
+      req: true,
+      opts: ["Asian", "White", "I don't wish to answer"],
+    },
+  ])
+  const resolved = [ok("f1", "I don't wish to answer", { sel: "#eeo" })]
+  const p = buildPlan({ scan, resolved, adapter: greenhouse, files })
+  const item = p.items.find((i) => i.k === "f1")
+  assert.ok(item, "the field must be planned, not deferred")
+  assert.equal(item.how, "combo")
+  assert.deepEqual(
+    item.values,
+    ["I don't wish to answer"],
+    "a single answer on a multi widget must ride as a one-element list",
+  )
+  assert.equal(item.value, "I don't wish to answer")
+})
+
+test("a single answer on a NON-multi combo does not grow values[]", () => {
+  const scan = scanOf([
+    {
+      k: "f1",
+      sel: "#dept",
+      t: "combo",
+      l: "Department",
+      req: true,
+      opts: ["Engineering", "Sales"],
+    },
+  ])
+  const resolved = [ok("f1", "Engineering", { sel: "#dept" })]
+  const p = buildPlan({ scan, resolved, adapter: greenhouse, files })
+  const item = p.items.find((i) => i.k === "f1")
+  assert.equal(item.how, "combo")
+  assert.equal(
+    "values" in item,
+    false,
+    "a single-select combo keeps the single path",
+  )
+})
+
+test("a single value lands on a token-holding widget without deleting the committed token", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // #stack loads with a React token already committed — the exact shape the
+  // single path cannot survive (its centre-click hits the token's ×). The
+  // one-element values list takes the multi path and leaves React standing.
+  const { out, state } = await run([
+    {
+      k: "f3",
+      sel: "#stack",
+      how: "combo",
+      value: "Node",
+      values: ["Node"],
+    },
+  ])
+  assert.equal(out.failed, 0, JSON.stringify(out.failures))
+  assert.deepEqual(
+    state.stackTokens,
+    ["React", "Node"],
+    "the committed React token must survive the single-value fill",
   )
   assert.ok(out.verify.landed.includes("f3"))
 })

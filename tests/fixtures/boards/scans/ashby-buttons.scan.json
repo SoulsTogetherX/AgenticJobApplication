@@ -63,6 +63,24 @@
       ],
       "widget": "buttons",
       "labelWhy": "answered by buttons whose answer set this scanner does not recognise"
+    },
+    {
+      "k": "g3",
+      "t": "radio",
+      "l": "Check Yes or No to indicate whether you have previously worked for Fixture Compute in any role.",
+      "req": true,
+      "_note": "TIER 2, INSTRUCTION-PHRASED (2026-08-21). No \"?\" anywhere — the question is an imperative sentence, which is how Ashby words its texting consent. questionIn() alone left this pair to the widget sweep, which reported two separate fields labelled \"Yes\" and \"No\" on the live Quora and Flock Safety forms. The firstSentence fallback adopts it, gated on the answer set being CLOSED: a Yes/No pair under a sentence is a question; a Bold/Italic toolbar is not, and stays out of `fields`. The inner \"Yes or No\" survives because withoutOptions removes only the LAST occurrence of each option label — the buttons' own text, not the question's words. `req` comes from the * marker outside the sentence, exactly as g1 — required, so an UNKNOWN resolution DEFERS rather than skip-itemising.",
+      "o": [
+        {
+          "k": "f8",
+          "l": "Yes"
+        },
+        {
+          "k": "f9",
+          "l": "No"
+        }
+      ],
+      "widget": "buttons"
     }
   ],
   "btns": [

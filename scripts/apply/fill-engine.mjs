@@ -187,6 +187,51 @@ export default async function fillPage(page, plan, opts = {}) {
     return out
   }
 
+  // --- NO SUBMIT LEAVES THIS ENGINE, WHATEVER KEY IS PRESSED -----------------
+  //
+  // The header says "never click submit" is a thing this engine cannot
+  // express. MEASURED on Torc's Greenhouse embed form (2026-08-18), it could:
+  // Enter pressed in a combobox input whose menu had no focused row is the
+  // browser's implicit form submission, and the board's submit handler ran.
+  // The type-enter guard above stops that keystroke at its source; this is
+  // the structural half, for anything the guard cannot see (a widget that
+  // reports no focused row yet still forwards Enter, a key sent by any other
+  // verb): for the duration of this fill a CAPTURE listener on `window` — the
+  // first thing in the dispatch order, ahead of the root listener React and
+  // Remix attach to `document` — cancels every `submit` event and stops it
+  // dead, so neither the native navigation nor the board's onSubmit runs. It
+  // is removed before this function returns, so the runner's own click in
+  // submit.mjs (and advance.mjs's `next`) is untouched. Every submit it had to
+  // stop is counted and reported as a signal, never swallowed: a fill that
+  // tried to submit is a fill with a defect in it, and the report says so.
+  const armSubmitGuard = () =>
+    page
+      .evaluate(() => {
+        const g = (e) => {
+          window.__ajSubmitsBlocked = (window.__ajSubmitsBlocked || 0) + 1
+          e.preventDefault()
+          e.stopImmediatePropagation()
+        }
+        window.__ajSubmitGuards = window.__ajSubmitGuards || []
+        window.__ajSubmitGuards.push(g)
+        window.__ajSubmitsBlocked = 0
+        window.addEventListener("submit", g, true)
+      })
+      .catch(() => {})
+  const disarmSubmitGuard = () =>
+    page
+      .evaluate(() => {
+        for (const g of window.__ajSubmitGuards || [])
+          window.removeEventListener("submit", g, true)
+        delete window.__ajSubmitGuards
+        const n = Number(window.__ajSubmitsBlocked || 0)
+        delete window.__ajSubmitsBlocked
+        return n
+      })
+      .then((n) => Number(n) || 0)
+      .catch(() => 0)
+  await armSubmitGuard()
+
   // sel first: it is app-owned and survives remounts. data-aj is only a
   // fallback, and only valid while no re-scan has renumbered the keys.
   const locate = async (item) => {
@@ -380,6 +425,20 @@ export default async function fillPage(page, plan, opts = {}) {
           }
           for (const n of p.querySelectorAll("input, select")) {
             if (n === el) continue
+            // A CHECKBOX IS NEVER A COMBO'S STORE. MEASURED on Flock Safety's
+            // Ashby form 2026-08-18: the only combobox on the page (Location)
+            // walked up to a container holding Ashby's display:none backing
+            // checkboxes for its Yes/No button pairs, read the first one's
+            // default value — "on" — as the committed selection, and a
+            // location that had landed was reported failed. A tick has no
+            // text value; neither does a file, button or submit input.
+            if (
+              n.tagName === "INPUT" &&
+              /^(checkbox|radio|file|submit|button|reset|image)$/i.test(
+                String(n.type || ""),
+              )
+            )
+              continue
             if (!unpainted(n)) continue
             sawStore = true
             if (txt(n.value)) return txt(n.value)
@@ -588,6 +647,60 @@ export default async function fillPage(page, plan, opts = {}) {
     return named ? byText.first() : byText.locator("visible=true").first()
   }
 
+  // ENTER IS PRESSED ONLY WHEN THE PAGE SAYS A ROW IS FOCUSED, and this is a
+  // SAFETY rule before it is a correctness one.
+  //
+  // MEASURED on Torc's Greenhouse embed form, 2026-08-18. type-enter typed the
+  // location into react-select's input, waited its 500ms, and pressed Enter
+  // before the server-queried suggestions had arrived. react-select handles
+  // Enter ONLY when its menu is open with a focused option; otherwise it lets
+  // the keydown through — and Enter in a text input inside a <form> is the
+  // browser's IMPLICIT SUBMISSION. The board received a submit event, ran its
+  // whole-form validation and painted "First Name is required." on every empty
+  // field. Nothing was sent that time only because required fields were still
+  // empty. A form whose LAST required control is a typeahead would have been
+  // submitted by this engine, from a keystroke, past every gate in submit.mjs
+  // — the click-surface invariant broken by a key nobody counted as a click.
+  //
+  // So Enter is pressed only when the focused control reports a focused row:
+  // `aria-activedescendant` naming an element that exists (react-select,
+  // react-aria and every WAI-ARIA combobox set it while a row is highlighted),
+  // or a focused/selected row inside the menu the control names. Nothing
+  // reported means nothing to commit, and this strategy FAILS to the next one
+  // (type-click clicks the row it can see; no key is sent). The submit guard
+  // installed by fillPage() catches what this misses; this stops the keystroke
+  // at its source and stops the board from validating a half-filled form on
+  // every fill.
+  //
+  // `ajFocusedOptionProbe` names this evaluate for the instrumented page in
+  // scripts/dev/bench-apply.mjs, exactly as `ajSettleProbe` names the settle
+  // probe: the double must be able to answer it in its own terms.
+  const focusedOptionShown = () =>
+    page
+      .evaluate(() => {
+        const ajFocusedOptionProbe = true
+        const a = document.activeElement
+        if (!a || !a.getAttribute || !ajFocusedOptionProbe) return false
+        const id = String(a.getAttribute("aria-activedescendant") || "").trim()
+        if (id && document.getElementById(id)) return true
+        const menuId = String(
+          a.getAttribute("aria-controls") || a.getAttribute("aria-owns") || "",
+        )
+          .trim()
+          .split(/\s+/)[0]
+        const menu = menuId ? document.getElementById(menuId) : null
+        if (
+          menu &&
+          menu.querySelector(
+            "[aria-selected='true'],[class*='is-focused'],[class*='--is-focused']," +
+              "[class*='highlighted'],[class*='Highlighted'],[data-focused='true']",
+          )
+        )
+          return true
+        return false
+      })
+      .catch(() => false)
+
   const strategies = {
     // Typeahead: filter the list, then commit the highlighted row.
     //
@@ -602,6 +715,11 @@ export default async function fillPage(page, plan, opts = {}) {
       await open(loc)
       await page.keyboard.type(String(value).slice(0, 60), { delay: 20 })
       await page.waitForTimeout(500)
+      if (!(await focusedOptionShown())) {
+        throw new Error(
+          "no row focused after typing — Enter not pressed (it would submit the form)",
+        )
+      }
       await page.keyboard.press("Enter")
     },
     // Filter, then click the exact row — safer when Enter picks a near-match,
@@ -661,12 +779,97 @@ export default async function fillPage(page, plan, opts = {}) {
   // was asked for ("United States" -> "United States of America"), and a PREFIX
   // at a word boundary keeps exactly that case and drops the rest: an option
   // that merely mentions the words later in its text is a different option.
+  // PUNCTUATION IS NOT MEANING. MEASURED on Quora's Ashby form 2026-08-18: the
+  // bank spells the school "University of Nevada - Las Vegas", the board's own
+  // list spells it "University of Nevada, Las Vegas", the typeahead committed
+  // the right row and the readback failed on a hyphen. The last resort below
+  // compares the two with separators folded to spaces — EQUALITY only, never
+  // a prefix, so "1-3 years" and "13 years" stay different ("1 3" vs "13") and
+  // an option that merely contains the words is still not the value.
+  const foldPunct = (s) =>
+    norm(s)
+      .replace(/[,;:.\-–—/()]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  // THE SAME CALENDAR DAY IS THE SAME VALUE, whatever the widget renders.
+  // MEASURED on OpenAI's Ashby form 2026-08-21: a react date widget backed by
+  // a text input was typed "2026-08-18" and re-rendered it "08/18/2026", so
+  // every strategy "failed" on a field the widget had committed correctly and
+  // the job deferred at submit_readiness. Recognised shapes only — ISO
+  // YYYY-MM-DD and US MM/DD/YYYY (both sides tried both ways) — and EQUALITY
+  // of all three parts, never a fuzzy parse: "08/18/2026" equals
+  // "2026-08-18" and nothing else does.
+  const dateParts = (s) => {
+    let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`
+    m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s)
+    if (m) return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`
+    return null
+  }
   const accepts = (got, want) => {
     const g = norm(got)
     const w = norm(want)
     if (!g || !w) return false
     if (g === w) return true
-    return g.startsWith(w) && /[\s(,\-:/]/.test(g.charAt(w.length))
+    if (g.startsWith(w) && /[\s(,\-:/]/.test(g.charAt(w.length))) return true
+    const gd = dateParts(g)
+    if (gd && gd === dateParts(w)) return true
+    return foldPunct(g) === foldPunct(w)
+  }
+
+  // WHERE THE BOARD RENDERS A CHOSEN VALUE DIFFERENTLY FROM ITS OPTION TEXT.
+  //
+  // MEASURED on Torc's Greenhouse embed form, 2026-08-18: Country* offers
+  // "United States +1" and, once chosen, shows "+1". accepts() rightly says
+  // "+1" is not "United States +1", so every strategy "failed", the item was
+  // reported failed and the verify pass mismatched it — on a field the widget
+  // had committed correctly. ats/greenhouse.mjs has declared exactly this
+  // shape as a valueAlias since 2026-07-27, and AUDIT H8 (2026-08-04) copied
+  // the aliases onto the plan "the engine actually reads" — but nothing in this
+  // file ever read them. Both readbacks now do: the strategy ladder's commit
+  // check and the verify pass. An alias is knowledge from an adapter, keyed on
+  // the field's LABEL and the planned VALUE, and it only ever widens what is
+  // ACCEPTED as the readback of a value the plan already resolved — it never
+  // chooses a value.
+  //
+  // A RegExp does not survive JSON, and the plan crosses JSON on the MCP path
+  // (fill-plan.json, the embedded bootstrap). So an alias part may arrive as a
+  // RegExp (in-process runner), as `{source, flags}` (serialised by
+  // browser.mjs's embedLiteral / fill-plan.mjs's writer), or as a bare string;
+  // all three are read. Anything else is not an alias and is ignored.
+  const toRe = (x) => {
+    if (x instanceof RegExp) return x
+    if (x && typeof x === "object" && typeof x.source === "string") {
+      try {
+        return new RegExp(x.source, typeof x.flags === "string" ? x.flags : "")
+      } catch {
+        return null
+      }
+    }
+    if (typeof x === "string" && x) {
+      try {
+        return new RegExp(x, "i")
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+  const aliasFor = (item) => {
+    for (const a of Array.isArray(plan.valueAliases) ? plan.valueAliases : []) {
+      const l = toRe(a && a.label)
+      const v = toRe(a && a.value)
+      const acc = toRe(a && a.accept)
+      if (!l || !v || !acc) continue
+      if (l.test(String(item.label || "")) && v.test(String(item.value || "")))
+        return acc
+    }
+    return null
+  }
+  const acceptsFor = (item, got) => {
+    if (accepts(got, item.value)) return true
+    const acc = aliasFor(item)
+    return !!(acc && norm(got) && acc.test(String(got || "")))
   }
 
   // WHICH LADDER THIS FIELD CLIMBS, AND WHY A HINT ONLY REORDERS IT.
@@ -710,7 +913,7 @@ export default async function fillPage(page, plan, opts = {}) {
         await run(loc, item.value)
         await page.waitForTimeout(200)
         const got = await committedValue(loc)
-        if (accepts(got, item.value)) return { ok: true, via: name }
+        if (acceptsFor(item, got)) return { ok: true, via: name }
         last = "after " + name + ' the field reads "' + got + '"'
       } catch (e) {
         last = name + ": " + e.message
@@ -955,7 +1158,41 @@ export default async function fillPage(page, plan, opts = {}) {
           const re = new RegExp(spec.pattern, "i")
           const free = pool()
           let best = null
-          for (let order = 0; order < free.length; order++) {
+          // RULE 0 (2026-08-18): THE SCANNER'S OWN SELECTOR FOR THIS INPUT
+          // BEATS ANY TEXT WALK. The plan carries `sel` when the scanner
+          // stamped an app-owned selector on the file input (`#resume`,
+          // `#_systemfield_resume`); an id survives the remount the text walk
+          // was invented for, and it names ONE element. The walk stays as the
+          // fallback for inputs the scanner could not name.
+          //
+          // MEASURED on a live Ashby form (Eliza, dry run): the walk matched
+          // /resume|\bcv\b/ against the "Autofill from resume" helper input's
+          // heading — a nearer ancestor than the real slot's — and stamped the
+          // résumé onto the helper. `#_systemfield_resume` (required) then read
+          // empty at verify, so the fill was refused; on the attended path the
+          // same routing had put the résumé through the board's parser instead
+          // of into the slot. The selector goes first because it is the one
+          // thing on the page the board wrote for exactly this purpose.
+          if (spec.sel) {
+            let target = null
+            try {
+              const hits = [...document.querySelectorAll(spec.sel)]
+              if (hits.length === 1) target = hits[0]
+            } catch {}
+            if (
+              target &&
+              target.tagName === "INPUT" &&
+              target.type === "file" &&
+              free.includes(target)
+            )
+              best = {
+                el: target,
+                depth: 0,
+                len: 0,
+                order: free.indexOf(target),
+              }
+          }
+          for (let order = 0; !best && order < free.length; order++) {
             const el = free[order]
             let n = el
             for (let depth = 1; depth <= 8; depth++) {
@@ -977,7 +1214,10 @@ export default async function fillPage(page, plan, opts = {}) {
               break
             }
           }
-          const how = best ? "label" : "order"
+          // `selector` is the scanner's own selector (rule 0 above): as
+          // decisive as a label, and reported distinctly so a run log can say
+          // which mechanism placed each file.
+          const how = best ? (best.depth === 0 ? "selector" : "label") : "order"
           // Rule 3: some boards put the heading outside anything the walk can
           // reach; fall back to the first input STILL AWAITING A FILE.
           if (!best && free.length) best = { el: free[0], depth: null }
@@ -1079,6 +1319,7 @@ export default async function fillPage(page, plan, opts = {}) {
       dry = await resolveUploads(
         uploadItems.map((item, i) => ({
           pattern: patternOf(item),
+          sel: typeof item.sel === "string" && item.sel ? item.sel : null,
           tag: "u" + (i + 1),
         })),
         false,
@@ -1106,7 +1347,16 @@ export default async function fillPage(page, plan, opts = {}) {
     }
     let raw = null
     try {
-      raw = await resolveUploads([{ pattern, tag }], true)
+      raw = await resolveUploads(
+        [
+          {
+            pattern,
+            sel: typeof item.sel === "string" && item.sel ? item.sel : null,
+            tag,
+          },
+        ],
+        true,
+      )
     } catch (e) {
       fail(item, "file input lookup failed: " + e.message)
       continue
@@ -1262,9 +1512,12 @@ export default async function fillPage(page, plan, opts = {}) {
     if (item.how === "upload" || item.how === "skip") continue
     targets.push({ item, loc: await locate(item) })
   }
-  const guardFail = (why) => {
+  const guardFail = async (why) => {
     out.failed++
     out.failures.push({ k: "-", how: "guard", why })
+    // The submit guard is armed by now; a page-guard refusal must not leave it
+    // on a page the runner may still walk.
+    out.submitsBlocked = await disarmSubmitGuard()
     out.ms = Date.now() - started
     return out
   }
@@ -1678,19 +1931,38 @@ export default async function fillPage(page, plan, opts = {}) {
 
   const probes = items
     .filter((i) => i.how !== "skip")
-    .map((i) => ({
-      k: i.k,
-      sel: i.sel || (i.k ? '[data-aj="' + i.k + '"]' : null),
-      want: i.how === "upload" ? null : i.value,
-      // Multi items verify per VALUE — the page renders tokens in its own
-      // order, so equality against the joined `want` string would fail a
-      // fill that landed every value.
-      wants:
-        i.how !== "upload" && Array.isArray(i.values) && i.values.length
-          ? i.values
-          : undefined,
-      how: i.how,
-    }))
+    .map((i) => {
+      const acc = i.how === "combo" || i.how === "select" ? aliasFor(i) : null
+      return {
+        k: i.k,
+        sel: i.sel || (i.k ? '[data-aj="' + i.k + '"]' : null),
+        // A CHECK ITEM IS VERIFIED BY ITS TICK, NOT BY ITS OPTION TEXT.
+        // MEASURED on Torc 2026-08-18: a widget pick carries the banked
+        // option text as `value` ("None/Not applicable"), the box reads back
+        // "true", and every ticked group mismatched — a false refusal of the
+        // submit on each. The pick already chose WHICH box; what is verified
+        // here is that it is checked (or, for value false, unchecked).
+        want:
+          i.how === "upload"
+            ? null
+            : i.how === "check"
+              ? i.value === false || i.value === "false"
+                ? ""
+                : "true"
+              : i.value,
+        // Multi items verify per VALUE — the page renders tokens in its own
+        // order, so equality against the joined `want` string would fail a
+        // fill that landed every value.
+        wants:
+          i.how !== "upload" && Array.isArray(i.values) && i.values.length
+            ? i.values
+            : undefined,
+        how: i.how,
+        // The adapter's alias for this field, as {source, flags} — a RegExp
+        // does not cross page.evaluate; see aliasFor.
+        accept: acc ? { source: acc.source, flags: acc.flags } : undefined,
+      }
+    })
 
   out.verify = await page.evaluate((list) => {
     const res = {
@@ -1805,6 +2077,15 @@ export default async function fillPage(page, plan, opts = {}) {
         }
         for (const x of p.querySelectorAll("input, select")) {
           if (x === el) continue
+          // Mirrors shownValue(): a tick, a file or a button is never a
+          // combo's store (Ashby's hidden backing checkboxes read "on").
+          if (
+            x.tagName === "INPUT" &&
+            /^(checkbox|radio|file|submit|button|reset|image)$/i.test(
+              String(x.type || ""),
+            )
+          )
+            continue
           if (!unpainted(x)) continue
           sawStore = true
           if (n(x.value)) return String(x.value).trim()
@@ -1861,14 +2142,55 @@ export default async function fillPage(page, plan, opts = {}) {
         // committed readback (tokens / selected options, joined) — the page
         // orders tokens however it likes, so per-value containment is the
         // check, not equality on the joined string. A single item is
-        // unchanged.
+        // unchanged. A check item is its tick: "true" or "" — see the probes.
+        // An adapter alias (Greenhouse's Country* reads "+1" once chosen)
+        // accepts the readback the board actually shows for the value.
+        let aliasOk = false
+        if (p.accept && p.accept.source) {
+          try {
+            aliasOk =
+              !!n(got) &&
+              new RegExp(p.accept.source, p.accept.flags || "").test(got)
+          } catch {
+            aliasOk = false
+          }
+        }
+        // Separators folded to spaces, EQUALITY only — mirrors accepts()'s
+        // last resort ("University of Nevada - Las Vegas" vs the board's
+        // "University of Nevada, Las Vegas").
+        const fold = (s) =>
+          n(s)
+            .replace(/[,;:.\-–—/()]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+        // The same calendar day is the same value — mirrors accepts()'s
+        // date-equivalence (a react date widget re-renders a typed
+        // "2026-08-18" as "08/18/2026"; measured on Ashby 2026-08-21).
+        // Recognised shapes only, all three parts equal, never a fuzzy parse.
+        const dayOf = (s) => {
+          let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(n(s))
+          if (m) return m[1] + "-" + m[2] + "-" + m[3]
+          m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(n(s))
+          if (m)
+            return (
+              m[3] + "-" + ("0" + m[1]).slice(-2) + "-" + ("0" + m[2]).slice(-2)
+            )
+          return null
+        }
+        const sameDay = dayOf(got) != null && dayOf(got) === dayOf(p.want)
         const ok =
-          Array.isArray(p.wants) && p.wants.length
-            ? !!n(got) && p.wants.every((w) => n(got).includes(n(w)))
-            : !(
-                !n(got) ||
-                (n(got) !== n(p.want) && !n(got).includes(n(p.want)))
-              )
+          p.how === "check"
+            ? n(got) === n(p.want)
+            : Array.isArray(p.wants) && p.wants.length
+              ? !!n(got) && p.wants.every((w) => n(got).includes(n(w)))
+              : aliasOk ||
+                sameDay ||
+                !(
+                  !n(got) ||
+                  (n(got) !== n(p.want) &&
+                    !n(got).includes(n(p.want)) &&
+                    fold(got) !== fold(p.want))
+                )
         if (!ok) {
           res.mismatch.push({
             k: p.k,
@@ -1926,6 +2248,59 @@ export default async function fillPage(page, plan, opts = {}) {
       if (!t) t = pick(el.placeholder || el.name || el.id)
       return t.slice(0, 80)
     }
+    // A PLANNED CHOICE COVERS ITS WHOLE GROUP. MEASURED on Torc's Greenhouse
+    // embed form, 2026-08-18: a required checkbox question renders as
+    //   <fieldset class="checkbox" aria-required="true"><legend>question</legend>
+    //     <input type="checkbox" required name="question_37618007002[]" …> Cuba
+    //     <input type="checkbox" required name="question_37618007002[]" …> Iran
+    //     … None/Not applicable
+    // The plan ticked "None/Not applicable"; the other five boxes are required,
+    // unchecked and not in the plan, so this sweep reported all five as
+    // "revealed" and the submit was refused for a question that was answered.
+    // A choice group is answered by ticking ONE of its members. So a required
+    // checkbox/radio is not "revealed" when it shares a NAME with a planned box
+    // (Greenhouse, Lever: one name per question) or sits in the same
+    // <fieldset> / [role=group] / [role=radiogroup] as one — provided that
+    // container holds nothing but checkboxes and radios (Ashby: one name per
+    // box, one fieldset per question), so a section-wide wrapper holding other
+    // controls cannot make an unrelated required box disappear.
+    const groupOf = (el) =>
+      el.closest
+        ? el.closest("fieldset,[role='group'],[role='radiogroup']")
+        : null
+    const isChoiceInput = (el) => {
+      if (!el || el.tagName !== "INPUT") return false
+      const t = String(el.type || "").toLowerCase()
+      return t === "checkbox" || t === "radio"
+    }
+    const pureChoiceGroup = (g) => {
+      let cs = []
+      try {
+        cs = [...g.querySelectorAll("input,select,textarea")]
+      } catch {
+        return false
+      }
+      return cs.every(
+        (c) =>
+          isChoiceInput(c) ||
+          (c.tagName === "INPUT" &&
+            String(c.type || "").toLowerCase() === "hidden"),
+      )
+    }
+    const plannedNames = new Set()
+    const plannedGroups = new Set()
+    for (const el of planned) {
+      if (!isChoiceInput(el)) continue
+      if (el.name) plannedNames.add(el.name)
+      const g = groupOf(el)
+      if (g && pureChoiceGroup(g)) plannedGroups.add(g)
+    }
+    const coveredByPlannedGroup = (el) => {
+      if (!isChoiceInput(el)) return false
+      if (el.name && plannedNames.has(el.name)) return true
+      const g = groupOf(el)
+      return !!(g && plannedGroups.has(g))
+    }
     let all = []
     try {
       all = [...document.querySelectorAll(CONTROLS)]
@@ -1933,6 +2308,7 @@ export default async function fillPage(page, plan, opts = {}) {
     for (const el of all.slice(0, 400)) {
       if (res.revealed.length >= 20) break
       if (planned.has(el)) continue
+      if (coveredByPlannedGroup(el)) continue
       if (el.disabled || el.getAttribute("aria-disabled") === "true") continue
       const tag = el.tagName.toLowerCase()
       const type =
@@ -1946,6 +2322,25 @@ export default async function fillPage(page, plan, opts = {}) {
         r = el.getBoundingClientRect()
       } catch {}
       if (!(r.width > 0 || r.height > 0)) continue
+      // A STORE IS NOT A FIELD. react-select renders one `requiredInput` per
+      // required picker — a real, laid-out text input at opacity 0 with
+      // pointer-events none, which is what lets the browser raise "please
+      // fill in this field" on a custom widget, and which comboValue() above
+      // reads as the committed value. MEASURED on Chime's Greenhouse embed
+      // form 2026-08-18: the one deferred picker's store came back here as
+      // {"label":"","type":"text","sel":null} beside the picker's own row. A
+      // human cannot type into it; the picker it belongs to is what is
+      // reported (by the plan's defer, or by this sweep through the picker
+      // itself). Same rule as unpainted() above.
+      try {
+        const st = getComputedStyle(el)
+        if (
+          st.opacity === "0" ||
+          st.pointerEvents === "none" ||
+          st.visibility === "hidden"
+        )
+          continue
+      } catch {}
       // aria-checked first, and for ANY tag: a component library's
       // <div role="checkbox" aria-checked="false"> has no `checked` property
       // and its innerText is whatever the widget draws, so read() would report
@@ -2031,6 +2426,20 @@ export default async function fillPage(page, plan, opts = {}) {
       if (btn) out.next = { btn: btn.k, label: btn.l, role: btn.r }
     }
   } catch {}
+
+  // The guard comes off LAST, after everything this engine does to the page,
+  // and what it stopped is said out loud. `submitsBlocked` is a count the
+  // caller can gate on; the signal is the sentence a reader sees.
+  out.submitsBlocked = await disarmSubmitGuard()
+  if (out.submitsBlocked > 0) {
+    out.signals = [
+      ...(out.signals || []),
+      "the fill triggered " +
+        out.submitsBlocked +
+        " form submission attempt(s) — all blocked by the engine's submit guard; " +
+        "a keystroke reached the form as a submit, which is a defect in the fill, not the page",
+    ]
+  }
 
   out.ms = Date.now() - started
   return out

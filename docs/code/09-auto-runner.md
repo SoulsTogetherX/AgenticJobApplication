@@ -182,8 +182,9 @@ three frozen lists in `db.mjs`:
   `confirm-widget`, `consent-tickbox`, `unknown-field`, `unprobed-dropdown`,
   `fill-failed`, `identity-verification`, `captcha`, `bot-challenge`,
   `email-code-challenge`, `multipage-unresolvable`, `freetext-disclosure`,
-  `doc-unverified`, `fact-base-changed`, `board-untrusted`, `l3-rejected`,
-  `cap-company`, `posting-gone`, `board-paused`, `reconciled-not-sent`.
+  `doc-unverified`, `doc-unrendered`, `fact-base-changed`, `board-untrusted`,
+  `board-unsighted`, `l3-rejected`, `cap-company`, `already-applied`,
+  `posting-gone`, `board-paused`, `reconciled-not-sent`.
 - **`AUTO_FAILURE_KINDS`** — we malfunctioned: `nav-timeout`, `browser-crash`,
   `token-refused`, `origin-mismatch`, `post-submit-unclassified`,
   `db-write-failed`, `plan-error`.
@@ -753,8 +754,12 @@ The return contract is unusual and important:
 
 > `state` is `not-claimed` or a terminal `auto_queue` state. It NEVER throws for
 > a per-job condition — a thrown error would take the pool's worker down with it
-> and strand every job behind it. It DOES re-throw `StopError`, because a STOP is
-> not a per-job condition: it means stop.
+> and strand every job behind it. It re-throws `StopError` ONLY at global/run
+> scope, because that STOP means stop. A company- or board-scoped brake is a
+> per-job condition — the brake's own message promises everything else keeps
+> running — so it returns as a `company-stopped`/`board-stopped` deferral
+> (2026-08-22; before that, one company STOP rejected the pool's `Promise.all`
+> and stranded every queued job behind it).
 
 **The two mapping tables.** These convert another module's vocabulary into the
 closed reason taxonomy. Every entry is a deliberate aggregation decision.
@@ -861,7 +866,8 @@ plan_sha256: pageSha})` per page, **before that page's fill**, so a kill
   anywhere in the walk lands on `planned` carrying the hash of the page it died
   on.
 
-If `walkPages` throws: a `StopError` is re-thrown; an `AdvanceAmbiguous` becomes
+If `walkPages` throws: a `StopError` propagates to the catch-all (global/run
+re-thrown, company/board deferred); an `AdvanceAmbiguous` becomes
 `post-submit-unclassified` at stage `plan`, with this reasoning:
 
 > AdvanceAmbiguous: a Next click went out and the page did not become what was
@@ -889,8 +895,9 @@ If `walkPages` throws: a `StopError` is re-thrown; an `AdvanceAmbiguous` becomes
 > of "I could not walk this". The information is available: `walkPages` already
 > computes `findNextControl(scan).ok` on the same page.
 
-**→ `authorized`.** `authorizeSubmit(...)` over the merged plan. A `StopError` is
-re-thrown; an `AuthorizationInputError` becomes `plan-error` at stage `authorize`
+**→ `authorized`.** `authorizeSubmit(...)` over the merged plan. A `StopError`
+propagates to the catch-all (global/run re-thrown, company/board deferred); an
+`AuthorizationInputError` becomes `plan-error` at stage `authorize`
 ("The runner wired the gate wrong. A malfunction of ours"); a deferral takes its
 kind from `CHECK_TO_KIND.get(auth.failed[0]) ?? "plan-error"`.
 
@@ -906,16 +913,17 @@ kind from `CHECK_TO_KIND.get(auth.failed[0]) ?? "plan-error"`.
 
 **The submit and its outcomes.** What `submitOnce` returns or throws maps to:
 
-| thrown / returned                                                          | `runJob` does                                                                         |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `StopError`                                                                | re-throw — stops the whole run                                                        |
-| `SubmitAmbiguous`                                                          | `terminate("post-submit-unclassified", "attempt", …)` — leaves an orphan for a human  |
-| `SubmitRefused`                                                            | `terminate(PRECONDITION_TO_KIND.get(e.precondition) ?? "plan-error", "authorize", …)` |
-| `ClassifierRequired`                                                       | `terminate("plan-error", "authorize", e.message)` — our wiring error, not the board's |
-| outcome `"dry-run"` or `"confirmation"`                                    | `setAutoJobState(..., "submitted")` and return `submitted`                            |
-| outcome `bot-challenge` / `email-code-challenge` / `identity-verification` | `terminate(kind, "post-submit", …, "challenged")`                                     |
-| outcome `"posting-gone"`                                                   | `terminate("posting-gone", "post-submit", …)`                                         |
-| anything else (including `unclassified` and `error`)                       | `terminate("post-submit-unclassified", "post-submit", …)`                             |
+| thrown / returned                                                          | `runJob` does                                                                              |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `StopError` (global/run scope)                                             | re-throw — stops the whole run                                                             |
+| `StopError` (company/board scope)                                          | `terminate("company-stopped"/"board-stopped", "claim", …)` — one scope held, run continues |
+| `SubmitAmbiguous`                                                          | `terminate("post-submit-unclassified", "attempt", …)` — leaves an orphan for a human       |
+| `SubmitRefused`                                                            | `terminate(PRECONDITION_TO_KIND.get(e.precondition) ?? "plan-error", "authorize", …)`      |
+| `ClassifierRequired`                                                       | `terminate("plan-error", "authorize", e.message)` — our wiring error, not the board's      |
+| outcome `"dry-run"` or `"confirmation"`                                    | `setAutoJobState(..., "submitted")` and return `submitted`                                 |
+| outcome `bot-challenge` / `email-code-challenge` / `identity-verification` | `terminate(kind, "post-submit", …, "challenged")`                                          |
+| outcome `"posting-gone"`                                                   | `terminate("posting-gone", "post-submit", …)`                                              |
+| anything else (including `unclassified` and `error`)                       | `terminate("post-submit-unclassified", "post-submit", …)`                                  |
 
 The challenge map is small and explicit:
 
@@ -973,8 +981,12 @@ a `GROUP BY`.
 
 ### 6. Traps and things not to "fix"
 
-- **It never throws for a per-job condition, and always re-throws `StopError`.**
-  If you add a throw here, you strand every job queued behind this worker.
+- **It never throws for a per-job condition, and re-throws `StopError` only at
+  global/run scope.** A company/board-scoped brake becomes a
+  `company-stopped`/`board-stopped` deferral — do not "fix" that back to a
+  throw: one scoped brake rejecting the pool's `Promise.all` stranded every
+  queued job twice on 2026-08-22. If you add any other throw here, you strand
+  every job queued behind this worker.
 - **`terminate` is the only funnel to a terminal state.** An unknown kind becomes
   a loud `TaxonomyError` (caught by the catch-all and retyped as `plan-error`)
   rather than a quiet bucket.
@@ -1761,7 +1773,7 @@ originCount(jobs) -> number
 | parameter     | contract (from the JSDoc)                                                                                                                                                                                                 |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `jobs`        | rows with at least `{slug, origin}`                                                                                                                                                                                       |
-| `runOne`      | `async (job) -> result`. "Must not throw for a per-job condition; a throw here aborts the pool, which is correct only for a StopError."                                                                                   |
+| `runOne`      | `async (job) -> result`. "Must not throw for a per-job condition; a throw here aborts the pool, which is correct only for a global/run-scoped StopError (a company/board brake never reaches here — runJob converts it to a deferral)."                                                                                   |
 | `concurrency` | worker count. Must be an integer ≥ 1, or `TypeError`.                                                                                                                                                                     |
 | `onResult`    | called with each result as it lands, for progress output                                                                                                                                                                  |
 | `shouldStop`  | called before each job starts; truthy stops the pool from starting **new** work. "In-flight jobs are allowed to finish — killing them mid-fill would leave exactly the ambiguous half-states the ledger exists to avoid." |
@@ -1879,7 +1891,9 @@ trust decision, no cap arithmetic, and NO CLICK."
 - **One in-flight job per origin, always.** This is an invariant, not a heuristic.
 - **`max_in_flight` is measured**, and it must stay measured.
 - **A `runOne` that throws aborts the whole `Promise.all`** — which is precisely
-  why `runJob` catches everything except `StopError`.
+  why `runJob` catches everything except a global/run-scoped `StopError` (a
+  company/board brake is converted to a `company-stopped`/`board-stopped`
+  deferral before it can reach the pool).
 - **`busyOrigins.delete(key)` is in a `finally`**, so a throwing `runOne` still
   frees the origin.
 - Do not rewrite `NO_ORIGIN` as a literal NUL byte.

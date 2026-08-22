@@ -24,6 +24,7 @@
       "k": "f1",
       "t": "combo",
       "l": "How did you hear about this job? *",
+      "labelExact": true,
       "req": true,
       "v": "Select..."
     },

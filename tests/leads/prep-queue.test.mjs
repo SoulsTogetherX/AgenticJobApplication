@@ -488,3 +488,101 @@ test("CLI: the summary line reports the whole supply per tier, not just the queu
     "one of each tier exists in the store even though only one was queued",
   )
 })
+
+test("CLI: a lead screening already REJECTED is left out of the queue and counted, and --include-rejected puts it back", async (t) => {
+  // 2026-08-18. The queue was built from `status === "new"` alone and never read
+  // the screens table, so leads screen.mjs had rejected still took prep slots
+  // (three of the top twenty on 2026-08-17). The verdict read is the same one
+  // the runner's trust gate reads — model first, mechanical fallback.
+  const { openDb, upsertLeads, recordScreens } = await import(
+    "../../scripts/lib/db.mjs"
+  )
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prep-queue-screened-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const dbFile = path.join(dir, "leads.db")
+  const db = openDb(dbFile)
+  upsertLeads(db, [
+    {
+      id: "gh:pass",
+      company: "Alpha",
+      title: "Full Stack Engineer",
+      url: "https://job-boards.greenhouse.io/alpha/jobs/1",
+      apply_url: "https://job-boards.greenhouse.io/alpha/jobs/1",
+      status: "new",
+      description: "React Node.js TypeScript",
+    },
+    {
+      id: "gh:reject",
+      company: "Beta",
+      title: "Full Stack Engineer",
+      url: "https://job-boards.greenhouse.io/beta/jobs/2",
+      apply_url: "https://job-boards.greenhouse.io/beta/jobs/2",
+      status: "new",
+      description: "React Node.js TypeScript",
+    },
+    {
+      id: "gh:model-pass",
+      company: "Gamma",
+      title: "Full Stack Engineer",
+      url: "https://job-boards.greenhouse.io/gamma/jobs/3",
+      apply_url: "https://job-boards.greenhouse.io/gamma/jobs/3",
+      status: "new",
+      description: "React Node.js TypeScript",
+    },
+  ])
+  recordScreens(db, [
+    { lead_id: "gh:pass", source: "mechanical", verdict: "pass" },
+    { lead_id: "gh:reject", source: "mechanical", verdict: "reject", reason: "stale_33d" },
+    // Mechanical said reject, the model said pass: the model wins, as it does
+    // at the gate.
+    { lead_id: "gh:model-pass", source: "mechanical", verdict: "reject" },
+    { lead_id: "gh:model-pass", source: "model", verdict: "pass" },
+  ])
+  db.close()
+  const limitsFile = path.join(dir, "limits.yaml")
+  fs.writeFileSync(
+    limitsFile,
+    "auto_apply:\n  board_allowlist:\n    job-boards.greenhouse.io: greenhouse\n",
+  )
+  const args = (extra) => [
+    SCRIPT,
+    "--leads",
+    dbFile,
+    "--profile",
+    path.join(ROOT, "tests", "fixtures", "profile.yaml"),
+    "--limits",
+    limitsFile,
+    "--jobs-dir",
+    path.join(dir, "jobs"),
+    "--applications",
+    path.join(dir, "applications.yaml"),
+    ...extra,
+  ]
+  const r = spawnSync(process.execPath, args(["--json"]), {
+    cwd: ROOT,
+    encoding: "utf8",
+  })
+  assert.equal(r.status, 0, r.stderr)
+  assert.deepEqual(
+    JSON.parse(r.stdout)
+      .map((q) => q.id)
+      .sort(),
+    ["gh:model-pass", "gh:pass"],
+    "the mechanically-rejected lead is out; the model-overridden one is in",
+  )
+  const terse = spawnSync(process.execPath, args([]), {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: { ...process.env, CI: "1" },
+  })
+  assert.equal(terse.status, 0, terse.stderr)
+  assert.match(terse.stdout, /queued=2 /)
+  assert.match(terse.stdout, /screened_out=1/)
+
+  const back = spawnSync(process.execPath, args(["--include-rejected", "--json"]), {
+    cwd: ROOT,
+    encoding: "utf8",
+  })
+  assert.equal(back.status, 0, back.stderr)
+  assert.equal(JSON.parse(back.stdout).length, 3, "--include-rejected restores it")
+})

@@ -70,7 +70,9 @@ export function mergeQuestions(found) {
       // poisoned label to every future application with no marking at all).
       // Same detection fill-plan.mjs's buildPlan uses; see labelHazard's own
       // comment on why this is display-only.
-      const flag = labelHazard(q.label)
+      // Hazard over the FULLEST text available: instruction-shaped content
+      // past the 120-char cut must still flag.
+      const flag = labelHazard(q.labelFull ?? q.label)
       entry = {
         label: q.label,
         why: q.why,
@@ -92,6 +94,10 @@ export function mergeQuestions(found) {
     // must say so too — a form the list came from complete on and one it
     // came from truncated on do not cancel each other out.
     if (q.optsTruncated) entry.optsTruncated = true
+    // The display companion: the merge key stays norm(q.label) — the 120-cut
+    // string IS the bank key, and a full-text key would split one question
+    // into two — but any source that knows the full text donates it.
+    if (q.labelFull && !entry.labelFull) entry.labelFull = q.labelFull
     // A defer computed from a real scan outranks a guess from the cache.
     if (q.source === "plan") entry.why = q.why
   }
@@ -146,6 +152,7 @@ export function predictedFields(cache, atsIds) {
         k: `${fp}:${key}`,
         t: f.t ?? "text",
         l: label,
+        lFull: f.lFull || undefined,
         req: true,
         opts: f.opts ?? [],
         // Carried through so a predicted NEEDS-CHOICE also gets the "this
@@ -173,6 +180,7 @@ export function questionsFromPredicted(fields, resolved) {
       slug: null,
       ats: f.ats,
       label: f.l,
+      labelFull: f.lFull || undefined,
       why: (r.status ?? "UNRESOLVED").toLowerCase(),
       options: f.opts ?? [],
       optsTruncated: f.optsTruncated || undefined,
@@ -187,6 +195,56 @@ function readJson(file) {
   } catch {
     return null
   }
+}
+
+// A PLAN IS ONLY AS CURRENT AS THE THINGS THAT BUILT IT, and nothing here was
+// checking that. jobs/<slug>/fill-plan.json is a cached derivation of three
+// inputs — the scan, the planner, and the fact base — but only the scan is
+// tied to it (`fp`). Move either of the other two and every plan on disk keeps
+// reporting defers that current code would not produce.
+//
+// MEASURED 2026-08-20: "Location (City)*" was listed as an open question across
+// seven jobs off plans built 2026-08-08. ats/greenhouse.mjs had resolved that
+// field on 2026-08-18 (typeaheadFields), and the answer had been banked since
+// 2026-08-07 (a-066). The user was asked, three mornings running, a question
+// they had already answered — with no signal anywhere that the PLAN was the
+// stale part rather than the fact base being ignored. That is the failure this
+// prevents, and it is a trust failure before it is a latency one.
+//
+// So a plan older than the newest input that could flip one of its defers is
+// not a source of questions at all. Skipped and COUNTED, never silently
+// dropped: a hidden question is the same bug pointing the other way. The
+// rebuild is deterministic from the saved scan and costs no browser.
+//
+// mtime, not a version constant, on purpose. A constant has to be remembered on
+// every planner change, and being forgotten is precisely the shape of this bug.
+// mtime errs toward calling a plan stale — that direction costs a rebuild, the
+// other costs the user's confidence that answering anything matters.
+const PLAN_INPUT_PATHS = [
+  "scripts/apply/fill-plan.mjs",
+  "scripts/apply/answer-bank.mjs",
+  "scripts/apply/assent-policy.mjs",
+  "scripts/apply/ats",
+]
+
+export function newestInputMtime(extra = []) {
+  let newest = 0
+  const visit = (abs) => {
+    let st
+    try {
+      st = fs.statSync(abs)
+    } catch {
+      return
+    }
+    if (st.isDirectory()) {
+      for (const e of fs.readdirSync(abs)) visit(path.join(abs, e))
+      return
+    }
+    if (st.mtimeMs > newest) newest = st.mtimeMs
+  }
+  for (const rel of PLAN_INPUT_PATHS) visit(path.join(ROOT, rel))
+  for (const p of extra) visit(p)
+  return newest
 }
 
 function main() {
@@ -223,13 +281,37 @@ function main() {
           .map((e) => e.name)
   ).filter((s) => fs.existsSync(path.join(jobsDir, s, "job.json")))
 
+  // The fact base counts as an input too: banking an answer is the single most
+  // common reason a recorded defer stops being true.
+  const newestInput = newestInputMtime([
+    typeof answersFlag === "string"
+      ? path.resolve(answersFlag)
+      : path.join(ROOT, "profile", "answers.yaml"),
+  ])
+
   const plans = []
+  const stalePlans = []
   const atsIds = new Set()
   for (const slug of slugs) {
-    const plan = readJson(path.join(jobsDir, slug, "fill-plan.json"))
+    const planPath = path.join(jobsDir, slug, "fill-plan.json")
+    const plan = readJson(planPath)
     if (plan) {
-      plans.push({ slug, plan })
+      let planMtime = 0
+      try {
+        planMtime = fs.statSync(planPath).mtimeMs
+      } catch {
+        // Unreadable stat on a readable file: treat as stale rather than
+        // current, for the same reason as above.
+      }
+      // The ATS is still trustworthy on a stale plan — it comes from the URL,
+      // not from the planner — so prediction still runs for this job and its
+      // questions get re-derived from current code.
       if (plan.ats) atsIds.add(plan.ats)
+      if (planMtime < newestInput) {
+        stalePlans.push(slug)
+        continue
+      }
+      plans.push({ slug, plan })
       continue
     }
     // No scan yet — the ATS is still knowable from the posting URL, and that is
@@ -261,7 +343,12 @@ function main() {
   if (wantJson) {
     console.log(
       JSON.stringify(
-        { jobs: slugs.length, planned: plans.length, questions },
+        {
+          jobs: slugs.length,
+          planned: plans.length,
+          stale: stalePlans,
+          questions,
+        },
         null,
         2,
       ),
@@ -278,7 +365,9 @@ function main() {
           q.sources.join("+"),
           q.slugs.length ? q.slugs.join(",") : q.ats.join(",") || "-",
           q.why,
-          q.label,
+          // Display prefers the untruncated companion; matching and the
+          // merge key stay on the 120-cut `label`.
+          q.labelFull ?? q.label,
           q.labelFlag ?? "",
         ].join("\t"),
       )
@@ -289,10 +378,22 @@ function main() {
         )
       }
     }
+    if (stalePlans.length) {
+      console.log(`stale	${stalePlans.join(",")}`)
+    }
     console.log(
-      `questions=${questions.length} jobs=${slugs.length} planned=${plans.length} predicted=${predicted.length}`,
+      `questions=${questions.length} jobs=${slugs.length} planned=${plans.length} predicted=${predicted.length} stale=${stalePlans.length}`,
     )
     return
+  }
+  if (stalePlans.length) {
+    console.log(
+      `${stalePlans.length} plan(s) predate the planner or the fact base and were NOT read — ` +
+        `their defers may already be resolved. Rebuild before trusting this list:
+` +
+        `  node scripts/apply/rebuild-plans.mjs
+`,
+    )
   }
   if (!questions.length) {
     console.log(
@@ -310,7 +411,7 @@ function main() {
       ? q.slugs.join(", ")
       : `${q.ats.join(", ")} (predicted)`
     console.log(
-      `- ${q.label}${q.labelFlag ? ` [label flag: ${q.labelFlag}]` : ""}\n    ${q.why} — ${where}`,
+      `- ${q.labelFull ?? q.label}${q.labelFlag ? ` [label flag: ${q.labelFlag}]` : ""}\n    ${q.why} — ${where}`,
     )
     if (q.options.length) {
       console.log(

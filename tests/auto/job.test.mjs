@@ -56,7 +56,13 @@ function rig(t, over = {}) {
     doc_sha256: DOC_SHA,
     profile_sha256: PROFILE_SHA,
   })
-  const run = startRun({ mode: "dry_run", dbFile, autoDir })
+  // The run's mode follows the job's: a live job under a dry-run run is a
+  // token-mode mismatch by design (audit.mjs beginSubmit), not a test setup.
+  const run = startRun({
+    mode: over.mode === "live" ? "live" : "dry_run",
+    dbFile,
+    autoDir,
+  })
 
   t.after(() => {
     try {
@@ -320,6 +326,182 @@ test("the page is closed even when the job defers", async (t) => {
   assert.equal(closed, 1)
 })
 
+test("an empty page 1 that offers 'next' is a DEFER (unknown-field), not a plan-error — the Coinbase shape", async (t) => {
+  // Measured 2026-08-17: a closed posting rendered no fields and a next-shaped
+  // control. The walk minted a token, the gate said "nothing to fill", and the
+  // row was written as plan-error — a malfunction that fed the breaker. Nothing
+  // malfunctioned; the runner was on the wrong page.
+  const r = rig(t, {
+    scan: async () => ({
+      url: APPLY_URL,
+      kind: "form",
+      fields: [],
+      buttons: [{ k: "b1", l: "Apply", r: "next" }],
+    }),
+    plan: async () => ({ items: [], defer: [] }),
+  })
+  const out = await runJob(r.base)
+  assert.equal(out.state, "deferred")
+  assert.equal(out.kind, "unknown-field")
+  assert.match(out.detail, /wrong page/)
+  assert.equal(queue(r.db).reason_kind, "unknown-field")
+})
+
+test("a mid-walk authorisation refusal is typed through CHECK_TO_KIND, exactly like the final gate", async (t) => {
+  // Three pages; page 2's plan is empty and page 2 still offers Next, so the
+  // per-page authorisation refuses `submit_readiness` before that Next click.
+  // That check maps to unknown-field at the final gate, and must map to the
+  // same thing here — it used to reach the row as a blanket plan-error.
+  let scans = 0
+  const r = rig(t, {
+    mode: "live",
+    limits: { auto_apply: { ...LIMITS.auto_apply, dry_run: false } },
+    scan: async () => {
+      scans += 1
+      return {
+        url: APPLY_URL,
+        kind: "form",
+        buttons:
+          scans < 3
+            ? [{ k: `n${scans}`, l: "Save and Continue", r: "next" }]
+            : [{ k: "b1", l: "Submit application", r: "submit" }],
+      }
+    },
+    plan: async ({ page }) => ({
+      items: page === 1 ? [{ k: "f1", how: "fill", value: "X" }] : [],
+      defer: [],
+    }),
+    openPage: async (url) => ({
+      page: {
+        url: () => url,
+        locator: () => ({
+          async click() {
+            /* the Next click on page 1 */
+          },
+          async waitFor() {},
+        }),
+        async waitForLoadState() {},
+      },
+      url,
+      status: 200,
+      close: async () => {},
+    }),
+  })
+  const out = await runJob(r.base)
+  assert.equal(out.state, "deferred", out.detail)
+  assert.equal(out.kind, "unknown-field")
+  assert.match(out.detail, /page 2 could not be authorised/)
+})
+
+// --- the sightedness gate (2026-08-18) -------------------------------------------
+
+test("LIVE on a host with no captured confirmation page defers board-unsighted BEFORE any scan — nothing is typed into the form", async (t) => {
+  // The allowlist and the evidence list are different lists. This host clears
+  // the trust gate (127.0.0.1 is allowlisted in LIMITS) and is then declared
+  // blind by the injected predicate — the shape of jobs.lever.co on 2026-08-17.
+  let scanned = 0
+  const r = rig(t, {
+    mode: "live",
+    limits: { auto_apply: { ...LIMITS.auto_apply, dry_run: false } },
+    hostSighted: () => false,
+    scan: async () => {
+      scanned += 1
+      return { url: APPLY_URL, kind: "form", buttons: [] }
+    },
+  })
+  const out = await runJob(r.base)
+  assert.equal(out.state, "deferred")
+  assert.equal(out.kind, "board-unsighted")
+  assert.equal(out.stage, "plan")
+  assert.match(out.detail, /no captured post-submit page/)
+  assert.match(out.detail, /capture-post-submit/)
+  assert.equal(
+    scanned,
+    0,
+    "the page was opened (redirects followed) but never scanned or filled",
+  )
+  assert.equal(r.opened.length, 1, "one navigation, to learn the live host")
+})
+
+test("a DRY RUN on the same blind host proceeds — nothing is clicked, so nothing needs reading", async (t) => {
+  const r = rig(t, { hostSighted: () => false }) // mode: dry_run
+  const out = await runJob(r.base)
+  assert.equal(out.state, "submitted", out.detail)
+})
+
+test("LIVE on a SIGHTED host proceeds past the gate", async (t) => {
+  let scanned = 0
+  const r = rig(t, {
+    mode: "live",
+    limits: { auto_apply: { ...LIMITS.auto_apply, dry_run: false } },
+    hostSighted: () => true,
+    classify: () => ({ kind: "confirmation", rule: "test" }),
+    scan: async () => {
+      scanned += 1
+      return {
+        url: APPLY_URL,
+        kind: "form",
+        buttons: [{ k: "b1", l: "Submit application", r: "submit" }],
+      }
+    },
+    openPage: async (url) => ({
+      page: {
+        url: () => url,
+        locator: () => ({ async click() {}, async waitFor() {} }),
+        async waitForLoadState() {},
+        async content() {
+          return "<html><body>Thanks</body></html>"
+        },
+      },
+      url,
+      status: 200,
+      close: async () => {},
+    }),
+  })
+  const out = await runJob(r.base)
+  assert.equal(scanned, 1, "the gate let it through to the scan")
+  assert.equal(out.state, "submitted", out.detail)
+})
+
+test("the default predicate is the shipped classifier's own evidence — a loopback host is sighted for the fixture harness", async (t) => {
+  // No hostSighted injected: isHostSighted from classify.mjs decides. The
+  // fixture rules ship a loopback confirmation, so a 127.0.0.1 live run reaches
+  // the scan; that is what keeps browser-leg.test.mjs and the bench honest.
+  let scanned = 0
+  const r = rig(t, {
+    mode: "live",
+    limits: { auto_apply: { ...LIMITS.auto_apply, dry_run: false } },
+    classify: () => ({
+      kind: "confirmation",
+      rule: "fixture-application-received",
+    }),
+    scan: async () => {
+      scanned += 1
+      return {
+        url: APPLY_URL,
+        kind: "form",
+        buttons: [{ k: "b1", l: "Submit application", r: "submit" }],
+      }
+    },
+    openPage: async (url) => ({
+      page: {
+        url: () => url,
+        locator: () => ({ async click() {}, async waitFor() {} }),
+        async waitForLoadState() {},
+        async content() {
+          return "<html><body>Thanks</body></html>"
+        },
+      },
+      url,
+      status: 200,
+      close: async () => {},
+    }),
+  })
+  const out = await runJob(r.base)
+  assert.equal(scanned, 1)
+  assert.equal(out.state, "submitted", out.detail)
+})
+
 test("a stage that throws is caught and typed — it never takes the worker down", async (t) => {
   // The pool has N-1 other jobs behind this one, and an uncaught throw strands
   // every one of them.
@@ -378,9 +560,8 @@ test("CHECK_TO_KIND covers every SUBMIT_CHECKS entry", async () => {
   // is what keeps the fallback from being how new checks are reported.
   const { CHECK_TO_KIND } = await import("../../scripts/auto/job.mjs")
   const { SUBMIT_CHECKS } = await import("../../scripts/auto/authorize.mjs")
-  const { AUTO_DEFER_KINDS, AUTO_FAILURE_KINDS } = await import(
-    "../../scripts/lib/db.mjs"
-  )
+  const { AUTO_DEFER_KINDS, AUTO_FAILURE_KINDS } =
+    await import("../../scripts/lib/db.mjs")
 
   const unmapped = SUBMIT_CHECKS.filter((c) => !CHECK_TO_KIND.has(c))
   assert.deepEqual(
@@ -410,4 +591,177 @@ test("a duplicate refusal is reported as already-applied, not a malfunction", as
     "policy",
     "a posting the user already applied to is our rule deciding, not a fault",
   )
+})
+
+// --- scoped STOPs defer one scope; only a global STOP stops the run --------
+//
+// The brake's own message promises "Only this company is held back; everything
+// else keeps running", and until 2026-08-22 runJob's unconditional re-throw
+// broke it: one company STOP rejected the pool's Promise.all and stranded
+// every queued job behind it, twice in one day. These three tests are the
+// contract: company/board scope converts to a typed deferral at the runJob
+// boundary; global scope still throws, because that STOP means stop.
+
+test("a company-scoped STOP defers the job as company-stopped, throwing nothing", async (t) => {
+  const { StopError, scopedStopPath } = await import(
+    "../../scripts/auto/guard.mjs"
+  )
+  const r = rig(t)
+  const stopPath = path.join(r.dir, "jobs", ".auto", "STOP")
+  const brake = scopedStopPath("company", "Acme", { stopPath })
+  fs.mkdirSync(path.dirname(brake), { recursive: true })
+  fs.writeFileSync(brake, "orphaned attempt under adjudication")
+
+  const out = await runJob({
+    ...r.base,
+    job: { ...r.base.job, company: "Acme" },
+  })
+  assert.equal(out.state, "deferred")
+  assert.equal(out.kind, "company-stopped")
+  assert.match(
+    out.detail,
+    /company-scoped STOP/,
+    "the detail must name the scope",
+  )
+  assert.ok(
+    out.detail.includes("stops"),
+    `the detail must point at the brake file to delete, got: ${out.detail}`,
+  )
+  const row = queue(r.db)
+  assert.equal(row.state, "deferred")
+  assert.equal(row.reason_kind, "company-stopped")
+})
+
+test("a board-scoped STOP defers the job as board-stopped", async (t) => {
+  const { scopedStopPath } = await import("../../scripts/auto/guard.mjs")
+  const r = rig(t)
+  const stopPath = path.join(r.dir, "jobs", ".auto", "STOP")
+  const brake = scopedStopPath("board", "greenhouse:e", { stopPath })
+  fs.mkdirSync(path.dirname(brake), { recursive: true })
+  fs.writeFileSync(brake, "board held for review")
+
+  const out = await runJob({
+    ...r.base,
+    job: { ...r.base.job, company: "Acme" },
+  })
+  assert.equal(out.state, "deferred")
+  assert.equal(out.kind, "board-stopped")
+  const row = queue(r.db)
+  assert.equal(row.reason_kind, "board-stopped")
+})
+
+test("a global STOP still throws StopError out of runJob — it means stop", async (t) => {
+  const { StopError } = await import("../../scripts/auto/guard.mjs")
+  const r = rig(t)
+  // Written AFTER startRun (the rig already passed the run-start checkpoint),
+  // so the between-jobs checkpoint inside runJob is what reads it.
+  const stopPath = path.join(r.dir, "jobs", ".auto", "STOP")
+  fs.writeFileSync(stopPath, "user pulled the brake")
+
+  await assert.rejects(
+    runJob({ ...r.base, job: { ...r.base.job, company: "Acme" } }),
+    (e) => e instanceof StopError && e.scope === "global",
+    "a global STOP is not a per-job condition and must abort the run",
+  )
+})
+
+// --- the stamp-lost re-scan seam -------------------------------------------
+//
+// Greenhouse's embed remounts after an upload and kills every stamp, so the
+// scan handed to submitOnce can describe a document that no longer exists.
+// submitOnce's liveness check throws SubmitStampLost BEFORE anything durable;
+// runJob re-scans ONCE (scan only — no plan, no fill) and retries. Torc failed
+// this exact way three times before the seam existed.
+
+test("a dead submit stamp triggers ONE re-scan, and the retry submits", async (t) => {
+  let scans = 0
+  const r = rig(t, {
+    mode: "live",
+    limits: { auto_apply: { ...LIMITS.auto_apply, dry_run: false } },
+    hostSighted: () => true,
+    classify: () => ({ kind: "confirmation", rule: "test" }),
+    scan: async () => {
+      scans += 1
+      return {
+        url: APPLY_URL,
+        kind: "form",
+        // The remount gave the fresh scan a different stamp key.
+        buttons: [
+          { k: scans === 1 ? "b1" : "b2", l: "Submit application", r: "submit" },
+        ],
+      }
+    },
+    openPage: async (url) => ({
+      page: {
+        url: () => url,
+        locator: (sel) => ({
+          async click() {},
+          async waitFor() {
+            // b1 died with the remount; b2 is the re-scan's live stamp.
+            if (sel.includes("b1")) throw new Error("Timeout waiting for " + sel)
+          },
+        }),
+        async waitForLoadState() {},
+        async content() {
+          return "<html><body>Thanks</body></html>"
+        },
+      },
+      url,
+      status: 200,
+      close: async () => {},
+    }),
+  })
+  const out = await runJob(r.base)
+  assert.equal(out.state, "submitted", out.detail)
+  assert.equal(scans, 2, "exactly one re-scan")
+  const subs = r.db
+    .prepare("SELECT COUNT(*) AS n FROM auto_submissions WHERE slug = ?")
+    .get(SLUG)
+  assert.equal(subs.n, 1, "one attempt row, from the successful retry only")
+})
+
+test("a stamp still dead after the re-scan defers as submit-control-lost with a clean ledger", async (t) => {
+  let scans = 0
+  const r = rig(t, {
+    mode: "live",
+    limits: { auto_apply: { ...LIMITS.auto_apply, dry_run: false } },
+    hostSighted: () => true,
+    classify: () => ({ kind: "confirmation", rule: "test" }),
+    scan: async () => {
+      scans += 1
+      return {
+        url: APPLY_URL,
+        kind: "form",
+        buttons: [{ k: "b1", l: "Submit application", r: "submit" }],
+      }
+    },
+    openPage: async (url) => ({
+      page: {
+        url: () => url,
+        locator: () => ({
+          async click() {
+            assert.fail("a job whose stamp never resolves must not click")
+          },
+          async waitFor() {
+            throw new Error("Timeout — the stamp never came back")
+          },
+        }),
+        async waitForLoadState() {},
+        async content() {
+          return "<html><body></body></html>"
+        },
+      },
+      url,
+      status: 200,
+      close: async () => {},
+    }),
+  })
+  const out = await runJob(r.base)
+  assert.equal(out.state, "deferred", out.detail)
+  assert.equal(out.kind, "submit-control-lost")
+  assert.equal(scans, 2, "the retry is bounded at one re-scan")
+  const subs = r.db
+    .prepare("SELECT COUNT(*) AS n FROM auto_submissions WHERE slug = ?")
+    .get(SLUG)
+  assert.equal(subs.n, 0, "no attempt row — nothing durable before the check")
 })

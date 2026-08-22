@@ -231,13 +231,41 @@
           p.syncMenu()
         }
 
+        // THE FOCUSED ROW, as react-select renders it: while the menu is open
+        // the first row matching the search text carries
+        // `select__option--is-focused` and the input's aria-activedescendant
+        // names it. That is the page's own statement that Enter would commit
+        // a row rather than submit the form, and it is what fill-engine's
+        // type-enter now reads before it presses Enter (2026-08-18).
+        const rows = [...menu.querySelectorAll("[role=option]")]
+        rows.forEach((r, i) => {
+          if (!r.id) r.id = id + "-option-" + i
+        })
+        const refocus = () => {
+          const typed = norm(input.value).toLowerCase()
+          const visible = rows.filter((r) => r.style.display !== "none")
+          const row =
+            visible.find((r) =>
+              norm(r.textContent).toLowerCase().startsWith(typed),
+            ) || null
+          for (const r of rows) r.classList.remove("select__option--is-focused")
+          if (row) {
+            row.classList.add("select__option--is-focused")
+            input.setAttribute("aria-activedescendant", row.id)
+          } else {
+            input.removeAttribute("aria-activedescendant")
+          }
+        }
         const open = () => {
           menu.setAttribute("data-open", "1")
           input.setAttribute("aria-expanded", "true")
+          refocus()
         }
         const close = () => {
           menu.removeAttribute("data-open")
           input.setAttribute("aria-expanded", "false")
+          input.removeAttribute("aria-activedescendant")
+          for (const r of rows) r.classList.remove("select__option--is-focused")
           // react-select drops the search text when the menu closes.
           input.value = ""
         }
@@ -279,11 +307,34 @@
           sv.textContent = norm(text)
           input.value = ""
         }
-        document
-          .getElementById("dept")
-          .addEventListener("click", () => menu.setAttribute("data-open", "1"))
+        // Same focused-row statement as the token pickers above.
+        const deptRows = [...menu.querySelectorAll("[role=option]")]
+        deptRows.forEach((r, i) => {
+          if (!r.id) r.id = "dept-option-" + i
+        })
+        const deptRefocus = () => {
+          const typed = norm(input.value).toLowerCase()
+          const row =
+            deptRows.find((r) =>
+              norm(r.textContent).toLowerCase().startsWith(typed),
+            ) || null
+          for (const r of deptRows)
+            r.classList.remove("select__option--is-focused")
+          if (row) {
+            row.classList.add("select__option--is-focused")
+            input.setAttribute("aria-activedescendant", row.id)
+          } else input.removeAttribute("aria-activedescendant")
+        }
+        document.getElementById("dept").addEventListener("click", () => {
+          menu.setAttribute("data-open", "1")
+          deptRefocus()
+        })
+        input.addEventListener("input", deptRefocus)
         input.addEventListener("keydown", (e) => {
-          if (e.key === "Escape") return menu.removeAttribute("data-open")
+          if (e.key === "Escape") {
+            input.removeAttribute("aria-activedescendant")
+            return menu.removeAttribute("data-open")
+          }
           if (e.key !== "Enter") return
           e.preventDefault()
           const typed = norm(input.value).toLowerCase()

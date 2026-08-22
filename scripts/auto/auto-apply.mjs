@@ -215,6 +215,36 @@ export function selectEligible({
   for (const [url, slug] of urls) {
     if (out.length >= limit) break
     const lead = bySlugUrl.get(url) ?? { slug, apply_url: url, url }
+    // A DISMISSED LEAD IS NOT A CANDIDATE, whatever its workspace holds. This
+    // walk starts from verification rows, so a lead the user (or a prune)
+    // marked `dismissed` AFTER its résumé was verified was still queued and
+    // still spent a browser lane — measured 2026-08-17: a Coinbase posting
+    // dismissed as closed reached the plan stage, scanned an empty page and
+    // was written up as a `plan-error`. The status is the user's own verdict
+    // on the lead and it is read here for the same reason already-applied is:
+    // the queue must not re-open a decision the ledgers already record.
+    if (lead.status === "dismissed") {
+      rejected.push({
+        slug,
+        reason: "lead status is dismissed — not queued while it stays so",
+      })
+      continue
+    }
+    // NO RENDERED RÉSUMÉ, NO QUEUE ROW. The verification row vouches for the
+    // markdown; the ATS file input wants the PDF, and buildPlan defers the whole
+    // application when it is missing ("no rendered resume"). Two jobs on
+    // 2026-08-17 were queued on a passing verification, opened a browser, and
+    // deferred on exactly that. Refusing here costs a row and no page load, and
+    // the reason names the one command that clears it.
+    if (!fs.existsSync(path.join(jobsDir, slug, "resume.pdf"))) {
+      rejected.push({
+        slug,
+        reason:
+          "resume.pdf is not rendered for this workspace — run " +
+          "scripts/documents/render-pdf.mjs on its resume.md first",
+      })
+      continue
+    }
     // THE POSTING AND THE FORM ARE DIFFERENT PAGES on every board this repo
     // adapts, and the runner was being handed the posting. It scanned a job ad,
     // found no fields, and deferred "nothing to fill" — measured on a real lead
@@ -268,6 +298,10 @@ export function selectEligible({
       posted_at: lead.posted_at ?? null,
       company: lead.company ?? null,
       title: lead.title ?? null,
+      // The store's own key for this lead. Persisted on the queue row so a
+      // resumed job can re-read its screening verdict from the `screens`
+      // table, which is keyed by (lead_id, source) — see runCampaign.
+      lead_id: lead.id ?? null,
       // Carried onto the job, because runCampaign seeds `byUrl` from these and
       // runJob hands it to authorizeSubmit — which refuses an UNSCREENED lead
       // outright. Omitting it here meant a lead that had just cleared the trust
@@ -402,6 +436,31 @@ export async function runCampaign({
     const byUrl = new Map(queued.map((j) => [j.slug, j]))
     let sentThisRun = 0
 
+    // THE SCREENING VERDICT FOR A ROW THIS RUN DID NOT SELECT. `byUrl` only
+    // knows the jobs selectEligible produced in THIS invocation; every other
+    // resumable row — enqueued earlier, beyond this run's --limit in a
+    // differently ordered list, or left by a crash — used to reach runJob with
+    // `screening: null` and be refused as unscreened (and, with no apply_url,
+    // as untrusted). The row now carries `lead_id`, so its verdict is one map
+    // lookup away, in the same order of preference selectEligible uses: model
+    // first, mechanical as the fallback. Read once per run, lazily, so an
+    // invocation whose every row was seeded pays nothing.
+    let screensByLead = null
+    const screeningFor = (leadId) => {
+      if (!leadId) return null
+      if (!screensByLead) {
+        screensByLead = {
+          model: screenIndex(db, "model"),
+          mechanical: screenIndex(db, "mechanical"),
+        }
+      }
+      return (
+        screensByLead.model.get(leadId) ??
+        screensByLead.mechanical.get(leadId) ??
+        null
+      )
+    }
+
     // §4.6. Run state, deliberately not persisted: a pause is a timed backoff
     // with probe re-admission, and carrying one into the next invocation
     // without re-probing is the thing the spec forbids in as many words.
@@ -468,15 +527,25 @@ export async function runCampaign({
             submitted: false,
           }
         }
+        // THE ROW IS THE FALLBACK FOR EVERYTHING THE SEED WOULD SUPPLY. Before
+        // the queue row carried apply_url/lead_id/company/title, a row this
+        // invocation had not itself selected resumed as an anonymous slug and
+        // fell at the trust gate — measured 2026-08-17 (Torc Robotics,
+        // "the lead carries no apply_url" on a lead whose store row had one).
+        // Seed first, because it is fresher; row second, because it is what
+        // makes resume-after-crash a SELECT rather than a re-selection.
         const seed = byUrl.get(row.slug) ?? {}
         const applyUrl = seed.apply_url ?? row.apply_url ?? null
         const lead = {
           slug: row.slug,
+          id: seed.lead_id ?? row.lead_id ?? null,
           apply_url: applyUrl,
           url: applyUrl,
-          company: seed.company ?? null,
-          title: seed.title ?? null,
+          company: seed.company ?? row.company ?? null,
+          title: seed.title ?? row.title ?? null,
         }
+        const screening =
+          seed.screening ?? screeningFor(seed.lead_id ?? row.lead_id) ?? null
         const documents = documentsFor
           ? documentsFor(row.slug)
           : defaultDocuments(row.slug, { jobsDir })
@@ -492,7 +561,7 @@ export async function runCampaign({
           },
           lead,
           limits,
-          screening: seed.screening ?? null,
+          screening,
           mode,
           openPage,
           scan,
@@ -709,7 +778,12 @@ async function main(argv) {
   const profileDoc = readYamlIfPresent(
     path.join(ROOT, "profile", "profile.yaml"),
   )
-  const stages = makeStages({ jobsDir })
+  // THE SAME LIMITS FILE FOR THE STAGES AS FOR THE GATE. `--limits <file>` used
+  // to reach the trust gate, preflight and the submit gate while makeStages()
+  // silently read docs/application-limits.yaml for the disclosure limits and
+  // the assent policy — so a rehearsal against a copy of the user's file was
+  // planning under one policy and gating under another. One file, every reader.
+  const stages = makeStages({ jobsDir, limitsFile })
 
   // AUTO_PROFILE selects the persistent lane — one shared context, for boards
   // that need a logged-in session. Unset (the default) is the per-job

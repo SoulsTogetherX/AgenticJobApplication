@@ -593,6 +593,24 @@ Two rules about `l` that look like omissions and are not:
   section heading above each. So `section` carries it, and a consumer can tell
   them apart without the label string changing.
 
+The one place a group's `l` **is** replaced, and why it is not an exception to
+the first rule: a radio/checkbox **group** has no element of its own, so it has
+no label of its own either — the field loop names it when it meets its first
+option and, with no `<legend>` to take, falls back to that option's own text.
+An option is an _answer_, and an answer never names a question. So after every
+option is in, a group with two or more options whose `l` is one of them is
+given the question from the options' container — the same five-ancestor walk
+and the same bounds the button-pair detector (C.7) uses, so a Yes/No rendered
+as `<button>`s and the same Yes/No rendered as `<input type=radio>` get the
+**same** `l` — marked `labelWhy: "label source is group question"` and never
+vouched. Measured on Ashby's texting-consent radios (2026-08-18) and on
+`pages/lever.html`, whose sponsorship group read `"l": "Yes"` until then. A
+group whose container holds nothing but its options keeps the old label: nothing
+found means nothing changes. In the same pass, an Ashby "select all that apply"
+checkbox — `name="Atlanta, GA"`, its own option text — groups by its
+`<fieldset>` rather than by `name`, which had split one 15-option question into
+fifteen one-option groups.
+
 #### The E8 trap: a wrong label is worse than an empty one
 
 In the widget sweep (C.7), the precedence is deliberately **not** "label first".

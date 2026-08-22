@@ -39,13 +39,16 @@ import { withLock, lockPathFor } from "../lib/lock.mjs"
 // regenerated the cache.
 export const CACHE_VERSION = 4
 
-// scan-page.js's own MAX_OPTS (40) already truncates a long list before it
-// ever reaches this file; this cap exists so a caller that hands recordCache
-// a list some OTHER way (bypassing that scanner) cannot blow the cache file
-// up unboundedly. It is deliberately above scan-page.js's cap, so under
-// normal operation this file is never the one doing the cutting — see
-// `optsTruncated` below for what happens when a list WAS cut somewhere.
-const MAX_CACHED_OPTS = 60
+// scan-page.js's own MAX_OPTS (250 since 2026-08-21, was 40) already
+// truncates a long list before it ever reaches this file; this cap exists so
+// a caller that hands recordCache a list some OTHER way (bypassing that
+// scanner) cannot blow the cache file up unboundedly. It is deliberately
+// above scan-page.js's cap — under normal operation this file is never the
+// one doing the cutting, and a cache cap BELOW the scanner's would flag every
+// full country list as truncated, refuse to serve it, and buy a ~2s re-probe
+// on every run for nothing. See `optsTruncated` below for what happens when
+// a list WAS cut somewhere.
+const MAX_CACHED_OPTS = 300
 
 const norm = (s) =>
   String(s ?? "")
@@ -397,6 +400,11 @@ export function recordCache(cache, { fp, scan, atsId, url, now = new Date() }) {
     if (sel) next.sel = sel
     const via = f.via ?? prev.via
     if (via) next.via = via
+    // Display-only companion for a label the scanner cut at 120. Carried, not
+    // keyed: fieldKey and the fingerprint stay on `l`, so old entries without
+    // it load unchanged (no CACHE_VERSION move) and nothing matches on it.
+    const lf = f.lFull ?? prev.lFull
+    if (lf && lf !== next.l) next.lFull = lf
     entry.fields[key] = next
   }
   cache.forms[fp] = entry

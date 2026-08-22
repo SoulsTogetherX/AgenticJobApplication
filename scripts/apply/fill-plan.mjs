@@ -97,6 +97,7 @@ import {
 import {
   embedLiteral,
   engineSandboxSource,
+  jsonReplacer,
   readScannerSource,
 } from "./browser.mjs"
 import {
@@ -117,6 +118,16 @@ import {
   buildDisclosure,
   emptyDisclosure,
 } from "./disclosure.mjs"
+// The user's unattended-assent policy (2026-08-18) — which assent-shaped
+// fields buildPlan may act on under the user's own config keys, and how
+// submitReadiness tells a granted actuation from an ungranted one.
+import {
+  ASSENT_OFF,
+  GRANTS,
+  grantEnabled,
+  loadAssentPolicy,
+  normalizeAssentPolicy,
+} from "./assent-policy.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -244,6 +255,22 @@ export function isHardConsent(label) {
   return HARD_CONSENT_PATTERNS.some((re) => re.test(String(label ?? "")))
 }
 
+// WHICH OPTION OF A CONSENT DROPDOWN MEANS "yes" (2026-08-20). Deliberately
+// two expressions rather than one: the head match says an option OPENS
+// affirmatively, and the negation guard then throws it out if a negation
+// appears anywhere at all. English negates on both sides of the verb — "I do
+// not agree" before it, "I agree, except to marketing" after it — and a single
+// anchored pattern only ever catches one side.
+//
+// Both are matched against an option list PROBED off the live form, never
+// against anything a page merely claims, and the caller requires exactly one
+// surviving option before it will act. A form that offers two affirmatives, or
+// none, defers to the user — which is the fail-closed direction.
+export const CONSENT_AFFIRM =
+  /^\s*(i\s+)?(agree|accept|consent|acknowledge|confirm|yes)\b/i
+export const CONSENT_NEGATION =
+  /\b(not|no|never|n't|decline|refuse|disagree|deny|opt[-\s]?out|withhold|except|excluding|other than|unless)\b/i
+
 // The structural half of the FINDING above: SHAPE, not topic. A legal
 // agreement — however it is worded, including a wording nobody on this team
 // has thought to add a pattern for yet — is written as a full sentence
@@ -341,7 +368,12 @@ const BANK_ID_RE = /^(a-\d+)@/
 // not qualify anything to be typed onto a control that could not be grounded.
 // Read by the adapter-declared typeahead promotion in buildPlan; see the block
 // there for why each half of that gate exists.
-const APPROVED_SOURCE = /^(a-\d+@|contact\.|experience\.|education\.)/
+// `education` is stamped BARE by answer-bank's school/degree/discipline rules
+// (source "education", no sub-key), so the `education\.` alternative matched
+// nothing until 2026-08-18 — a School typeahead resolved from profile.yaml was
+// refused as unapproved. A profile fact is an approved provenance whichever
+// way the rule spells its source.
+const APPROVED_SOURCE = /^(a-\d+@|contact\.|experience\.|education(\.|$))/
 
 // answers.yaml keyed by id, loaded once per resolveFields() call (not once
 // per field — see the classification loop below for the cost this is
@@ -781,7 +813,13 @@ export function buildPlan({
   // today's behaviour on 2.2 and the floor on 2.3 rather than an open gate.
   limits = DEFAULT_LIMITS,
   bankSize = 0,
+  // The user's unattended-assent policy (assent-policy.mjs). Absent = every
+  // grant OFF = today's behaviour on every path. Read from the user's own
+  // limits file by the callers (stages.mjs, main()), never from the scan or
+  // the plan — a page cannot grant itself anything.
+  assent: assentRaw = ASSENT_OFF,
 }) {
+  const assent = normalizeAssentPolicy(assentRaw)
   // FIX (E7, w3-resolution): scan-page.js already classifies the page —
   // `kind: "login"` when it saw a password field, and a CAPTCHA iframe pushes
   // its own `signals` entry — but nothing downstream ever READ either one.
@@ -891,6 +929,10 @@ export function buildPlan({
   // caller can name every one without walking the whole plan — rule 6 requires
   // the record, and a record nobody can find cheaply does not get read.
   const actuated = []
+  // Consent-shaped GROUPS the consent branch handed on to the widget/select
+  // branches under `required_widgets` (a question the user answered from the
+  // bank), so the item and its `actuated` record can say so.
+  const consentFallthrough = new Set()
   const byKey = new Map(resolved.map((r) => [r.k, r]))
   let fileIndex = 0
 
@@ -1168,8 +1210,237 @@ export function buildPlan({
       // That is a risk the user may well decide to take — it is their
       // application — but it is theirs to take explicitly, with that sentence
       // in front of them.
-      defer.push({ k: f.k, label: displayLabel, ...mLabel(), why: "consent" })
-      continue
+      //
+      // =====================================================================
+      // THEY TOOK IT. USER DECISION, 2026-08-18 (assent-policy.mjs has the
+      // full record): "tick required, except legal-weight". So the other half
+      // is now implemented — UNDER THE USER'S OWN CONFIG KEY, off by default:
+      //
+      //   * REQUIRED, single checkbox, VOUCHED label, not isHardConsent, and
+      //     `required_consent` is `non-legal` (or `all`, which admits hard
+      //     consent too — an explicit choice, never the default): the box is
+      //     ticked, recorded in `actuated` with its grant, and the item says
+      //     so. The vouch is not negotiable — it is what closes the
+      //     DECOUPLING attack (matched on one string, showing another), which
+      //     is a different attack from a lying label and is still closed
+      //     mechanically. Vouches exist only on the in-process (Playwright)
+      //     path, so the MCP/CLI path keeps deferring — a human is there.
+      //   * a consent-shaped RADIO/SELECT GROUP with an OK-status banked pick
+      //     under `required_widgets` is a WIDGET the user answered
+      //     ("Do you consent to texts?" → their banked "No"), not a box to
+      //     tick blind: it falls through to the check-verb branch below,
+      //     which applies its own grant. Hard consent never falls through.
+      //   * OPTIONAL and `optional: skip`: left untouched and out of `defer`,
+      //     as a `skip` item that names why — the user's "if it's optional,
+      //     don't tick it", plus "and let the submit proceed".
+      //   * everything else — no policy, unvouched, hard consent under
+      //     `non-legal`, a group with no banked pick — defers exactly as it
+      //     always did, with the reason stated.
+      // =====================================================================
+      const hard = isHardConsent(label)
+      const singleBox =
+        f.t === "checkbox" && Array.isArray(f.o) && f.o.length === 1
+
+      // A CONSENT RENDERED AS A DROPDOWN. User decision 2026-08-20. Measured
+      // on Reddit's Greenhouse form the same day: "By selecting "I agree," I
+      // understand that the information I have provided as part of this job
+      // application will be processed in accordance with Reddit's Candidate
+      // Privacy Policy." is a react-select, not a checkbox — so `singleBox`
+      // was false and `required_consent` could not reach it however the user
+      // set the key. Same dead end as the Ashby fieldset vouch, different
+      // shape.
+      //
+      // THE PICK IS GROUNDED IN THE PROBED LIST, NEVER INVENTED. The options
+      // must have been read off the live form, exactly ONE of them may be
+      // affirmative, and any negation anywhere in an option's text disqualifies
+      // it. Zero affirmatives (nothing to agree with) and two or more (which
+      // "yes" was meant?) both fall through to the deferral below. That keeps
+      // this inside rule 6's second route — "a probed option list read off the
+      // live form" — and out of "a model decides which option means yes".
+      //
+      // The negation guard is separate from the head match on purpose: English
+      // negates before the verb ("I do not agree") and after it ("I agree,
+      // except..."), and only checking the head would catch the first.
+      const optionTexts =
+        f.t === "select" || f.t === "combo"
+          ? Array.isArray(f.opts) && f.opts.length
+            ? f.opts.map((o) => String(o ?? ""))
+            : (f.o ?? []).map((o) => String(o?.l ?? ""))
+          : []
+      const affirmative = optionTexts.filter(
+        (t) => CONSENT_AFFIRM.test(t) && !CONSENT_NEGATION.test(t),
+      )
+      const singlePick = affirmative.length === 1 ? affirmative[0] : null
+      const isGroup =
+        (f.t === "checkbox" ||
+          f.t === "radio" ||
+          f.t === "select" ||
+          f.t === "combo") &&
+        !singleBox
+      const bankedPick =
+        r.status === "OK" && (r.pick || f.t === "select" || f.t === "combo")
+      // A COMBO-SHAPED CONSENT NEVER SKIPS THE VOUCH, even when the bank
+      // resolved it. The fallthrough below exists for radio/checkbox GROUPS,
+      // whose label is a group question that is deliberately never vouched
+      // (the banked answer, polarity-checked against the question, is the
+      // grounding there). A select/combo's label IS its own label and — since
+      // 2026-08-21 — CAN vouch, so an unvouched one showing one string while
+      // matching another must take the consent branch's deferral, not ride a
+      // bank hit into `required_widgets` with no identity check at all.
+      const comboLike = f.t === "select" || f.t === "combo"
+      if (
+        !hard &&
+        isGroup &&
+        assent.required_widgets &&
+        bankedPick &&
+        f.req &&
+        (!comboLike || vouchedSet.has(normalizeQuestion(label)))
+      ) {
+        // fall through to the widget/select branches below: this is a
+        // question the user answered, and its grant lives there. Marked, so
+        // the item and the `actuated` record say it was consent-shaped.
+        consentFallthrough.add(f.k)
+      } else if (
+        !hard ||
+        (assent.required_consent === "all" &&
+          f.req &&
+          (singleBox || singlePick))
+      ) {
+        if (
+          f.req &&
+          !singleBox &&
+          singlePick &&
+          assent.required_consent !== "none"
+        ) {
+          // Same two refusals as the checkbox branch below, in the same order
+          // and for the same reasons: an unvouched label could be showing one
+          // string and matching another, and a widget the engine cannot operate
+          // cannot be actuated at all.
+          if (!vouchedSet.has(normalizeQuestion(label))) {
+            defer.push({
+              k: f.k,
+              label: displayLabel,
+              ...mLabel(),
+              why: "consent",
+              note: "required consent, but the scanner could not vouch for its label — a human picks it",
+              req: true,
+            })
+            continue
+          }
+          if (f.widget) {
+            defer.push({
+              k: f.k,
+              label: displayLabel,
+              ...mLabel(),
+              why: "consent",
+              note: "required consent on a control the engine cannot operate",
+              req: true,
+            })
+            continue
+          }
+          items.push({
+            k: f.k,
+            sel: f.sel,
+            how: verb,
+            value: singlePick,
+            label: displayLabel,
+            ...mLabel(),
+            assent: true,
+            grant: GRANTS.REQUIRED_CONSENT,
+            req: true,
+            ...(hard ? { legalWeight: true } : {}),
+          })
+          actuated.push({
+            k: f.k,
+            label: displayLabel,
+            value: singlePick,
+            grant: GRANTS.REQUIRED_CONSENT,
+            req: true,
+            ...(hard ? { legalWeight: true } : {}),
+          })
+          continue
+        }
+        if (f.req && singleBox && assent.required_consent !== "none") {
+          const vouched = vouchedSet.has(normalizeQuestion(label))
+          if (!vouched) {
+            defer.push({
+              k: f.k,
+              label: displayLabel,
+              ...mLabel(),
+              why: "consent",
+              note: "required consent, but the scanner could not vouch for its label — a human ticks it",
+              req: true,
+            })
+            continue
+          }
+          if (f.widget) {
+            defer.push({
+              k: f.k,
+              label: displayLabel,
+              ...mLabel(),
+              why: "consent",
+              note: "required consent on a control the engine cannot operate",
+              req: true,
+            })
+            continue
+          }
+          const opt = f.o[0]
+          items.push({
+            k: f.k,
+            sel: opt.sel ?? (opt.k ? `[data-aj="${opt.k}"]` : f.sel),
+            how: "check",
+            value: true,
+            pick: opt.k,
+            pickSel: opt.sel,
+            label: displayLabel,
+            ...mLabel(),
+            assent: true,
+            grant: GRANTS.REQUIRED_CONSENT,
+            req: true,
+            ...(hard ? { legalWeight: true } : {}),
+          })
+          actuated.push({
+            k: f.k,
+            label: displayLabel,
+            value: true,
+            pick: opt.k,
+            grant: GRANTS.REQUIRED_CONSENT,
+            req: true,
+            ...(hard ? { legalWeight: true } : {}),
+          })
+          continue
+        }
+        if (!f.req && assent.optional === "skip") {
+          items.push({
+            k: f.k,
+            how: "skip",
+            label: displayLabel,
+            ...mLabel(),
+            why: "consent: optional, left unticked (unattended_assent.optional=skip)",
+            req: false,
+          })
+          continue
+        }
+        defer.push({ k: f.k, label: displayLabel, ...mLabel(), why: "consent" })
+        continue
+      } else {
+        // Hard consent under `non-legal` (or under any policy on a shape the
+        // grant does not cover): the user's own line — legal-weight boxes stay
+        // theirs — and it is said in the defer rather than left implicit.
+        defer.push({
+          k: f.k,
+          label: displayLabel,
+          ...mLabel(),
+          why: "consent",
+          ...(assent.required_consent !== "none" || assent.optional === "skip"
+            ? {
+                note: "legal-weight consent (arbitration / background check / e-signature) stays yours under unattended_assent.required_consent=non-legal",
+              }
+            : {}),
+          req: !!f.req,
+        })
+        continue
+      }
     }
 
     if (duplicateCombo(f)) {
@@ -1207,6 +1478,28 @@ export function buildPlan({
           label: displayLabel,
           ...mLabel(),
           why: "profile-import control, not an attachment slot: uploading here runs the board's resume parser and writes fields the fact base never approved",
+        })
+        continue
+      }
+
+      // A HELPER FILE INPUT THE ADAPTER KNOWS (2026-08-18): Ashby's autofill
+      // control, which the scanner sees as a selector-less file input wearing
+      // the next field's label. Same two halves as the import-control skip —
+      // nothing is uploaded to it, and it consumes no `fileIndex`. The adapter
+      // decides, from the whole scan (ashby.mjs `helperFileInput`); a board
+      // with no such knowledge answers nothing and the field is treated as it
+      // always was. Until this, every Ashby application deferred on it as an
+      // "unrecognised attachment slot".
+      if (
+        typeof adapter.helperFileInput === "function" &&
+        adapter.helperFileInput(f, scan) === true
+      ) {
+        items.push({
+          k: f.k,
+          how: "skip",
+          label: displayLabel,
+          ...mLabel(),
+          why: `helper file input the ${adapter.id} adapter recognises (a borrowed label, no selector, beside a real résumé slot) — not an attachment slot, nothing uploaded`,
         })
         continue
       }
@@ -1258,6 +1551,26 @@ export function buildPlan({
       if (spec) fileIndex++
       const doc = spec && files[spec.doc]
       if (!doc) {
+        // AN OPTIONAL COVER-LETTER SLOT WITH NO COVER LETTER IS LEFT EMPTY
+        // (2026-08-18), not deferred. Measured on the 2026-08-17 live run:
+        // Greenhouse and Ashby both render a cover-letter input on every form,
+        // most postings do not require one, and a workspace with a résumé and
+        // no cover letter deferred the WHOLE application on the empty slot —
+        // "no rendered cover" — which is a defer for a document nobody asked
+        // for. Leaving an optional slot empty is honest and is what a human
+        // does. Every other case still defers: a slot the form marks required
+        // (`f.req`), a missing RÉSUMÉ (never optional — it is the
+        // application), and a slot nothing recognised.
+        if (spec && spec.doc === "cover" && !f.req) {
+          items.push({
+            k: f.k,
+            how: "skip",
+            label: displayLabel,
+            ...mLabel(),
+            why: "optional cover-letter slot left empty — no cover letter rendered for this workspace",
+          })
+          continue
+        }
         defer.push({
           k: f.k,
           label: displayLabel,
@@ -1265,12 +1578,21 @@ export function buildPlan({
           why: spec
             ? `no rendered ${spec.doc}`
             : "unrecognised attachment slot",
+          ...(f.req ? { req: true } : {}),
         })
         continue
       }
       items.push({
         k: f.k,
         how: "upload",
+        // The scanner's own selector for the input, when it has one
+        // (`#resume`, `#_systemfield_resume`). The engine tries it FIRST
+        // (2026-08-18) — an app-owned id survives the remount the text walk
+        // was invented for, and on Ashby the walk matched the résumé regex
+        // against the autofill helper's heading and put the résumé through
+        // the parser instead of into the slot. The label pattern stays as the
+        // fallback for inputs the scanner could not name.
+        ...(f.sel ? { sel: f.sel } : {}),
         // The engine finds the input by the text around it, because the first
         // upload remounts the form and invalidates every stamp.
         labelMatch: spec.match.source,
@@ -1380,6 +1702,74 @@ export function buildPlan({
       //
       // The consent branch above is not the same case and was kept: it acts
       // only on a VOUCHED label the user gave a standing rule for.
+      //
+      // =====================================================================
+      // AND THEN THE USER DECIDED (2026-08-18; assent-policy.mjs has the
+      // record): "If required, fuzzy exact. Otherwise leave them alone."
+      // Under `required_assertions` a REQUIRED assertion the bank resolved at
+      // status OK — which is what CONFIRM is stamped on: OK first, then
+      // reclassified by the answer's class, so "fuzzy, polarity-checked" is
+      // exactly this status — is filled with the user's own recorded value
+      // and recorded in `actuated` with its grant. Under `optional: skip` an
+      // OPTIONAL one is left empty as a `skip` item. Everything the paragraph
+      // above says about shape B is still true; what changed is whose call it
+      // is, and it is now on record as theirs. `f.widget` still defers — the
+      // engine cannot act on it, and a recorded act that never happened is
+      // worse than a defer.
+      // =====================================================================
+      if (assent.required_assertions && f.req && !f.widget) {
+        const isCheck = verb === "check"
+        if (!isCheck || r.pick) {
+          items.push({
+            k: f.k,
+            // The OPTION is the element to act on: its own selector, else its
+            // stamp. Ashby radios carry no id (pickSel undefined) and a group
+            // key resolves to no element at all — MEASURED on Flock
+            // 2026-08-18: "no unique element for g2" on the SMS radio.
+            sel: isCheck
+              ? (r.pickSel ?? (r.pick ? `[data-aj="${r.pick}"]` : f.sel))
+              : (r.sel ?? f.sel),
+            how: verb,
+            value: r.value,
+            ...(isCheck ? { pick: r.pick, pickSel: r.pickSel } : {}),
+            ...((verb === "select" || verb === "combo") &&
+            Array.isArray(r.values) &&
+            r.values.length
+              ? { values: r.values }
+              : {}),
+            label: displayLabel,
+            ...mLabel(),
+            assent: true,
+            bank: r.source,
+            grant: GRANTS.REQUIRED_ASSERTION,
+            classInfo: r.classDescription,
+            req: true,
+          })
+          actuated.push({
+            k: f.k,
+            label: displayLabel,
+            value: r.value,
+            ...(isCheck ? { pick: r.pick } : {}),
+            bank: r.source,
+            grant: GRANTS.REQUIRED_ASSERTION,
+            req: true,
+          })
+          continue
+        }
+      }
+      if (!f.req && assent.optional === "skip") {
+        items.push({
+          k: f.k,
+          how: "skip",
+          label: displayLabel,
+          ...mLabel(),
+          why: "optional assertion left empty (unattended_assent.optional=skip)",
+          value: r.value,
+          classInfo: r.classDescription,
+          req: false,
+        })
+        continue
+      }
       defer.push({
         k: f.k,
         label: displayLabel,
@@ -1388,6 +1778,7 @@ export function buildPlan({
         value: r.value,
         ...(r.pick ? { pick: r.pick, pickSel: r.pickSel } : {}),
         classInfo: r.classDescription,
+        req: !!f.req,
       })
       continue
     }
@@ -1600,11 +1991,48 @@ export function buildPlan({
       //     defers instead, carrying `value` and `pick`: the answer is still
       //     resolved with no model turn, and the agent actuates and names it,
       //     which is what rule 6 asks for on the user-directed path.
+      //
+      // =====================================================================
+      // THE SECOND EXEMPTION: A REQUIRED WIDGET UNDER THE USER'S POLICY
+      // (2026-08-18; assent-policy.mjs has the record). "If required, fuzzy
+      // exact. Otherwise leave them alone." — so with `required_widgets` on, a
+      // REQUIRED group whose banked answer names one of its options at status
+      // OK (fuzzy wording allowed; answer-bank's polarity/intent check and
+      // option grounding are what OK means) is ticked and recorded with its
+      // grant; and with `optional: skip`, an OPTIONAL one is left untouched as
+      // a `skip` item rather than a blocking defer. The 2026-08-03 `@exact`
+      // exemption above is unchanged and still applies with the policy off.
+      // `f.widget` still defers under every policy — the engine cannot act.
+      // =====================================================================
       const exactBank = /^a-\d+@exact/.test(r.source ?? "")
-      if (exactBank && r.status === "OK" && r.pick && !f.widget) {
+      // A policy tick carries the grant that admits it; the exact-bank
+      // exemption carries none (it is the user-directed path's own rule, and
+      // submitReadiness still blocks on it unattended). An exact hit on a
+      // REQUIRED field under the policy is a policy tick — one grant per act.
+      const policyGrant =
+        assent.required_widgets && !!f.req && r.status === "OK" && !!r.pick
+      // "Otherwise leave them alone": under `optional: skip` an OPTIONAL
+      // widget is not ticked even from an exact hit — it is left untouched and
+      // out of `defer`, and the plan says so.
+      const optionalSkip = !f.req && assent.optional === "skip"
+      if (
+        (policyGrant || (exactBank && !optionalSkip)) &&
+        r.status === "OK" &&
+        r.pick &&
+        !f.widget
+      ) {
+        const granted = policyGrant
+          ? {
+              grant: GRANTS.REQUIRED_WIDGET,
+              ...(consentFallthrough.has(f.k) ? { consentShaped: true } : {}),
+            }
+          : {}
         items.push({
           k: f.k,
-          sel: r.pickSel ?? r.sel ?? f.sel,
+          // The option's own selector, else its stamp — never the group's key,
+          // which is no element (see the CONFIRM branch above).
+          sel:
+            r.pickSel ?? (r.pick ? `[data-aj="${r.pick}"]` : (r.sel ?? f.sel)),
           how: verb,
           value: r.value,
           pick: r.pick,
@@ -1616,6 +2044,7 @@ export function buildPlan({
           assent: true,
           bank: r.source,
           req: !!f.req,
+          ...granted,
         })
         actuated.push({
           k: f.k,
@@ -1624,6 +2053,21 @@ export function buildPlan({
           pick: r.pick,
           bank: r.source,
           req: !!f.req,
+          ...granted,
+        })
+        continue
+      }
+
+      if (optionalSkip) {
+        items.push({
+          k: f.k,
+          how: "skip",
+          label: displayLabel,
+          ...mLabel(),
+          why: "optional assent widget left untouched (unattended_assent.optional=skip)",
+          value: r.value,
+          pick: r.pick,
+          req: false,
         })
         continue
       }
@@ -1658,7 +2102,20 @@ export function buildPlan({
       Array.isArray(r.values) &&
       r.values.length
         ? { values: r.values }
-        : {}),
+        : // A SINGLE grounded answer on a scanner-flagged token picker rides
+          // as a one-element list, so the engine takes the multi path:
+          // `openComboMulti` opens via the inner input, because the CENTRE of
+          // a committed-token widget is a token's × remove control — the
+          // single path's centre-click deleted a committed choice and then
+          // waited out its option timeout (Chime's EEO combo, three runs,
+          // 2026-08-22). The multi path's per-token readback is also the only
+          // one that can VERIFY a value on a widget already holding tokens.
+          // Grounding is unchanged: `r.status === OK` on a combo already
+          // means the value matched the probed options (the EEO decline
+          // included). Same verb gate as above, same reason.
+          (verb === "select" || verb === "combo") && f.multi && r.value != null
+          ? { values: [String(r.value)] }
+          : {}),
       label: displayLabel,
       ...mLabel(),
       // A combo strategy remembered from a previous application to this same
@@ -1666,7 +2123,31 @@ export function buildPlan({
       // free to ignore this and walk its normal strategy order; it is a
       // hint, not a guarantee the field still works the same way.
       ...(verb === "combo" && f.via ? { via: f.via } : {}),
+      // A consent-shaped select/combo the consent branch handed on under
+      // `required_widgets` ("Please confirm receipt of the privacy notice" as
+      // a Yes/No dropdown, answered from the bank): filled like any value, but
+      // named as an assent — the grant rides on the item and the act is
+      // recorded, because a consent answered by a dropdown is still a consent.
+      ...(consentFallthrough.has(f.k)
+        ? {
+            assent: true,
+            bank: r.source,
+            grant: GRANTS.REQUIRED_WIDGET,
+            consentShaped: true,
+            req: !!f.req,
+          }
+        : {}),
     })
+    if (consentFallthrough.has(f.k))
+      actuated.push({
+        k: f.k,
+        label: displayLabel,
+        value: r.value,
+        bank: r.source,
+        grant: GRANTS.REQUIRED_WIDGET,
+        consentShaped: true,
+        req: !!f.req,
+      })
   }
 
   // A ticked "current role" box disables the end-date pair on every one of
@@ -1961,7 +2442,8 @@ function showValue(v) {
   return `a ${typeof v}`
 }
 
-export function submitReadiness(plan, report = null) {
+export function submitReadiness(plan, report = null, { assent } = {}) {
+  const policy = normalizeAssentPolicy(assent)
   const fillable = (plan.items ?? []).filter((i) => i.how !== "skip")
   const flagged = [
     ...(Array.isArray(plan.items) ? plan.items : []),
@@ -2010,18 +2492,33 @@ export function submitReadiness(plan, report = null) {
   // So the runner still refuses every form carrying one, exactly as it did
   // when the widget deferred. `actuated` is the durable signal, and it is on
   // the plan rather than inferred, so this cannot drift back.
-  if (plan.actuated?.length) {
+  //
+  // UNLESS THE USER GRANTED IT (2026-08-18). An `actuated` entry that carries
+  // a `grant` is admitted when — and only when — the policy THIS gate is
+  // handed enables that grant. Two independent keys, on purpose: buildPlan
+  // records the grant it acted under; this gate re-checks it against the
+  // policy the runner read from the user's file. A plan built under one
+  // policy and submitted under a stricter one is refused, and an entry with
+  // no grant (the user-directed path's exact-bank exemption) is refused
+  // exactly as before. `assent` absent = every grant off = today's gate.
+  const ungranted = (plan.actuated ?? []).filter(
+    (a) => !(a?.grant && grantEnabled(policy, a.grant)),
+  )
+  if (ungranted.length) {
     return {
       ready: false,
       reason:
-        `${plan.actuated.length} widget(s) were ticked from banked answers ` +
-        `(${plan.actuated
+        `${ungranted.length} widget(s) were ticked from banked answers ` +
+        `(${ungranted
           .slice(0, 3)
           .map((a) => a.label)
           .join(
             "; ",
           )}) — the user delegates assent when they hand over a URL, ` +
-        `and an unattended run has no such instruction`,
+        `and an unattended run has no such instruction` +
+        (ungranted.some((a) => a?.grant)
+          ? " (a grant is present but the policy this run was handed does not enable it)"
+          : ""),
     }
   }
   if (!fillable.length) {
@@ -2110,6 +2607,23 @@ export function submitReadiness(plan, report = null) {
       const l = labels.get(key)
       return l ? `${l.slice(0, 60)} (${String(key)})` : String(key ?? "?")
     }
+
+    // A FILL THAT TRIED TO SUBMIT IS NOT A CLEAN FILL. fill-engine's window-
+    // capture guard (2026-08-18) counts every submit event a keystroke raised
+    // during the fill; it stopped them all, so nothing reached the board — but
+    // a widget forwarded Enter the engine believed it would handle, and the
+    // form's state after that is not the state the plan describes with any
+    // certainty. Refused, with the count, on the unattended path only: the
+    // attended readiness() is unchanged, and a human is looking at the page.
+    if (Number(report.submitsBlocked) > 0)
+      return {
+        ready: false,
+        reason:
+          `the fill triggered ${Number(report.submitsBlocked)} form submission ` +
+          "attempt(s) that the engine's submit guard blocked — a keystroke " +
+          "reached the form as a submit; the fill is not trusted to have left " +
+          "the form as planned",
+      }
 
     const failed = report.failed
     if (
@@ -2478,6 +2992,13 @@ function main() {
   // without touching that file. See loadDisclosureLimits().
   const maxFreeTextFlag = flag("--max-freetext")
   const disclosureBudgetFlag = flag("--disclosure-budget")
+  // Where the unattended-assent policy is read FROM (default: the user's
+  // docs/application-limits.yaml). The bench harness passes a pinned file
+  // here, because a benchmark that inherits the machine's live grants is
+  // measuring the user's config, not the pipeline — the same reason it pins
+  // --profile and --answers. A path that does not exist means every grant
+  // OFF, which is the fail-closed direction.
+  const assentLimitsFlag = flag("--assent-limits")
 
   const slug = args.find((a) => !a.startsWith("--"))
   if (!slug) {
@@ -2596,6 +3117,15 @@ function main() {
   // count of entries, never their content. 0 when the file is missing, which
   // leaves the budget at its floor (the stricter end).
   const bankSize = loadBankById(answersFlag).size
+  // The SAME policy the unattended runner reads (stages.mjs), from the same
+  // file, so the attended CLI and the runner cannot disagree about what a
+  // required assertion or an optional widget does. On this path there is no
+  // vouch (the scan crossed a process boundary), so a required consent box
+  // still defers here and the agent ticks it — the grants that need no vouch
+  // (required assertions, required widgets, optional skips) apply the same.
+  const assent = assentLimitsFlag
+    ? loadAssentPolicy({ limitsFile: assentLimitsFlag })
+    : loadAssentPolicy()
   const plan = buildPlan({
     scan,
     resolved,
@@ -2605,6 +3135,7 @@ function main() {
     consentAllowlist,
     limits,
     bankSize,
+    assent,
   })
   // A board-level hint — the same helper stages.mjs uses, so the attended and
   // unattended paths promote the remembered strategy identically.
@@ -2632,7 +3163,9 @@ function main() {
   fs.mkdirSync(jobDir, { recursive: true })
   const jsPath = path.join(jobDir, "fill-plan.js")
   const jsonPath = path.join(jobDir, "fill-plan.json")
-  fs.writeFileSync(jsonPath, JSON.stringify(plan, null, 2) + "\n")
+  // jsonReplacer: the plan's valueAliases are RegExps, which JSON would turn
+  // into `{}`; they are written as {source, flags}, which the engine reads.
+  fs.writeFileSync(jsonPath, JSON.stringify(plan, jsonReplacer, 2) + "\n")
 
   // Read here — an ordinary Node process — never inside the generated driver,
   // which runs in a vm sandbox with no fs. See buildDriverSource().

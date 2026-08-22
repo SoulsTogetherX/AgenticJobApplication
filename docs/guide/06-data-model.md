@@ -1268,8 +1268,9 @@ back-filled for the rows that mattered."
   `confirm-widget`, `consent-tickbox`, `unknown-field`, `unprobed-dropdown`,
   `fill-failed`, `identity-verification`, `captcha`, `bot-challenge`,
   `email-code-challenge`, `multipage-unresolvable`, `freetext-disclosure`,
-  `doc-unverified`, `fact-base-changed`, `board-untrusted`, `l3-rejected`,
-  `cap-company`, `posting-gone`, `board-paused`, `reconciled-not-sent`.
+  `doc-unverified`, `doc-unrendered`, `fact-base-changed`, `board-untrusted`,
+  `board-unsighted`, `l3-rejected`, `cap-company`, `already-applied`,
+  `posting-gone`, `board-paused`, `reconciled-not-sent`.
 - **`AUTO_FAILURE_KINDS`** (7 values) — the machine malfunctioned:
   `nav-timeout`, `browser-crash`, `token-refused`, `origin-mismatch`,
   `post-submit-unclassified`, `db-write-failed`, `plan-error`.

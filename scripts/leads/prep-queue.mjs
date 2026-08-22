@@ -12,10 +12,13 @@
 // Usage: node scripts/leads/prep-queue.mjs [--top N] [--status new|all] [--json]
 //        [--leads <path>] [--profile <path>] [--jobs-dir <path>]
 //        [--applications <path>] [--limits <path>] [--cluster [--threshold 0.6]]
-//        [--by-score]
+//        [--by-score] [--include-rejected]
 //
 // --cluster collapses near-duplicate postings (cluster.mjs) so a group that one
 // tailored resume can serve costs one queue slot, not four.
+//
+// Leads whose stored screening verdict is `reject` are LEFT OUT and counted
+// (`screened_out=N`); --include-rejected puts them back.
 //
 // Leads are ordered by APPLICABILITY first and fit second — see the block above
 // `applicability()`. --by-score restores the old fit-only ordering.
@@ -28,7 +31,11 @@ import { loadYamlFile, isTerse } from "../lib/lib.mjs"
 import { profileText } from "../profile/profile-gaps.mjs"
 import { rankLeads, rankingContext } from "./recommend.mjs"
 import { clusterLeads, coveredBy } from "./cluster.mjs"
-import { readLeadStore, resolveLeadSource } from "../lib/db.mjs"
+import {
+  readLeadStore,
+  resolveLeadSource,
+  latestScreenVerdicts,
+} from "../lib/db.mjs"
 import { readApplications } from "../lib/db.mjs"
 import { readLimits, normalizeAllowlist } from "../auto/trust.mjs"
 
@@ -227,9 +234,37 @@ function main() {
   const entries = normalizeAllowlist(
     readLimits(limitsPath)?.auto_apply?.board_allowlist,
   )
-  const ordered = args.includes("--by-score")
+  const applicable = args.includes("--by-score")
     ? byScore
     : preferApplicable(byScore, entries)
+
+  // A LEAD SCREENING ALREADY REJECTED IS NOT WORTH A PREP SLOT (2026-08-18).
+  // The queue used to be built from `status === "new"` alone and never read the
+  // `screens` table, so a lead screen.mjs had rejected as stale, over the
+  // experience bar or instruction-shaped still ranked into the top of the
+  // queue; the cycle then either spent tailoring on it (and the runner refused
+  // it at the trust gate) or, when the gate ran first, skipped it and printed
+  // a shorter queue than it asked for. Measured 2026-08-17: three of the top
+  // twenty. The verdict read here is the SAME one the runner reads (model
+  // first, mechanical fallback), so what this drops is exactly what the gate
+  // would refuse. Dropped rather than ranked down, because a rejected lead is
+  // not "hand-apply only" — it is a lead the pipeline has decided against —
+  // and it is COUNTED, so a queue that shrank says why. --include-rejected
+  // restores the old behaviour for someone re-checking a verdict.
+  let screenedOut = 0
+  let ordered = applicable
+  if (!args.includes("--include-rejected")) {
+    let verdicts = new Map()
+    try {
+      verdicts = latestScreenVerdicts(leadsPath)
+    } catch {
+      /* an unreadable screens table leaves the queue as it was — the runner's
+         own gate still refuses a rejected lead */
+    }
+    const rejected = (l) => verdicts.get(l.id)?.verdict === "reject"
+    screenedOut = applicable.filter(rejected).length
+    ordered = applicable.filter((l) => !rejected(l))
+  }
   // Generous, then filtered — the top few are often already tailored, and we
   // still want a full queue underneath them.
   const ranked = ordered.slice(0, Math.max(top * 4, 20))
@@ -295,6 +330,7 @@ function main() {
     }
     console.log(
       `queued=${queue.length} ranked=${ranked.length}${tiers}` +
+        ` screened_out=${screenedOut}` +
         (covered.size
           ? ` clustered=${attached} covered_elsewhere=${suppressed}`
           : ""),
@@ -322,6 +358,9 @@ function main() {
         : ".") +
       (suppressed > 0
         ? `\n${suppressed} more are covered by a resume that already exists.`
+        : "") +
+      (screenedOut > 0
+        ? `\n${screenedOut} lead(s) screening already rejected were left out (--include-rejected to see them).`
         : ""),
   )
 }

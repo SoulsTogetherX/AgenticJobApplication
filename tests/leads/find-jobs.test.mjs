@@ -541,3 +541,45 @@ test("no hardcoded default query in this file disagrees with DEFAULT_SEARCH_QUER
   )
   assert.doesNotMatch(src, /=\s*"software engineer"/)
 })
+
+// ---------------------------------------------------------------------------
+// The sweep summary says where the candidates WENT (2026-08-18).
+// ---------------------------------------------------------------------------
+
+test("summarize reports fetched, duplicates, gate-rejected and stored — so stored=0 on a healthy sweep is legible", async () => {
+  const { summarize } = await import("../../scripts/leads/find-jobs.mjs")
+  const lines = []
+  const orig = console.log
+  console.log = (s) => lines.push(String(s))
+  try {
+    // Terse (agent) rendering: under node --test stdout is a pipe, so
+    // isTerse() is already true — the same way a tool call sees it.
+    summarize(
+      [{ id: "gh:1", company: "A", title: "Dev", location: "Remote" }],
+      [{ id: "gh:2", reasons: ["title: not a match"] }, { id: "gh:3", reasons: ["stale: 40d"] }],
+      { counts: { fetched: 12, duplicates: 9 } },
+    )
+  } finally {
+    console.log = orig
+  }
+  const summary = lines.find((l) => l.startsWith("fetched="))
+  assert.ok(summary, `no summary line in: ${lines.join(" | ")}`)
+  assert.equal(
+    summary,
+    "fetched=12 duplicates=9 gate_rejected=2 stored=1 rejected=2",
+    "12 seen: 9 already in the store, 2 rejected by the gates, 1 stored",
+  )
+})
+
+test("summarize with no counts still adds up — fetched falls back to kept + rejected, duplicates to 0", async () => {
+  const { summarize } = await import("../../scripts/leads/find-jobs.mjs")
+  const lines = []
+  const orig = console.log
+  console.log = (s) => lines.push(String(s))
+  try {
+    summarize([], [{ id: "x", reasons: ["title: no"] }])
+  } finally {
+    console.log = orig
+  }
+  assert.ok(lines.some((l) => l === "fetched=1 duplicates=0 gate_rejected=1 stored=0 rejected=1"), lines.join(" | "))
+})

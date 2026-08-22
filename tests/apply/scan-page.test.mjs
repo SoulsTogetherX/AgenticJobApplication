@@ -756,7 +756,24 @@ test("a wrapping <label> around one checkbox is vouched", async () => {
   assert.equal(g.l, CERT)
 })
 
-test("a fieldset legend is a group heading, never a vouched label", async () => {
+// CHANGED 2026-08-20, by the user's decision, and this test now asserts the new
+// rule rather than the old one. It used to read "a fieldset legend is a group
+// heading, never a vouched label" and assert `labelExact === undefined` here.
+//
+// Why it moved: a legend is refused the vouch because it heads a GROUP and so
+// does not say WHICH control it labels. With exactly one control in the
+// fieldset there is no which — and the old rule had a measured cost. Ashby
+// wraps every consent box in its own <fieldset>, so `required_consent: all`
+// (on since 2026-08-18) had never fired on a single Ashby form:
+// jobs.ashbyhq.com/openai scanned `vouched=0` on 2026-08-20 and both required
+// acknowledgements deferred as "could not vouch for its label".
+//
+// What did NOT move, each with its own test below: more than one control in the
+// fieldset, a legend over a bare answer token, and a label reached by walking
+// ancestors. The vouched string is also the fieldset's COMPLETE text — legend
+// and control label together — never the legend alone, which would vouch a
+// heading while the terms sat underneath it.
+test("a fieldset around exactly one control is that control's label, vouched", async () => {
   const out = await scan(
     h("body", {}, [
       h("fieldset", {}, [
@@ -769,9 +786,38 @@ test("a fieldset legend is a group heading, never a vouched label", async () => 
     ]),
   )
   const g = onlyGroup(out)
-  assert.equal(g.labelExact, undefined)
-  assert.equal(g.labelWhy, "label source is fieldset legend")
-  assert.equal(g.l, "Voluntary disclosures")
+  assert.equal(g.labelExact, true)
+  assert.equal(g.labelWhy, undefined)
+  assert.match(g.l, /Voluntary disclosures/)
+  assert.ok(
+    g.l.includes(CERT),
+    "the vouched string must be the COMPLETE visible text, not the legend alone",
+  )
+})
+
+test("a fieldset legend over MORE THAN ONE control is still never vouched", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("fieldset", {}, [
+        h("legend", {}, ["Voluntary disclosures"]),
+        h("div", {}, [
+          h("label", { for: "c1" }, [CERT]),
+          h("input", { type: "checkbox", id: "c1", name: "a" }),
+        ]),
+        h("div", {}, [
+          h("label", { for: "c2" }, ["I also accept the marketing terms."]),
+          h("input", { type: "checkbox", id: "c2", name: "b" }),
+        ]),
+      ]),
+    ]),
+  )
+  for (const g of out.fields.filter((f) => f.t === "checkbox")) {
+    assert.notEqual(
+      g.labelExact,
+      true,
+      "with two controls the legend does not say WHICH box",
+    )
+  }
 })
 
 test("a label found by walking ancestors is a guess, never a vouch", async () => {
@@ -807,6 +853,370 @@ test("a second box under the same label withdraws the vouch", async () => {
   assert.equal(g.labelWhy, "more than one control shares this label")
   // and both option labels went back to the short form
   for (const o of g.o) assert.ok(o.l.length <= 80)
+})
+
+// --- a group's label is its QUESTION, never one of its options ------------
+//
+// MEASURED on Ashby, 2026-08-18: the texting-consent radios sit under a
+// paragraph, inside the phone-number entry, with no fieldset and no legend, and
+// the group came back labelled with its first option's own text ("Yes - I
+// consent to receiving text messages"). The exact live shape, reduced:
+// Every rich-text block on the live form — the question paragraph and each
+// option's own label — is a read-only tiptap editor (`contenteditable="false"`),
+// which is what the first version of the pass tripped over: `[contenteditable]`
+// matches on presence, so the question's container looked like it held a
+// control. The fixture carries the same wrappers so that stays pinned.
+const editor = (kids) =>
+  h("div", { class: " _editor_1n5m7_37" }, [
+    h("div", { contenteditable: "false", class: "tiptap ProseMirror" }, kids),
+  ])
+const radioIn = (label, name, value) =>
+  h("label", { class: "_label_1rwuy_6" }, [
+    h("input", { type: "radio", name, value }),
+    h("div", { class: "_consentRadioLabel_" }, [editor([h("p", {}, [label])])]),
+  ])
+const SMS_YES = "Yes - I consent to receiving text messages"
+const SMS_NO = "No - I do not consent to receiving text messages"
+const SMS_TEXT =
+  "Check Yes or No to indicate your agreement to receive text message updates " +
+  "from Flock Group Inc. regarding your job application. Frequency may vary. " +
+  "Message and data rates may apply. Reply STOP to opt out of future messaging."
+const ashbyPhoneEntry = () =>
+  h("div", { class: "_fieldEntry_1e3gg_28" }, [
+    h("label", { class: "_heading_ _required_f7cvd_91", for: "phone" }, [
+      "Phone Number",
+    ]),
+    h("input", { type: "tel", id: "phone", name: "phone" }),
+    h("div", { class: "_phoneNumberConsentLegalText_" }, [
+      h("div", { class: "_consentBody_" }, [editor([h("p", {}, [SMS_TEXT])])]),
+      h("div", { class: "_container_1rwuy_1" }, [
+        radioIn(SMS_YES, "communicationConsent", "given"),
+        radioIn(SMS_NO, "communicationConsent", "notGiven"),
+      ]),
+    ]),
+  ])
+const radioGroup = (out) => out.fields.find((f) => f.t === "radio")
+
+test("Ashby texting consent: the group is labelled with the question paragraph, not its first option", async () => {
+  const out = await scan(h("body", {}, [h("form", {}, [ashbyPhoneEntry()])]))
+  const g = radioGroup(out)
+  assert.ok(g, "the radio group is reported")
+  assert.equal(
+    g.l,
+    "Check Yes or No to indicate your agreement to receive text message updates " +
+      "from Flock Group Inc. regarding your job application.",
+    "the first sentence of the block above the options — 'Inc.' is not a boundary",
+  )
+  assert.equal(g.labelWhy, "label source is group question")
+  assert.equal(g.labelExact, undefined, "a group question is never vouched")
+  assert.equal(g.lSeen, undefined)
+  assert.deepEqual(
+    g.o.map((o) => o.l),
+    [SMS_YES, SMS_NO],
+    "the options keep their own labels",
+  )
+  // The phone entry ABOVE the consent block holds another control (the tel
+  // input), so the walk stops one level below it and "Phone Number" is never
+  // adopted — the E8 trap ("a wrong label is worse than an empty one").
+  assert.notEqual(g.l, "Phone Number")
+  // and the phone field itself is untouched
+  const phone = out.fields.find((f) => f.t === "tel")
+  assert.equal(phone.l, "Phone Number")
+})
+
+test("a group question ends at the last '?' when there is one (Lever's shape)", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("div", { class: "application-question" }, [
+        h("div", { class: "application-label" }, [
+          "Will you now or in the future require sponsorship for employment visa status?",
+          h("span", { class: "required" }, ["✱"]),
+        ]),
+        h("ul", { class: "application-answers" }, [
+          h("li", {}, [
+            h("label", {}, [
+              h("input", {
+                type: "radio",
+                name: "cards[x][field0]",
+                value: "Yes",
+              }),
+              "Yes",
+            ]),
+          ]),
+          h("li", {}, [
+            h("label", {}, [
+              h("input", {
+                type: "radio",
+                name: "cards[x][field0]",
+                value: "No",
+              }),
+              "No",
+            ]),
+          ]),
+        ]),
+      ]),
+    ]),
+  )
+  const g = radioGroup(out)
+  assert.equal(
+    g.l,
+    "Will you now or in the future require sponsorship for employment visa status?",
+  )
+  assert.equal(g.labelWhy, "label source is group question")
+  assert.deepEqual(
+    g.o.map((o) => o.l),
+    ["Yes", "No"],
+  )
+})
+
+test("a group with a legend keeps the legend; the question pass does not run", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("p", {}, ["Some prose above the fieldset that must not win."]),
+      h("fieldset", {}, [
+        h("legend", {}, ["Are you legally authorized to work in the US?"]),
+        h("label", {}, [
+          h("input", { type: "radio", name: "auth", value: "y" }),
+          "Yes",
+        ]),
+        h("label", {}, [
+          h("input", { type: "radio", name: "auth", value: "n" }),
+          "No",
+        ]),
+      ]),
+    ]),
+  )
+  const g = radioGroup(out)
+  assert.equal(g.l, "Are you legally authorized to work in the US?")
+  assert.equal(g.labelWhy, "label source is fieldset legend")
+})
+
+test("a lone checkbox keeps its own label and its vouch — the pass needs two options", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("p", {}, ["Please read the following before continuing."]),
+        h("label", { for: "c1" }, [CERT]),
+        h("input", { type: "checkbox", id: "c1" }),
+      ]),
+    ]),
+  )
+  const g = onlyGroup(out)
+  assert.equal(g.l, CERT)
+  assert.equal(g.labelExact, true)
+})
+
+test("a group whose container holds nothing but its options is left as it was", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("label", {}, [
+          h("input", { type: "radio", name: "r", value: "a" }),
+          "Alpha",
+        ]),
+        h("label", {}, [
+          h("input", { type: "radio", name: "r", value: "b" }),
+          "Beta",
+        ]),
+      ]),
+    ]),
+  )
+  const g = radioGroup(out)
+  assert.equal(g.l, "Alpha", "no question anywhere: the old label stands")
+  assert.equal(g.labelWhy, "more than one control shares this label")
+})
+
+test("a container holding a control the group does not own is somebody else's question — stop", async () => {
+  // Two questions under ONE wrapper with ONE heading: adopting the heading
+  // would stamp the wrong question on the radios. The other control is a
+  // visible text input, so the walk stops at the wrapper and adopts nothing.
+  const out = await scan(
+    h("body", {}, [
+      h("div", { class: "section" }, [
+        h("h3", {}, ["Tell us about your availability"]),
+        h("input", { type: "text", name: "start", placeholder: "Start date" }),
+        h("div", {}, [
+          h("label", {}, [
+            h("input", { type: "radio", name: "ft", value: "y" }),
+            "Full time",
+          ]),
+          h("label", {}, [
+            h("input", { type: "radio", name: "ft", value: "n" }),
+            "Part time",
+          ]),
+        ]),
+      ]),
+    ]),
+  )
+  const g = radioGroup(out)
+  assert.equal(g.l, "Full time", "nothing adopted across a foreign control")
+})
+
+test("a container with more text than PAIR_QUESTION_MAX is a section, not a question — stop", async () => {
+  const wall = "This is a long paragraph of policy prose. ".repeat(12) // > 300 chars
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("p", {}, [wall]),
+        h("div", {}, [
+          h("label", {}, [
+            h("input", { type: "radio", name: "r", value: "a" }),
+            "Alpha",
+          ]),
+          h("label", {}, [
+            h("input", { type: "radio", name: "r", value: "b" }),
+            "Beta",
+          ]),
+        ]),
+      ]),
+    ]),
+  )
+  const g = radioGroup(out)
+  assert.equal(g.l, "Alpha")
+})
+
+test("a group question that is itself invisible prose is not adopted (display:none block)", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("p", { style: { display: "none" } }, [
+          "Do you agree to binding arbitration?",
+        ]),
+        h("div", {}, [
+          h("label", {}, [
+            h("input", { type: "radio", name: "r", value: "a" }),
+            "Alpha",
+          ]),
+          h("label", {}, [
+            h("input", { type: "radio", name: "r", value: "b" }),
+            "Beta",
+          ]),
+        ]),
+      ]),
+    ]),
+  )
+  const g = radioGroup(out)
+  assert.equal(
+    g.l,
+    "Alpha",
+    "hidden text contributes nothing to innerText, so nothing to adopt",
+  )
+})
+
+// --- Ashby's "select all that apply": one fieldset, N boxes named after
+// their own option --------------------------------------------------------
+const ashbyBox = (entry, i, text) =>
+  h("div", { class: "_option_1258i_34" }, [
+    h("span", { class: "_container_1danv_28" }, [
+      h("input", {
+        type: "checkbox",
+        id: `${entry}-labeled-checkbox-${i}`,
+        name: text,
+      }),
+    ]),
+    h(
+      "label",
+      { for: `${entry}-labeled-checkbox-${i}`, class: "_label_1258i_42" },
+      [text],
+    ),
+  ])
+const ashbyMultiSelect = (entry, question, options) =>
+  h("div", { "data-field-path": entry }, [
+    h("fieldset", { class: "_container_1258i_28 _fieldEntry_1e3gg_28" }, [
+      h(
+        "label",
+        {
+          class: "_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42",
+          for: entry,
+        },
+        [question],
+      ),
+      ...options.map((o, i) => ashbyBox(entry, i, o)),
+    ]),
+  ])
+
+test("Ashby select-all-that-apply: boxes named after their own option form ONE group under the question", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("form", {}, [
+        ashbyMultiSelect("q1", "Where are you based relative to our hubs?", [
+          "Atlanta, GA",
+          "Boston, MA",
+          "Willing to relocate to Atlanta, GA or Boston, MA",
+          "Remote",
+        ]),
+        ashbyMultiSelect("q2", "Select all that you are proficient in.", [
+          "AOSP",
+          "Python",
+          "Rust",
+        ]),
+      ]),
+    ]),
+  )
+  const groups = out.fields.filter((f) => f.t === "checkbox")
+  assert.equal(groups.length, 2, "two questions, two groups — not seven")
+  assert.equal(groups[0].l, "Where are you based relative to our hubs?")
+  assert.deepEqual(
+    groups[0].o.map((o) => o.l),
+    [
+      "Atlanta, GA",
+      "Boston, MA",
+      "Willing to relocate to Atlanta, GA or Boston, MA",
+      "Remote",
+    ],
+  )
+  assert.equal(
+    groups[0].req,
+    true,
+    "the entry label's _required_ class marks the group",
+  )
+  assert.equal(groups[1].l, "Select all that you are proficient in.")
+  assert.deepEqual(
+    groups[1].o.map((o) => o.l),
+    ["AOSP", "Python", "Rust"],
+  )
+  // each option keeps its own identity
+  assert.deepEqual(
+    groups[1].o.map((o) => o.n),
+    ["AOSP", "Python", "Rust"],
+  )
+  assert.equal(
+    groups[1].labelExact,
+    undefined,
+    "a group heading is never vouched",
+  )
+})
+
+test("checkboxes with REAL names in one fieldset are still separate groups (the rule needs name === own text)", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("fieldset", {}, [
+        h("legend", {}, ["Legal"]),
+        h("label", { for: "t" }, ["I agree to the terms."]),
+        h("input", { type: "checkbox", id: "t", name: "agree_terms" }),
+        h("label", { for: "b" }, ["I authorize a background check."]),
+        h("input", { type: "checkbox", id: "b", name: "agree_bgc" }),
+      ]),
+    ]),
+  )
+  const groups = out.fields.filter((f) => f.t === "checkbox")
+  assert.equal(groups.length, 2)
+  for (const g of groups) assert.equal(g.o.length, 1)
+})
+
+test("a box named after its own text but OUTSIDE any fieldset is keyed as before", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("label", { for: "a" }, ["Python"]),
+        h("input", { type: "checkbox", id: "a", name: "Python" }),
+        h("label", { for: "b" }, ["Rust"]),
+        h("input", { type: "checkbox", id: "b", name: "Rust" }),
+      ]),
+    ]),
+  )
+  const groups = out.fields.filter((f) => f.t === "checkbox")
+  assert.equal(groups.length, 2, "no fieldset, no merge — nothing to group by")
 })
 
 test("a label longer than the vouch ceiling defers instead of truncating", async () => {
@@ -1992,5 +2402,62 @@ test("a VISIBLE control in the same container still blocks it", async () => {
   assert.deepEqual(
     out.btns.map((b) => b.l),
     ["Yes", "No"],
+  )
+})
+
+// --- lFull: the display companion for a cut label --------------------------
+//
+// `l` stays at 120 (matching key, cache key, fingerprint input); `lFull` is
+// the untruncated text, emitted only when the label overran the cut, capped
+// at MAX_EXACT, matched against by nothing. It exists so pending-questions
+// can show a whole essay prompt instead of a sentence cut mid-word.
+
+test("a long label keeps l at 120 and carries the complete lFull", async () => {
+  const long =
+    "This role is about the infrastructure ML models run on - distributed systems, GPU serving, and developer tooling - working closely with research teams to make iteration faster."
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("label", { for: "t1" }, [long]),
+        h("textarea", { id: "t1" }),
+      ]),
+    ]),
+  )
+  const f = out.fields.find((x) => x.t === "textarea")
+  assert.ok(f, "the textarea should be scanned")
+  assert.equal(f.l.length, 120, "l keeps the cut")
+  assert.equal(f.l, long.replace(/\s+/g, " ").trim().slice(0, 120))
+  assert.equal(f.lFull, long, "lFull is the complete text")
+})
+
+test("lFull is capped at 1000 for a pathological label", async () => {
+  const huge = ("A question. " + "x".repeat(1500)).trim()
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("label", { for: "t2" }, [huge]),
+        h("input", { type: "text", id: "t2" }),
+      ]),
+    ]),
+  )
+  const f = out.fields.find((x) => x.t === "text")
+  assert.equal(f.lFull.length, 1000)
+})
+
+test("a short label emits NO lFull key — the scan stays byte-identical", async () => {
+  const out = await scan(
+    h("body", {}, [
+      h("div", {}, [
+        h("label", { for: "t3" }, ["Full name"]),
+        h("input", { type: "text", id: "t3" }),
+      ]),
+    ]),
+  )
+  const f = out.fields.find((x) => x.t === "text")
+  assert.equal(f.l, "Full name")
+  assert.equal(
+    "lFull" in f && f.lFull !== undefined,
+    false,
+    "no companion for a label the cut never touched",
   )
 })

@@ -79,6 +79,10 @@ export const REASON_CLASSES = Object.freeze({
     "unprobed-dropdown",
     "fill-failed",
     "multipage-unresolvable",
+    // The submit stamp died with a form remount and a re-scan did not bring
+    // it back — an engine/adapter behaviour ours to fix, so it shrinks with
+    // engineering, which is this tier's definition.
+    "submit-control-lost",
   ]),
   assent: Object.freeze([
     "confirm-field",
@@ -97,11 +101,18 @@ export const REASON_CLASSES = Object.freeze({
   ]),
   policy: Object.freeze([
     "doc-unverified",
+    "doc-unrendered",
     "fact-base-changed",
     "board-untrusted",
+    "board-unsighted",
     "l3-rejected",
     "cap-company",
     "already-applied",
+    // A durable scoped STOP standing (§4.9). Policy, not environment: the
+    // brake is our own rule holding — like board-untrusted — and clearing it
+    // is the user's act (deleting the file), never a retry or a fix.
+    "company-stopped",
+    "board-stopped",
   ]),
   malfunction: AUTO_FAILURE_KINDS,
 })
@@ -153,7 +164,18 @@ export const DEFER_PRIORITY = Object.freeze([
   "reconciled-not-sent",
   // 3. policy
   "l3-rejected",
+  // Ahead of board-untrusted: a standing scoped brake is the single most
+  // actionable policy item — the fix is one file deletion, once the human has
+  // adjudicated the orphan behind it. A company brake outranks a board brake
+  // because it usually means an application may exist at that employer.
+  "company-stopped",
+  "board-stopped",
   "board-untrusted",
+  // Beside board-untrusted, because it is the same shape of answer — "not
+  // this board, not tonight" — with a different fix (capture a page, not
+  // edit the allowlist). Ahead of already-applied so a stale queue never
+  // hides a board the user has to go and capture.
+  "board-unsighted",
   // Ahead of the rest of the tier: of every reason in this list it is the one
   // least worth reporting as work outstanding, because there is nothing to do.
   // The user already applied; the queue was stale. A backlog item here would
@@ -161,9 +183,13 @@ export const DEFER_PRIORITY = Object.freeze([
   "already-applied",
   "cap-company",
   "doc-unverified",
+  "doc-unrendered",
   "fact-base-changed",
   // 4. understanding — the backlog tier
   "multipage-unresolvable",
+  // Beside fill-failed: the same "the engine lost the page" shape, at the
+  // submit stage instead of the fill.
+  "submit-control-lost",
   "fill-failed",
   "unprobed-dropdown",
   "unknown-field",
@@ -243,13 +269,16 @@ const WHY_PREFIXES = [
   // is broken", which sends the next reader into the planner instead of into
   // the jobs/ directory where the missing file is.
   //
-  // `doc-unverified` is the closest EXISTING kind and the mapping is a
-  // deliberate aggregation, not a shrug: both mean "the document this
-  // application needs is not ready", both are cleared the same way (render it,
-  // verify it, run again), and both are the user's own pipeline lagging rather
-  // than anything the board did.
-  ["no rendered", "doc-unverified"],
-  ["unrecognised attachment slot", "doc-unverified"],
+  // RE-TYPED 2026-08-18. Both used to map to `doc-unverified` as "the closest
+  // existing kind", and the aggregation misled in practice: on the 2026-08-17
+  // run five deferrals carried `doc-unverified` and not one of them was about
+  // verification. A missing PDF is `doc-unrendered` — the document is fine,
+  // render-pdf was never run, and that is the fix. A slot nothing recognised
+  // is `unknown-field` — the planner did not understand which document a file
+  // input wanted, which is exactly the understanding tier an adapter shrinks
+  // (and the Ashby helper input, its commonest cause, is now recognised).
+  ["no rendered", "doc-unrendered"],
+  ["unrecognised attachment slot", "unknown-field"],
 ]
 
 /**
@@ -367,6 +396,13 @@ export function classifyPlanDefers(defers, ctx = {}) {
   const others = ranked.slice(1)
   const first = list.find((d) => kindForWhy(d?.why) === blocking)
   const label = safeText(first?.label ?? first?.k ?? "", 80)
+  // The defer's own `note` says WHY the field deferred ("required consent,
+  // but the scanner could not vouch for its label"), and dropping it here is
+  // what made every Reddit run from 2026-08-19 to 2026-08-21 read identically
+  // while the actual blocker — an unreachable vouch — sat one key deeper.
+  // Surfaced so the next dead-end grant is visible in the run log rather than
+  // requiring a field-cache archaeology session.
+  const note = safeText(first?.note ?? "", 120)
 
   return reasonRecord({
     kind: blocking,
@@ -376,6 +412,7 @@ export function classifyPlanDefers(defers, ctx = {}) {
     detail:
       `${list.length} field(s) need a human` +
       (label ? `; first: ${label}` : "") +
+      (note ? ` — ${note}` : "") +
       (others.length ? ` (also ${others.join(", ")})` : ""),
   })
 }

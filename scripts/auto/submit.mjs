@@ -121,6 +121,29 @@ export class ClassifierRequired extends Error {
   }
 }
 
+/**
+ * The submit control's data-aj stamp matched nothing on the live page.
+ *
+ * NOT a SubmitRefused, for the same reason ClassifierRequired is not: the
+ * eleven preconditions are properties of the job, and this is a property of
+ * the page's lifecycle — Greenhouse's embed remounts its form after an upload
+ * and drops every stamp (fill-engine.mjs), so the scan that named the button
+ * may be describing a document that no longer exists. Thrown BEFORE the
+ * durable attempt row and before the token spend, so nothing needs abandoning
+ * and the token stays reusable: the header above says the correct outcome for
+ * a dead stamp is a re-scan by the caller, and this error is that mechanism.
+ */
+export class SubmitStampLost extends Error {
+  constructor(key, label, detail) {
+    super(detail)
+    this.name = "SubmitStampLost"
+    this.code = "ESTAMPLOST"
+    this.key = key
+    this.label = label ?? null
+    this.detail = detail
+  }
+}
+
 /** The click was issued and something went wrong AFTER it. Deliberately a
  *  different type from SubmitRefused: this one must never be retried and must
  *  never be abandoned, because the request may have reached the ATS. */
@@ -227,6 +250,7 @@ export async function submitOnce(
     stopPath = undefined,
     clickTimeoutMs = 15_000,
     settleMs = 20_000,
+    stampWaitMs = 250,
     job = null,
   } = {},
 ) {
@@ -332,7 +356,12 @@ export async function submitOnce(
           .map((d) => safeText(d?.why ?? d?.label ?? "unnamed", 40))
           .join(", "),
     )
-  const ready = submitReadiness(plan, report)
+  // Under the assent policy the TOKEN carries (authorize.mjs stamps the
+  // policy check 9 read from the user's block): the click site has no limits
+  // file in hand, and re-checking against anything but what the gate saw would
+  // make this precondition a second, independently-configured gate. A token
+  // from before the policy carries none, which is every grant off.
+  const ready = submitReadiness(plan, report, { assent: token?.assent ?? null })
   if (!ready?.ready)
     refuse(
       "plan_clean",
@@ -405,6 +434,39 @@ export async function submitOnce(
   // cannot resolve.
   if (mode === "live" && typeof classify !== "function")
     throw new ClassifierRequired()
+
+  // --- the stamp is ALIVE, or nothing durable is written -------------------
+  //
+  // ATTACHED WITHIN stampWaitMs, OR GONE — the scan-engine's own idiom for a
+  // stamp after a remount. Greenhouse's embed remounts its form after an
+  // upload and drops every [data-aj] stamp; without this check the click below
+  // waited its full 15s on a selector matching zero elements, with the attempt
+  // row ALREADY WRITTEN — an orphan and a company STOP for a click that
+  // provably never dispatched (measured three times on Torc, 2026-08-19/22).
+  // Checked here, before the durable row and the token spend, so a dead stamp
+  // costs nothing: no orphan to adjudicate, and the token is still spendable
+  // when the caller re-scans and retries. Live-only: a dry run never clicks,
+  // and its page double has no real DOM to wait on.
+  if (mode === "live") {
+    const pre = findSubmitControl(scan)
+    if (pre.ok) {
+      const alive = await page
+        .locator(`[data-aj="${pre.key}"]`)
+        .waitFor({ state: "attached", timeout: stampWaitMs })
+        .then(
+          () => true,
+          () => false,
+        )
+      if (!alive)
+        throw new SubmitStampLost(
+          pre.key,
+          pre.label,
+          `the submit control's stamp [data-aj="${pre.key}"] matched nothing ` +
+            `within ${stampWaitMs}ms — the form likely remounted (Greenhouse ` +
+            `drops every stamp after an upload); re-scan and retry`,
+        )
+    }
+  }
 
   // --- 7: THE DURABLE ATTEMPT, and 9: STOP ---------------------------------
   //
@@ -510,6 +572,58 @@ export async function submitOnce(
   const outcome = classify(url, html)
   const kind = typeof outcome === "string" ? outcome : outcome?.kind
   const confirmationUrl = kind === "confirmation" ? url : null
+
+  // A CONFIRMED CLICK RESOLVES THE INTENT, HERE, IN THE SAME FUNCTION THAT
+  // WROTE IT (2026-08-18). Until this, nothing on the live path ever called
+  // run.recordSubmission(): the queue row went to `submitted`, but the ledger
+  // row stayed `attempted`, `run.submitted` stayed 0, and finish() — reading
+  // the ledger, as it must — reported "1 unresolved submit attempt(s), each of
+  // which may already be an application" and raised a company-scoped brake.
+  // For a SUCCESSFUL application. Found by driving runJob with a classifier
+  // that answers `confirmation`; the first real submit would have found it too.
+  //
+  // WHAT THE RECORD CARRIES, and why each field: the confirmation url (what
+  // the user opens to see it landed); the fill's own verify block (what the
+  // page said the fields held); every assent this plan actuated on the user's
+  // behalf, with its grant — rule 6: "every one that is must be named in the
+  // report", and this row is the report's source; and no screenshots, said
+  // as an empty list rather than left null, because "none were taken" is a
+  // fact and "unknown" is not. A challenge, a gone posting or an unclassified
+  // page leaves the attempt OPEN on purpose — that is the orphan a human
+  // adjudicates, and it must not be resolved by anything that did not see a
+  // confirmation.
+  if (kind === "confirmation") {
+    const actuated = Array.isArray(plan?.actuated) ? plan.actuated : []
+    const row = run.recordSubmission({
+      slug,
+      plan_sha256: planSha,
+      apply_url: token.apply_url,
+      company: job?.company ?? token.company ?? null,
+      title: job?.title ?? null,
+      confirmation_url: url,
+      classified_by:
+        typeof outcome === "object" && outcome ? (outcome.rule ?? null) : null,
+      // The engine's report always carries `verify` (fill-engine.mjs
+      // initialises it before the first action) and mergePages carries it
+      // across pages; a walk with NO fill stage — a rehearsal harness, a
+      // test — has no report at all. That is stated as a verify block that
+      // says nothing was measured, rather than as null: the audit's
+      // required-field check reads null as "the record is missing a piece it
+      // needs for a withdrawal", and an honest "not measured" is not that.
+      verify: report?.verify ?? { measured: false, note: "no fill report" },
+      // The assents, as the record's `consent_labels` (the name predates the
+      // policy and is what the audit's required-field list checks) AND in full
+      // as `actuated`, grants included.
+      consent_labels: actuated.map((a) => ({
+        label: a?.label ?? null,
+        value: a?.value ?? a?.pick ?? null,
+        grant: a?.grant ?? null,
+      })),
+      actuated,
+      screenshots: [],
+    })
+    return { outcome: kind, confirmationUrl, clicked, url, row }
+  }
 
   return { outcome: kind, confirmationUrl, clicked, url, row: attempt }
 }

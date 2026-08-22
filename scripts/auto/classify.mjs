@@ -413,3 +413,44 @@ export function capturedKinds(rules = RULES) {
     ),
   ].sort()
 }
+
+/**
+ * The hosts this repository can READ A CONFIRMATION FROM: every host named by
+ * a capture-sourced `confirmation` rule. This is the evidence list, and it is
+ * a different list from the user's allowlist — a board can be trusted (the
+ * user allowlisted the vendor) and still be blind here (nobody has captured
+ * its post-submit page). Read by job.mjs BEFORE a live click (2026-08-18): a
+ * click on a host not in this list would land as `unclassified`, a hard STOP,
+ * with the application possibly sent and unrecorded — so the runner defers
+ * `board-unsighted` instead of clicking. Which hosts are here is a fact about
+ * SHIPPED, never about a document.
+ */
+export function sightedHosts(rules = RULES) {
+  const out = new Set()
+  for (const r of rules) {
+    if (r.evidence?.source !== "capture" || r.kind !== "confirmation") continue
+    for (const h of r.evidence.hosts ?? [])
+      if (typeof h === "string" && h) out.add(h.toLowerCase())
+  }
+  return [...out].sort()
+}
+
+/** Is a confirmation on this url's host readable? Same host test ruleApplies
+ *  uses (exact or a subdomain of a captured host); fails CLOSED on an
+ *  unparseable url. A LOOPBACK url is sighted when a fixture-sourced
+ *  confirmation rule ships — that is exactly the set of hosts a fixture rule
+ *  may fire on (ruleApplies), so the fixture harness and the real gate read
+ *  the same evidence the same way. */
+export function isHostSighted(url, rules = RULES) {
+  let host
+  try {
+    host = new URL(String(url)).hostname.toLowerCase()
+  } catch {
+    return false
+  }
+  if (isFixtureUrl(url))
+    return rules.some(
+      (r) => r.evidence?.source === "fixture" && r.kind === "confirmation",
+    )
+  return sightedHosts(rules).some((h) => host === h || host.endsWith(`.${h}`))
+}

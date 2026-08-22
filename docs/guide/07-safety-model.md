@@ -1474,17 +1474,35 @@ everything the policy did not explicitly cover.
 
 Three things move between the paths:
 
-| Situation                  | Attended                              | Unattended |
-| -------------------------- | ------------------------------------- | ---------- |
-| A field resolved `CONFIRM` | actuated, and **named** in the report | **blocks** |
-| A `confirm-widget` defer   | actuated, and **named** in the report | **blocks** |
-| A consent tickbox          | actuated, and **named** in the report | **blocks** |
-| An `UNKNOWN` field         | **blocks**                            | **blocks** |
+| Situation                  | Attended                              | Unattended (policy off, the default) | Unattended (policy on)                                                                                            |
+| -------------------------- | ------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| A field resolved `CONFIRM` | actuated, and **named** in the report | **blocks**                           | REQUIRED + status OK → filled and **named**; optional → left empty                                                |
+| A `confirm-widget` defer   | actuated, and **named** in the report | **blocks**                           | REQUIRED + status OK + a pick → ticked and **named**; optional → left empty                                       |
+| A consent tickbox          | actuated, and **named** in the report | **blocks**                           | REQUIRED + vouched + not legal-weight → ticked and **named**; legal-weight → **blocks**; optional → left unticked |
+| An `UNKNOWN` field         | **blocks**                            | **blocks**                           | **blocks**                                                                                                        |
+
+"Policy" is the user's `auto_apply.unattended_assent` block in
+`docs/application-limits.yaml` (loader and record:
+`scripts/apply/assent-policy.mjs`). It was decided on 2026-08-18 after a live
+run submitted 0 of 9 with seven of eight deferrals in the first three rows — in
+the user's words, _"If required, fuzzy exact. Otherwise leave them alone"_ and
+_"tick required, except legal-weight"_. Every key defaults **off**; a typo is
+the off-value. "Status OK" is answer-bank's own polarity/intent-checked,
+option-grounded resolution — the policy widens what a **resolved** answer may
+do and never resolves anything, so `MAYBE`/`NEEDS-CHOICE`/`UNKNOWN` still
+defer, `fieldIdentityMismatch` still runs first, and a control the engine
+cannot operate (`f.widget`) still defers.
 
 The reporting requirement is not optional: _"The user is delegating assent, not
 waiving the record of it."_ Every actuated widget carries `assent: true` in the
-plan item and is pushed onto `plan.actuated`, so the run can say exactly what it
-ticked and with what label.
+plan item and is pushed onto `plan.actuated`; under the policy it also carries
+the **grant** it acted under (`required-assertion`, `required-widget`,
+`required-consent`). `submitReadiness` admits a granted actuation only under a
+policy that enables that grant — the click site re-checks against the policy
+stamped on the submit token, never against a second copy of the file — and on
+a confirmed click `submit.mjs` writes the whole list into the submission record
+(`consent_labels` + `actuated`), which the digest prints per submission under
+"Asserted on your behalf".
 
 ### What the agent may click, and what it may not
 

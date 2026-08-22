@@ -7,12 +7,19 @@
   "heading": "Senior Full-Stack Engineer",
   "kind": "form",
   "fields": [
-    { "k": "f5", "sel": "#f-name", "n": "name", "t": "text", "l": "Full name" },
+    {
+      "k": "f5",
+      "sel": "#f-name",
+      "n": "name",
+      "t": "text",
+      "l": "Full name"
+    },
     {
       "k": "f1",
       "sel": "#country",
       "t": "combo",
       "l": "Country",
+      "labelExact": true,
       "v": "Select..."
     },
     {
@@ -20,6 +27,7 @@
       "sel": "#withdraw",
       "t": "combo",
       "l": "Withdraw my application",
+      "labelWhy": "label source is arialabel",
       "v": "Withdraw my application"
     },
     {
@@ -27,6 +35,7 @@
       "sel": "#delete",
       "t": "combo",
       "l": "Delete my candidate account and all application history",
+      "labelWhy": "label source is arialabel",
       "v": "Delete my candidate account and all application history"
     },
     {
@@ -34,8 +43,15 @@
       "sel": "#submit-now",
       "t": "combo",
       "l": "Submit application now",
+      "labelWhy": "label source is arialabel",
       "v": "Submit application now"
     }
   ],
-  "btns": [{ "k": "b1", "l": "Submit Application", "r": "submit" }]
+  "btns": [
+    {
+      "k": "b1",
+      "l": "Submit Application",
+      "r": "submit"
+    }
+  ]
 }

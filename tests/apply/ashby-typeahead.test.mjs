@@ -54,6 +54,25 @@ test("the Ashby Location typeahead is filled from the fact base, not deferred", 
   assert.match(item.bank, /^(a-\d+@|contact\.)/)
 })
 
+test("Ashby's School typeahead is filled from the fact base too (measured on Quora, 2026-08-18)", () => {
+  // Same control, same rule: "Search schools..." lists nothing until typed
+  // into, so the probe records no options and the field resolved NEEDS-CHOICE
+  // "field was not probed" with the school sitting in the fact base.
+  const plan = planFor([{ k: "f2", t: "combo", l: "School", req: true }])
+  assert.equal(plan.defer.filter((d) => d.k === "f2").length, 0)
+  const item = plan.items.find((i) => i.k === "f2")
+  assert.ok(item, "School produced no fill item")
+  assert.equal(item.typeahead, true)
+  // answer-bank stamps the school rule's source as bare "education".
+  assert.match(item.bank, /^(a-\d+@|contact\.|experience\.|education(\.|$))/)
+  // and the label match is the bare word: a "School district" text field or a
+  // "Schools attended" list is not this control.
+  const other = planFor([
+    { k: "f3", t: "combo", l: "Schools attended", req: true },
+  ])
+  assert.ok(other.defer.some((d) => d.k === "f3"))
+})
+
 test("BOUNDARY: a board with no such declaration still defers", () => {
   // The adapter declaration is the whole gate. An identically-shaped control on
   // a board nobody has looked at must behave exactly as it did before.

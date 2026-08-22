@@ -232,7 +232,7 @@ fields the human-readable summary leaves out.
 `gate-audit.mjs`, `prep-queue.mjs`, `cluster.mjs`, `board-yield.mjs`,
 `discover-boards.mjs`, `find-boards.mjs`, `cc-boards.mjs`, `canonical.mjs`, `keyword-plan.mjs`,
 `assemble-resume.mjs`, `ats-lint.mjs`, `reuse-check.mjs`, `letter-plan.mjs`,
-`answer-bank.mjs`, `fill-plan.mjs`, `pending-questions.mjs`,
+`answer-bank.mjs`, `fill-plan.mjs`, `pending-questions.mjs`, `rebuild-plans.mjs`,
 `automatability.mjs`, `auth-sync.mjs`, `preflight.mjs`, `auto-apply.mjs`,
 `cycle.mjs`, `applications.mjs`, `follow-ups.mjs`, `profile-gaps.mjs`,
 `keyword-coverage.mjs`, `prune-jobs.mjs`, `archive.mjs`, `save-answer.mjs`
@@ -791,7 +791,7 @@ lead carries the requested status.
 node scripts/leads/prep-queue.mjs [--top 5] [--status new|all] [--json]
      [--leads <path>] [--profile <path>] [--jobs-dir <path>]
      [--applications <path>] [--limits <path>] [--cluster [--threshold 0.6]]
-     [--by-score]
+     [--by-score] [--include-rejected]
 ```
 
 Tailoring a résumé takes a subagent a few minutes. Doing it at apply time puts
@@ -820,6 +820,13 @@ one for a queue whose output is a tailored document.
 **Nothing is filtered out** — a `manual-only` lead is still a job you can apply to
 yourself, so it is ranked down, never hidden. `--by-score` restores the old
 fit-only ordering.
+
+**One exception (2026-08-18): a lead screening already rejected.** The queue
+reads the same stored verdict the runner's trust gate reads (`screens` table,
+model first, mechanical fallback) and leaves a `reject` out — it is not
+hand-apply-only, it is a lead the pipeline decided against, and it used to take
+prep slots the cycle then spent or skipped. The summary line counts them as
+`screened_out=N`; `--include-rejected` puts them back.
 
 **Exit codes:** `0` ok, `2` usage or missing store.
 
@@ -902,7 +909,35 @@ any browser is opened). `--no-predict` drops the second.
 Consent, terms and e-signature fields are **never** listed. They are yours to
 tick in the browser, not questions with answers worth storing.
 
+A plan older than the planner, the adapters or `profile/answers.yaml` is **not
+read at all** — it is counted on a `stale` line instead. A fill plan is a cached
+derivation of (scan, planner, fact base) and only the scan is bound to it, so an
+old plan reports deferrals current code would not produce. Rebuild with §4.6
+before trusting the list.
+
 **Exit codes:** `0` ok, `2` missing jobs directory.
+
+### 4.6 `rebuild-plans.mjs` — re-derive stale plans from the saved scan
+
+**WRITES `jobs/<slug>/fill-plan.{js,json}` and `jobs/.field-cache.json`**
+
+```
+node scripts/apply/rebuild-plans.mjs [<slug> ...] [--all] [--dry-run]
+     [--jobs-dir jobs]
+```
+
+Rebuilds every plan that predates its inputs, reading the scan already on disk —
+**no browser, no network**. It changes no answers and makes no decisions: every
+deferral it clears is one current code resolves on its own. `--all` rebuilds
+regardless of age; `--dry-run` lists what would be rebuilt.
+
+Measured 2026-08-20: 28 of 29 plans predated the Greenhouse typeahead fix
+(2026-08-18), so `pending-questions.mjs` was still asking for a location banked
+on 2026-08-07. A plan with no scan on disk cannot be rebuilt here and is named
+on a `no-scan` line rather than skipped silently.
+
+**Exit codes:** `0` ok (including nothing to do), `1` a rebuild failed, `2`
+missing jobs directory.
 
 ---
 
@@ -2171,6 +2206,7 @@ Everything runnable, alphabetically within its folder, with what it changes.
 | `capture-post-submit.mjs` | Apply               | a gitignored staging dir; `promote` writes the committed corpus |
 | `fill-plan.mjs`           | Apply               | `jobs/<slug>/fill-plan.{js,json}`, `jobs/.field-cache.json`     |
 | `pending-questions.mjs`   | See what to do next | **READ-ONLY**                                                   |
+| `rebuild-plans.mjs`       | Apply               | `jobs/<slug>/fill-plan.{js,json}`, `jobs/.field-cache.json`     |
 
 ### `scripts/applications/`
 

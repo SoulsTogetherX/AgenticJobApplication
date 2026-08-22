@@ -313,6 +313,85 @@ test("a mintToken that returns nothing is a refusal, not a pass", async () => {
   assert.equal(got.ok, false)
   assert.match(got.reason, /no token was minted/)
   assert.deepEqual(f.clicked, [])
+  assert.equal(got.check, null, "no token, no check to name")
+})
+
+test("a refused authorisation CARRIES THE FAILED CHECK, so the caller types it like the final gate does", async () => {
+  // Before 2026-08-18 job.mjs mapped every mid-walk authorisation refusal to
+  // `plan-error` — a malfunction kind — so a policy refusal on page 2 read as a
+  // broken planner. The walk now names the first failed check; job.mjs runs
+  // it through the same CHECK_TO_KIND map the final gate uses.
+  const f = form({ pages: 3 })
+  const got = await walk(f, {
+    mintToken: async (planSha, ctx) =>
+      ctx.page >= 2
+        ? {
+            deferred: true,
+            reason: "submit_readiness: nothing to fill",
+            failed: ["submit_readiness"],
+          }
+        : mintOk(planSha, ctx),
+  })
+  assert.equal(got.ok, false)
+  assert.equal(got.kind, "authorize")
+  assert.equal(got.check, "submit_readiness")
+})
+
+// --- the empty first page ---------------------------------------------------------
+
+test("page 1 with NOTHING to fill and a 'next' control is the wrong page — an unknown-field defer, not an advance", async () => {
+  // Measured 2026-08-17: a closed posting rendered no fields and one next-shaped
+  // control; the walk minted a token for it and the refusal came back as a
+  // malfunction. Nothing malfunctioned — the runner was on the wrong page.
+  const f = form({ pages: 3 })
+  const got = await walk(f, {
+    planStage: async ({ page: n }) => ({
+      v: 1,
+      items:
+        n === 1
+          ? [{ k: "s1", how: "skip", why: "not an input" }]
+          : [{ k: `f${n}`, how: "fill", value: "x" }],
+      defer: [],
+    }),
+  })
+  assert.equal(got.ok, false)
+  assert.equal(got.kind, "unknown-field")
+  assert.match(got.reason, /page 1 rendered no fillable field/)
+  assert.deepEqual(f.clicked, [], "and nothing was clicked")
+  assert.equal(got.abandonment, null, "no draft exists to abandon")
+})
+
+test("the wrong-page verdict is PAGE 1 ONLY — an empty later page is left to the per-page authorisation", async () => {
+  // A later page with nothing to fill and a Next control is not the wrong-page
+  // case (it may be an interstitial), so this file does not judge it. What
+  // happens to it is the per-page gate's business — today the real
+  // authorizeSubmit refuses "nothing to fill" for it, and the walk reports that
+  // as an authorisation refusal carrying its check, not as a wrong page.
+  const f = form({ pages: 3 })
+  const got = await walk(f, {
+    planStage: async ({ page: n }) => ({
+      v: 1,
+      items: n === 2 ? [] : [{ k: `f${n}`, how: "fill", value: "x" }],
+      defer: [],
+    }),
+  })
+  assert.equal(got.ok, false)
+  assert.equal(got.kind, "authorize", "the gate spoke, not the wrong-page rule")
+  assert.equal(got.check, "submit_readiness")
+  assert.match(got.reason, /page 2 could not be authorised/)
+  assert.deepEqual(f.clicked, [1], "page 1 was advanced normally")
+})
+
+test("a single-page form whose scan found nothing at all is still complete — no 'next' control means no wrong-page verdict", async () => {
+  const f = form({ pages: 1, lastHasSubmit: false })
+  const got = await walk(f, {
+    planStage: async () => ({ v: 1, items: [], defer: [] }),
+  })
+  assert.equal(
+    got.ok,
+    true,
+    "the submit gate, not the walk, decides what an empty single page means",
+  )
 })
 
 // --- dry run --------------------------------------------------------------------
@@ -645,4 +724,205 @@ test("a clean multi-page walk still reaches ready — the fix is not a blanket r
   assert.equal(got.ok, true)
   const gate = submitReadiness(got.plan, got.report)
   assert.equal(gate.ready, true, gate.reason ?? "")
+})
+
+// ---------------------------------------------------------------------------
+// THE SECOND PASS (2026-08-21): a fill that CREATES fields gets ONE re-scan +
+// re-plan + re-fill, and only that. Attentive and Chime both deferred at
+// submit_readiness on "1 field(s) revealed by the fill were never in the
+// plan" — a conditional reveal is invisible to the pass-1 scan by
+// construction, and re-running the same three stages is the only
+// deterministic way to understand it. The gates are unweakened: whatever is
+// STILL revealed after the pass refuses at submitReadiness exactly as
+// before.
+// ---------------------------------------------------------------------------
+
+test("SECOND PASS: a revealed field triggers exactly one re-scan/re-plan/re-fill, and the result is clean", async () => {
+  const calls = { scan: 0, plan: 0, fill: 0 }
+  const f = form({ pages: 1 })
+  const got = await walk(f, {
+    scanStage: async () => {
+      calls.scan++
+      return { buttons: [{ k: "sub", l: "Submit application", r: "submit" }] }
+    },
+    planStage: async ({ page: n }) => {
+      calls.plan++
+      return {
+        v: 1,
+        // Pass 2 sees the revealed field and plans it.
+        items:
+          calls.plan === 1
+            ? [{ k: "f1", how: "fill", value: "v1" }]
+            : [
+                { k: "f1", how: "fill", value: "v1" },
+                { k: "f9", how: "fill", value: "revealed answer" },
+              ],
+        defer: [],
+      }
+    },
+    fillStage: async (_p, plan, { page: n }) => {
+      calls.fill++
+      return {
+        ok: plan.items.length,
+        failed: 0,
+        failures: [],
+        uploads: [],
+        // Pass 1 reveals one field; pass 2, having planned it, reveals none.
+        revealed:
+          calls.fill === 1 ? [{ label: "If yes, when?", sel: null }] : [],
+      }
+    },
+  })
+  assert.equal(got.ok, true)
+  assert.deepEqual(
+    calls,
+    { scan: 2, plan: 2, fill: 2 },
+    "ONE extra pass, no more",
+  )
+  assert.equal(got.report.revealed.length, 0, "the reveal was consumed")
+  assert.ok(
+    // On the PAGE report — mergePages rebuilds the merged report from the
+    // keys the gates read, and signals are page-level narration.
+    got.pages[0].report.signals.some((s) =>
+      /re-scanned and re-planned once/.test(s),
+    ),
+    "the pass announces itself",
+  )
+  assert.ok(
+    got.plan.items.some((i) => i.k === "f9"),
+    "the merged plan carries the re-planned field",
+  )
+})
+
+test("SECOND PASS: a field STILL revealed after the pass keeps refusing — the gate is not weakened", async () => {
+  let fills = 0
+  const f = form({ pages: 1 })
+  const got = await walk(f, {
+    scanStage: async () => ({
+      buttons: [{ k: "sub", l: "Submit application", r: "submit" }],
+    }),
+    fillStage: async () => {
+      fills++
+      return {
+        ok: 1,
+        failed: 0,
+        failures: [],
+        uploads: [],
+        revealed: [{ label: "Never understood", sel: null }],
+      }
+    },
+  })
+  assert.equal(got.ok, true)
+  assert.equal(fills, 2, "the pass ran once and only once")
+  assert.equal(
+    got.report.revealed.length,
+    1,
+    "still revealed -> still on the report -> submitReadiness still refuses",
+  )
+})
+
+test("SECOND PASS: a clean fill runs each stage exactly once — no pass on the happy path", async () => {
+  const calls = { scan: 0, plan: 0, fill: 0 }
+  const f = form({ pages: 1 })
+  await walk(f, {
+    scanStage: async () => {
+      calls.scan++
+      return { buttons: [{ k: "sub", l: "Submit application", r: "submit" }] }
+    },
+    planStage: async () => {
+      calls.plan++
+      return { v: 1, items: [{ k: "f1", how: "fill", value: "v" }], defer: [] }
+    },
+    fillStage: async () => {
+      calls.fill++
+      return { ok: 1, failed: 0, failures: [], uploads: [], revealed: [] }
+    },
+  })
+  assert.deepEqual(calls, { scan: 1, plan: 1, fill: 1 })
+})
+
+test("SECOND PASS: uploads are never replayed, pass-1 upload evidence survives, grants are carried", async () => {
+  const pass2Plans = []
+  const f = form({ pages: 1 })
+  let plans = 0
+  const got = await walk(f, {
+    scanStage: async () => ({
+      buttons: [{ k: "sub", l: "Submit application", r: "submit" }],
+    }),
+    planStage: async () => {
+      plans++
+      return {
+        v: 1,
+        items: [
+          { k: "up", how: "upload", value: "resume.pdf" },
+          { k: "f1", how: "fill", value: "v" },
+        ],
+        defer: [],
+        actuated:
+          plans === 1
+            ? [
+                {
+                  k: "c1",
+                  label: "I agree to the policy",
+                  grant: "required_consent",
+                },
+              ]
+            : [],
+      }
+    },
+    fillStage: async (_p, plan) => {
+      if (plans === 2) pass2Plans.push(plan)
+      return {
+        ok: 1,
+        failed: 0,
+        failures: [],
+        uploads:
+          plans === 1 ? [{ k: "up", attached: true, file: "resume.pdf" }] : [],
+        revealed: plans === 1 ? [{ label: "revealed", sel: null }] : [],
+      }
+    },
+  })
+  assert.equal(got.ok, true)
+  assert.equal(pass2Plans.length, 1)
+  assert.ok(
+    pass2Plans[0].items.every((i) => i.how !== "upload"),
+    "pass 2 must not re-attach files",
+  )
+  assert.deepEqual(
+    got.report.uploads,
+    [{ k: "up", attached: true, file: "resume.pdf" }],
+    "pass-1's upload record is the one the user reads",
+  )
+  assert.ok(
+    got.plan.actuated.some((a) => a.label === "I agree to the policy"),
+    "a pass-1 grant whose control the fill consumed is still on the record",
+  )
+})
+
+test("SECOND PASS: skipped when pass 1 already deferred — no second fill into a form that will not submit", async () => {
+  let fills = 0
+  const f = form({ pages: 1 })
+  const got = await walk(f, {
+    scanStage: async () => ({
+      buttons: [{ k: "sub", l: "Submit application", r: "submit" }],
+    }),
+    planStage: async () => ({
+      v: 1,
+      items: [{ k: "f1", how: "fill", value: "v" }],
+      defer: [{ k: "d1", why: "unknown" }],
+    }),
+    fillStage: async () => {
+      fills++
+      return {
+        ok: 1,
+        failed: 0,
+        failures: [],
+        uploads: [],
+        revealed: [{ label: "revealed", sel: null }],
+      }
+    },
+  })
+  assert.equal(fills, 1, "the walk is ending at plan-defer; nothing refills")
+  assert.equal(got.ok, false)
+  assert.equal(got.kind, "plan-defer")
 })

@@ -33,6 +33,23 @@ export default {
     },
   ],
 
+  // A CONTROL THAT LOOKS LIKE A DROPDOWN AND IS NOT ONE — the same shape and
+  // the same rule as Ashby's Location (ats/ashby.mjs carries the reasoning).
+  //
+  // MEASURED on job-boards.greenhouse.io/embed/job_app forms 2026-08-18 (Torc
+  // 8677422002; and Coinbase, Cloudflare, Ethos, Twilio in the field cache):
+  // "Location (City)*" is react-select over a server-queried place search.
+  // Opened with no query it renders nothing, so the probe records zero
+  // options on every one of those forms — there is no list to enumerate — and
+  // the field resolved NEEDS-CHOICE "field was not probed" on every Greenhouse
+  // application, with the banked answer ("North Las Vegas, Nevada, United
+  // States", the exact suggestion the search offers, recorded off a live form)
+  // sitting unused. Knowledge, not behaviour: buildPlan still requires an
+  // approved value to type, and the engine's verify pass still reads the
+  // committed value back, so a suggestion the search does not offer is a
+  // failed fill and blocks the submit rather than a guess.
+  typeaheadFields: [{ match: /^\s*location\s*\(city\)\s*\**\s*$/i }],
+
   // WHERE THE FORM IS, and on Greenhouse this fixes TWO separate failures.
   //
   // 1. THE BOARD URL CAN REDIRECT OFF THE BOARD. Measured on a real lead

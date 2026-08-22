@@ -1965,6 +1965,277 @@ sent, and **nothing later corrects it**.
 > What still holds regardless: the post-submit classifier is the hard stop
 > described above, and `submit.mjs` refuses a live submit outright without one.
 
+### Symptom: a queued job deferred `board-untrusted` — "the lead carries no apply_url" — and the lead in the store has one
+
+**Where it comes from.** `scripts/auto/auto-apply.mjs` `runCampaign()`, on a
+row that was already in `auto_queue` before this invocation selected anything —
+enqueued by an earlier `--enqueue`, beyond this run's `--limit` in a
+differently ordered list, or left by a crash.
+
+**What it means.** Until 2026-08-18 the runner learned a job's `apply_url` and
+screening verdict only from the selection made in the **same** invocation
+(`byUrl`, seeded from `selectEligible`). Every other resumable row reached
+`runJob` as an anonymous slug — `apply_url: null`, `screening: null` — and the
+trust gate refused it, correctly, for having nothing to trust. Measured
+2026-08-17: a Torc Robotics lead whose store row carried a perfectly good
+`apply_url` deferred exactly this way, one slot after its sibling on the same
+board was worked normally.
+
+**The fix that landed.** `auto_queue` rows are self-describing: `enqueueAutoJobs`
+writes `apply_url`, `lead_id`, `company`, `title` (backfilled onto rows that
+predate the columns, never overwritten), and `runCampaign` builds the lead from
+the row when this run did not select it, re-reading the screening verdict from
+the `screens` table by `lead_id`. `tests/auto/resume-identity.test.mjs` pins it.
+
+**If you still see it.** The row predates the columns AND nothing has
+re-enqueued it since: `node scripts/auto/auto-apply.mjs --enqueue` backfills the
+identity of every row it selects. A row that is not selectable any more (lead
+dismissed, PDF missing) is refused with that reason instead — see the next
+entry.
+
+### Symptom: a job you expected in the queue was rejected at selection with "dismissed" or "resume.pdf is not rendered"
+
+**Where it comes from.** `selectEligible()` in `scripts/auto/auto-apply.mjs`,
+2026-08-18. Both refusals are reported in `rejected[]` with their reason and
+never silently dropped.
+
+**What it means.** The queue used to be built from verification rows alone, so a
+lead marked `dismissed` after its résumé was verified was still queued and
+scanned (a closed Coinbase posting: an empty page, one next-shaped control,
+written up as `plan-error`), and a workspace whose `resume.md` had passed
+verification but was never rendered spent a browser lane to defer "no rendered
+resume". Both are now refused before a page loads.
+
+**What to do.** For a PDF: `node scripts/documents/render-pdf.mjs
+jobs/<slug>/resume.md jobs/<slug>/resume.pdf`, then re-enqueue. For a dismissed
+lead: that is the store's verdict; un-dismiss it deliberately if it was wrong.
+
+### Symptom: an Ashby application defers "unrecognised attachment slot" on a field labelled "Name"
+
+**Where it comes from.** buildPlan's file branch, before 2026-08-18.
+
+**What it means.** Ashby's "Autofill from resume" helper is a selector-less
+`<input type=file>` that borrows the next field's label. The
+`scripts/apply/ats/ashby.mjs` adapter now declares it (`helperFileInput`) and
+buildPlan skips it — nothing is uploaded to it and it consumes no file slot. If
+it defers again, the scan changed shape: check that the field still has no
+`sel`, still borrows a non-file field's label, and that a real résumé slot with
+a selector sits beside it (every clause is required; see the adapter's comment).
+
+### Symptom: the whole application deferred on an empty cover-letter slot
+
+**Where it comes from.** buildPlan, before 2026-08-18: `no rendered cover` on a
+slot the form did not mark required.
+
+**What it means.** Now an **optional** cover-letter slot with no cover letter is
+left empty (a `skip` item that says so). A slot the form marks required, and a
+missing **résumé**, still defer — the first as `doc-unrendered`, which names the
+fix (render-pdf), not `doc-unverified`, which is about verification.
+
+### Symptom: a live click was classified `confirmation`, the queue row says `submitted`, and the run still finished `stopped` with "unresolved submit attempt"
+
+**Where it comes from.** `audit.mjs` `finish()`, reading the `auto_submissions`
+ledger. Before 2026-08-18 nothing on the live path ever called
+`run.recordSubmission()`, so the ledger row stayed `attempted` for a
+**successful** application, `run.submitted` stayed 0, and a company-scoped brake
+was raised for it. Found by driving `runJob` with a classifier answering
+`confirmation`; the first real submit would have found it too.
+
+**What it means now.** `submit.mjs` resolves the intent in the same function
+that wrote it: on `confirmation` it calls `recordSubmission` with the
+confirmation URL, the fill's verify block, and every assent the plan actuated
+(`consent_labels` + `actuated`, grants included). A challenge, a gone posting or
+an `unclassified` page still leaves the attempt open — that is the orphan a
+human adjudicates. `tests/auto/submit.test.mjs` "a CONFIRMED live click resolves
+its own ledger row" pins it.
+
+### Symptom: a live run defers `board-unsighted` on an allowlisted board
+
+**Where it comes from.** `scripts/auto/job.mjs`, after navigation and before
+the walk, since 2026-08-18. `classify.mjs` `isHostSighted(liveUrl)` is false:
+no capture-sourced `confirmation` rule names that host.
+
+**What it means.** The allowlist says the user trusts the vendor; the evidence
+list says whether this repository can read the page after a submit. They are
+different lists, and on 2026-08-17 `boards.greenhouse.io` and `jobs.lever.co`
+were on the first and not the second. Before this gate, such a job was filled,
+clicked, and then hard-STOPped at `unclassified` with the application possibly
+sent and unrecorded. Now it defers, cheaply, before anything is typed.
+
+**What to do.** Apply once **attended** on that host with
+`scripts/apply/capture-post-submit.mjs` (stage → review → promote), which adds
+the host to the rule's `evidence.hosts`; then re-enqueue (the kind is
+requeueable). `node -e "import('./scripts/auto/classify.mjs').then(m=>console.log(m.sightedHosts()))"`
+prints the hosts that are sighted today. Never add a host without a capture —
+that is the plausible-regex guess rule 6 forbids.
+
+### Symptom: every combo on a Greenhouse embed form reads `probe_error: locator.click: Timeout 6000ms exceeded`, and the scan takes a minute
+
+**Where it comes from.** `scripts/apply/scan-engine.mjs`'s probe, on
+`job-boards.greenhouse.io/embed/job_app` (measured 2026-08-18 on Attentive and
+Torc; it is what "13 of 19 required combos failed to probe" still meant on that
+host after the 2026-08-07 aria/portal fix).
+
+**What it means.** The embed form is a Remix app hydrating over its
+server-rendered HTML, and on this host the client render **replaces the whole
+document root ~200ms after `load`**, scanner or no scanner (verified with none
+installed). Every `data-aj` stamp the structure scan wrote sat on a node that no
+longer existed, so each probe click waited its full 6s for `[data-aj="fN"]`.
+The dropdowns were readable; the stamps were dead.
+
+**What happens now.** The engine (and its MCP twin `scan.driver.mjs`) counts the
+stamps on the page against the stamps the scan handed out before and after the
+probe pass, checks each control is attached (250ms, not 6s) before clicking,
+and treats a stamped node that vanished mid-read as the same signal. On loss it
+waits for the control count to hold still (a condition with a 2s ceiling), runs
+the structure scan again over the fresh nodes — same keys, DOM order — and
+probes again. `scan.probe.rescans` and a `signals` line say it happened; a page
+that never re-renders pays one `page.evaluate` (~1ms). It re-scans **once**: a
+page that loses its stamps again is re-rendering on a timer, and the second
+pass keeps what it got and says so. Pinned by
+`tests/apply/greenhouse-embed-rerender.test.mjs` against real Chromium.
+
+**Two neighbours fixed in the same pass.** A menu that mounts with only a
+`Loading...` notice is waited on for its rows (bounded) and never stored as
+`["Loading..."]` — the field cache held exactly that for School / Degree /
+Discipline. And Greenhouse's `Location (City)*` is a server-queried typeahead
+with no list to enumerate: `ats/greenhouse.mjs` now declares it
+(`typeaheadFields`), so a banked value is typed and verified rather than
+deferred `needs-choice` on every Greenhouse application
+(`tests/apply/greenhouse-typeahead.test.mjs`).
+
+**Stated limit.** A swap that lands **after** `scanPage` returns (a form with
+nothing to probe finishes in ~80ms) is not caught here; the fill engine resolves
+`sel` first for that reason, and a control with no `sel` then fails to locate —
+a stated fill failure that blocks the submit rather than filling the wrong
+thing.
+
+### Symptom: an Ashby yes/no radio group is deferred `consent-tickbox`, and its label is one of its own options ("Yes - I consent to receiving text messages")
+
+**Where it comes from.** `.claude/skills/apply-job/scan-page.js`, before
+2026-08-18. Ashby's texting-consent question is a paragraph above two radios,
+each wrapped in its own `<label>`, with no `<fieldset>`, no `<legend>` and no
+`aria-labelledby`. The field loop named the group when it met the group's first
+option and, with no legend to take, fell back to that option's own text.
+`tests/fixtures/boards/pages/lever.html` had the same shape and its scan
+fixture read `"l": "Yes"` for the sponsorship question — the FINDING in
+`tests/security/board-fidelity.test.mjs`, now the fix.
+
+**Why it mattered.** Three consumers went wrong at once: `isConsent()` matched
+the option's "consent to" and routed a yes/no question into the consent-tickbox
+branch, where it deferred on every run whatever the bank held; a banked answer
+would have had to be keyed on the option text; and the approval message named
+the field by an answer to it.
+
+**What happens now.** After every option is in, a group with two or more options
+whose `l` is one of its own options is given the question from the options'
+container — the same walk and bounds the button-pair detector uses (five
+ancestors, stop at a container holding a control the group does not own, cut at
+`PAIR_QUESTION_MAX`, the last `?` sentence else the first sentence) — so a
+Yes/No rendered as `<button>`s and the same Yes/No rendered as radios get the
+SAME label. `labelWhy: "label source is group question"`; never vouched. A
+read-only tiptap editor (`contenteditable="false"`, which is every rich-text
+block on Ashby) no longer counts as a foreign control. Nothing found leaves the
+group exactly as before. The banked answer for such a group is the option's
+**exact text** — `"No - I do not consent to receiving text messages"` — because
+the answer bank's yes/no long-form match only accepts an option whose extra
+words the label already contains, and "consent to receiving text messages" is
+not in "agreement to receive text message updates" (rule 1: defer, never
+loosen).
+
+**In the same pass:** Ashby's "select all that apply" checkboxes are named after
+their own option (`name="Atlanta, GA"`), so keyed on `name` a 15-option question
+scanned as fifteen one-option groups and a banked "Python" could never resolve
+it. A checkbox whose `name` equals its own label is now grouped by its
+`<fieldset>`; a box with a real name, or outside any fieldset, is keyed as
+before. `tests/apply/scan-page.test.mjs` pins both.
+
+### Symptom: after a fill, the board shows "First Name is required." on fields the fill never touched — or an application went out that submit.mjs never clicked
+
+**Where it comes from.** `scripts/apply/fill-engine.mjs`'s `type-enter` strategy,
+before 2026-08-18. Measured on Torc's Greenhouse embed form: it typed the
+location into react-select's input, waited its 500 ms and pressed Enter before
+the server-queried suggestions arrived. react-select handles Enter only while a
+row is focused; otherwise the keydown falls through, and **Enter in a text input
+inside a `<form>` is the browser's implicit submission**. The board's submit
+handler ran, validated the whole form and painted every empty field red.
+Nothing was sent that time only because required fields were still empty. On a
+form whose last required control is a typeahead, the fill engine would have
+submitted the application from a keystroke, past every gate in `submit.mjs` —
+`tests/auto/click-surface.test.mjs` counts `.click(` calls and never counted a
+key.
+
+**What happens now, two layers.** `type-enter` presses Enter **only when the
+page reports a focused row** (`aria-activedescendant` naming an element, or a
+focused/selected row in the menu the control names); with none it fails to the
+next rung (`type-click` clicks the row; no key). And for the whole of
+`fillPage()` a **window-capture `submit` listener** cancels every submit event
+and stops it before the page's own handler — removed before the function
+returns, so the runner's own click is untouched. What it stopped is counted
+(`report.submitsBlocked`) and said in `report.signals`; a fill that tried to
+submit is a defect in the fill, never silence. Pinned by
+`tests/security/enter-never-submits.test.mjs` against real Chromium (both
+layers, and that a click after the fill still submits).
+
+**Side effect worth knowing.** The stale validation text a failed submit
+attempt leaves on the page ("Please enter your location" on a field that was
+then committed) used to reach `verify.errors` and refuse the submit. No submit
+attempt, no stale text.
+
+### Symptom: Greenhouse's Country* fails "after click-option the field reads '+1'"; every ticked group MISMATCHes; a form's other checkboxes come back "revealed"
+
+**Where it comes from.** Four fill-engine defects that only showed once a
+Greenhouse embed fill actually ran (2026-08-18, Torc / Flock / Chime / Quora):
+
+- `plan.valueAliases` (AUDIT H8) was **never read by the engine** — the adapter's
+  "Country* shows `+1` once chosen" alias existed since 2026-07-27 and did
+  nothing. Now `setCombo`'s commit check and the verify pass both honour it,
+  and a RegExp survives the JSON path as `{source, flags}` (`jsonReplacer` in
+  `browser.mjs`).
+- a **check item was verified against its option text** ("None/Not applicable")
+  while the box reads back "true" — every widget pick mismatched. A tick is now
+  verified as a tick.
+- the **revealed sweep flagged the other members of an answered choice group**
+  (Torc's export-control boxes: Cuba, Iran, …). A required checkbox/radio that
+  shares a `name` with a planned box, or its pure-choice `<fieldset>` /
+  `[role=group]`, is covered by the plan; a box in a container that also holds
+  other controls, or a group the plan never touched, is still reported
+  (`tests/apply/choice-group-verify.test.mjs`).
+- **a check item for an id-less option targeted the group's key** (`[data-aj="g2"]`,
+  no element) — Ashby's SMS radios: "no unique element for g2". Both plan
+  branches now fall back to the option's own stamp.
+
+Also in the same pass: the combo readback walked into Ashby's hidden backing
+checkboxes and read "on" as the committed location (a tick is never a store);
+react-select's `requiredInput` store is no longer reported as an unlabelled
+"revealed" field; a readback that differs from the value only in separators
+("University of Nevada, Las Vegas" vs "- Las Vegas") is accepted — equality
+after folding, never a prefix; a stated count of years grounds into the one
+bracket that contains it (`answer-bank.mjs` `bracketFor`, Hims' "3 to 5
+years"); Ashby's School is declared a typeahead like its Location; and a
+profile `education` fact is an approved typeahead provenance (its source is
+stamped bare, and the old regex wanted a dot).
+
+### Symptom: the day's second dry run STOPs a company with "the ledger already holds a dry_run row … this application may already exist"
+
+**Where it comes from.** `audit.mjs` `beginSubmit()`, before 2026-08-18. The
+`(slug, mode)` claim reported 0 for a slug the morning's dry run had rehearsed,
+and the collision brake fired — braking the company, throwing `StopError` out of
+the pool and taking a second worker's in-flight job down as `db-write-failed`
+(its queue row left `claimed`, and the colliding slug's left `attempted`).
+
+**What it means now.** A rehearsal colliding with a **rehearsal** is a repeat
+rehearsal, said in the audit log (`submit.rehearsal-repeat`); the attempt stays
+open and `recordRehearsal()` refreshes the same row. The claim in `db.mjs` is
+untouched — a live collision, or a dry run meeting a live row, still stops
+exactly as before (`tests/auto/audit.test.mjs`). If you met the old brake:
+delete `jobs/.auto/stops/company/<key>` (nothing was sent — a dry run cannot
+click), release the dead run's `claimed` row with `releaseStaleAutoClaims`
+(or wait out the 30-minute lease), and set the colliding slug's `attempted`
+queue row back to `queued` yourself — that state is never reclaimed
+automatically, on purpose, and here it is the crash's residue rather than a
+click.
+
 ---
 
 ## How to get more detail

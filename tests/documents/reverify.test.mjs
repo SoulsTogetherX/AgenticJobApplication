@@ -364,3 +364,94 @@ test("a stale row whose document is gone is reported, not resurrected", (t) => {
     "the old row stays stale, which keeps the job ineligible",
   )
 })
+
+// --- orphaned verification rows (workspace hand-deleted) -------------------
+//
+// The sweep is row-driven by design, so rows whose workspace no longer exists
+// re-reported as `missing` forever, and nothing in the repo could delete a
+// verifications row (measured: essex-street-cheese-frontend-dev, three rows
+// re-reported since 2026-08-10). --prune-orphans is the sanctioned cleanup,
+// guarded three ways: no directory, no documents row, no applications row.
+
+test("an orphaned slug is reported but NOT pruned without the flag", (t) => {
+  const w = ws(t)
+  const db = w.db()
+  const doc = w.job("ghost-dev")
+  w.recordPass(db, doc.resume)
+  fs.rmSync(doc.dir, { recursive: true, force: true })
+  fs.appendFileSync(w.profilePath, "\n# note\n") // make the row stale
+
+  const r = sweep(db, w)
+  assert.deepEqual(r.orphaned, ["ghost-dev"])
+  assert.equal(r.pruned, 0)
+  assert.equal(
+    readVerifications(db, "ghost-dev").length,
+    1,
+    "the default sweep must not delete anything",
+  )
+  assert.equal(
+    r.missing.length,
+    1,
+    "without pruning the row still re-reports as missing",
+  )
+})
+
+test("--prune-orphans deletes the rows, and the slug leaves stale/missing in the SAME run", (t) => {
+  const w = ws(t)
+  const db = w.db()
+  const doc = w.job("ghost-dev")
+  w.recordPass(db, doc.resume)
+  fs.rmSync(doc.dir, { recursive: true, force: true })
+  fs.appendFileSync(w.profilePath, "\n# note\n")
+
+  const r = reverifySweep({ db, ...w.opts, pruneOrphans: true })
+  assert.deepEqual(r.orphaned, ["ghost-dev"])
+  assert.equal(r.pruned, 1)
+  assert.deepEqual(readVerifications(db, "ghost-dev"), [])
+  assert.deepEqual(r.stale, [], "pruned before the sweep reads the rows")
+  assert.deepEqual(r.missing, [])
+})
+
+test("a slug with an APPLICATIONS row is never pruned, even with the directory gone", (t) => {
+  const w = ws(t)
+  const db = w.db()
+  const doc = w.job("applied-dev")
+  w.recordPass(db, doc.resume)
+  db.prepare(
+    "INSERT INTO applications (slug, company, title, applied_at, status, doc) VALUES (?,?,?,?,?,?)",
+  ).run("applied-dev", "Acme", "Dev", "2026-08-10", "applied", "{}")
+  fs.rmSync(doc.dir, { recursive: true, force: true })
+  fs.appendFileSync(w.profilePath, "\n# note\n")
+
+  const r = reverifySweep({ db, ...w.opts, pruneOrphans: true })
+  assert.deepEqual(
+    r.orphaned,
+    [],
+    "an applications row is evidence of a real application — never prunable",
+  )
+  assert.equal(r.pruned, 0)
+  assert.equal(readVerifications(db, "applied-dev").length, 1)
+})
+
+test("a slug with a DOCUMENTS row is never pruned", (t) => {
+  const w = ws(t)
+  const db = w.db()
+  const doc = w.job("archived-dev")
+  w.recordPass(db, doc.resume)
+  db.prepare(
+    "INSERT INTO documents (slug, name, content, bytes, sha256, archived_at) VALUES (?,?,?,?,?,?)",
+  ).run(
+    "archived-dev",
+    "resume.md",
+    "# archived",
+    10,
+    "d".repeat(64),
+    "2026-08-10",
+  )
+  fs.rmSync(doc.dir, { recursive: true, force: true })
+  fs.appendFileSync(w.profilePath, "\n# note\n")
+
+  const r = reverifySweep({ db, ...w.opts, pruneOrphans: true })
+  assert.deepEqual(r.orphaned, [])
+  assert.equal(readVerifications(db, "archived-dev").length, 1)
+})

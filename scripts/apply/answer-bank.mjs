@@ -755,6 +755,103 @@ function remainderIsGrounded(remainder, label) {
 // coincidence.
 const atWordBoundary = (s, i) => i >= s.length || !/[a-z0-9]/i.test(s[i])
 
+// A NUMBER OF YEARS GROUNDS INTO THE BRACKET THAT CONTAINS IT.
+//
+// MEASURED on Hims & Hers' Ashby form, 2026-08-18: "How many years of
+// professional software development experience do you have?" offers
+//   Less than 3 years | 3 to 5 years | 6 to 9 years | 10+ years
+// and the bank answers the same question with "Approximately 3 years (since
+// June 2023)". Nothing in the ladder above can ground that — the option is
+// neither the value nor a prefix of it — so the field came back NEEDS-CHOICE
+// on a question the user had answered, and would on every board that brackets
+// years (most of them do).
+//
+// This is arithmetic, not a guess, and it is bounded on both sides so it
+// stays arithmetic:
+//   * the VALUE must state exactly ONE count of years ("3 years", "3.5 yrs",
+//     "approximately 3 years"); a "+" ("3+ years") is a lower bound and does
+//     not name a number; two counts ("2 years React, 5 years JS") is ambiguous;
+//     a bare 4-digit number is a calendar year, not a count;
+//   * EVERY option must parse as a year bracket — "less than N", "N to M",
+//     "N-M", "between N and M", "N+", "N or more", "more than N", "over N",
+//     "N years" — and name years; one option that does not ("Other",
+//     "I prefer not to say") means the list is not a bracket list and nothing
+//     is grounded;
+//   * exactly ONE bracket may contain the number. "Less than 3" excludes 3;
+//     "3 to 5" includes both ends; a value in a gap between brackets grounds
+//     nothing and the field defers, as before.
+// The failure direction is the one this file always takes: nothing matched
+// means NEEDS-CHOICE, never a nearest bracket.
+const YEARS_UNIT = /\b(?:years?|yrs?)\b/i
+export function yearsInValue(raw) {
+  const s = String(raw ?? "")
+  const hits = [
+    ...s.matchAll(
+      /(?<![\d.])(\d{1,2}(?:\.\d+)?)\s*(\+?)\s*(?:years?|yrs?)\b/gi,
+    ),
+  ]
+  if (hits.length !== 1) return null
+  if (hits[0][2] === "+") return null
+  const n = Number(hits[0][1])
+  return Number.isFinite(n) ? n : null
+}
+export function yearsBracket(option) {
+  const o = String(option ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (!YEARS_UNIT.test(o)) return null
+  const num = "(\\d{1,2}(?:\\.\\d+)?)"
+  let m
+  if (
+    (m = new RegExp(
+      `^(?:less|fewer)\\s+than\\s+${num}\\b|^under\\s+${num}\\b|^<\\s*${num}\\b`,
+      "i",
+    ).exec(o))
+  )
+    return {
+      lo: 0,
+      loIncl: true,
+      hi: Number(m[1] ?? m[2] ?? m[3]),
+      hiIncl: false,
+    }
+  if (
+    (m = new RegExp(
+      `^(?:between\\s+)?${num}\\s*(?:to|-|–|—|and)\\s*${num}\\b`,
+      "i",
+    ).exec(o))
+  )
+    return { lo: Number(m[1]), loIncl: true, hi: Number(m[2]), hiIncl: true }
+  if (
+    (m = new RegExp(`^${num}\\s*\\+`, "i").exec(o)) ||
+    (m = new RegExp(
+      `^${num}\\s+(?:or\\s+more|and\\s+(?:up|above|over))\\b`,
+      "i",
+    ).exec(o))
+  )
+    return { lo: Number(m[1]), loIncl: true, hi: Infinity, hiIncl: true }
+  if (
+    (m = new RegExp(
+      `^(?:more\\s+than|over|greater\\s+than|>)\\s*${num}\\b`,
+      "i",
+    ).exec(o))
+  )
+    return { lo: Number(m[1]), loIncl: false, hi: Infinity, hiIncl: true }
+  if ((m = new RegExp(`^${num}\\s*(?:years?|yrs?)\\b`, "i").exec(o)))
+    return { lo: Number(m[1]), loIncl: true, hi: Number(m[1]), hiIncl: true }
+  return null
+}
+export function bracketFor(value, opts) {
+  const n = yearsInValue(value)
+  if (n === null || !Array.isArray(opts) || opts.length < 2) return null
+  const parsed = opts.map((o) => ({ o, b: yearsBracket(o) }))
+  if (parsed.some((p) => !p.b)) return null
+  const hits = parsed.filter(
+    ({ b }) =>
+      (b.loIncl ? n >= b.lo : n > b.lo) && (b.hiIncl ? n <= b.hi : n < b.hi),
+  )
+  return hits.length === 1 ? hits[0].o : null
+}
+
 // Accepts a single value or an ordered list of acceptable answers; the first
 // one the form actually offers wins.
 //
@@ -827,6 +924,9 @@ export function matchOption(
       })
       if (hit) return hit
     }
+    // A stated count of years, offered as brackets: see bracketFor.
+    const bracket = bracketFor(v, real)
+    if (bracket) return bracket
     return null
   }
 
@@ -944,9 +1044,13 @@ function bankHit(entry, value) {
 // pending-questions.mjs import the resolver directly instead of spawning a
 // fresh `node answer-bank.mjs` process per call.
 // ---------------------------------------------------------------------------
-export function createResolver(profile = {}, answersDoc = {}) {
+export function createResolver(profile = {}, answersDoc = {}, { now } = {}) {
   const contact = profile.contact ?? {}
   const bank = Array.isArray(answersDoc.answers) ? answersDoc.answers : []
+  // The clock every time-derived answer reads. Injectable so tests pin it —
+  // a test that reads the real clock rots (tests/leads/screen-blockers
+  // pattern) — and so one resolve batch answers from ONE instant.
+  const NOW = now instanceof Date ? now : new Date()
 
   const nameParts = String(contact.name ?? "")
     .trim()
@@ -982,6 +1086,87 @@ export function createResolver(profile = {}, answersDoc = {}) {
   const isCurrent = /\b(present|current|now|ongoing)\b/i.test(
     String(currentJob.dates ?? ""),
   )
+
+  // ---- time-derived answers, computed against NOW --------------------------
+  //
+  // USER DECISION 2026-08-21: "For any time related questions, I need you to
+  // be able to automatically keep track of the passage of time yourself, via
+  // comparing dates." A banked duration is a frozen literal — a-008's
+  // "Approximately 3 years (since June 2023)" was true when banked and
+  // decays — so the count is derived here from profile.experience dates and
+  // the clock, and the pre-bank pass in resolveField runs it AHEAD of the
+  // exact-bank tier so a stale literal cannot shadow it.
+  //
+  // THE ANCHOR IS THE USER'S OWN ACCOUNTING, not lib.mjs's
+  // yearsOfExperience(). That helper unions ranges and drops internships
+  // (NON_PROFESSIONAL_TITLE), which is right for screening a posting's
+  // "5+ years required" gate but computes 2.6 where the user's own banked
+  // answers say ~3 "since June 2023" — they count from their first INDUSTRY
+  // role, the QA/SWE internship, and a derivation that contradicts the fact
+  // base's owner is a new claim, not a restatement (rule 1). So: earliest
+  // parseable start among experience entries that are industry roles
+  // (teaching/tutoring/volunteering excluded, internships kept), span to NOW,
+  // floored — the conservative direction; never claim a year that has not
+  // elapsed.
+  const NON_INDUSTRY_TITLE =
+    /\b(teacher assistant|teaching assistant|tutor|volunteer)\b/i
+  const industryStarts = (profile.experience ?? [])
+    .filter((e) => !NON_INDUSTRY_TITLE.test(String(e.title ?? "")))
+    .map((e) => parseDateRange(e.dates, NOW)?.start)
+    .filter(Boolean)
+  const earliestStart = industryStarts.length
+    ? new Date(Math.min(...industryStarts.map((d) => d.getTime())))
+    : null
+  const yearsInField = earliestStart
+    ? (NOW.getTime() - earliestStart.getTime()) / (365.25 * 24 * 3600 * 1000)
+    : null
+
+  // A YEARS QUESTION IS ONLY ANSWERED WITH THE TOTAL WHEN IT ASKS FOR THE
+  // TOTAL. "How many years of React experience" names a technology, and the
+  // overall span says nothing about it — so between the years phrase and the
+  // word "experience" every word must be generic (professional / software /
+  // development / …), else the label is skill-scoped and falls through to the
+  // bank. "over" is in the list because a live GitLab form typo'd "over 3
+  // years over professional software engineering experience".
+  const GENERIC_EXP_WORD =
+    /^(?:of|in|over|professional|full[- ]?time|relevant|total|paid|industry|hands[- ]?on|work(?:ing)?|software|development|developer|engineering|swe|dev)$/i
+  const genericExpSegment = (seg) =>
+    seg
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .every((w) => GENERIC_EXP_WORD.test(w.replace(/[^a-z-]/gi, "")))
+  // "How many years of professional … experience …" -> the floored span.
+  const totalYearsAsked = (label) => {
+    const m = /\bhow (?:many|much) years?\b([^?]*?)\bexperience\b/i.exec(label)
+    return !!m && genericExpSegment(m[1])
+  }
+  // "Do you have over/at least N years of … experience" -> Yes/No by
+  // comparing N against the UNfloored span; over/more-than is strict.
+  const yearsThresholdAsked = (label) => {
+    const m =
+      /\b(over|more than|at least|minimum(?: of)?)\s+(\d{1,2})\s*\+?\s*years?\b([^?]*?)\bexperience\b/i.exec(
+        label,
+      )
+    if (!m || !genericExpSegment(m[3])) return null
+    const n = Number(m[2])
+    const strict = /^(over|more than)$/i.test(m[1])
+    return { n, strict }
+  }
+  // "When can you start" -> today, the one start date that can never be
+  // stale — but only where a DATE is actually the answer: a date-shaped
+  // control, or a text control whose exact-banked answer is itself a bare
+  // date literal (the live shape that failed: Ashby's react date widget over
+  // an <input type=text>, with the exact-bank tier replaying a-053's dead
+  // "2026-08-18"; the widget's MM/DD/YYYY re-rendering is handled by the
+  // date-equivalence in fill-engine's readback). A PROSE availability answer
+  // ("Available immediately; two weeks notice if required") never decays and
+  // is the user's own wording — it always survives, which
+  // tests/apply/answer-bank-rewording.test.mjs pins.
+  const DATE_LITERAL = /^(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4})$/
+  const START_DATE_Q =
+    /\bwhen can you start\b|\bstart date\b|\bearliest (?:available )?start\b|\bdate (?:you are |you're )?available\b|\bavailability date\b/i
+  const isoDate = (d) => d.toISOString().slice(0, 10)
 
   const education = profile.education?.[0] ?? {}
   const degreesText = String(education.degrees ?? "")
@@ -1510,10 +1695,61 @@ export function createResolver(profile = {}, answersDoc = {}) {
     // (source `a2@exact`) after the profile rules had already refused it — it
     // runs BEFORE them, so gating the later `bestAnswer` call alone changed
     // nothing. Both routes are gated now; see the definition for the reasoning.
+    // ---- the pre-bank TIME pass ------------------------------------------
+    // Runs AHEAD of the exact-bank tier on purpose: the bank holds frozen
+    // time literals (a-008's "Approximately 3 years", a-053's dead date) that
+    // exact-match these questions and decay, and the user's 2026-08-21
+    // decision is that time answers are computed from dates, never replayed.
+    // Everything here is a restatement of profile.experience dates plus the
+    // clock — see the derivation block above for why the anchor is the
+    // user's own accounting.
+    if (yearsInField !== null && totalYearsAsked(label)) {
+      const m = matchOption(
+        `${Math.floor(yearsInField)} years`,
+        opts,
+        matchOpts,
+      )
+      return push(
+        m.needsChoice ? "NEEDS-CHOICE" : "OK",
+        "experience.dates@computed",
+        m.value,
+        noteFor(m),
+        m.values,
+      )
+    }
+    const yearsTh = yearsInField !== null ? yearsThresholdAsked(label) : null
+    if (yearsTh) {
+      const enough = yearsTh.strict
+        ? yearsInField > yearsTh.n
+        : yearsInField >= yearsTh.n
+      const m = matchOption(enough ? "Yes" : "No", opts, matchOpts)
+      return push(
+        m.needsChoice ? "NEEDS-CHOICE" : "OK",
+        "experience.dates@computed",
+        m.value,
+        noteFor(m),
+        m.values,
+      )
+    }
+    if (f.t === "date" && START_DATE_Q.test(label)) {
+      return push("OK", "computed.today", isoDate(NOW))
+    }
+
     const exact = ownJobBankSilenced
       ? undefined
       : exactBank.get(normalizeQuestion(label))
     if (exact) {
+      // A banked BARE DATE on a start-date question is the one exact answer
+      // that decays by itself (a-053 replayed "2026-08-18" three days dead) —
+      // it is replaced with NOW's date, computed, never replayed. Prose
+      // answers to the same questions are the user's wording and pass
+      // through untouched.
+      if (
+        START_DATE_Q.test(label) &&
+        DATE_LITERAL.test(String(exact.answer ?? "").trim())
+      ) {
+        return push("OK", "computed.today", isoDate(NOW))
+      }
       // The same decline-shape recognition the EEO branch below uses, and for
       // the same reason (see its comment) — an exact question match is if
       // anything the STRONGER signal, so it must not defer on a wording
@@ -1883,6 +2119,34 @@ export function createResolver(profile = {}, answersDoc = {}) {
         /\b(current )?(location|address)\b|\bwhere are you (currently )?(located|based)\b/i,
         "contact.location",
         contact.location ?? "",
+      ],
+      // COUNTRY OF RESIDENCE is a RESTATEMENT of contact.location, not a new
+      // claim: a second location element that is a US state code places the
+      // user in the United States the same way DEGREE_LEVELS restates a
+      // degree level. Ordered long-form first because matchOption's prefix
+      // expansion refuses "United States" -> "United States of America" (the
+      // remainder "of america" is not in the label), so the spelling a form
+      // offers has to be matched directly — the first candidate the probed
+      // list holds wins.
+      //
+      // The matcher requires BOTH the word "country" and a residence verb,
+      // and vetoes four shapes that carry those words without asking where
+      // the user lives: "Country Code" (the phone widget), anything
+      // mentioning relocation or willingness (the 3-way live-here/relocate
+      // question is per-job context and belongs to the relocation intent this
+      // table would pre-empt), conditional follow-ups ("If you checked ...",
+      // measured on a real Greenhouse form asking for details about a
+      // DIFFERENT country), and "different country" itself.
+      [
+        /^(?!.*\brelocat)(?!.*\bwilling\b)(?!.*\bif\s+(you|yes|no)\b)(?!.*\bdifferent\s+countr)(?!.*\bcountry[\s-]*code\b)(?=.*\bcountry\b)(?=.*\b(residence|reside|residing|live|living)\b)/is,
+        "contact.location",
+        US_STATES[
+          String(locParts[1] ?? "")
+            .trim()
+            .toUpperCase()
+        ]
+          ? ["United States of America", "United States", "USA", "US"]
+          : "",
       ],
     ]
 

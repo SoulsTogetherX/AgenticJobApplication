@@ -123,7 +123,13 @@
 //
 // NOT a module: no imports, no exports, no leading semicolon (see .prettierignore).
 window.__ajScan = async (PROBE = true) => {
-  const MAX_OPTS = 40
+  // 250, raised from 40 on 2026-08-21: a 197-option country list was cut to
+  // 40 rows without "United States of America" in them, so a banked answer
+  // the form really offered resolved NEEDS-CHOICE on three of four cached
+  // GitLab forms. The cap exists to bound pathological lists, not real ones,
+  // and every country/nationality picker on the swept boards is ~200 rows.
+  // optsTruncated still states any cut past it.
+  const MAX_OPTS = 250
   const MAX_PROBE = 15
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -137,6 +143,18 @@ window.__ajScan = async (PROBE = true) => {
       .replace(/\s+/g, " ")
       .trim()
   const txt = (s, n = 120) => full(s).slice(0, n)
+  // The DISPLAY companion to a cut label. `l` stays at 120 on purpose — it is
+  // what answer-bank matches on, what the field cache keys on and what the
+  // form fingerprint hashes; lengthening it would orphan every banked answer
+  // and re-probe every board. `lFull` is emitted ONLY when the label overran
+  // the cut, capped at MAX_EXACT, matched against by NOTHING — it exists so a
+  // human reading pending-questions sees the whole essay prompt instead of a
+  // sentence cut mid-word. Prefix-matching l against lFull is the truncation
+  // attack; do not add it.
+  const lFullOf = (t) => {
+    const f = full(t)
+    return f.length > 120 ? f.slice(0, MAX_EXACT) : undefined
+  }
   const vis = (el) => {
     if (!el || !el.isConnected) return false
     const r = el.getBoundingClientRect()
@@ -480,16 +498,24 @@ window.__ajScan = async (PROBE = true) => {
   }
 
   // Returns "" when the label can be vouched for, else the reason it cannot.
-  function vouchFail(el, d) {
+  // `near` overrides the element adjacency is measured FROM — the combo
+  // branch passes the widget's outer shell, because react-select nests its
+  // inner input five wrappers deep (Greenhouse's remix frontend, measured on
+  // Reddit's consent combo 2026-08-22) and a chain walked from the input dies
+  // inside the widget's own plumbing before it can reach the label's
+  // container. Measuring from the shell keeps the SAME 5-ancestor budget and
+  // every other check (visibility, pseudo-text, rival labels, id uniqueness)
+  // unchanged: a label decoupled from the widget still refuses.
+  function vouchFail(el, d, near = null) {
     if (!VOUCHABLE[d.src]) return "label source is " + d.src
     if (!d.text || !WORDY.test(d.text)) return "label has no words"
     if (d.text.length > MAX_EXACT) return "label longer than " + MAX_EXACT
     if (!d.nodes.length) return "label came from no element"
 
-    const near = nearnessTo(el)
+    const nearFn = nearnessTo(near ?? el)
     for (const n of d.nodes) {
       if (!visibleToEye(n)) return "label text is not visibly rendered"
-      if (!near(n)) return "label is not adjacent to the control"
+      if (!nearFn(n)) return "label is not adjacent to the control"
       const ghost = pseudoText(n)
       if (ghost) return ghost
       // A <label> holding two controls does not say which one it means.
@@ -572,7 +598,7 @@ window.__ajScan = async (PROBE = true) => {
 
   // The only entry point. Returns the label at full length plus the reason it
   // could not be vouched for ("" means it can).
-  function vouchedLabel(el) {
+  function vouchedLabel(el, { near = null } = {}) {
     let d = labelDetail(el)
     // An aria-label is an ATTRIBUTE, so on its own it can never vouch — it is
     // not text anyone reading the form can see. But when it is BYTE-IDENTICAL
@@ -586,7 +612,12 @@ window.__ajScan = async (PROBE = true) => {
     // `nodes` rides along because the checkbox branch feeds this same object to
     // seenOf(), which asks whether the label's own elements are visible. An
     // object missing them would answer "not readable" for every vouched box.
-    return { text: d.text, src: d.src, nodes: d.nodes, why: vouchFail(el, d) }
+    return {
+      text: d.text,
+      src: d.src,
+      nodes: d.nodes,
+      why: vouchFail(el, d, near),
+    }
   }
 
   function helpOf(el) {
@@ -844,8 +875,20 @@ window.__ajScan = async (PROBE = true) => {
     if (el.tagName === "SELECT" || !vis(el) || claimedNow(el))
       continue
     const host = labelHost(el)
-    const dc = labelDetail(host)
-    const label = txt(dc.text)
+    // A CONSENT CAN BE A COMBO — react-select renders "I agree" as a
+    // single-option picker (measured on Reddit's Greenhouse embed,
+    // 2026-08-21), and the required-consent grant demands the same vouch a
+    // checkbox gets: the string matched against the user's policy, the string
+    // they approved, and the string on screen must be ONE string, whole.
+    // vouchedLabel fails CLOSED (attribute sources, invisible nodes, text
+    // past MAX_EXACT all refuse), and on refusal the record below is exactly
+    // what this branch always produced — truncated label, no exactness claim
+    // — so a form this does not recognise scans byte-identically. On success
+    // the label is kept at FULL length: a vouched label is never truncated
+    // (the truncation attack), and the full text is also what lets
+    // isHardConsent see an arbitration clause past the 120-char cut.
+    const dc = vouchedLabel(host, { near: el })
+    const label = dc.why ? txt(dc.text) : dc.text
     // A TOKEN PICKER IS A DIFFERENT VERB, and the flag has to come from the
     // scan: the planner cannot see the widget and the engine only does what
     // the plan says. Recognised from the widget's own static markers — the
@@ -875,6 +918,11 @@ window.__ajScan = async (PROBE = true) => {
       t: "combo",
       multi,
       l: label,
+      // A vouched combo's `l` is already the full text; only the unvouched
+      // (cut) label needs the display companion.
+      lFull: dc.why ? lFullOf(dc.text) : undefined,
+      labelExact: dc.why ? undefined : true,
+      labelWhy: dc.why || undefined,
       lSeen: seenOf(host, dc),
       // `req` from the HOST for the same reason as the label: Greenhouse's
       // Country picker carries aria-required="true" on the inner input, and
@@ -917,6 +965,19 @@ window.__ajScan = async (PROBE = true) => {
   const fields = []
   const groups = new Map()
   const signals = []
+  // Each radio/checkbox option's OWN label at full length, keyed on its stamp.
+  // Read by the group-question pass below the button-pair detector, which
+  // must know what each option says in order to (a) recognise a group whose
+  // `l` is merely one of its options and (b) subtract the options' words from
+  // their container's text before looking for the question. `o.l` cannot serve:
+  // it is cut to 80 for an unvouched group.
+  const ownText = new Map()
+  // One key per <fieldset>, for the checkbox-grouping rule below.
+  const fieldsetKeys = new Map()
+  const fieldsetKey = (fs) => {
+    if (!fieldsetKeys.has(fs)) fieldsetKeys.set(fs, fieldsetKeys.size + 1)
+    return fieldsetKeys.get(fs)
+  }
 
   for (const el of document.querySelectorAll("select,textarea,input")) {
     if (claimed.has(el) || el.disabled) continue
@@ -937,15 +998,38 @@ window.__ajScan = async (PROBE = true) => {
     const label = txt(dg.text)
 
     if (type === "radio" || type === "checkbox") {
-      // Ticking a box is the one thing on a form that ASSERTS something, so
-      // this is the only branch that computes exactness — and the only branch
-      // whose `l` can exceed 120 chars. Every other field type keeps the exact
-      // string it had before, so answer-bank matching and the field-cache
-      // fingerprint are untouched for them.
+      // Ticking a box ASSERTS something, so this branch computes exactness
+      // and its `l` may exceed 120 chars. The combo builder above does the
+      // same since 2026-08-21 (a consent can be a react-select picker); every
+      // other field type keeps the exact string it had before, so answer-bank
+      // matching and the field-cache fingerprint are untouched for them.
       const d = vouchedLabel(el)
       const why = d.why
       const own = why ? txt(d.text) : d.text
-      const gid = type + ":" + (el.name || own || "?")
+      // A CHECKBOX NAMED AFTER ITS OWN OPTION CARRIES NO GROUP IN ITS NAME.
+      //
+      // MEASURED on Ashby (jobs.ashbyhq.com), 2026-08-18. A "select all that
+      // apply" question renders as one <fieldset> holding N checkboxes, each
+      //   <input type="checkbox" name="Atlanta, GA" id="<entry>-labeled-checkbox-0">
+      //   <label for="...-labeled-checkbox-0">Atlanta, GA</label>
+      // — the `name` IS the option's own text, different on every box. Keyed on
+      // `name`, a 15-option "Select all that you are proficient in." came back
+      // as FIFTEEN one-option groups all labelled with the question, so a
+      // banked answer of "Python" ticked one and left fourteen deferring "no
+      // option matched the resolved value" — a required question that could
+      // never resolve, on every Ashby form that asks one. Radios keep the HTML
+      // rule (same name, one group). A checkbox whose name says nothing but its
+      // own label is grouped by the <fieldset> that holds it, exactly as a
+      // legend would group it; a box with a real name, or one outside any
+      // fieldset, is keyed as before, so no fixture in the corpus changes.
+      const nameIsOwnText =
+        type === "checkbox" &&
+        !!el.name &&
+        full(el.name).toLowerCase() === full(d.text).toLowerCase()
+      const fsOwn = nameIsOwnText ? el.closest("fieldset") : null
+      const gid = fsOwn
+        ? "checkbox:fieldset:" + fieldsetKey(fsOwn)
+        : type + ":" + (el.name || own || "?")
       let g = groups.get(gid)
       if (!g) {
         // A <legend> is a heading for a GROUP, not this control's own label,
@@ -967,6 +1051,9 @@ window.__ajScan = async (PROBE = true) => {
         if (fromFieldset) g.labelWhy = "label source is fieldset legend"
         else if (why) g.labelWhy = why
         else g.labelExact = true
+        // Kept only so the single-control pass below can read the fieldset's
+        // complete visible text. Deleted there, before anything is serialized.
+        if (fromFieldset) g._fs = el.closest("fieldset")
         groups.set(gid, g)
         fields.push(g)
       } else if (g.labelExact) {
@@ -978,8 +1065,10 @@ window.__ajScan = async (PROBE = true) => {
       // The identity rides on the OPTION, not the group: a checkbox/radio
       // group is a synthetic object with no element of its own, exactly as
       // `sel` already works here.
+      const ok = stamp(el, "f")
+      ownText.set(ok, d.text)
       g.o.push({
-        k: stamp(el, "f"),
+        k: ok,
         sel: stableSel(el),
         ...identityOf(el),
         l: g.labelExact ? own : txt(own, 80),
@@ -994,6 +1083,7 @@ window.__ajScan = async (PROBE = true) => {
       ...identityOf(el),
       t: tag === "select" ? "select" : tag === "textarea" ? "textarea" : type,
       l: label,
+      lFull: lFullOf(dg.text),
       lSeen: seenOf(el, dg),
       req: isReq(el, label, dg) || groupRequired(el) || undefined,
       v: txt(el.value, 60) || undefined,
@@ -1016,6 +1106,79 @@ window.__ajScan = async (PROBE = true) => {
     fields.push(f)
   }
 
+  // A FIELDSET AROUND EXACTLY ONE CONTROL IS THAT CONTROL'S LABEL. User
+  // decision 2026-08-20, and it fixes a measured dead end rather than widening
+  // anything: `required_consent: all` had been on since 2026-08-18 and had
+  // never once fired on Ashby, because Ashby wraps each consent box in its own
+  // <fieldset> and a legend-sourced label is refused the vouch above. Measured
+  // on jobs.ashbyhq.com/openai (2026-08-20): the whole form scanned
+  // `vouched=0`, so both required acknowledgements deferred with "the scanner
+  // could not vouch for its label" — the user's key could not reach the
+  // controls it was written for.
+  //
+  // WHY THIS DOES NOT RE-OPEN EITHER ATTACK the vouch exists to stop:
+  //   DECOUPLING  the string vouched here is rendered DOM text, never an
+  //               attribute. A legend is on screen; aria-label is not. The
+  //               reason a legend is normally refused is that it heads a GROUP
+  //               and so does not say WHICH box — with exactly one box, there
+  //               is no which.
+  //   TRUNCATION  the vouched string is the fieldset's COMPLETE visible text,
+  //               legend and control label together, and the vouch is refused
+  //               outright past MAX_EXACT rather than sliced. Taking the legend
+  //               alone would have vouched "Applicant Arbitration Agreement
+  //               Acknowledgement" while the terms sat in the paragraph below
+  //               it — a shorter string than the user reads, which is the
+  //               truncation attack wearing a different hat.
+  // Still fails closed everywhere else: more than one control, no fieldset, no
+  // text, or text too long, and the group keeps deferring exactly as before.
+  // A LEGEND OVER A BARE ANSWER TOKEN IS A QUESTION, NOT A LABEL, and it must
+  // keep deferring. <legend>Are you legally authorized to work in the United
+  // States?</legend> over one tickbox whose own text is "Yes" is a yes/no
+  // WIDGET: the legend is the question and the box is the answer. Folding the
+  // two into "Are you legally authorized to work in the United States? Yes"
+  // would corrupt the very thing answer-bank matches on — it appends an
+  // affirmative to a question whose honest answer might be no, which is the
+  // polarity trap the stemmer and the polarity guard exist to stop. Caught by
+  // tests/security/scan-fidelity.test.mjs against hostile-escalated-tickbox,
+  // which is what that fixture is for.
+  //
+  // A consent box is the opposite shape: its option text IS the sentence being
+  // agreed to, so legend and option are two halves of one label. So the test is
+  // the OPTION's own text, not the legend's.
+  const ANSWER_TOKEN =
+    /^\s*(yes|no|y|n|true|false|n\/a|none|other|agree|accept|confirm|acknowledge|i agree|i accept|i confirm|i acknowledge)\s*[.!]?\s*$/i
+  // ONE CONTROL IN THE FIELDSET, not one option in the group. Two boxes with
+  // DIFFERENT names inside one fieldset form two separate single-option groups,
+  // and taking the fieldset's whole text for each would hand both of them the
+  // SAME vouched label — "Select the terms you accept: the privacy policy… the
+  // marketing terms…" — which is precisely the "does not say WHICH box" failure
+  // the vouch exists to prevent, reintroduced one level up. So the count is
+  // taken off the DOM, not off the group.
+  // Plain selectors and a JS filter, never `:not()`. The fixture harness
+  // (tests/fixtures/boards/dom.mjs) implements a subset of CSS and silently
+  // matches NOTHING for a selector it cannot parse — so a `:not()` here would
+  // behave one way in Chromium and another under scan-fidelity.test.mjs, and
+  // the fixtures that pin this file would be validated against semantics no
+  // real browser has.
+  const CONTROLS = "input,select,textarea,[role='checkbox'],[role='radio']"
+  const isHidden = (c) =>
+    String(c.getAttribute("type") ?? "").toLowerCase() === "hidden"
+  for (const g of groups.values()) {
+    if (!g.labelExact && g.o.length === 1 && g._fs) {
+      const controls = [...g._fs.querySelectorAll(CONTROLS)].filter(
+        (c) => !isHidden(c),
+      )
+      if (controls.length !== 1) continue
+      if (ANSWER_TOKEN.test(String(g.o[0]?.l ?? ""))) continue
+      const whole = full(g._fs.innerText)
+      if (whole && whole.length <= MAX_EXACT && WORDY.test(whole)) {
+        g.l = whole
+        g.labelExact = true
+        delete g.labelWhy
+      }
+    }
+  }
+
   // ONE STRING, everywhere. A vouched group has exactly one option and that
   // option carries the same full text the group does; a group that never got
   // the vouch, or lost it to a second control, goes back to the 80-char option
@@ -1025,7 +1188,11 @@ window.__ajScan = async (PROBE = true) => {
       delete g.labelExact
       g.labelWhy = "more than one control shares this label"
     }
-    if (!g.labelExact) for (const o of g.o) o.l = txt(o.l, 80)
+    if (g.labelExact) for (const o of g.o) o.l = g.l
+    else for (const o of g.o) o.l = txt(o.l, 80)
+    // The element reference is a scanning aid, never part of the scan: it must
+    // not survive into the JSON that crosses the process boundary.
+    delete g._fs
   }
 
   for (const el of document.querySelectorAll("[contenteditable='true']")) {
@@ -1036,6 +1203,7 @@ window.__ajScan = async (PROBE = true) => {
       ...identityOf(el),
       t: "richtext",
       l: labelOf(el),
+      lFull: lFullOf(labelDetail(el).text),
       lSeen: seenOf(el, labelDetail(el)),
       v: txt(el.innerText, 60) || undefined,
     })
@@ -1178,9 +1346,28 @@ window.__ajScan = async (PROBE = true) => {
     "input,select,textarea,[contenteditable],[role='combobox'],[role='checkbox'],[role='radio'],[role='listbox']"
   const isFileInput = (c) =>
     c.tagName === "INPUT" && full(c.getAttribute("type")).toLowerCase() === "file"
-  const holdsForeignControl = (a) => {
+  // A READ-ONLY EDITOR IS PROSE, NOT A CONTROL. MEASURED on Ashby, 2026-08-18:
+  // every rich-text block on the form — the texting-consent paragraph AND each
+  // consent option's own label — is a tiptap editor rendered with
+  // `contenteditable="false"`. `[contenteditable]` matches on presence, so the
+  // consent question's container read as "holds another control" and the
+  // group-question pass below adopted nothing. The scanner itself collects
+  // only `[contenteditable='true']` as a field, and this says the same thing:
+  // an explicit "false" on something that is not a native control is not a
+  // control this scanner would collect, so it cannot be somebody else's
+  // question. `own` — the group's own option inputs — is exempt for the same
+  // reason (they are THIS question); the pair path passes none.
+  const readOnlyEditor = (c) =>
+    c.tagName !== "INPUT" &&
+    c.tagName !== "SELECT" &&
+    c.tagName !== "TEXTAREA" &&
+    !c.getAttribute("role") &&
+    full(c.getAttribute("contenteditable")).toLowerCase() === "false"
+  const holdsForeignControl = (a, own) => {
     try {
       for (const c of a.querySelectorAll(PAIR_FOREIGN)) {
+        if (own && own.has(c)) continue
+        if (readOnlyEditor(c)) continue
         if (isFileInput(c) || vis(c)) return true
       }
     } catch {
@@ -1398,6 +1585,113 @@ window.__ajScan = async (PROBE = true) => {
       (set) => set.length === keys.length && set.every((v, i) => v === keys[i]),
     )
   }
+  // --- a native group's label is its QUESTION, never one of its options ----
+  //
+  // MEASURED on Ashby (jobs.ashbyhq.com), 2026-08-18, on the Flock Safety and
+  // Quora application forms. Ashby's texting-consent question renders as
+  //   <div class="..._texting-consent-description">
+  //     <div class="_consentBody_"><p>Check <b>Yes</b> or <b>No</b> to indicate
+  //        your agreement to receive text message updates from ... </p></div>
+  //     <div>
+  //       <label><input type="radio" name="communicationConsent" value="given">
+  //              <p><b>Yes</b> - I consent to receiving text messages</p></label>
+  //       <label><input type="radio" name="communicationConsent" value="notGiven">
+  //              <p><b>No</b> - I do not consent to receiving text messages</p></label>
+  // No <fieldset>, no <legend>, no aria-labelledby: the question is a text
+  // block ABOVE the options, and each option's own <label> wraps its input.
+  // The field loop names a group when it meets the group's FIRST option, and
+  // with no legend to take it falls back to that option's own label, so the
+  // group was reported as
+  //   {"t":"radio","l":"Yes - I consent to receiving text messages", o:[Yes…,No…]}
+  // Three consumers went wrong at once. fill-plan.mjs's isConsent() matched the
+  // OPTION's "consent to" and routed a yes/no QUESTION into the consent-tickbox
+  // branch, where it deferred on every run whatever the bank held; a banked
+  // answer would have had to be keyed on the option text rather than on the
+  // question; and the approval message named the field by an answer to it.
+  // tests/fixtures/boards/pages/lever.html has the same shape — the question in
+  // a sibling <div class="application-label"> — and its scan fixture read
+  // `"l": "Yes"` for the sponsorship question until this landed
+  // (tests/security/board-fidelity.test.mjs carried it as a FINDING).
+  //
+  // THE RULE. Once every option is in, a group with TWO OR MORE options whose
+  // label is one of those options' own labels has no label at all — an option
+  // is an ANSWER, and answers do not name questions. So the question is looked
+  // for the way the button-pair detector below finds ITS question, under the
+  // same bounds, so a Yes/No rendered as <button>s and the same Yes/No rendered
+  // as <input type=radio> come out with the SAME `l` and one banked answer
+  // resolves both:
+  //   1. start at the options' nearest common ancestor and walk up FIVE
+  //      ancestors, stopping at BODY / FORM;
+  //   2. a container holding a visible control this group does not own is
+  //      somebody else's question too — stop, adopt nothing. On Ashby the
+  //      texting-consent block sits INSIDE the phone-number entry, so the walk
+  //      finds the consent paragraph one level up and never reaches the level
+  //      that would hand it "Phone Number";
+  //   3. the container's text WITHOUT the option labels, bounded by
+  //      PAIR_QUESTION_MAX exactly as the pair path bounds it — more text than
+  //      that is a section, not a question — stop;
+  //   4. the last sentence ending in "?" (questionIn), else — because a native
+  //      radio group is unambiguously a field where a row of buttons is not —
+  //      the FIRST sentence, which is how an instruction reads ("Check Yes or
+  //      No to indicate…").
+  // Nothing found leaves the group exactly as it was reported before, option
+  // label and all, so no scan of a form this does not recognise changes.
+  //
+  // WHAT THIS DOES NOT TOUCH. A one-option group (a lone checkbox): its own
+  // label IS its label, and the consent vouch depends on that. A group named by
+  // a <legend>, or by anything else that is not one of its own options. And the
+  // question is never VOUCHED — `labelWhy` says where it came from — because it
+  // is a heading for a group exactly as a legend is; the check-verb path does
+  // not need the vouch, and the tickbox grant, which does, never applies to a
+  // group.
+  // The FIRST sentence, by the same boundary test questionIn() uses to find
+  // the last one, so "(e.g. H-1B status, etc)" and "U.S." do not end it early.
+  const firstSentence = (t) => {
+    let end = -1
+    for (const mark of [". ", "? ", "! "]) {
+      let j = t.indexOf(mark)
+      while (j >= 0) {
+        if (isBoundary(t, j, mark)) {
+          if (end < 0 || j < end) end = j
+          break
+        }
+        j = t.indexOf(mark, j + 1)
+      }
+    }
+    return txt(end < 0 ? t : t.slice(0, end + 1), PAIR_QUESTION_MAX)
+  }
+  const groupQuestion = (els, labels) => {
+    let root = els[0]
+    while (root && !els.every((e) => root.contains(e))) root = root.parentElement
+    const own = new Set(els)
+    for (let a = root, i = 0; a && i < 5; a = a.parentElement, i++) {
+      if (a.tagName === "BODY" || a.tagName === "HTML" || a.tagName === "FORM")
+        break
+      if (holdsForeignControl(a, own)) break
+      const raw = withoutOptions(full(a.innerText), labels)
+      if (raw.length > PAIR_QUESTION_MAX) break
+      if (!raw) continue
+      const q = questionIn(raw) || firstSentence(raw)
+      if (q) return q
+    }
+    return ""
+  }
+  for (const g of groups.values()) {
+    if (g.o.length < 2) continue
+    const els = g.o.map((o) => elOf.get(o.k))
+    if (els.some((e) => !e)) continue
+    const labels = g.o.map((o) => ownText.get(o.k) || "")
+    const gl = full(g.l).toLowerCase()
+    if (!gl || !labels.some((t) => full(t).toLowerCase() === gl)) continue
+    const q = groupQuestion(els, labels)
+    if (!q || labels.some((t) => full(t).toLowerCase() === q.toLowerCase()))
+      continue
+    g.l = q
+    delete g.lSeen
+    delete g.labelExact
+    g.labelWhy = "label source is group question"
+  }
+
   // A BACKSTOP, AND SAID TO BE ONE. What actually stops tier 2 acting on a
   // hostile pair is that it only ever fills from an EXACT bank hit — the
   // user's own recorded wording of this exact question — so a question they
@@ -1457,16 +1751,26 @@ window.__ajScan = async (PROBE = true) => {
           all.map((b) => pairCands.get(b) ?? txt(b.innerText || b.value, 60)),
         )
         if (raw.length > PAIR_QUESTION_MAX) break
-        const question = questionIn(raw)
+        const opts = mine.map((b) => ({ el: b, l: pairCands.get(b) }))
+        const closed = isClosedSet(opts)
+        // A question phrased as an INSTRUCTION carries no "?" — Ashby's
+        // "Check Yes or No to indicate your agreement…" (measured 2026-08-21
+        // on the Quora and Flock Safety forms: the pair fell through here and
+        // the widget sweep reported two separate fields labelled "Yes" and
+        // "No"). The firstSentence fallback the native-group pass has had
+        // since 2026-08-18 applies here too, but ONLY when the answer set is
+        // closed: a Yes/No pair under a sentence is unambiguously a question,
+        // where a toolbar of short unnamed buttons — Bold, Italic — is not,
+        // and that toolbar case is exactly what requiring "?" protected. The
+        // closed-set gate keeps that protection without the silent miss.
+        const question = questionIn(raw) || (closed ? firstSentence(raw) : "")
         if (!question) continue
         pairCut++
         // The cut is STATED, never silent — same reasoning as optsTruncated
         // and the widget sweep's own cap. What is skipped falls through to
         // `btns` exactly as before, which is the miss, so it is said out loud.
         if (pairCut > MAX_PAIRS) break
-        const opts = mine.map((b) => ({ el: b, l: pairCands.get(b) }))
-        const recognised =
-          isClosedSet(opts) && !PAIR_DESTRUCTIVE.test(question)
+        const recognised = closed && !PAIR_DESTRUCTIVE.test(question)
         const g = {
           k: "g" + ++ngroup,
           t: recognised ? "radio" : "widget",
@@ -1816,6 +2120,7 @@ window.__ajScan = async (PROBE = true) => {
       ...identityOf(el),
       t: CONTROL_ROLE[role] ? "aria-" + role : "widget",
       l: label,
+      lFull: declared ? lFullOf(da.text) : undefined,
       lSeen: declared ? seenOf(el, da) : undefined,
       labelWhy: inferred
         ? "label inferred from a nearby element, not declared by the control"

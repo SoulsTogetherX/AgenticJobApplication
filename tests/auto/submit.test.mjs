@@ -57,8 +57,14 @@ const SCAN = Object.freeze({
   buttons: [{ k: "b7", l: "Submit application", r: "submit" }],
 })
 
-/** A page that RECORDS clicks instead of performing them. */
-function fakePage({ url = APPLY_URL, onClick = null } = {}) {
+/** A page that RECORDS clicks instead of performing them. `stampAttached:
+ *  false` makes the pre-click liveness check see a dead stamp (the Greenhouse
+ *  post-upload remount) without touching the click path. */
+function fakePage({
+  url = APPLY_URL,
+  onClick = null,
+  stampAttached = true,
+} = {}) {
   const clicks = []
   return {
     clicks,
@@ -68,6 +74,10 @@ function fakePage({ url = APPLY_URL, onClick = null } = {}) {
         async click(opts) {
           clicks.push({ sel, opts })
           if (onClick) return onClick(sel)
+        },
+        async waitFor() {
+          if (!stampAttached)
+            throw new Error(`Timeout exceeded waiting for ${sel}`)
         },
       }
     },
@@ -488,6 +498,114 @@ test("a dry-run rehearsal does NOT pre-consume the live claim", async (t) => {
   assert.deepEqual(rows.map((x) => x.mode).sort(), ["dry_run", "live"])
 })
 
+test("a CONFIRMED live click resolves its own ledger row, counts as submitted, names every actuation, and leaves the run clean", async (t) => {
+  // THE DEFECT (2026-08-18): nothing on the live path ever called
+  // run.recordSubmission(). The queue row went to `submitted`, the ledger row
+  // stayed `attempted`, run.submitted stayed 0, and finish() reported one
+  // unresolved attempt "which may already be an application" and raised a
+  // company-scoped brake — for a SUCCESSFUL application. Found by driving the
+  // path with a classifier that answers `confirmation`; the first real submit
+  // would have found it too.
+  const r = rig(t, { mode: "live", limits: { ...LIMITS, dry_run: false } })
+  const page = fakePage()
+  const plan = {
+    ...PLAN,
+    actuated: [
+      {
+        k: "g1",
+        label: "Are you legally authorized to work in the United States?",
+        value: "Yes",
+        pick: "f2",
+        grant: "required-assertion",
+        req: true,
+      },
+    ],
+  }
+  const planSha = planSha256(plan)
+  // The plan carries a granted actuation, so the gate needs the policy that
+  // grants it — the same key the user's file would carry.
+  const token = r.mint({
+    plan,
+    planSha,
+    config: {
+      ...LIMITS,
+      dry_run: false,
+      unattended_assent: { required_assertions: true },
+    },
+  })
+  assert.ok(token?.nonce, `a token was minted: ${token?.reason ?? ""}`)
+  const out = await submitOnce(page, {
+    ...r.base({
+      mode: "live",
+      classify: () => ({ kind: "confirmation", rule: "capture-test" }),
+    }),
+    token,
+    plan,
+    planSha,
+    report: { verify: { mismatch: [], errors: [], requiredEmpty: [] } },
+    job: { slug: SLUG, company: "Acme", title: "Full-Stack Engineer" },
+  })
+  assert.equal(out.outcome, "confirmation")
+  assert.equal(out.row.outcome, "submitted", "the resolved row comes back")
+
+  const db = openDb(r.dbFile)
+  const row = db
+    .prepare(
+      "SELECT outcome, confirmation_url, doc FROM auto_submissions WHERE slug = ? AND mode = 'live'",
+    )
+    .get(SLUG)
+  db.close()
+  assert.equal(
+    row.outcome,
+    "submitted",
+    "the ledger row is RESOLVED, not left attempted",
+  )
+  assert.equal(row.confirmation_url, APPLY_URL)
+  const doc = JSON.parse(row.doc)
+  assert.deepEqual(
+    doc.consent_labels,
+    [
+      {
+        label: "Are you legally authorized to work in the United States?",
+        value: "Yes",
+        grant: "required-assertion",
+      },
+    ],
+    "every actuation is named on the record, with its grant",
+  )
+  assert.equal(doc.actuated.length, 1)
+  assert.equal(
+    doc.audit_incomplete,
+    undefined,
+    "nothing a withdrawal needs is missing",
+  )
+
+  const fin = r.run.finish({ outcome: "ok" })
+  assert.equal(fin.submitted, 1, "the run counted it")
+  assert.equal(fin.outcome, "ok", `no false brake: ${fin.stop_reason ?? ""}`)
+})
+
+test("a challenge after the click leaves the attempt OPEN — only a confirmation resolves it", async (t) => {
+  const r = rig(t, { mode: "live", limits: { ...LIMITS, dry_run: false } })
+  const out = await submitOnce(
+    fakePage(),
+    r.base({ mode: "live", classify: () => "bot-challenge" }),
+  )
+  assert.equal(out.outcome, "bot-challenge")
+  const db = openDb(r.dbFile)
+  const row = db
+    .prepare(
+      "SELECT outcome FROM auto_submissions WHERE slug = ? AND mode = 'live'",
+    )
+    .get(SLUG)
+  db.close()
+  assert.equal(
+    row.outcome,
+    "attempted",
+    "an orphan for a human to adjudicate, by design",
+  )
+})
+
 // ---------------------------------------------------------------------------
 // The click site itself
 // ---------------------------------------------------------------------------
@@ -621,4 +739,57 @@ test("the refusal type carries WHICH precondition, for an actionable reason", as
     assert.equal(e.precondition, "board_trusted")
     assert.ok(SUBMIT_PRECONDITIONS.includes(e.precondition))
   }
+})
+
+// --- the pre-click stamp liveness check ------------------------------------
+//
+// Greenhouse's embed remounts its form after an upload and drops every
+// [data-aj] stamp. Before this check, the click waited its full 15s on a
+// selector matching zero elements WITH THE ATTEMPT ROW ALREADY WRITTEN — an
+// orphan and a company STOP for a click that provably never dispatched
+// (three times on Torc, 2026-08-19/22). The check runs before anything
+// durable: no row, no token spend, so the caller can re-scan and retry.
+
+test("a dead submit stamp refuses BEFORE the attempt row, and the token survives", async (t) => {
+  const { SubmitStampLost } = await import("../../scripts/auto/submit.mjs")
+  const r = rig(t, { mode: "live", limits: { ...LIMITS, dry_run: false } })
+
+  const dead = fakePage({ stampAttached: false })
+  const token = r.mint()
+  await assert.rejects(
+    () =>
+      submitOnce(
+        dead,
+        r.base({ mode: "live", classify: () => "confirmation", token }),
+      ),
+    (e) => e instanceof SubmitStampLost && e.key === "b7",
+  )
+  assert.deepEqual(dead.clicks, [], "no click may be issued on a dead stamp")
+
+  const db = openDb(r.dbFile)
+  const row = db
+    .prepare("SELECT * FROM auto_submissions WHERE slug = ?")
+    .get(SLUG)
+  db.close()
+  assert.equal(row, undefined, "a dead stamp must write no attempt row")
+
+  // The same token spends cleanly on a page whose stamp is alive — the
+  // refusal consumed nothing.
+  const alive = fakePage()
+  const out = await submitOnce(
+    alive,
+    r.base({ mode: "live", classify: () => "confirmation", token }),
+  )
+  assert.equal(out.clicked, true)
+  assert.equal(alive.clicks.length, 1)
+})
+
+test("a dry run never runs the liveness check — its page double has no DOM", async (t) => {
+  const r = rig(t)
+  // stampAttached:false would throw in live mode; in dry_run the check is
+  // skipped entirely and the dry rehearsal completes.
+  const page = fakePage({ stampAttached: false })
+  const out = await submitOnce(page, r.base())
+  assert.equal(out.outcome, "dry-run")
+  assert.deepEqual(page.clicks, [], "a dry run must never click")
 })

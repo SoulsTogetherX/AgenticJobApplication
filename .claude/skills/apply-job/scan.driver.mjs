@@ -48,15 +48,58 @@ async (page) => {
   // the tell. Wait for a button to EXIST rather than for a flat 1.5 seconds,
   // then re-scan. Same ceiling; a page that hydrates in 200ms costs 200ms.
   await page.waitForLoadState("load").catch(() => {})
-  let scan = await page.evaluate(() => window.__ajScan(false))
+  const runScan = () => page.evaluate(() => window.__ajScan(false))
+  let scan = await runScan()
   if (!scan.btns || !scan.btns.length) {
     await page
       .locator("button, [role='button'], input[type=submit]")
       .first()
       .waitFor({ state: "attached", timeout: 1500 })
       .catch(() => {})
-    scan = await page.evaluate(() => window.__ajScan(false))
+    scan = await runScan()
   }
+
+  // THE PAGE MAY RE-RENDER ITSELF UNDER THE SCAN — mirrored from
+  // scripts/apply/scan-engine.mjs, which carries the measurement. In short:
+  // Greenhouse's embed form (a Remix app) replaces its whole document root
+  // ~200ms after `load`, with or without a scanner on the page, so every
+  // data-aj stamp the structure scan wrote is on a node that no longer exists
+  // and every probe click waited its full 6s for nothing. Detected cheaply
+  // (stamp count before and after the pass, an attached-check per control),
+  // then ONE re-scan over the fresh nodes and the pass runs again. A page that
+  // never re-renders pays nothing.
+  const stampsIn = (s) => {
+    const keys = new Set()
+    for (const f of s.fields || []) {
+      if (f.k && !Array.isArray(f.o)) keys.add(f.k)
+      for (const o of f.o || []) if (o && o.k) keys.add(o.k)
+    }
+    for (const b of s.btns || []) if (b && b.k) keys.add(b.k)
+    return keys.size
+  }
+  const stampsAlive = () =>
+    page
+      .evaluate(() => document.querySelectorAll("[data-aj]").length)
+      .catch(() => 0)
+  const stampsLost = async (s) => (await stampsAlive()) < stampsIn(s)
+  // A CONDITION WITH A CEILING, not a sleep: the control count must read the
+  // same on two consecutive polls 150ms apart (so at least one poll interval
+  // passes), bounded at 2s. Only ever paid by a page that lost its stamps.
+  const settleAfterRerender = () =>
+    page
+      .waitForFunction(
+        () => {
+          const n = document.querySelectorAll(
+            "input,select,textarea,[role='combobox']",
+          ).length
+          const same = window.__ajSettleCount === n
+          window.__ajSettleCount = n
+          return same
+        },
+        undefined,
+        { polling: 150, timeout: 2000 },
+      )
+      .catch(() => {})
 
   // Capped: a long form should not spend a minute here, and the field cache
   // means this only runs once per board anyway.
@@ -100,7 +143,23 @@ async (page) => {
     return ""
   }
 
-  const stats = { probed: 0, cached: 0, skipped: 0, capped: 0, refused: 0 }
+  // THE BOUND THAT WAS ACTUALLY MEANT IS TIME, NOT COUNT — mirrored from
+  // scan-engine.mjs, which carries the reasoning. In short: the cap has always
+  // stood in for "a long form should not spend a minute in here", and raising
+  // it 18 -> 24 alongside 2s -> 6s of click patience took the pathological
+  // form from ~72s to ~264s. The budget enforces the stated intent directly,
+  // so the worst case returns to ~60s while a healthy form keeps the coverage.
+  // It spans both passes when a re-render forces a second one.
+  const probeBudgetMs = 60000
+  const probeStart = Date.now()
+
+  // One probe PASS over `scan`; returns true when the page re-rendered under
+  // it (its stamps are gone) so the caller can re-scan and run it again.
+  // `stats` is per pass: the numbers describe the scan that is returned.
+  let stats = null
+  const probePass = async () => {
+  if (await stampsLost(scan)) return true
+  stats = { probed: 0, cached: 0, skipped: 0, capped: 0, refused: 0 }
   const todo = []
   for (const f of scan.fields || []) {
     if (f.t !== "combo" || (f.opts && f.opts.length)) continue
@@ -120,15 +179,6 @@ async (page) => {
     }
     todo.push(f)
   }
-
-  // THE BOUND THAT WAS ACTUALLY MEANT IS TIME, NOT COUNT — mirrored from
-  // scan-engine.mjs, which carries the reasoning. In short: the cap has always
-  // stood in for "a long form should not spend a minute in here", and raising
-  // it 18 -> 24 alongside 2s -> 6s of click patience took the pathological
-  // form from ~72s to ~264s. The budget enforces the stated intent directly,
-  // so the worst case returns to ~60s while a healthy form keeps the coverage.
-  const probeBudgetMs = 60000
-  const probeStart = Date.now()
 
   // THE ELEMENT WE STAMPED IS NOT ALWAYS THE ELEMENT THAT CARRIES THE ARIA —
   // mirrored from scripts/apply/scan-engine.mjs, which carries the full
@@ -169,6 +219,14 @@ async (page) => {
       continue
     }
     const loc = page.locator('[data-aj="' + f.k + '"]')
+    // ATTACHED WITHIN 250ms, OR GONE — mirrored from scan-engine.mjs: a stamp
+    // not on the page by now is on a node the page threw away; the pass ends
+    // and the caller re-scans. An attached control resolves this at once.
+    const attached = await loc
+      .waitFor({ state: "attached", timeout: 250 })
+      .then(() => true)
+      .catch(() => false)
+    if (!attached) return true
     try {
       // NON-FATAL — mirrored from scan-engine.mjs, which carries the
       // measurement: on Oracle Recruiting Cloud this threw before the click was
@@ -249,12 +307,17 @@ async (page) => {
       // as one 60-character blob, because the only <li> inside the listbox is
       // the scroller that holds them all and a container's text is not an
       // option.
-      const raw = await page.evaluate((ajKey) => {
+      // Named so it can run a second time when the first read found only a
+      // loading placeholder (below) — mirrored from scan-engine.mjs.
+      const readMenu = () =>
+        page.evaluate((ajKey) => {
         const norm = (s) =>
           String(s == null ? "" : s)
             .replace(/\s+/g, " ")
             .trim()
         const el = document.querySelector('[data-aj="' + ajKey + '"]')
+        // Re-rendered between the click and the read: say so, sweep nothing.
+        if (!el) return { lost: true }
         const vis = (n) => {
           if (!n || !n.isConnected) return false
           const r = n.getBoundingClientRect()
@@ -367,18 +430,60 @@ async (page) => {
         // The cache would then store that as the COMPLETE list and the real
         // answer would resolve as "not on offer" forever. Removal-only, so it
         // can only cause a defer, never a wrong fill.
+        // "Loading..." is not an option either — mirrored from scan-engine.mjs
+        // (Greenhouse's async School / Degree / Discipline lists mount with a
+        // loading notice and fill in later); reported as `loading` so the
+        // caller can wait for the rows once.
         const EMPTY_STATE =
-          /^(no results?|no options?|no matches?|nothing found|start typing|type to search)\b/i
+          /^(no results?|no options?|no matches?|nothing found|start typing|type to search|loading\b)/i
+        const shown = rows.filter(vis).map((e) => norm(e.innerText))
+        const loading = shown.some((t) => /^loading\b/i.test(t))
         const all = [
           ...new Set(
-            rows
-              .filter(vis)
-              .map((e) => norm(e.innerText).slice(0, 60))
+            shown
+              .map((t) => t.slice(0, 60))
               .filter((t) => t && !EMPTY_STATE.test(t)),
           ),
         ]
-        return { opts: all.slice(0, 40), total: all.length }
+        // 250, raised from 40 on 2026-08-21 in step with scan-engine.mjs and
+        // scan-page.js MAX_OPTS — a 197-row country list cut to 40 lost the
+        // banked answer's option. optsTruncated still states any cut.
+        return { opts: all.slice(0, 250), total: all.length, loading }
       }, f.k)
+      let raw = await readMenu()
+      if (raw && raw.lost === true) {
+        await page.keyboard.press("Escape").catch(() => {})
+        return true
+      }
+      // Rows that have not arrived yet are not an empty list — a condition
+      // with a ceiling (the loading notice must go away), then ONE re-read.
+      if (
+        raw &&
+        raw.loading === true &&
+        !(Array.isArray(raw.opts) && raw.opts.length)
+      ) {
+        await page
+          .waitForFunction(
+            () =>
+              ![
+                ...document.querySelectorAll(
+                  "[class*='menu'] *,[role='listbox'] *",
+                ),
+              ].some(
+                (n) =>
+                  n.getClientRects().length &&
+                  /^loading\b/i.test(String(n.innerText || "").trim()),
+              ),
+            undefined,
+            { polling: 100, timeout: 1500 },
+          )
+          .catch(() => {})
+        raw = await readMenu()
+        if (raw && raw.lost === true) {
+          await page.keyboard.press("Escape").catch(() => {})
+          return true
+        }
+      }
       const opts = Array.isArray(raw) ? raw : (raw && raw.opts) || []
       const total = Array.isArray(raw) ? raw.length : Number((raw && raw.total) || 0)
       if (opts.length) f.opts = opts
@@ -399,7 +504,33 @@ async (page) => {
       f.probe_error = String(e.message).slice(0, 60)
     }
   }
-  scan.probe = stats
+  return stampsLost(scan)
+  }
+
+  // Run the pass; if the page re-rendered under it, re-scan ONCE and run it
+  // again over the fresh stamps — mirrored from scan-engine.mjs.
+  let rescans = 0
+  for (;;) {
+    const lost = await probePass()
+    if (!lost) break
+    if (rescans >= 1) {
+      scan.signals = (scan.signals || []).concat(
+        "page re-rendered again after a re-scan; stamps may not resolve at fill time",
+      )
+      break
+    }
+    await settleAfterRerender()
+    scan = await runScan()
+    rescans++
+    scan.signals = (scan.signals || []).concat(
+      "page re-rendered after the structure scan (hydration); re-scanned and re-probed",
+    )
+  }
+  scan.probe = Object.assign(
+    {},
+    stats || { probed: 0, cached: 0, skipped: 0, capped: 0, refused: 0 },
+    { rescans },
+  )
 
   // NO VOUCH EVER SURVIVES THIS PATH, and that is deliberate.
   //

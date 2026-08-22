@@ -459,3 +459,62 @@ test("stale deferred rows are counted, with how many the next enqueue will revis
   // the shape of the line is what this pins.
   assert.match(out, /stale_deferred=3 \(requeueable=2 oldest=\d+(\.\d+)?h\)/)
 })
+
+test("every assent a confirmed submission made for the user is NAMED in the digest — label, value, grant — never just counted", async (t) => {
+  // Rule 6: the user delegates assent, not the record of it. submit.mjs writes
+  // plan.actuated into the ledger row on a confirmed click; the digest reads it
+  // back per submission. A row that actuated nothing is not listed.
+  const f = fixture(t)
+  recordAutoSubmission(f.db, {
+    run_id: "run-2",
+    slug: "gh-assented",
+    company: "Torc Robotics",
+    title: "Software Engineer II",
+    mode: "live",
+    submitted_at: ago(3).toISOString(),
+    outcome: "submitted",
+    apply_url: "https://job-boards.greenhouse.io/torc/jobs/1",
+    // `actuated` rides on the record itself — recordAutoSubmission stores the
+    // whole object as the row's doc, which is exactly what audit.mjs writes.
+    actuated: [
+        {
+          k: "f9",
+          label: "Are you legally authorized to work in the United States?",
+          value: "Yes",
+          grant: "required-assertion",
+          req: true,
+        },
+        {
+          k: "g2",
+          label: "I certify that the information provided is true.",
+          value: true,
+          pick: "f10",
+          grant: "required-consent",
+          req: true,
+        },
+      ],
+  })
+  const a = buildAutoStatus(f.db, { now: NOW, stopPath: f.stopPath })
+  assert.equal(a.assents_24h.length, 1, "only the row that actuated something")
+  assert.equal(a.assents_24h[0].slug, "gh-assented")
+  assert.deepEqual(
+    a.assents_24h[0].assents.map((x) => [x.label, x.value, x.grant]),
+    [
+      ["Are you legally authorized to work in the United States?", "Yes", "required-assertion"],
+      ["I certify that the information provided is true.", true, "required-consent"],
+    ],
+  )
+  const { formatAutoTerse, formatAutoProse } = await await_import()
+  const terse = formatAutoTerse(a).join("\n")
+  assert.match(terse, /auto assent gh-assented n=2/)
+  assert.match(terse, /grant=required-assertion/)
+  const prose = formatAutoProse(a).join("\n")
+  assert.match(prose, /Asserted on your behalf/)
+  assert.match(prose, /I certify that the information provided is true\. → ticked \[required-consent\]/)
+})
+
+function await_import() {
+  // The renderers are pure over the status object; imported lazily here so
+  // the file's existing import list stays as it was.
+  return import("../../scripts/auto/digest.mjs").then((m) => m)
+}

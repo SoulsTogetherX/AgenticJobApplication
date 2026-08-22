@@ -58,6 +58,7 @@ import {
   submitOnce,
   SubmitRefused,
   SubmitAmbiguous,
+  SubmitStampLost,
   ClassifierRequired,
 } from "./submit.mjs"
 import { walkPages } from "./multipage.mjs"
@@ -65,6 +66,16 @@ import { AdvanceAmbiguous } from "./advance.mjs"
 import { classifyPlanDefers, reasonRecord, toStateOpts } from "./taxonomy.mjs"
 import { safeText } from "./untrusted-text.mjs"
 import { StopError } from "./guard.mjs"
+import { isHostSighted } from "./classify.mjs"
+
+/** The hostname of a url, for a message; never throws. */
+function hostOf(url) {
+  try {
+    return new URL(String(url)).hostname
+  } catch {
+    return "an unparseable url"
+  }
+}
 
 /**
  * authorizeSubmit's check names -> taxonomy kinds.
@@ -137,8 +148,11 @@ const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v)
  * @returns {{slug, state, kind, stage, detail, submitted, wall_ms}}
  *   `state` is `not-claimed` or a terminal auto_queue state. It NEVER throws
  *   for a per-job condition — a thrown error would take the pool's worker down
- *   with it and strand every job behind it. It DOES re-throw `StopError`,
- *   because a STOP is not a per-job condition: it means stop.
+ *   with it and strand every job behind it. It re-throws `StopError` ONLY at
+ *   global/run scope, because that STOP is not a per-job condition: it means
+ *   stop. A company- or board-scoped brake IS a per-job condition — it holds
+ *   one employer or vendor and promises everything else keeps running — so it
+ *   returns as a `company-stopped`/`board-stopped` deferral instead (§4.9).
  */
 export async function runJob({
   db,
@@ -160,6 +174,10 @@ export async function runJob({
   sentThisRun = 0,
   allowLoopbackHttp = false,
   classify = null,
+  // Can a confirmation on this host be read? Defaults to the shipped
+  // classifier's own evidence (classify.mjs isHostSighted); injectable so a
+  // harness that injects a `classify` can say what its classifier can see.
+  hostSighted = isHostSighted,
   dbFile,
   stopPath = undefined,
   navRetries = 1,
@@ -278,6 +296,30 @@ export async function runJob({
 
     const liveUrl = nav.url ?? applyUrl
 
+    // --- the sightedness gate, BEFORE anything is typed into the form -----
+    //
+    // THE ALLOWLIST AND THE EVIDENCE LIST ARE DIFFERENT LISTS (CLAUDE.md rule
+    // 6). The trust gate above said the user trusts this vendor; this asks
+    // whether the repository can READ what the vendor's page says after a
+    // submit — i.e. whether classify.mjs ships a capture-sourced confirmation
+    // rule for the LIVE host, redirects followed. Until 2026-08-18 nothing
+    // asked until after the click, so on an allowlisted-but-uncaptured host
+    // (boards.greenhouse.io, jobs.lever.co on that day) the form was filled,
+    // clicked, and the page after came back `unclassified` — a hard STOP, with
+    // the application possibly SENT and unrecorded, which is the one failure
+    // nothing later corrects. Deferring here costs one navigation and names the
+    // fix: an attended apply on that host with capture-post-submit.mjs, then
+    // promote. Live only — a dry run clicks nothing and reads nothing.
+    if (mode === "live" && !hostSighted(liveUrl))
+      return terminate(
+        "board-unsighted",
+        "plan",
+        `no captured post-submit page for ${safeText(hostOf(liveUrl), 60)} — ` +
+          `a live click could not be read afterwards; capture one attended ` +
+          `(scripts/apply/capture-post-submit.mjs: stage → review → promote) ` +
+          `and re-enqueue`,
+      )
+
     // THE WALK (§4.2c). One page or several — the single-page case is the same
     // code path with the loop running once, so a multi-page form is not a
     // special case to be remembered. The scan, plan and fill stages are handed
@@ -348,7 +390,10 @@ export async function runJob({
     const report = walk.report
     // THE LAST PAGE'S SCAN, never the first. The submit control lives on the
     // final page, and an earlier page's stamps do not exist in that DOM.
-    const scan = walk.pages?.[walk.pages.length - 1]?.scan ?? null
+    // `let`, not `const`: if the fill's upload remounted the form and killed
+    // the stamps, submitOnce throws SubmitStampLost and the retry below
+    // replaces this with one fresh scan.
+    let scan = walk.pages?.[walk.pages.length - 1]?.scan ?? null
     // The MERGED sha, replacing the per-page one the walk left on the row. This
     // is the sha the submit token binds to, and it has to cover every page — a
     // token bound to the last page alone would authorise a submit whose earlier
@@ -378,7 +423,18 @@ export async function runJob({
         : ""
       if (walk.kind !== "plan-defer")
         return terminate(
-          walk.kind === "authorize" ? "plan-error" : walk.kind,
+          // A mid-walk authorisation refusal is typed EXACTLY as the final
+          // gate's is (CHECK_TO_KIND, below): the walk carries the first failed
+          // check's name, and the same policy check gets the same kind whether
+          // it fired on page 2 or at the end. It used to be a blanket
+          // `plan-error`, so a "nothing to fill" on a closed posting — a
+          // `submit_readiness` refusal, `unknown-field` at the final gate —
+          // reached the row as a MALFUNCTION and fed the breaker. Only a
+          // refusal whose check nothing maps (or a token that was never
+          // minted) is still the runner's own fault.
+          walk.kind === "authorize"
+            ? (CHECK_TO_KIND.get(walk.check) ?? "plan-error")
+            : walk.kind,
           "plan",
           `${safeText(walk.reason, 200)}${suffix}`,
         )
@@ -469,28 +525,66 @@ export async function runJob({
     setAutoJobState(db, slug, "attempted", { run_id: run.id })
 
     let result
+    // Bounded at ONE re-scan. SubmitStampLost is thrown before the durable
+    // attempt row and before the token spend (submit.mjs), so retrying is
+    // safe: no orphan exists and the token is still whole. The re-scan is a
+    // scan ONLY — no plan, no fill, no other click; the merged sha and the
+    // token are untouched, and the fresh stamps are the one thing the retry
+    // needs (Greenhouse's embed remount is why they died).
+    let rescanned = false
     try {
-      result = await submitOnce(page, {
-        token: auth,
-        slug,
-        planSha: sha,
-        mode,
-        pageUrl: page.url ? page.url() : liveUrl,
-        queueRow: { slug, state: "authorized", run_id: run.id },
-        plan,
-        report,
-        run,
-        trust,
-        verification: documents?.verification ?? null,
-        profileApproved,
-        scan,
-        classify,
-        dbFile,
-        ...(stopPath === undefined ? {} : { stopPath }),
-        job,
-      })
+      for (;;) {
+        try {
+          result = await submitOnce(page, {
+            token: auth,
+            slug,
+            planSha: sha,
+            mode,
+            pageUrl: page.url ? page.url() : liveUrl,
+            queueRow: { slug, state: "authorized", run_id: run.id },
+            plan,
+            report,
+            run,
+            trust,
+            verification: documents?.verification ?? null,
+            profileApproved,
+            scan,
+            classify,
+            dbFile,
+            ...(stopPath === undefined ? {} : { stopPath }),
+            job,
+          })
+          break
+        } catch (e) {
+          if (e instanceof SubmitStampLost && !rescanned) {
+            rescanned = true
+            scan = await scanStage(page, {
+              url: liveUrl,
+              job,
+              lead,
+              page: walk.pages?.length ?? 1,
+            })
+            continue
+          }
+          throw e
+        }
+      }
     } catch (e) {
       if (e instanceof StopError) throw e
+      if (e instanceof SubmitStampLost) {
+        // One re-scan did not bring the stamp back. No click was issued and
+        // no attempt row exists, so this defers cleanly and a fresh run —
+        // which re-navigates and re-stamps — usually lands it.
+        return terminate(
+          "submit-control-lost",
+          "attempt",
+          safeText(
+            `the submit stamp left the DOM before any click (form remount ` +
+              `after upload); one re-scan did not recover it: ${e.detail}`,
+            200,
+          ),
+        )
+      }
       if (e instanceof SubmitAmbiguous) {
         // The click went out and we do not know what happened. The ledger row
         // stays 'attempted' — an ORPHAN, deliberately — and the queue row says
@@ -548,7 +642,25 @@ export async function runJob({
       `the post-submit page classified as ${safeText(result.outcome, 60)}`,
     )
   } catch (e) {
-    if (e instanceof StopError) throw e
+    if (e instanceof StopError) {
+      // A SCOPED brake defers this job; only global/run scope stops the run.
+      // The brake's own message promises "everything else keeps running", and
+      // until 2026-08-22 this re-throw broke that promise: one company STOP
+      // rejected the pool's Promise.all and stranded every queued job behind
+      // it, twice in one day. Every checkpoint throw (beginJob, pre-submit)
+      // funnels here, so this is the single conversion point.
+      if (e.scope === "company" || e.scope === "board")
+        return terminate(
+          e.scope === "board" ? "board-stopped" : "company-stopped",
+          "claim",
+          safeText(
+            `a ${e.scope}-scoped STOP for "${e.key}" is set (checkpoint ${e.checkpoint}) — ` +
+              `delete ${e.at} to clear, then --enqueue`,
+            200,
+          ),
+        )
+      throw e // global | run: a STOP means stop
+    }
     // The catch-all. A job must not be able to take its worker down: the pool
     // has N-1 other jobs behind it and an uncaught throw strands all of them.
     try {

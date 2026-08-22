@@ -450,14 +450,32 @@ test("FINDING (w3-resolution): CARRIER 1 — a scan FILE on disk asserts its own
       JSON.stringify(ticked),
   )
 
-  // Auxiliary, after: either the planner deferred the box, or it refused to
-  // produce a plan at all. Both are safe; anything else is not.
+  // Auxiliary, after: the planner deferred the box, refused to plan at all, or
+  // left it explicitly unticked. All three are safe; anything else is not.
+  //
+  // THE THIRD OUTCOME IS NEW AND IS NOT A LOOSENING. The box in this fixture
+  // carries no `req`, so it is OPTIONAL, and the user's `unattended_assent`
+  // key `optional: skip` (2026-08-18) says an optional assent field is left
+  // empty and stops blocking. The planner therefore emits it as a `skip` item
+  // reading "consent: optional, left unticked" instead of a `defer`. The
+  // property this test defends — a scan FILE cannot talk the planner into
+  // ticking a consent box — is asserted above and is untouched: `skip` means
+  // the box was not ticked, said out loud, which is the same safety with a
+  // different word. Verified by running the CLI on this exact fixture
+  // (2026-08-20). Were this clause to accept a `check` item, that would be the
+  // loosening, and the assertion above already forbids it.
+  const leftUnticked = (written.items ?? []).some(
+    (i) => i.how === "skip" && /consent/i.test(String(i.why ?? "")),
+  )
   const safe =
-    written._absent || (written.defer ?? []).some((d) => d.why === "consent")
+    written._absent ||
+    (written.defer ?? []).some((d) => d.why === "consent") ||
+    leftUnticked
   assert.ok(
     safe,
-    `the consent box must defer (or the run must refuse): status=${res.status} ` +
-      `defer=${JSON.stringify(written.defer)} stderr=${res.stderr.slice(0, 200)}`,
+    `the consent box must defer, skip, or the run must refuse: status=${res.status} ` +
+      `defer=${JSON.stringify(written.defer)} items=${JSON.stringify(written.items)} ` +
+      `stderr=${res.stderr.slice(0, 200)}`,
   )
 })
 

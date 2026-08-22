@@ -39,6 +39,7 @@ import {
   knownOptsFromEntry,
 } from "../apply/field-cache.mjs"
 import { loadDisclosureLimits } from "../apply/disclosure.mjs"
+import { loadAssentPolicy } from "../apply/assent-policy.mjs"
 import { detectAts } from "../apply/ats/index.mjs"
 import { classify as classifyPage } from "./classify.mjs"
 import { loadYamlFile } from "../lib/lib.mjs"
@@ -109,6 +110,11 @@ export function makeStages({
 } = {}) {
   const limits = loadDisclosureLimits({ limitsFile })
   const bankSize = bankSizeOf(answersPath)
+  // The user's unattended-assent policy, from the same file, read once per
+  // makeStages() — the same lifetime as the disclosure limits. authorize.mjs
+  // re-reads it independently for the submit gate; the two are separate keys
+  // on purpose (see submitReadiness).
+  const assent = loadAssentPolicy({ limitsFile })
 
   // THE VOUCH TRAVELS OUT OF BAND, and this WeakMap is how.
   //
@@ -242,6 +248,7 @@ export function makeStages({
       vouchedLabels: vouchOf.get(pageScan) ?? [],
       limits,
       bankSize,
+      assent,
     })
     promoteComboStrategy(built, cachedEntry)
 

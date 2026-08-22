@@ -2424,6 +2424,25 @@ test("a failed fill refuses the submit, and the reason names the field", () => {
   assert.match(state.reason, /resume\.pdf/)
 })
 
+test("a fill whose submit guard had to block a submission attempt refuses, with the count", () => {
+  // fill-engine (2026-08-18) counts every submit event a keystroke raised
+  // during the fill and stops them; a count above zero means a widget
+  // forwarded Enter, and the unattended gate does not trust the form after
+  // that. Zero, or absent (an older report), changes nothing.
+  const state = submitReadiness(CLEAN_PLAN, {
+    ...CLEAN_REPORT,
+    submitsBlocked: 1,
+  })
+  assert.equal(state.ready, false)
+  assert.match(state.reason, /1 form submission attempt\(s\)/)
+  assert.match(state.reason, /submit guard blocked/)
+  assert.equal(
+    submitReadiness(CLEAN_PLAN, { ...CLEAN_REPORT, submitsBlocked: 0 }).ready,
+    true,
+  )
+  assert.equal(submitReadiness(CLEAN_PLAN, CLEAN_REPORT).ready, true)
+})
+
 test("a verify MISMATCH refuses, naming the field and both values", () => {
   const state = submitReadiness(CLEAN_PLAN, {
     ...CLEAN_REPORT,

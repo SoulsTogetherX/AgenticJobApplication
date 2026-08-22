@@ -124,6 +124,56 @@ test("an unprobed combo defers instead of silently accepting the first candidate
 // nowhere in the label or the banked answer — a confidently wrong,
 // auto-filled claim. remainderIsGrounded() is the fix: whatever text SURVIVES
 // past the matched value must already be implied by the FIELD's own label.
+// A stated count of years grounds into the ONE bracket that contains it —
+// measured on Hims & Hers (Ashby) 2026-08-18, where the bank's "Approximately
+// 3 years (since June 2023)" met "Less than 3 years | 3 to 5 years | 6 to 9
+// years | 10+ years" and came back NEEDS-CHOICE. Arithmetic, bounded on both
+// sides; every bound below is a case that must keep deferring.
+const YEAR_BRACKETS = [
+  "Less than 3 years",
+  "3 to 5 years",
+  "6 to 9 years",
+  "10+ years",
+]
+test("matchOption: a single stated count of years grounds into the bracket that contains it", () => {
+  const ground = (v) =>
+    matchOption(v, YEAR_BRACKETS, { requireOptions: true, label: "Years" })
+  assert.deepEqual(ground("Approximately 3 years (since June 2023)"), {
+    value: "3 to 5 years",
+  })
+  assert.deepEqual(ground("2 years"), { value: "Less than 3 years" })
+  assert.deepEqual(ground("3.5 yrs"), { value: "3 to 5 years" })
+  assert.deepEqual(ground("12 years"), { value: "10+ years" })
+  // "Less than 3" excludes 3; "3 to 5" includes both ends.
+  assert.deepEqual(ground("5 years"), { value: "3 to 5 years" })
+  assert.deepEqual(ground("6 years"), { value: "6 to 9 years" })
+})
+
+test("matchOption: the year-bracket rule defers on every ambiguity rather than picking a nearest bracket", () => {
+  const nc = (v, opts = YEAR_BRACKETS) =>
+    matchOption(v, opts, { requireOptions: true, label: "Years" }).needsChoice
+  assert.equal(nc("5.5 years"), true, "a value in the gap between brackets")
+  assert.equal(nc("3+ years"), true, "a lower bound is not a number")
+  assert.equal(nc("2 years React, 5 years JS"), true, "two counts")
+  assert.equal(nc("since 2023"), true, "no count at all")
+  assert.equal(nc("2023 years"), true, "a calendar year is not a count")
+  assert.equal(
+    nc("3 years", ["Less than 3 years", "3 to 5 years", "Other"]),
+    true,
+    "one option that is not a bracket means the list is not a bracket list",
+  )
+  assert.equal(
+    nc("3 years", ["Less than 3", "3 to 5", "6+"]),
+    true,
+    "options that do not name years are not year brackets",
+  )
+  assert.equal(
+    nc("3 years", ["1-3 years", "3-5 years"]),
+    true,
+    "a value on a shared boundary of two brackets is not unique",
+  )
+})
+
 test("matchOption: a banked Yes does not expand into invented detail the label never offered (AUDIT C1)", () => {
   const r = matchOption("Yes", ["Yes, 5+ years professionally", "No"], {
     requireOptions: true,
@@ -1557,4 +1607,214 @@ test("a banked answer the board does not offer defers rather than coercing", () 
   })
   assert.equal(r.get("f1").status, "NEEDS-CHOICE")
   assert.notEqual(r.get("f1").value, DECLINE)
+})
+
+// ---------------------------------------------------------------------------
+// TIME-DERIVED ANSWERS (2026-08-21). User decision, in their words: "For any
+// time related questions, I need you to be able to automatically keep track
+// of the passage of time yourself, via comparing dates." The pre-bank pass
+// computes years-of-experience and start dates against an injected NOW; the
+// bank's frozen literals (a stale date, a duration true when banked) must
+// never shadow it. Every test pins `now` — a test that reads the real clock
+// rots (the screen-blockers pattern).
+// ---------------------------------------------------------------------------
+
+const TIME_PROFILE = {
+  contact: {
+    name: "Jane Q Test",
+    email: "jane@test.example",
+    location: "Springfield, IL",
+  },
+  experience: [
+    // The user's own accounting anchors at the first INDUSTRY role — the
+    // internship counts (a-008 says "since June 2023"), teaching does not.
+    { company: "School", title: "Teacher Assistant", dates: "May 2019 - May 2023" },
+    { company: "SightCo", title: "QA / Software Development Intern", dates: "Jun 2023 - Aug 2023" },
+    { company: "Acme", title: "Full-Stack Developer", dates: "Jan 2024 - Present" },
+  ],
+}
+// A bank holding exactly the stale literals the pass must outrank.
+const TIME_BANK = {
+  answers: [
+    {
+      id: "a8",
+      question: "How many years of professional software development experience do you have?",
+      answer: "Approximately 3 years (since June 2023)",
+    },
+    { id: "a53", question: "When can you start a new role?", answer: "2026-08-18", source: "model" },
+  ],
+}
+const NOW_2026 = new Date("2026-08-21T12:00:00Z")
+const timeResolve = (fields, { now = NOW_2026, bank = TIME_BANK } = {}) => {
+  const { results } = createResolver(TIME_PROFILE, bank, { now }).resolveAll(
+    fields,
+  )
+  return new Map(results.map((r, i) => [fields[i].k, r]))
+}
+
+test("TIME: the years count is computed from dates, and the stale banked literal never shadows it", () => {
+  const r = timeResolve([
+    {
+      k: "f1",
+      t: "combo",
+      l: "How many years of professional software development experience do you have?",
+      opts: ["Less than 3 years", "3 to 5 years", "6 to 9 years", "10+ years"],
+    },
+  ])
+  const got = r.get("f1")
+  assert.equal(got.status, "OK")
+  assert.equal(got.value, "3 to 5 years")
+  assert.match(String(got.source), /computed/)
+})
+
+test("TIME: the same question two years later answers from the same facts with a different number", () => {
+  const r = timeResolve(
+    [
+      {
+        k: "f1",
+        t: "combo",
+        l: "How many years of professional software development experience do you have?",
+        opts: ["Less than 3 years", "3 to 5 years", "6 to 9 years", "10+ years"],
+      },
+    ],
+    { now: new Date("2029-09-01T12:00:00Z") },
+  )
+  // Jun 2023 -> Sep 2029 is 6.2y; the answer moved brackets with no edit to
+  // any file, which is the entire point of computing it.
+  assert.equal(r.get("f1").value, "6 to 9 years")
+})
+
+test("TIME: a generic threshold question compares the computed span; over/at-least are honoured", () => {
+  const r = timeResolve([
+    {
+      k: "f1",
+      t: "radio",
+      l: "Do you have over 3 years over professional software engineering experience?*",
+      o: [
+        { k: "o1", l: "Yes" },
+        { k: "o2", l: "No" },
+      ],
+    },
+    {
+      k: "f2",
+      t: "radio",
+      l: "Do you have at least 5 years of professional experience?",
+      o: [
+        { k: "o1", l: "Yes" },
+        { k: "o2", l: "No" },
+      ],
+    },
+  ])
+  // Jun 2023 -> Aug 2026 = 3.2y: over 3 -> Yes (with the live GitLab typo),
+  // at least 5 -> No. A No today becomes a Yes by itself when the clock says
+  // so — never by re-banking.
+  assert.equal(r.get("f1").value, "Yes")
+  assert.equal(r.get("f1").status, "OK")
+  assert.equal(r.get("f2").value, "No")
+})
+
+test("TIME: a SKILL-scoped years question is never answered with the total span", () => {
+  const r = timeResolve([
+    {
+      k: "f1",
+      t: "combo",
+      l: "How many years of React experience do you have?",
+      opts: ["1", "2", "3"],
+    },
+  ])
+  assert.doesNotMatch(String(r.get("f1").source ?? ""), /computed/)
+})
+
+test("TIME: 'when can you start' resolves to NOW's date, not the banked dead literal", () => {
+  const r = timeResolve([
+    { k: "f1", t: "date", l: "When can you start a new role?" },
+    { k: "f2", t: "text", l: "When can you start a new role?" },
+  ])
+  for (const k of ["f1", "f2"]) {
+    assert.equal(r.get(k).value, "2026-08-21", k)
+    assert.equal(r.get(k).status, "OK", k)
+  }
+})
+
+test("TIME: notice-period prose questions stay with the bank — no date is forced on them", () => {
+  const bank = {
+    answers: [
+      {
+        id: "a13",
+        question: "What is your earliest available start date / notice period?",
+        answer: "Available immediately; two weeks notice if required",
+      },
+    ],
+  }
+  const r = timeResolve(
+    [
+      {
+        k: "f1",
+        t: "text",
+        l: "What is your earliest available start date / notice period?",
+      },
+    ],
+    { bank },
+  )
+  // "start date" appears in the label, so the pass could claim it — but the
+  // banked answer is PROSE, the user's own wording, and prose never decays.
+  // The computed date replaces only a banked bare date literal.
+  assert.equal(
+    r.get("f1").value,
+    "Available immediately; two weeks notice if required",
+  )
+})
+
+// ---------------------------------------------------------------------------
+// COUNTRY OF RESIDENCE (2026-08-21): derived from contact.location's US state
+// code, ordered long-form first, and fenced away from the questions it must
+// never touch.
+// ---------------------------------------------------------------------------
+
+test("COUNTRY: 'current country of residence' derives United States from a US state code", () => {
+  const r = timeResolve([
+    {
+      k: "f1",
+      t: "combo",
+      l: "In which country do you currently reside?",
+      opts: ["Canada", "Mexico", "United States of America"],
+    },
+  ])
+  assert.equal(r.get("f1").status, "OK")
+  assert.equal(r.get("f1").value, "United States of America")
+})
+
+test("COUNTRY: the form's own spelling wins — 'United States' grounds when that is what is offered", () => {
+  const r = timeResolve([
+    {
+      k: "f1",
+      t: "combo",
+      l: "What is your country of residence?",
+      opts: ["Canada", "United States", "Mexico"],
+    },
+  ])
+  assert.equal(r.get("f1").value, "United States")
+})
+
+test("COUNTRY: the vetoed shapes never fire the rule", () => {
+  const r = timeResolve([
+    // The 3-way relocation question is per-job context.
+    {
+      k: "f1",
+      t: "text",
+      l: "Do you currently live in this country or are you willing to relocate?",
+    },
+    // The phone widget.
+    { k: "f2", t: "combo", l: "Country Code", opts: ["United States +1"] },
+    // A conditional follow-up about a DIFFERENT country.
+    {
+      k: "f3",
+      t: "text",
+      l: "If you reside in a different country, name the country here",
+    },
+  ])
+  for (const k of ["f1", "f2", "f3"]) {
+    assert.notEqual(r.get(k).value, "United States of America", k)
+    assert.notEqual(r.get(k).value, "United States", k)
+  }
 })

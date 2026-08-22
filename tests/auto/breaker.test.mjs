@@ -56,6 +56,12 @@ test("an honest deferral never moves the breaker", () => {
       "l3-rejected",
       "board-untrusted",
       "doc-unverified",
+      // 2026-08-18: a PDF nobody rendered, a host nobody captured a page for,
+      // and a queue row the ledgers already say was applied to — none of them
+      // is the board misbehaving.
+      "doc-unrendered",
+      "board-unsighted",
+      "already-applied",
     ]) {
       const got = b.record({ ...fail("greenhouse", kind), slug: `s${i}` })
       assert.equal(got.action, "none", `${kind} must not move the breaker`)

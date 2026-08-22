@@ -332,6 +332,20 @@ CREATE INDEX IF NOT EXISTS idx_auto_subs_run ON auto_submissions(run_id);
 --
 -- NULL means unrecorded, never zero: rows written before this column existed,
 -- and the not-claimed case, which does no work and writes nothing.
+--
+-- apply_url / lead_id / company / title make the row SELF-DESCRIBING, and that
+-- is a correctness property, not a convenience. Until 2026-08-18 the runner
+-- learned a queued job's apply_url and screening verdict only from the
+-- selection made in the SAME invocation (auto-apply.mjs seeded a Map from
+-- selectEligible's output); a row that was already in the queue -- enqueued by
+-- an earlier --enqueue, or beyond this run's --limit in a differently ordered
+-- list, or left behind by a crash -- resumed with apply_url null and no
+-- screening, and the trust gate refused it as "the lead carries no apply_url".
+-- Measured 2026-08-17: a Torc Robotics lead whose store row carried a perfectly
+-- good apply_url deferred board-untrusted for exactly this reason. A queue that
+-- cannot resume its own rows is not a queue, so the row now carries what the
+-- job needs: the URL it was trusted on, the lead id its screening verdict is
+-- keyed by, and the company/title the report names it by.
 CREATE TABLE IF NOT EXISTS auto_queue (
   slug          TEXT PRIMARY KEY,
   run_id        TEXT,
@@ -346,7 +360,11 @@ CREATE TABLE IF NOT EXISTS auto_queue (
   posted_at     TEXT,
   claimed_at    TEXT,
   updated_at    TEXT,
-  wall_ms       INTEGER
+  wall_ms       INTEGER,
+  apply_url     TEXT,
+  lead_id       TEXT,
+  company       TEXT,
+  title         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_auto_queue_state ON auto_queue(state);
 CREATE INDEX IF NOT EXISTS idx_auto_queue_run ON auto_queue(run_id);
@@ -554,6 +572,12 @@ function healAutoQueue(db) {
   // anything recorded a duration.
   if (!have.has("wall_ms"))
     db.exec("ALTER TABLE auto_queue ADD COLUMN wall_ms INTEGER")
+  // The self-describing columns (see the SCHEMA comment). NULL on a pre-existing
+  // row means "queued before the row carried this" — and the runner treats
+  // that exactly as it always did, by falling back to the current selection's
+  // seed, so an old queue keeps working while a new one no longer needs it.
+  for (const col of ["apply_url", "lead_id", "company", "title"])
+    if (!have.has(col)) db.exec(`ALTER TABLE auto_queue ADD COLUMN ${col} TEXT`)
 }
 
 // The same additive story again, for board_stats's sweeps/zero_streak.
@@ -1079,6 +1103,28 @@ export function screenIndex(db, source) {
   return map
 }
 
+// lead_id -> the verdict that COUNTS, model first and mechanical as the
+// fallback — the same preference selectEligible and the cycle's prep loop use,
+// so a queue built here and a queue built there agree about which leads
+// screening already rejected. Opens the store by path, so a caller holding
+// only a file name (prep-queue.mjs) can ask; a JSON legacy store has no screens
+// table and yields an empty map.
+export function latestScreenVerdicts(explicit = null) {
+  const src = resolveLeadSource(explicit)
+  const out = new Map()
+  if (src.kind === "json" || !fs.existsSync(src.file)) return out
+  const db = openDb(src.file)
+  try {
+    const model = screenIndex(db, "model")
+    const mech = screenIndex(db, "mechanical")
+    for (const [id, s] of mech) out.set(id, s)
+    for (const [id, s] of model) out.set(id, s)
+  } finally {
+    db.close()
+  }
+  return out
+}
+
 // --- unattended runs ---------------------------------------------------------
 
 // Upsert, not insert: a run is written once at start (outcome 'running') and
@@ -1356,6 +1402,47 @@ export function countAutoSubmissions(db, sinceIso) {
     .get(sinceIso).c
 }
 
+// THE ASSENTS A SUBMISSION MADE ON THE USER'S BEHALF (2026-08-18). Rule 6:
+// "every one that is must be named in the report" — this is where the report
+// reads them from. submit.mjs writes `plan.actuated` into the record when a
+// click is confirmed; each entry names the field, the value or option ticked,
+// and the grant (assent-policy.mjs) it acted under. Rows with nothing actuated
+// are omitted: this answers "what did the machine assert for me", not "what
+// was submitted".
+export function readAutoAssents(db, sinceIso, { mode = "live" } = {}) {
+  const rows = db
+    .prepare(
+      `SELECT slug, company, title, submitted_at, doc FROM auto_submissions
+        WHERE submitted_at >= ? AND mode = ? AND outcome = 'submitted'
+        ORDER BY submitted_at DESC`,
+    )
+    .all(sinceIso, mode)
+  const out = []
+  for (const r of rows) {
+    let doc
+    try {
+      doc = JSON.parse(r.doc)
+    } catch {
+      continue
+    }
+    const acts = Array.isArray(doc?.actuated) ? doc.actuated : []
+    if (!acts.length) continue
+    out.push({
+      slug: r.slug,
+      company: r.company ?? doc.company ?? null,
+      title: r.title ?? doc.title ?? null,
+      submitted_at: r.submitted_at,
+      assents: acts.map((a) => ({
+        label: a?.label ?? null,
+        value: a?.value ?? a?.pick ?? null,
+        grant: a?.grant ?? null,
+        ...(a?.legalWeight ? { legalWeight: true } : {}),
+      })),
+    })
+  }
+  return out
+}
+
 // The unresolved attempts belonging to ONE run, for the check audit.mjs makes
 // at finish(). Deliberately not filtered on the run's finished_at: the caller
 // is the run itself, still open, asking what it is about to leave behind.
@@ -1454,8 +1541,23 @@ export const AUTO_DEFER_KINDS = Object.freeze([
   "multipage-unresolvable",
   "freetext-disclosure",
   "doc-unverified",
+  // The workspace has no rendered PDF behind an attachment slot the form
+  // needs (buildPlan's "no rendered resume"/"no rendered cover"). Split out
+  // of `doc-unverified` on 2026-08-18: that kind means the VERIFICATION is not
+  // passing or not approved, and this means the document is fine and nobody
+  // ran render-pdf — two different fixes, and a digest that showed them as one
+  // bucket sent the reader to verify-claims for a missing file.
+  "doc-unrendered",
   "fact-base-changed",
   "board-untrusted",
+  // The board is allowlisted (the user trusts the vendor) but this repository
+  // holds no CAPTURED post-submit page for its host, so a live click could not
+  // be read afterwards — it would land as `unclassified`, a hard STOP, with the
+  // application possibly sent and unrecorded. Checked BEFORE the click since
+  // 2026-08-18; the fix is an attended apply + capture-post-submit.mjs, which
+  // is why it is its own kind and not `board-untrusted`: the allowlist and the
+  // evidence list are different lists.
+  "board-unsighted",
   "l3-rejected",
   "cap-company",
   // The user already applied to this posting. NOT `cap-company`, though both
@@ -1482,6 +1584,26 @@ export const AUTO_DEFER_KINDS = Object.freeze([
   // the reconciler's only positive result in a bucket the digest reads as
   // "boards taking their listings down".
   "reconciled-not-sent",
+  // A durable scoped STOP (guard.mjs raiseStop, §4.9) is standing for this
+  // job's company or board. NOT `board-paused`: a pause is a timed backoff the
+  // breaker clears on one success; a scoped STOP is a brake only a human
+  // clears, by deleting the file — guard.mjs is explicit that conflating the
+  // two would undo §4.6. Two kinds rather than one because the scopes prove
+  // different things (a company brake says "this employer's state is
+  // unknown"; a board brake says "this vendor is held"), and a digest bucket
+  // named for one holding the other would misdirect the reader.
+  "company-stopped",
+  "board-stopped",
+  // The submit control's data-aj stamp matched nothing at click time and one
+  // re-scan did not recover it. Greenhouse's embed remounts its form after an
+  // upload and drops every stamp (fill-engine.mjs); the fill survives that by
+  // resolving sel-first, but a button carries only its stamp. NOT
+  // `fill-failed`: the fill succeeded — this is a submit-stage loss, and a
+  // digest that filed it under fill would send the reader into the wrong
+  // engine. A DEFERRAL, not a failure: no click was issued (the liveness
+  // check runs before the durable attempt row), so the application can safely
+  // be tried again.
+  "submit-control-lost",
 ])
 
 // The machine malfunctioned. These are the ones worth waking somebody for.
@@ -1605,10 +1727,24 @@ export const AUTO_REQUEUEABLE_KINDS = Object.freeze([
   "unknown-field",
   "fill-failed",
   "doc-unverified",
+  // Cleared by running render-pdf — the next --enqueue should look again.
+  "doc-unrendered",
+  // Cleared by promoting a captured post-submit page for the host — a code
+  // change, after which the next --enqueue should look again.
+  "board-unsighted",
   "fact-base-changed",
   // A board pause strands its jobs as deferred/board-paused; the pause clears
   // on one success and nothing re-admitted the stranded rows. Same defect.
   "board-paused",
+  // A scoped STOP defers its jobs before any browser work; after the human
+  // deletes the brake file, the next --enqueue should look again. While the
+  // brake stands a re-queued job costs one claim row and one re-defer at
+  // beginJob — no navigation, no click.
+  "company-stopped",
+  "board-stopped",
+  // A fresh run re-navigates and re-fills, which re-stamps the form; the
+  // retry usually lands.
+  "submit-control-lost",
 ])
 const REQUEUEABLE_SQL = AUTO_REQUEUEABLE_KINDS.map((k) => `'${k}'`).join(", ")
 
@@ -1624,13 +1760,19 @@ export function enqueueAutoJobs(db, jobs, { now = new Date() } = {}) {
   const at = nowIso(now)
   const stmt = db.prepare(
     `INSERT INTO auto_queue
-       (slug, run_id, board_key, origin, state, attempt_no, plan_sha256, posted_at, updated_at)
-     VALUES ($slug, $run_id, $board_key, $origin, 'queued', 0, $plan_sha256, $posted_at, $updated_at)
+       (slug, run_id, board_key, origin, state, attempt_no, plan_sha256, posted_at, updated_at,
+        apply_url, lead_id, company, title)
+     VALUES ($slug, $run_id, $board_key, $origin, 'queued', 0, $plan_sha256, $posted_at, $updated_at,
+             $apply_url, $lead_id, $company, $title)
      ON CONFLICT(slug) DO UPDATE SET
        state = 'queued',
        run_id = excluded.run_id,
        board_key = COALESCE(excluded.board_key, auto_queue.board_key),
        origin = COALESCE(excluded.origin, auto_queue.origin),
+       apply_url = COALESCE(excluded.apply_url, auto_queue.apply_url),
+       lead_id = COALESCE(excluded.lead_id, auto_queue.lead_id),
+       company = COALESCE(excluded.company, auto_queue.company),
+       title = COALESCE(excluded.title, auto_queue.title),
        -- attempt_no is NOT touched here: the claim increments it, so a
        -- re-queued row reads attempt 2 the moment a worker picks it up.
        plan_sha256 = NULL,
@@ -1642,11 +1784,31 @@ export function enqueueAutoJobs(db, jobs, { now = new Date() } = {}) {
      WHERE auto_queue.state = 'deferred'
        AND auto_queue.reason_kind IN (${REQUEUEABLE_SQL})`,
   )
+  // The identity columns are BACKFILLED on every row this call names, whatever
+  // its state: a row queued before the columns existed (or by a caller that
+  // did not know them) is otherwise resumed blind. COALESCE means a value
+  // already on the row is never overwritten — identity is written once and
+  // then only filled in where it was missing. Not counted in `added`: nothing
+  // about the row's place in the queue changes.
+  const backfill = db.prepare(
+    `UPDATE auto_queue SET
+       apply_url = COALESCE(apply_url, $apply_url),
+       lead_id = COALESCE(lead_id, $lead_id),
+       company = COALESCE(company, $company),
+       title = COALESCE(title, $title)
+     WHERE slug = $slug`,
+  )
   let added = 0
   db.exec("BEGIN IMMEDIATE")
   try {
     for (const j of jobs) {
       if (!j?.slug) throw new TypeError("enqueueAutoJobs requires a slug")
+      const identity = {
+        apply_url: j.apply_url ?? null,
+        lead_id: j.lead_id ?? null,
+        company: j.company ?? null,
+        title: j.title ?? null,
+      }
       added += stmt.run({
         slug: j.slug,
         run_id: j.run_id ?? null,
@@ -1655,7 +1817,9 @@ export function enqueueAutoJobs(db, jobs, { now = new Date() } = {}) {
         plan_sha256: j.plan_sha256 ?? null,
         posted_at: j.posted_at ?? null,
         updated_at: at,
+        ...identity,
       }).changes
+      backfill.run({ slug: j.slug, ...identity })
     }
     db.exec("COMMIT")
   } catch (e) {
@@ -2299,6 +2463,32 @@ export function readVerifications(db, slug = null) {
         )
         .all(slug)
     : db.prepare("SELECT * FROM verifications ORDER BY slug, mode").all()
+}
+
+/**
+ * Slugs whose verification rows reference NOTHING else in the store — no
+ * documents row, no applications row. Candidates only: whether the workspace
+ * directory exists is a filesystem question and the caller's to ask
+ * (reverify.mjs), because this module does not touch the disk. An
+ * applications row makes a slug permanently ineligible here — its
+ * verification history is evidence of a real application, never prunable.
+ */
+export function orphanVerificationCandidates(db) {
+  return db
+    .prepare(
+      `SELECT DISTINCT slug FROM verifications v
+        WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.slug = v.slug)
+          AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.slug = v.slug)
+        ORDER BY slug`,
+    )
+    .all()
+    .map((r) => r.slug)
+}
+
+/** Delete every verification row for one slug. Returns the row count. */
+export function deleteVerifications(db, slug) {
+  return db.prepare("DELETE FROM verifications WHERE slug = ?").run(slug)
+    .changes
 }
 
 // per_company_max_per_week's counter, and the one that matters most: carpet

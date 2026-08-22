@@ -238,6 +238,90 @@ export default async function scanPage(page, opts = {}) {
     scan = await runScan(false)
   }
 
+  // --- THE PAGE MAY RE-RENDER ITSELF UNDER THE SCAN --------------------------
+  //
+  // MEASURED on Greenhouse's embed form (job-boards.greenhouse.io/embed/job_app,
+  // Attentive token 4363395009 and Torc 8677422002), 2026-08-18, and it is the
+  // whole of "13 of 19 required combos failed to probe" on that host, not the
+  // aria/portal defects fixed on 2026-08-07:
+  //
+  //   goto (domcontentloaded)                 ~430ms
+  //   first control attached                  ~670ms
+  //   structure scan done, 24 stamps          ~730ms
+  //   document.documentElement REPLACED       ~860ms   <- with or without a scan
+  //   [data-aj] elements on the page               0
+  //
+  // The board is a Remix app hydrating over its server-rendered form; on this
+  // host the client render replaces the WHOLE document root ~200ms after
+  // `load`, whether or not anything scanned it (verified with no scanner
+  // installed at all). Every `data-aj` stamp the structure scan wrote lives on
+  // a node that no longer exists, so each probe click waited its full 6s for
+  // `[data-aj="fN"]` and every combo came back
+  //   probe_error: "locator.click: Timeout 6000ms exceeded" — 61s for a scan
+  // that should take 4. The stamps were dead before the first click; the
+  // scan itself was fine.
+  //
+  // WHAT IS DONE ABOUT IT, and what is deliberately not:
+  //   * NOT a wait before scanning. A flat or "quiet DOM" wait taxes every
+  //     board to cover one host's hydration, and this pipeline is benchmarked
+  //     on latency. A page that never re-renders pays nothing below.
+  //   * DETECT the loss, cheaply and everywhere: the number of `[data-aj]`
+  //     elements on the page is compared with the number of stamps the scan
+  //     handed out (one page.evaluate, ~1ms) before the probe starts and after
+  //     it ends, and each control's stamp is checked to be attached before it
+  //     is clicked (locator.count(), no wait) rather than waited on for 6s.
+  //   * RE-SCAN once, after the page settles. A fresh structure scan re-stamps
+  //     the NEW nodes with keys assigned in DOM order — the same keys for the
+  //     same form — and the probe pass runs again over that scan. The re-scan
+  //     is a full replacement, never a merge: whatever the first pass read off
+  //     nodes that were then thrown away is discarded with them, so a menu
+  //     read mid-swap cannot leak into the field cache as a complete list.
+  //   * ONCE. A page that loses its stamps again after the re-scan is one that
+  //     re-renders on a timer, and no number of retries decides that; the
+  //     second pass keeps whatever it got and says so in `scan.signals` and
+  //     `scan.probe.rescans`, so the runner's defer names the cause rather
+  //     than "no options".
+  //
+  // STATED LIMIT: a swap that lands after this function returns (a form with
+  // nothing to probe scans in ~80ms and returns before the ~860ms swap) is not
+  // caught here — the fill engine resolves `sel` first for exactly that reason,
+  // and a control with no `sel` then fails to locate, which is a stated fill
+  // failure and blocks the submit rather than filling the wrong thing.
+  const stampsIn = (s) => {
+    const keys = new Set()
+    for (const f of s.fields || []) {
+      if (f.k && !Array.isArray(f.o)) keys.add(f.k)
+      for (const o of f.o || []) if (o && o.k) keys.add(o.k)
+    }
+    for (const b of s.btns || []) if (b && b.k) keys.add(b.k)
+    return keys.size
+  }
+  const stampsAlive = () =>
+    page
+      .evaluate(() => document.querySelectorAll("[data-aj]").length)
+      .catch(() => 0)
+  const stampsLost = async (s) => (await stampsAlive()) < stampsIn(s)
+  // After a re-render: wait for the control count to hold still. A CONDITION
+  // WITH A CEILING, not a sleep — the same rule every other wait in this file
+  // follows: the count must read the same on two consecutive polls 150ms apart
+  // (so at least one poll interval passes), bounded at 2s. Only ever paid by a
+  // page that already lost its stamps once.
+  const settleAfterRerender = () =>
+    page
+      .waitForFunction(
+        () => {
+          const n = document.querySelectorAll(
+            "input,select,textarea,[role='combobox']",
+          ).length
+          const same = window.__ajSettleCount === n
+          window.__ajSettleCount = n
+          return same
+        },
+        undefined,
+        { polling: 150, timeout: 2000 },
+      )
+      .catch(() => {})
+
   // --- which dropdowns are worth opening ------------------------------------
   // Probing is the most expensive part of a scan: a real click plus the menu
   // render, per dropdown, up to 18 of them. Options only exist to CHOOSE an
@@ -258,23 +342,29 @@ export default async function scanPage(page, opts = {}) {
   // its hints, never the scan — the fallback is the full probe, which is the
   // safe direction (a scan with too little information is expensive; a scan
   // that did not happen is a job that defers "nothing to fill").
-  let late = null
-  if (typeof opts.knownFor === "function") {
-    try {
-      late = (await opts.knownFor(scan)) || null
-    } catch {
-      late = null
+  //
+  // (Read inside probePass, per pass: a re-scan after a re-render is a new
+  // structure scan and may fingerprint differently.)
+  const hintsFor = async (s) => {
+    let late = null
+    if (typeof opts.knownFor === "function") {
+      try {
+        late = (await opts.knownFor(s)) || null
+      } catch {
+        late = null
+      }
     }
+    const known = new Map(
+      Object.entries({
+        ...(opts.knownOpts || {}),
+        ...((late && late.knownOpts) || {}),
+      }).map(([k, v]) => [key(k), v]),
+    )
+    const skip = new Set(
+      [...(opts.skipProbe || []), ...((late && late.skipProbe) || [])].map(key),
+    )
+    return { known, skip }
   }
-  const known = new Map(
-    Object.entries({
-      ...(opts.knownOpts || {}),
-      ...((late && late.knownOpts) || {}),
-    }).map(([k, v]) => [key(k), v]),
-  )
-  const skip = new Set(
-    [...(opts.skipProbe || []), ...((late && late.skipProbe) || [])].map(key),
-  )
   // RAISED 18 -> 24, measured on Coinbase's Greenhouse form 2026-08-07: it has
   // 23 comboboxes, so the old cap skipped 5 of them outright and each one came
   // back NEEDS-CHOICE with no options — a deferral caused by the cap rather
@@ -309,437 +399,555 @@ export default async function scanPage(page, opts = {}) {
   // inside two on a slow one, which is exactly the flake it produced first
   // time. Nothing in production passes this, so the default is the real clock.
   const nowMs = typeof opts.now === "function" ? opts.now : Date.now
+  // The budget spans BOTH passes when a re-render forces a second one: the
+  // bound is time in this function, not time per pass.
   const probeStart = nowMs()
 
-  const stats = { probed: 0, cached: 0, skipped: 0, capped: 0, refused: 0 }
-  const todo = []
-  for (const f of scan.fields || []) {
-    if (f.t !== "combo" || (f.opts && f.opts.length)) continue
-    // Before anything else, and independent of what the caller asked for: a
-    // caller that forgets to pass skipProbe must not be able to make the
-    // scanner click Withdraw. See probeRefusal above.
-    const refusal = probeRefusal(f)
-    if (refusal) {
-      f.probe_refused = refusal
-      stats.refused++
-      continue
-    }
-    const cached = known.get(key(f.l)) || known.get(key(f.k))
-    if (cached && cached.length) {
-      f.opts = cached
-      f.opts_from = "cache"
-      stats.cached++
-      continue
-    }
-    if (skip.has(key(f.l)) || skip.has(key(f.k))) {
-      f.probe_skipped = "answer already known"
-      stats.skipped++
-      continue
-    }
-    // Capped: a long form should not spend a minute in here.
-    if (todo.length >= probeMax) {
-      f.probe_skipped = "probe cap"
-      stats.capped++
-      continue
-    }
-    todo.push(f)
-  }
-
-  // THE ELEMENT WE STAMPED IS NOT ALWAYS THE ELEMENT THAT CARRIES THE ARIA.
-  //
-  // MEASURED on Coinbase's Greenhouse form (job-boards.greenhouse.io,
-  // token 8113286), 2026-08-07: 13 of 19 required combos failed to probe.
-  //
-  // react-select renders
-  //   <div class="select__control">                 <- matches COMBO_SEL, STAMPED
-  //     <div class="select__value-container">
-  //       <input class="select__input" role="combobox"
-  //              aria-controls="react-select-3-listbox" aria-expanded="false">
-  // and the wrapper carries NO aria attributes at all. Reading `aria-controls`
-  // off the stamped element therefore returned null, so:
-  //   * menuOf() found no ids and fell back to a class-name guess;
-  //   * `aria-expanded` read null rather than "false", so the chevron-toggle
-  //     fallback — the whole Ashby fix above — never fired either.
-  // Both halves of the probe were reading the shell and finding nothing.
-  //
-  // Identity MUST stay on the shell: it is what a human clicks, what
-  // scan-page.js stamps, and what every `data-aj` selector resolves to. So the
-  // element is not re-chosen — only the ATTRIBUTE READ is redirected, and only
-  // when the shell itself is silent. A shell that states its own aria-controls
-  // (every Oracle Recruiting Cloud picker, where role=combobox is on the input
-  // and the input IS the stamped element) is unaffected: it answers first and
-  // the inner lookup never runs.
-  const ariaOf = (k, attr) =>
-    page
-      .evaluate(
-        ([ajKey, a]) => {
-          const el = document.querySelector('[data-aj="' + ajKey + '"]')
-          if (!el || !el.getAttribute) return null
-          const own = el.getAttribute(a)
-          if (own != null) return own
-          const inner =
-            el.querySelector &&
-            el.querySelector(
-              "input[role='combobox'],input[aria-controls],input[aria-expanded]," +
-                "[role='combobox'][aria-controls],[role='combobox'][aria-expanded]",
-            )
-          return inner ? inner.getAttribute(a) : null
-        },
-        [k, attr],
-      )
-      .catch(() => null)
-
-  for (const f of todo) {
-    // Checked BEFORE the control is touched, so the budget can only stop work
-    // that has not started — never abandon a control mid-probe with a menu
-    // left open for the next one to read.
-    if (probeBudgetMs > 0 && nowMs() - probeStart > probeBudgetMs) {
-      f.probe_skipped = "probe budget"
-      stats.capped++
-      continue
-    }
-    const loc = page.locator('[data-aj="' + f.k + '"]')
-    try {
-      // NON-FATAL, AND THAT IS THE FIX. Measured on Oracle Recruiting Cloud
-      // 2026-08-04: every required picker on the form came back with
-      //   probe_error: "locator.scrollIntoViewIfNeeded: Timeout 2000ms exceeded"
-      // and no options at all, because this call threw before the click was
-      // ever attempted. Scrolling is preparation, not the probe: a control
-      // already in view needs none, and one that genuinely cannot be reached
-      // fails the CLICK below, which is the honest error and the one whose
-      // message tells a reader what actually went wrong. Swallowing it here
-      // costs nothing and stops a scroll quirk from reading as "this board
-      // refuses to open its menus".
-      //
-      // 2000 -> 5000, measured on the same Coinbase form: the page is heavy
-      // enough that the scroll itself did not settle inside 2s on a control
-      // low in a 23-combo form. Non-fatal either way, so the only cost of the
-      // old ceiling was arriving at the click before the control was in view.
-      await loc.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {})
-      // NOT force:true. A forced click skips every actionability check —
-      // "is it visible", "is it covered by an overlay", "does it receive
-      // pointer events" — which is precisely "click something the user could
-      // not have clicked". The scanner has no business doing that before a
-      // plan exists. A control that is genuinely unclickable now fails here,
-      // is caught below as probe_error, and defers to the user, which is the
-      // designed failure mode for a probe.
-      //
-      // 2000 -> 6000, measured on Coinbase's Greenhouse form 2026-08-07, where
-      // the 2s ceiling produced `locator.click: Timeout 2000ms exceeded` on
-      // control after control that a human clicks without noticing a delay. A
-      // timeout that fires on a clickable control is not a safety property —
-      // it defers a field that would have answered. The actionability checks,
-      // which ARE the safety property, are unchanged; only the patience is.
-      await loc.click({ timeout: 6000 })
-      // Wait for the menu to RENDER, not for 300ms. When the control NAMES its
-      // menu, wait for that element to be visible — that is this control's own
-      // menu rather than a guess, so the wait ends when the thing about to be
-      // read is actually on screen. Otherwise react-select's own class: a bare
-      // [role=option] also matches the phone country-code widget, which is
-      // always in the DOM — so waiting on that would return instantly on every
-      // form with a phone field, and reading it would hand every dropdown the
-      // same list of countries.
-      const menuId = await ariaOf(f.k, "aria-controls")
-      const menuSel = menuId
-        ? '[id="' +
-          String(menuId)
-            .split(/\s+/)[0]
-            .replace(/(["\\])/g, "\\$1") +
-          '"]'
-        : "[class*='__option']"
-      await page
-        .locator(menuSel)
-        .first()
-        .waitFor({ state: menuId ? "visible" : "attached", timeout: 300 })
-        .catch(() => {})
-      // THE BOX IS NOT ALWAYS WHAT OPENS THE MENU.
-      //
-      // MEASURED on Ashby (jobs.ashbyhq.com), 2026-08-04, on a live Render
-      // application. Its dropdowns are
-      //   <div class="_inputContainer_">
-      //     <input role="combobox" aria-expanded="false">
-      //     <button class="_toggleButton_"><svg chevron/></button>
-      // and clicking the INPUT only focuses it — the menu opens from the
-      // button beside it. So every Ashby dropdown probed as zero options and
-      // came back NEEDS-CHOICE, blocking the submit on a form whose lists are
-      // perfectly readable: an 11-option "How did you hear about us?" was
-      // deferred to a human for no reason at all.
-      //
-      // aria-expanded is the PAGE'S OWN report of whether it opened, which is
-      // why it is the trigger rather than "no options were found" — that is
-      // also what a genuinely empty menu looks like, and retrying on it would
-      // add a click to every empty dropdown on every board.
-      //
-      // WHAT MAY BE CLICKED IS BOUNDED HARD: a <button> inside the control's
-      // OWN container with NO NAME OF ITS OWN. A chevron has none; "Withdraw
-      // my application" has plenty. That is exactly the distinction
-      // probeRefusal() draws above — a picker is named from outside itself, an
-      // action names itself — applied to the toggle instead of to the box, so
-      // this can never become a click on a labelled action button.
-      const shut = await ariaOf(f.k, "aria-expanded")
-      if (shut === "false") {
-        const toggleSel = await page.evaluate((k) => {
-          const el = document.querySelector('[data-aj="' + k + '"]')
-          const box = el && el.parentElement
-          if (!box) return null
-          const norm = (s) =>
-            String(s == null ? "" : s)
-              .replace(/\s+/g, " ")
-              .trim()
-          const cand = [...box.querySelectorAll("button")].find(
-            (b) => !norm(b.innerText) && !norm(b.getAttribute("aria-label")),
-          )
-          if (!cand) return null
-          cand.setAttribute("data-aj-toggle", k)
-          return '[data-aj-toggle="' + k + '"]'
-        }, f.k)
-        if (toggleSel) {
-          await page.locator(toggleSel).click({ timeout: 6000 })
-          // Re-read: a control that was closed may only NAME its menu once it
-          // has one.
-          const openedId = await ariaOf(f.k, "aria-controls")
-          const openedSel = openedId
-            ? '[id="' +
-              String(openedId)
-                .split(/\s+/)[0]
-                .replace(/(["\\])/g, "\\$1") +
-              '"]'
-            : menuSel
-          await page
-            .locator(openedSel)
-            .first()
-            .waitFor({ state: openedId ? "visible" : "attached", timeout: 300 })
-            .catch(() => {})
-        }
+  // One probe PASS over `scan`: choose the controls worth opening, open each,
+  // read its menu. Returns true when the page re-rendered under it — the
+  // stamps it was probing are gone — so the caller can re-scan and run it
+  // again. `stats` is per pass on purpose: the numbers describe the scan that
+  // is returned, not the one that was thrown away.
+  let stats = null
+  const probePass = async () => {
+    const { known, skip } = await hintsFor(scan)
+    // Dead before the first click: the swap landed between the structure scan
+    // and here. Nothing to gain from probing nodes that no longer exist.
+    if (await stampsLost(scan)) return true
+    stats = { probed: 0, cached: 0, skipped: 0, capped: 0, refused: 0 }
+    const todo = []
+    for (const f of scan.fields || []) {
+      if (f.t !== "combo" || (f.opts && f.opts.length)) continue
+      // Before anything else, and independent of what the caller asked for: a
+      // caller that forgets to pass skipProbe must not be able to make the
+      // scanner click Withdraw. See probeRefusal above.
+      const refusal = probeRefusal(f)
+      if (refusal) {
+        f.probe_refused = refusal
+        stats.refused++
+        continue
       }
-      // THE CUT IS STATED, NOT SILENT. A 200-option country list came back as
-      // 40 with nothing recording that anything was dropped, so the field
-      // cache stored the short list as the whole list and an answer the form
-      // really does offer — past the cut — resolved as "not on offer" and was
-      // deferred to the user for no reason. `total` is what the menu actually
-      // rendered; the caller flags the field when it exceeds what we kept.
-      // READ THE MENU THIS CONTROL NAMES, AND TAKE ITS LEAVES.
-      //
-      // MIRRORS scan-page.js's optionTexts()/rowsIn() — that file is the
-      // canonical statement of the rule and carries the full reasoning; this
-      // runs in page context and cannot import it. The two are pinned against
-      // each other BEHAVIOURALLY rather than by source text, in
-      // tests/apply/oracle-orc.test.mjs: both paths read the same ORC fixture
-      // and must return the same list, so a change to one that does not reach
-      // the other goes red.
-      //
-      // WHAT THE OLD VERSION DID ON ORC (measured 2026-08-04): nothing. The
-      // rows are not [class*='__option'] and not [role='option'], so `all` was
-      // empty and three required pickers were reported with no options —
-      // silently, since an empty list is indistinguishable from a menu that
-      // did not open.
-      const raw = await page.evaluate((ajKey) => {
-        const norm = (s) =>
-          String(s == null ? "" : s)
-            .replace(/\s+/g, " ")
-            .trim()
-        const el = document.querySelector('[data-aj="' + ajKey + '"]')
-        const vis = (n) => {
-          if (!n || !n.isConnected) return false
-          const r = n.getBoundingClientRect()
-          const st = getComputedStyle(n)
-          return (
-            (r.width > 0 || r.height > 0) &&
-            st.visibility !== "hidden" &&
-            st.display !== "none" &&
-            st.opacity !== "0"
-          )
-        }
-        // A container is not a row.
-        const leavesOnly = (list) =>
-          list.filter(
-            (n) => !list.some((o) => o !== n && n.contains && n.contains(o)),
-          )
-        // Same redirection as ariaOf() above, for the same measured reason:
-        // react-select's stamped shell carries no aria, and the ids live on the
-        // inner input. The shell is asked first, so a control that names its
-        // own menu is untouched.
-        const ariaAttr = (c, a) => {
-          if (!c || !c.getAttribute) return ""
-          const own = c.getAttribute(a)
-          if (own != null) return own
-          const inner =
-            c.querySelector &&
-            c.querySelector(
-              "input[role='combobox'],input[aria-controls],input[aria-owns]," +
-                "[role='combobox'][aria-controls],[role='combobox'][aria-owns]",
+      const cached = known.get(key(f.l)) || known.get(key(f.k))
+      if (cached && cached.length) {
+        f.opts = cached
+        f.opts_from = "cache"
+        stats.cached++
+        continue
+      }
+      if (skip.has(key(f.l)) || skip.has(key(f.k))) {
+        f.probe_skipped = "answer already known"
+        stats.skipped++
+        continue
+      }
+      // Capped: a long form should not spend a minute in here.
+      if (todo.length >= probeMax) {
+        f.probe_skipped = "probe cap"
+        stats.capped++
+        continue
+      }
+      todo.push(f)
+    }
+
+    // THE ELEMENT WE STAMPED IS NOT ALWAYS THE ELEMENT THAT CARRIES THE ARIA.
+    //
+    // MEASURED on Coinbase's Greenhouse form (job-boards.greenhouse.io,
+    // token 8113286), 2026-08-07: 13 of 19 required combos failed to probe.
+    //
+    // react-select renders
+    //   <div class="select__control">                 <- matches COMBO_SEL, STAMPED
+    //     <div class="select__value-container">
+    //       <input class="select__input" role="combobox"
+    //              aria-controls="react-select-3-listbox" aria-expanded="false">
+    // and the wrapper carries NO aria attributes at all. Reading `aria-controls`
+    // off the stamped element therefore returned null, so:
+    //   * menuOf() found no ids and fell back to a class-name guess;
+    //   * `aria-expanded` read null rather than "false", so the chevron-toggle
+    //     fallback — the whole Ashby fix above — never fired either.
+    // Both halves of the probe were reading the shell and finding nothing.
+    //
+    // Identity MUST stay on the shell: it is what a human clicks, what
+    // scan-page.js stamps, and what every `data-aj` selector resolves to. So the
+    // element is not re-chosen — only the ATTRIBUTE READ is redirected, and only
+    // when the shell itself is silent. A shell that states its own aria-controls
+    // (every Oracle Recruiting Cloud picker, where role=combobox is on the input
+    // and the input IS the stamped element) is unaffected: it answers first and
+    // the inner lookup never runs.
+    const ariaOf = (k, attr) =>
+      page
+        .evaluate(
+          ([ajKey, a]) => {
+            const el = document.querySelector('[data-aj="' + ajKey + '"]')
+            if (!el || !el.getAttribute) return null
+            const own = el.getAttribute(a)
+            if (own != null) return own
+            const inner =
+              el.querySelector &&
+              el.querySelector(
+                "input[role='combobox'],input[aria-controls],input[aria-expanded]," +
+                  "[role='combobox'][aria-controls],[role='combobox'][aria-expanded]",
+              )
+            return inner ? inner.getAttribute(a) : null
+          },
+          [k, attr],
+        )
+        .catch(() => null)
+
+    for (const f of todo) {
+      // Checked BEFORE the control is touched, so the budget can only stop work
+      // that has not started — never abandon a control mid-probe with a menu
+      // left open for the next one to read.
+      if (probeBudgetMs > 0 && nowMs() - probeStart > probeBudgetMs) {
+        f.probe_skipped = "probe budget"
+        stats.capped++
+        continue
+      }
+      const loc = page.locator('[data-aj="' + f.k + '"]')
+      // ATTACHED WITHIN 250ms, OR GONE. A stamp that is not on the page by
+      // now is not late, it is gone (see the re-render note above): the click
+      // below would wait its full 6s for a node that will never come back, and
+      // did, on every combo of every Greenhouse embed form. So the pass ends
+      // here and the caller re-scans. An attached control resolves this at
+      // once; only a dead stamp pays the 250ms.
+      const attached = await loc
+        .waitFor({ state: "attached", timeout: 250 })
+        .then(() => true)
+        .catch(() => false)
+      if (!attached) return true
+      try {
+        // NON-FATAL, AND THAT IS THE FIX. Measured on Oracle Recruiting Cloud
+        // 2026-08-04: every required picker on the form came back with
+        //   probe_error: "locator.scrollIntoViewIfNeeded: Timeout 2000ms exceeded"
+        // and no options at all, because this call threw before the click was
+        // ever attempted. Scrolling is preparation, not the probe: a control
+        // already in view needs none, and one that genuinely cannot be reached
+        // fails the CLICK below, which is the honest error and the one whose
+        // message tells a reader what actually went wrong. Swallowing it here
+        // costs nothing and stops a scroll quirk from reading as "this board
+        // refuses to open its menus".
+        //
+        // 2000 -> 5000, measured on the same Coinbase form: the page is heavy
+        // enough that the scroll itself did not settle inside 2s on a control
+        // low in a 23-combo form. Non-fatal either way, so the only cost of the
+        // old ceiling was arriving at the click before the control was in view.
+        await loc.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {})
+        // NOT force:true. A forced click skips every actionability check —
+        // "is it visible", "is it covered by an overlay", "does it receive
+        // pointer events" — which is precisely "click something the user could
+        // not have clicked". The scanner has no business doing that before a
+        // plan exists. A control that is genuinely unclickable now fails here,
+        // is caught below as probe_error, and defers to the user, which is the
+        // designed failure mode for a probe.
+        //
+        // 2000 -> 6000, measured on Coinbase's Greenhouse form 2026-08-07, where
+        // the 2s ceiling produced `locator.click: Timeout 2000ms exceeded` on
+        // control after control that a human clicks without noticing a delay. A
+        // timeout that fires on a clickable control is not a safety property —
+        // it defers a field that would have answered. The actionability checks,
+        // which ARE the safety property, are unchanged; only the patience is.
+        await loc.click({ timeout: 6000 })
+        // Wait for the menu to RENDER, not for 300ms. When the control NAMES its
+        // menu, wait for that element to be visible — that is this control's own
+        // menu rather than a guess, so the wait ends when the thing about to be
+        // read is actually on screen. Otherwise react-select's own class: a bare
+        // [role=option] also matches the phone country-code widget, which is
+        // always in the DOM — so waiting on that would return instantly on every
+        // form with a phone field, and reading it would hand every dropdown the
+        // same list of countries.
+        const menuId = await ariaOf(f.k, "aria-controls")
+        const menuSel = menuId
+          ? '[id="' +
+            String(menuId)
+              .split(/\s+/)[0]
+              .replace(/(["\\])/g, "\\$1") +
+            '"]'
+          : "[class*='__option']"
+        await page
+          .locator(menuSel)
+          .first()
+          .waitFor({ state: menuId ? "visible" : "attached", timeout: 300 })
+          .catch(() => {})
+        // THE BOX IS NOT ALWAYS WHAT OPENS THE MENU.
+        //
+        // MEASURED on Ashby (jobs.ashbyhq.com), 2026-08-04, on a live Render
+        // application. Its dropdowns are
+        //   <div class="_inputContainer_">
+        //     <input role="combobox" aria-expanded="false">
+        //     <button class="_toggleButton_"><svg chevron/></button>
+        // and clicking the INPUT only focuses it — the menu opens from the
+        // button beside it. So every Ashby dropdown probed as zero options and
+        // came back NEEDS-CHOICE, blocking the submit on a form whose lists are
+        // perfectly readable: an 11-option "How did you hear about us?" was
+        // deferred to a human for no reason at all.
+        //
+        // aria-expanded is the PAGE'S OWN report of whether it opened, which is
+        // why it is the trigger rather than "no options were found" — that is
+        // also what a genuinely empty menu looks like, and retrying on it would
+        // add a click to every empty dropdown on every board.
+        //
+        // WHAT MAY BE CLICKED IS BOUNDED HARD: a <button> inside the control's
+        // OWN container with NO NAME OF ITS OWN. A chevron has none; "Withdraw
+        // my application" has plenty. That is exactly the distinction
+        // probeRefusal() draws above — a picker is named from outside itself, an
+        // action names itself — applied to the toggle instead of to the box, so
+        // this can never become a click on a labelled action button.
+        const shut = await ariaOf(f.k, "aria-expanded")
+        if (shut === "false") {
+          const toggleSel = await page.evaluate((k) => {
+            const el = document.querySelector('[data-aj="' + k + '"]')
+            const box = el && el.parentElement
+            if (!box) return null
+            const norm = (s) =>
+              String(s == null ? "" : s)
+                .replace(/\s+/g, " ")
+                .trim()
+            const cand = [...box.querySelectorAll("button")].find(
+              (b) => !norm(b.innerText) && !norm(b.getAttribute("aria-label")),
             )
-          return (inner && inner.getAttribute(a)) || ""
-        }
-        const menuOf = (c) => {
-          if (!c || !c.getAttribute) return null
-          const ids = norm(
-            ariaAttr(c, "aria-controls") || ariaAttr(c, "aria-owns") || "",
-          ).split(/\s+/)
-          for (const id of ids) {
-            if (!id) continue
-            let m = null
-            try {
-              m = document.getElementById(id)
-            } catch {}
-            if (m && vis(m)) return m
+            if (!cand) return null
+            cand.setAttribute("data-aj-toggle", k)
+            return '[data-aj-toggle="' + k + '"]'
+          }, f.k)
+          if (toggleSel) {
+            await page.locator(toggleSel).click({ timeout: 6000 })
+            // Re-read: a control that was closed may only NAME its menu once it
+            // has one.
+            const openedId = await ariaOf(f.k, "aria-controls")
+            const openedSel = openedId
+              ? '[id="' +
+                String(openedId)
+                  .split(/\s+/)[0]
+                  .replace(/(["\\])/g, "\\$1") +
+                '"]'
+              : menuSel
+            await page
+              .locator(openedSel)
+              .first()
+              .waitFor({
+                state: openedId ? "visible" : "attached",
+                timeout: 300,
+              })
+              .catch(() => {})
           }
-          return null
         }
-        // THE MENU IS NOT ALWAYS INSIDE THE CONTROL.
+        // THE CUT IS STATED, NOT SILENT. A 200-option country list came back as
+        // 40 with nothing recording that anything was dropped, so the field
+        // cache stored the short list as the whole list and an answer the form
+        // really does offer — past the cut — resolved as "not on offer" and was
+        // deferred to the user for no reason. `total` is what the menu actually
+        // rendered; the caller flags the field when it exceeds what we kept.
+        // READ THE MENU THIS CONTROL NAMES, AND TAKE ITS LEAVES.
         //
-        // MEASURED on the same Coinbase form: react-select renders
-        // `.select__menu` in a PORTAL — a sibling of <body>, not a descendant
-        // of the control's container — so every container-scoped lookup misses
-        // it, and when the control names no menu there is nothing left to read
-        // but the page-wide selector list.
+        // MIRRORS scan-page.js's optionTexts()/rowsIn() — that file is the
+        // canonical statement of the rule and carries the full reasoning; this
+        // runs in page context and cannot import it. The two are pinned against
+        // each other BEHAVIOURALLY rather than by source text, in
+        // tests/apply/oracle-orc.test.mjs: both paths read the same ORC fixture
+        // and must return the same list, so a change to one that does not reach
+        // the other goes red.
         //
-        // ONLY ONE MENU IS OPEN AT A TIME. That is what makes this safe rather
-        // than a guess: the probe opens exactly one control, reads it, and
-        // presses Escape before the next. So a SINGLE visible menu-list on the
-        // page is unambiguously the one just opened. Two or more visible means
-        // the assumption does not hold — a stale menu, or a board that renders
-        // several at once — and this declines to choose between them and falls
-        // through to the existing page-wide read, which is what happens today.
-        const portalMenu = () => {
-          let found = []
-          try {
-            found = [
-              ...document.querySelectorAll(
-                "[class*='select__menu-list'],[class*='Select__menu-list']",
-              ),
-            ].filter(vis)
-          } catch {
-            return null
-          }
-          return found.length === 1 ? found[0] : null
-        }
-        const rowsIn = (menu) => {
-          const declared = [...menu.querySelectorAll("[role='option']")]
-          if (declared.length) return declared
-          const nodes = [...menu.querySelectorAll("*")]
-          if (nodes.length > 400) return leavesOnly(nodes.filter(vis))
-          const out = []
-          const seen = new Set()
-          for (const n of nodes) {
-            const t = norm(n.innerText)
-            if (!t) continue
-            let leaf = true
-            for (const c of n.querySelectorAll("*")) {
-              if (norm(c.innerText)) {
-                leaf = false
-                break
+        // WHAT THE OLD VERSION DID ON ORC (measured 2026-08-04): nothing. The
+        // rows are not [class*='__option'] and not [role='option'], so `all` was
+        // empty and three required pickers were reported with no options —
+        // silently, since an empty list is indistinguishable from a menu that
+        // did not open.
+        // Named so it can run a second time when the first read found only a
+        // loading placeholder (below).
+        const readMenu = () =>
+          page.evaluate((ajKey) => {
+            const norm = (s) =>
+              String(s == null ? "" : s)
+                .replace(/\s+/g, " ")
+                .trim()
+            const el = document.querySelector('[data-aj="' + ajKey + '"]')
+            // The click landed and the page then re-rendered before the read: the
+            // stamped node is gone, and whatever menu is on screen now belongs
+            // to nobody this pass knows. Say so rather than sweep the page.
+            if (!el) return { lost: true }
+            const vis = (n) => {
+              if (!n || !n.isConnected) return false
+              const r = n.getBoundingClientRect()
+              const st = getComputedStyle(n)
+              return (
+                (r.width > 0 || r.height > 0) &&
+                st.visibility !== "hidden" &&
+                st.display !== "none" &&
+                st.opacity !== "0"
+              )
+            }
+            // A container is not a row.
+            const leavesOnly = (list) =>
+              list.filter(
+                (n) =>
+                  !list.some((o) => o !== n && n.contains && n.contains(o)),
+              )
+            // Same redirection as ariaOf() above, for the same measured reason:
+            // react-select's stamped shell carries no aria, and the ids live on the
+            // inner input. The shell is asked first, so a control that names its
+            // own menu is untouched.
+            const ariaAttr = (c, a) => {
+              if (!c || !c.getAttribute) return ""
+              const own = c.getAttribute(a)
+              if (own != null) return own
+              const inner =
+                c.querySelector &&
+                c.querySelector(
+                  "input[role='combobox'],input[aria-controls],input[aria-owns]," +
+                    "[role='combobox'][aria-controls],[role='combobox'][aria-owns]",
+                )
+              return (inner && inner.getAttribute(a)) || ""
+            }
+            const menuOf = (c) => {
+              if (!c || !c.getAttribute) return null
+              const ids = norm(
+                ariaAttr(c, "aria-controls") || ariaAttr(c, "aria-owns") || "",
+              ).split(/\s+/)
+              for (const id of ids) {
+                if (!id) continue
+                let m = null
+                try {
+                  m = document.getElementById(id)
+                } catch {}
+                if (m && vis(m)) return m
               }
+              return null
             }
-            if (!leaf) continue
-            let best = n
-            for (
-              let p = n.parentElement;
-              p && p !== menu;
-              p = p.parentElement
-            ) {
-              if (norm(p.innerText) !== t) break
-              best = p
+            // THE MENU IS NOT ALWAYS INSIDE THE CONTROL.
+            //
+            // MEASURED on the same Coinbase form: react-select renders
+            // `.select__menu` in a PORTAL — a sibling of <body>, not a descendant
+            // of the control's container — so every container-scoped lookup misses
+            // it, and when the control names no menu there is nothing left to read
+            // but the page-wide selector list.
+            //
+            // ONLY ONE MENU IS OPEN AT A TIME. That is what makes this safe rather
+            // than a guess: the probe opens exactly one control, reads it, and
+            // presses Escape before the next. So a SINGLE visible menu-list on the
+            // page is unambiguously the one just opened. Two or more visible means
+            // the assumption does not hold — a stale menu, or a board that renders
+            // several at once — and this declines to choose between them and falls
+            // through to the existing page-wide read, which is what happens today.
+            const portalMenu = () => {
+              let found = []
+              try {
+                found = [
+                  ...document.querySelectorAll(
+                    "[class*='select__menu-list'],[class*='Select__menu-list']",
+                  ),
+                ].filter(vis)
+              } catch {
+                return null
+              }
+              return found.length === 1 ? found[0] : null
             }
-            if (seen.has(best)) continue
-            seen.add(best)
-            out.push(best)
-          }
-          return out
-        }
-        const menu = menuOf(el) || portalMenu()
-        const rows = menu
-          ? rowsIn(menu)
-          : leavesOnly([
-              ...document.querySelectorAll(
-                "[role='option'],[role='listbox'] li,[class*='__option'],[class*='menu'] li",
+            const rowsIn = (menu) => {
+              const declared = [...menu.querySelectorAll("[role='option']")]
+              if (declared.length) return declared
+              const nodes = [...menu.querySelectorAll("*")]
+              if (nodes.length > 400) return leavesOnly(nodes.filter(vis))
+              const out = []
+              const seen = new Set()
+              for (const n of nodes) {
+                const t = norm(n.innerText)
+                if (!t) continue
+                let leaf = true
+                for (const c of n.querySelectorAll("*")) {
+                  if (norm(c.innerText)) {
+                    leaf = false
+                    break
+                  }
+                }
+                if (!leaf) continue
+                let best = n
+                for (
+                  let p = n.parentElement;
+                  p && p !== menu;
+                  p = p.parentElement
+                ) {
+                  if (norm(p.innerText) !== t) break
+                  best = p
+                }
+                if (seen.has(best)) continue
+                seen.add(best)
+                out.push(best)
+              }
+              return out
+            }
+            const menu = menuOf(el) || portalMenu()
+            const rows = menu
+              ? rowsIn(menu)
+              : leavesOnly([
+                  ...document.querySelectorAll(
+                    "[role='option'],[role='listbox'] li,[class*='__option'],[class*='menu'] li",
+                  ),
+                ])
+            // AN EMPTY-STATE MESSAGE IS NOT AN OPTION.
+            //
+            // MEASURED on Ashby, 2026-08-04. An async Location typeahead opened
+            // with no query renders
+            //   <div role="listbox"><div class="_noResults_"><p>No results</p>
+            // and declares NO [role=option] at all — so the leaf fallback above,
+            // which exists for menus that genuinely do not use role=option, read
+            // the decoration and returned ["No results"] AS THE OPTION LIST.
+            //
+            // That is worse than returning nothing. The field cache stores a
+            // returned list as the COMPLETE one, so the real answer then resolves
+            // as "not on offer" and the field defers on every future application
+            // to this board — the same silent-wrongness the truncation note below
+            // is about, arrived at from the other end.
+            //
+            // The filter only ever REMOVES, so its failure mode is a field that
+            // defers rather than one filled with a wrong value, which is the
+            // direction this pipeline always errs in.
+            //
+            // "LOADING..." IS NOT AN OPTION EITHER. MEASURED on Greenhouse embed
+            // forms 2026-08-18 (Torc, Cloudflare): School / Degree / Discipline
+            // are async lists whose menu mounts at once with a single
+            //   <div class="select__menu-notice--loading">Loading...</div>
+            // and fills in later. The read landed inside that window and the
+            // field cache stored ["Loading..."] as the COMPLETE list — the
+            // "No results" defect above, from the other end. Filtered here, and
+            // reported as `loading` so the caller can wait for the rows once.
+            const EMPTY_STATE =
+              /^(no results?|no options?|no matches?|nothing found|start typing|type to search|loading\b)/i
+            const shown = rows.filter(vis).map((e) => norm(e.innerText))
+            const loading = shown.some((t) => /^loading\b/i.test(t))
+            const all = [
+              ...new Set(
+                shown
+                  .map((t) => t.slice(0, 60))
+                  .filter((t) => t && !EMPTY_STATE.test(t)),
               ),
-            ])
-        // AN EMPTY-STATE MESSAGE IS NOT AN OPTION.
-        //
-        // MEASURED on Ashby, 2026-08-04. An async Location typeahead opened
-        // with no query renders
-        //   <div role="listbox"><div class="_noResults_"><p>No results</p>
-        // and declares NO [role=option] at all — so the leaf fallback above,
-        // which exists for menus that genuinely do not use role=option, read
-        // the decoration and returned ["No results"] AS THE OPTION LIST.
-        //
-        // That is worse than returning nothing. The field cache stores a
-        // returned list as the COMPLETE one, so the real answer then resolves
-        // as "not on offer" and the field defers on every future application
-        // to this board — the same silent-wrongness the truncation note below
-        // is about, arrived at from the other end.
-        //
-        // The filter only ever REMOVES, so its failure mode is a field that
-        // defers rather than one filled with a wrong value, which is the
-        // direction this pipeline always errs in.
-        const EMPTY_STATE =
-          /^(no results?|no options?|no matches?|nothing found|start typing|type to search)\b/i
-        const all = [
-          ...new Set(
-            rows
-              .filter(vis)
-              .map((e) => norm(e.innerText).slice(0, 60))
-              .filter((t) => t && !EMPTY_STATE.test(t)),
-          ),
-        ]
-        return { opts: all.slice(0, 40), total: all.length }
-      }, f.k)
-      // A page.evaluate return is DATA FROM THE PAGE and its shape is never
-      // assumed: an unexpected one used to become `probe_error` on every
-      // dropdown at once, which reads as "this board refuses to open its
-      // menus" and is indistinguishable from the real thing. A bare array is
-      // the shape this returned before the truncation flag existed.
-      const found = Array.isArray(raw)
-        ? { opts: raw, total: raw.length }
-        : {
-            opts: Array.isArray(raw && raw.opts) ? raw.opts : [],
-            total: Number((raw && raw.total) || 0),
+            ]
+            // 250, raised from 40 on 2026-08-21 (with scan-page.js MAX_OPTS):
+            // a 197-row country list cut to 40 lost the one option the banked
+            // answer named, and the field deferred on every run. The cap
+            // bounds pathological lists; optsTruncated still states any cut.
+            return { opts: all.slice(0, 250), total: all.length, loading }
+          }, f.k)
+        let raw = await readMenu()
+        // A page.evaluate return is DATA FROM THE PAGE and its shape is never
+        // assumed: an unexpected one used to become `probe_error` on every
+        // dropdown at once, which reads as "this board refuses to open its
+        // menus" and is indistinguishable from the real thing. A bare array is
+        // the shape this returned before the truncation flag existed.
+        if (raw && raw.lost === true) {
+          // Close whatever opened, then hand the pass back to the caller: the
+          // node this menu belonged to is gone, and so is every other stamp.
+          await page.keyboard.press("Escape").catch(() => {})
+          return true
+        }
+        // ROWS THAT HAVE NOT ARRIVED YET ARE NOT AN EMPTY LIST. Only a menu
+        // showing a loading notice and nothing else earns the second read, and
+        // the wait is a condition with a ceiling — the notice must go away —
+        // never a sleep. A list that never arrives is left as unprobed, which
+        // is the honest answer for it.
+        if (
+          raw &&
+          raw.loading === true &&
+          !(Array.isArray(raw.opts) && raw.opts.length)
+        ) {
+          await page
+            .waitForFunction(
+              () =>
+                ![
+                  ...document.querySelectorAll(
+                    "[class*='menu'] *,[role='listbox'] *",
+                  ),
+                ].some(
+                  (n) =>
+                    n.getClientRects().length &&
+                    /^loading\b/i.test(String(n.innerText || "").trim()),
+                ),
+              undefined,
+              { polling: 100, timeout: 1500 },
+            )
+            .catch(() => {})
+          raw = await readMenu()
+          if (raw && raw.lost === true) {
+            await page.keyboard.press("Escape").catch(() => {})
+            return true
           }
-      if (found.opts.length) f.opts = found.opts
-      if (found.total > found.opts.length) {
-        f.optsTruncated = true
-        f.optsTotal = found.total
+        }
+        const found = Array.isArray(raw)
+          ? { opts: raw, total: raw.length }
+          : {
+              opts: Array.isArray(raw && raw.opts) ? raw.opts : [],
+              total: Number((raw && raw.total) || 0),
+            }
+        if (found.opts.length) f.opts = found.opts
+        if (found.total > found.opts.length) {
+          f.optsTruncated = true
+          f.optsTotal = found.total
+        }
+        stats.probed++
+        await page.keyboard.press("Escape")
+        // Stop the NEXT dropdown's probe from reading THIS menu's rows. The read
+        // above falls back to a document-wide sweep whenever it cannot find the
+        // control's own menu, so a menu still on screen when the next control is
+        // clicked can hand its options to the wrong field — and a returned list
+        // is cached as the COMPLETE one, so that field then defers on every
+        // future application to the board. Same silent-wrongness as the
+        // empty-state note above, reached from the other end.
+        //
+        // IT DOES NOT EXIT EARLY, AND DID NOT ON ANY RUN MEASURED. MEASURED
+        // 2026-08-13 against all four page fixtures: every one renders the menu
+        // as a static container toggled with `hidden`, so the rows are never
+        // removed from the DOM and `detached` cannot fire. Three consecutive
+        // scans of greenhouse-step1 paid 82.5, 82.2 and 81.9ms of the 80ms
+        // ceiling. The guard still lands — 80ms is long enough for any menu to
+        // close — but it lands on the TIMEOUT, which makes this exactly the flat
+        // sleep the early exit was written to replace. Real react-select unmounts
+        // its menu and would detach; whether the live boards do was not checked.
+        //
+        // DO NOT "FIX" THAT BY SWITCHING TO state:"hidden" ALONE. Playwright
+        // reads hidden as "not visible OR not in the DOM", and this locator is
+        // page-wide with .first(), so it resolves against the first __option in
+        // DOM order — on a form carrying a persistent country-code widget (the
+        // one the open wait above already dodges) that element is ALREADY
+        // hidden, the wait returns instantly, and the guard is silently gone
+        // while the scan merely looks 80ms faster per dropdown. Scoping this to
+        // the control's own menu via aria-controls, as the open wait does, is a
+        // precondition for that change and not an independent improvement.
+        await page
+          .locator("[class*='__option']")
+          .first()
+          .waitFor({ state: "detached", timeout: 80 })
+          .catch(() => {})
+      } catch (e) {
+        f.probe_error = String(e.message).slice(0, 60)
       }
-      stats.probed++
-      await page.keyboard.press("Escape")
-      // Stop the NEXT dropdown's probe from reading THIS menu's rows. The read
-      // above falls back to a document-wide sweep whenever it cannot find the
-      // control's own menu, so a menu still on screen when the next control is
-      // clicked can hand its options to the wrong field — and a returned list
-      // is cached as the COMPLETE one, so that field then defers on every
-      // future application to the board. Same silent-wrongness as the
-      // empty-state note above, reached from the other end.
-      //
-      // IT DOES NOT EXIT EARLY, AND DID NOT ON ANY RUN MEASURED. MEASURED
-      // 2026-08-13 against all four page fixtures: every one renders the menu
-      // as a static container toggled with `hidden`, so the rows are never
-      // removed from the DOM and `detached` cannot fire. Three consecutive
-      // scans of greenhouse-step1 paid 82.5, 82.2 and 81.9ms of the 80ms
-      // ceiling. The guard still lands — 80ms is long enough for any menu to
-      // close — but it lands on the TIMEOUT, which makes this exactly the flat
-      // sleep the early exit was written to replace. Real react-select unmounts
-      // its menu and would detach; whether the live boards do was not checked.
-      //
-      // DO NOT "FIX" THAT BY SWITCHING TO state:"hidden" ALONE. Playwright
-      // reads hidden as "not visible OR not in the DOM", and this locator is
-      // page-wide with .first(), so it resolves against the first __option in
-      // DOM order — on a form carrying a persistent country-code widget (the
-      // one the open wait above already dodges) that element is ALREADY
-      // hidden, the wait returns instantly, and the guard is silently gone
-      // while the scan merely looks 80ms faster per dropdown. Scoping this to
-      // the control's own menu via aria-controls, as the open wait does, is a
-      // precondition for that change and not an independent improvement.
-      await page
-        .locator("[class*='__option']")
-        .first()
-        .waitFor({ state: "detached", timeout: 80 })
-        .catch(() => {})
-    } catch (e) {
-      f.probe_error = String(e.message).slice(0, 60)
     }
+    // The pass is over; are the stamps it leaves behind still on the page? A
+    // swap that landed after the last control was clicked would otherwise hand
+    // the planner a scan whose keys resolve to nothing at fill time.
+    return stampsLost(scan)
   }
-  scan.probe = stats
+
+  // Run the pass; if the page re-rendered under it, re-scan ONCE and run it
+  // again over the fresh stamps. See the re-render note above for the bound.
+  let rescans = 0
+  for (;;) {
+    const lost = await probePass()
+    if (!lost) break
+    if (rescans >= 1) {
+      scan.signals = [
+        ...(scan.signals ?? []),
+        "page re-rendered again after a re-scan; stamps may not resolve at fill time",
+      ]
+      break
+    }
+    await settleAfterRerender()
+    scan = await runScan(false)
+    rescans++
+    scan.signals = [
+      ...(scan.signals ?? []),
+      "page re-rendered after the structure scan (hydration); re-scanned and re-probed",
+    ]
+  }
+  scan.probe = {
+    ...(stats ?? { probed: 0, cached: 0, skipped: 0, capped: 0, refused: 0 }),
+    rescans,
+  }
 
   // --- THE VOUCH LEAVES OUT OF BAND -----------------------------------------
   //

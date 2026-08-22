@@ -592,6 +592,21 @@ export function instrumentedPage(spec = {}) {
       // and a double that matched on them answered the verify call with this
       // shape — which cost E4 its `landed` list and reported a filled field as
       // failed (tests/apply/edge-cases.test.mjs).
+      // THE FOCUSED-ROW PROBE (2026-08-18). type-enter presses Enter only
+      // when the page reports a focused option — Enter with none is the
+      // browser's implicit form submission (measured on Greenhouse). The
+      // double answers in its own terms: a combo that this fill OPENED and
+      // TYPED INTO has a focused row (the model has no rows to focus, so
+      // "open and filtered" is the state the real widget is in when a row is
+      // highlighted); anything else does not. `menuRenders: false` profiles
+      // — no menu ever opens — answer false, which is what sends them down
+      // the ladder exactly as a real board with no menu would.
+      if (src.includes("ajFocusedOptionProbe")) {
+        return !!(menuRenders && combo.open && combo.sawType)
+      }
+      // The submit guard's arm/disarm evaluates: nothing to model, nothing
+      // was blocked.
+      if (src.includes("__ajSubmitGuards")) return 0
       if (src.includes("ajSettleProbe")) {
         return {
           upl: (Array.isArray(arg) ? arg : []).map(() =>
@@ -1151,6 +1166,14 @@ export function benchPlan({
   args.push("--url", url)
   args.push("--profile", FIXTURE_PROFILE)
   args.push("--answers", answersFile)
+  // PINNED, like --profile and --answers above: without this the subprocess
+  // reads the machine's live docs/application-limits.yaml, and the bench's
+  // gate numbers move when the USER flips an unattended_assent key (measured
+  // 2026-08-21: required_assertions:true actuated gate-confirm and the gate
+  // matrix read 0 defers). The path does not exist, which loadAssentPolicy
+  // defines as every grant OFF — the policy every gate expectation was
+  // measured under.
+  args.push("--assent-limits", path.join(jobsDir, "no-assent.yaml"))
   args.push("--no-cache")
   if (files.resume) args.push("--resume", files.resume)
   if (files.cover) args.push("--cover", files.cover)

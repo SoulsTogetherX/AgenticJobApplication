@@ -58,7 +58,9 @@ const NO_ORIGIN = "\u0000no-origin"
  * @param jobs        rows with at least {slug, origin}
  * @param runOne      async (job) -> result. Must not throw for a per-job
  *                    condition; a throw here aborts the pool, which is correct
- *                    only for a StopError.
+ *                    only for a global/run-scoped StopError (a company/board
+ *                    brake never reaches here — runJob converts it to a
+ *                    deferral so the other origins keep running).
  * @param concurrency worker count.
  * @param onResult    called with each result as it lands, for progress output.
  * @param shouldStop  called before each job is started; returning a truthy

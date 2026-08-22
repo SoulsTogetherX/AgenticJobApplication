@@ -334,13 +334,13 @@ export async function walkPages(
   let liveUrl = url
 
   for (let pageNo = 1; ; pageNo++) {
-    const scan = await scanStage(page, {
+    let scan = await scanStage(page, {
       url: liveUrl,
       job,
       lead,
       page: pageNo,
     })
-    const plan = await planStage({
+    let plan = await planStage({
       scan,
       url: liveUrl,
       job,
@@ -348,7 +348,7 @@ export async function walkPages(
       documents,
       page: pageNo,
     })
-    const pageSha = sha256Of(plan)
+    let pageSha = sha256Of(plan)
 
     // THE `planned` WAYPOINT, written BEFORE the fill and on every page.
     //
@@ -362,9 +362,108 @@ export async function walkPages(
     if (onPagePlanned) await onPagePlanned({ page: pageNo, plan, sha: pageSha })
 
     // The fill runs Playwright-side and nothing is read back out of the page.
-    const report = fillStage
+    let report = fillStage
       ? await fillStage(page, plan, { job, lead, page: pageNo })
       : null
+
+    // ---- ONE bounded second pass, only when the fill CREATED fields --------
+    //
+    // A conditional reveal ("Have you worked here before? [Yes] -> If yes,
+    // when?") does not exist at scan time, so it is in no plan, and the
+    // verify pass reports it in `report.revealed` — un-stamped, because the
+    // scanner never saw it. Nothing can be filled from a revealed entry
+    // directly (no `k`, no fact-base resolution — fill-engine.mjs:2185 says
+    // why); the only deterministic way to understand it is the same way the
+    // first pass understood the page: scan again, plan again, fill again.
+    // Same template as scan-engine.mjs's hydration re-scan: ONCE, announced
+    // in signals, a full replacement rather than a merge. The gates are
+    // untouched and unweakened — a field still revealed after this pass
+    // refuses at submitReadiness exactly as before, anything UNKNOWN in the
+    // re-plan defers at the plan-defer exit below, so the pass only ever
+    // converts revealed -> planned-and-filled, revealed -> deferred, or
+    // revealed -> still-revealed-and-refused.
+    //
+    // Skipped when pass 1 already deferred: the walk is ending at the
+    // plan-defer exit regardless, and a second fill would only put more of
+    // the user's data into a form that is not going to be submitted.
+    if (fillStage && report?.revealed?.length && !plan?.defer?.length) {
+      const scan2 = await scanStage(page, {
+        url: liveUrl,
+        job,
+        lead,
+        page: pageNo,
+      })
+      const plan2 = await planStage({
+        scan: scan2,
+        url: liveUrl,
+        job,
+        lead,
+        documents,
+        page: pageNo,
+      })
+      // Uploads are NOT idempotent (the cover-letter-on-top-of-the-resume
+      // incident) — pass 2 replays every non-upload item and never re-attaches
+      // a file. The FULL non-upload list, not a delta: the choice-group
+      // coverage rule in the verify pass derives "covered" from the plan it is
+      // handed, and a delta plan would re-report already-answered group
+      // siblings as revealed.
+      const items2 = (plan2.items ?? []).filter((i) => i?.how !== "upload")
+      // Pass-1 grants survive the re-plan. A consent actuated in pass 1 whose
+      // control the fill then collapsed is absent from scan2, and dropping its
+      // record is the mergePages bug class (a gate cannot refuse — or admit —
+      // evidence it was never handed). Deduped by label+grant, not by `k`:
+      // scan2 re-stamps the page, so pass-1 keys may name different fields.
+      const seenGrants = new Set(
+        (plan2.actuated ?? []).map((a) => `${a.label}|${a.grant}`),
+      )
+      const carried = (plan.actuated ?? []).filter(
+        (a) => !seenGrants.has(`${a.label}|${a.grant}`),
+      )
+      const pass2 = {
+        ...plan2,
+        items: items2,
+        actuated: [...(plan2.actuated ?? []), ...carried],
+      }
+      const report2 = await fillStage(page, pass2, {
+        job,
+        lead,
+        page: pageNo,
+      })
+      // Pass 2 is authoritative for everything it replayed; pass 1 stays
+      // authoritative for uploads (its uploads record and any upload
+      // failures) and for counts that must never reset (submitsBlocked).
+      const upFails = (report?.failures ?? []).filter(
+        (f) => f?.how === "upload",
+      )
+      report = {
+        ...report2,
+        ok:
+          (report2.ok ?? 0) +
+          (report?.uploads ?? []).filter((u) => u?.attached).length,
+        failed: (report2.failed ?? 0) + upFails.length,
+        failures: [...(report2.failures ?? []), ...upFails],
+        uploads: report?.uploads ?? [],
+        comboVia: { ...(report?.comboVia ?? {}), ...(report2.comboVia ?? {}) },
+        submitsBlocked:
+          (report?.submitsBlocked ?? 0) + (report2.submitsBlocked ?? 0),
+        ms: (report?.ms ?? 0) + (report2.ms ?? 0),
+        signals: [
+          ...(report?.signals ?? []),
+          ...(report2.signals ?? []),
+          `${report.revealed.length} field(s) revealed by the fill; ` +
+            "re-scanned and re-planned once",
+        ],
+      }
+      scan = scan2
+      plan = pass2
+      // The advance token below and the merged submit sha both must bind the
+      // plan that now exists — a token bound to the pass-1 sha would name a
+      // plan this walk just replaced.
+      pageSha = sha256Of(plan)
+      if (onPagePlanned)
+        await onPagePlanned({ page: pageNo, plan, sha: pageSha })
+    }
+
     // The SCAN is kept per page, and the last page's is the one submitOnce
     // needs: the submit control lives on the final page, and locating it by the
     // stamp from an earlier page's scan would be locating it by a key that no
@@ -419,6 +518,28 @@ export async function walkPages(
       )
     }
 
+    // AN EMPTY FIRST PAGE THAT OFFERS 'NEXT' IS THE WRONG PAGE, not a page to
+    // advance from. Measured 2026-08-17 on a real lead: the runner opened a
+    // posting that had closed, the scan found no fields and one next-shaped
+    // control, and the walk went on to mint a token for it — which the gate
+    // refused ("nothing to fill") and this file then reported as an
+    // authorisation FAILURE, i.e. a malfunction. Nothing malfunctioned: the
+    // page was the ad, or the closed-posting notice, or a form that never
+    // rendered, and none of those is a page to click through. Page 1 only —
+    // a later page with nothing to fill and a Next control is a real shape
+    // (an interstitial), and the last page with nothing to fill and a Submit
+    // control is the review page, which the branch above already lets through.
+    // `unknown-field` is the honest kind: nothing deterministic understood
+    // this page, and it is the tier a probe or an adapter can shrink.
+    const fillable = (plan?.items ?? []).filter((i) => i?.how !== "skip")
+    if (pageNo === 1 && !fillable.length && !plan?.defer?.length)
+      return fail(
+        "unknown-field",
+        "page 1 rendered no fillable field yet offers a 'next' control — the " +
+          "runner is on the wrong page (posting closed, the ad rather than the " +
+          "form, or a form that did not render)",
+      )
+
     if (pageNo >= maxPages)
       return fail(
         "multipage-unresolvable",
@@ -434,6 +555,11 @@ export async function walkPages(
         "authorize",
         `page ${pageNo} could not be authorised to advance: ` +
           safeText(token?.reason ?? "no token was minted", 160),
+        // The FIRST failed check, carried so the caller can type the refusal
+        // the same way it types the final gate's (job.mjs CHECK_TO_KIND). A
+        // mid-walk refusal used to reach the row as a blanket `plan-error`,
+        // so a policy defer on page 2 read as a malfunction on page 2.
+        { check: token?.failed?.[0] ?? null },
       )
 
     try {
@@ -467,8 +593,10 @@ export async function walkPages(
 
   return { ok: true, pages, ...mergePages(pages) }
 
-  // Local, so every failure path goes through the abandonment.
-  async function fail(kind, reason) {
+  // Local, so every failure path goes through the abandonment. `extra` carries
+  // anything the caller needs to TYPE the failure (today: the failed check
+  // name of an authorisation refusal); it never carries page text.
+  async function fail(kind, reason, extra = {}) {
     // ONLY IF WE ADVANCED. A form abandoned on page 1 left nothing behind: no
     // Next was clicked, so no draft exists to discard, and reporting one would
     // be telling the user about something that is not there.
@@ -483,6 +611,7 @@ export async function walkPages(
       pages,
       ...mergePages(pages),
       abandonment,
+      ...extra,
     }
   }
 }

@@ -161,6 +161,10 @@ const openPage = async (url) => {
           // Reached only in the `challenged` run, which is live-mode.
           return true
         },
+        // The live path's pre-click stamp liveness check (submit.mjs); the
+        // stamp is "alive" here so the run reaches the click and the
+        // challenge.
+        async waitFor() {},
       }),
       async content() {
         return "<html><body>Please verify you are human</body></html>"

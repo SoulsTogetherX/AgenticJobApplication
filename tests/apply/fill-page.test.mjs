@@ -56,7 +56,11 @@ const plain = (v) => JSON.parse(JSON.stringify(v))
 // --- a fake page ----------------------------------------------------------
 // Records every interaction so tests can assert on ordering and on what was
 // never touched.
-function fakePage({ url = "https://ats.test/apply", elements = {} } = {}) {
+function fakePage({
+  url = "https://ats.test/apply",
+  elements = {},
+  ...opts
+} = {}) {
   const log = []
   // Which element the keyboard is aimed at. Only elements that opt in with
   // `typable` / `insertable` record what the keyboard sends — a react-select
@@ -231,6 +235,20 @@ function fakePage({ url = "https://ats.test/apply", elements = {} } = {}) {
       if (src.includes("requiredEmpty")) {
         log.push(["verify", (arg || []).length])
         return { mismatch: [], errors: [], requiredEmpty: [] }
+      }
+      // type-enter's focused-row probe (2026-08-18): this fake models a
+      // combobox whose menu is open with a highlighted row once something was
+      // typed into it — the state a real widget is in when Enter is safe. It
+      // answers true so the strategy ladder runs as it always did here; the
+      // no-row case has its own tests below.
+      if (src.includes("ajFocusedOptionProbe")) {
+        log.push(["focusedProbe"])
+        return opts.focusedOption === undefined ? true : !!opts.focusedOption
+      }
+      // The submit guard's arm/disarm: nothing to model.
+      if (src.includes("__ajSubmitGuards")) {
+        log.push([src.includes("removeEventListener") ? "disarm" : "arm"])
+        return 0
       }
       if (src.includes("__ajScan")) {
         return {
@@ -594,6 +612,89 @@ const inputsOf = (root) =>
     ajup: el.getAttribute("data-ajup"),
     files: (el.files || []).map((f) => f.name),
   }))
+
+// The Ashby shape, as scanned live (Eliza, 2026-08-18): the résumé-autofill
+// helper — a file input with no id under an "Autofill from resume" heading —
+// sits ABOVE the real slot, so its heading is the NEAREST ancestor matching
+// /resume/ and the text walk stamps the résumé onto it. The real slot then
+// reads empty at verify. The scanner names the real slot by its id; the plan
+// now carries that `sel`, and the engine tries it first.
+const ASHBY_HELPER_HTML = `<!doctype html><html><body><form>
+  <section class="autofill">
+    <h3>Autofill from resume</h3>
+    <p>Upload your resume to autofill this application.</p>
+    <input type="file" />
+  </section>
+  <div class="field">
+    <label for="_systemfield_name">Name</label>
+    <input type="text" id="_systemfield_name" />
+  </div>
+  <div class="field">
+    <label for="_systemfield_resume">Resume</label>
+    <input type="file" id="_systemfield_resume" />
+  </div>
+</form></body></html>`
+
+test("an upload item carrying the scanner's own selector lands on THAT input, not on the nearer text match (the Ashby helper)", async () => {
+  const page = domPage(ASHBY_HELPER_HTML)
+  const out = await fillPage(
+    page,
+    plan([
+      {
+        k: "f4",
+        how: "upload",
+        sel: "#_systemfield_resume",
+        labelMatch: "resume|\\bcv\\b",
+        paths: ["C:\\jobs\\x\\resume.pdf"],
+      },
+    ]),
+  )
+  assert.deepEqual(plain(inputsOf(page.root)), [
+    { id: "", ajup: null, files: [] },
+    { id: "_systemfield_resume", ajup: "u1", files: ["resume.pdf"] },
+  ])
+  assert.equal(out.ok, 1)
+  assert.equal(out.uploads[0].how, "selector")
+  assert.equal(out.uploads[0].target, "_systemfield_resume")
+})
+
+test("WITHOUT the selector the same page routes the résumé to the helper — which is exactly why the selector goes first", async () => {
+  // Pins the failure the selector rule exists for, so a future 'simplification'
+  // that drops `sel` from upload items turns this red instead of shipping.
+  const page = domPage(ASHBY_HELPER_HTML)
+  await fillPage(
+    page,
+    plan([
+      {
+        k: "f4",
+        how: "upload",
+        labelMatch: "resume|\\bcv\\b",
+        paths: ["C:\\jobs\\x\\resume.pdf"],
+      },
+    ]),
+  )
+  assert.deepEqual(plain(inputsOf(page.root)), [
+    { id: "", ajup: "u1", files: ["resume.pdf"] },
+    { id: "_systemfield_resume", ajup: null, files: [] },
+  ])
+})
+
+test("a selector that names an input already holding a file, or nothing at all, falls back to the text walk", async () => {
+  const page = domPage(ASHBY_HELPER_HTML)
+  const out = await fillPage(
+    page,
+    plan([
+      {
+        k: "f4",
+        how: "upload",
+        sel: "#no-such-input",
+        labelMatch: "resume|\\bcv\\b",
+        paths: ["C:\\jobs\\x\\resume.pdf"],
+      },
+    ]),
+  )
+  assert.equal(out.uploads[0].how, "label", "the walk decided, as before")
+})
 
 test("the cover letter never lands on the resume input", async () => {
   const page = domPage(GREENHOUSE_HTML)
@@ -1063,6 +1164,238 @@ test("combo falls through strategies until the value sticks", async () => {
   assert.ok(page.log.some((e) => e[0] === "press" && e[1] === "Enter"))
 })
 
+// --- valueAliases reach the engine (2026-08-18) -------------------------------
+//
+// MEASURED on Torc's Greenhouse embed form: Country* offers "United States +1"
+// and shows "+1" once chosen. ats/greenhouse.mjs has declared that alias since
+// 2026-07-27 and AUDIT H8 copied it onto the plan, but the engine never read
+// it — every strategy "failed" on a field the widget had committed, and the
+// verify pass mismatched it. Both readbacks now honour the alias.
+const COUNTRY_ALIAS = [
+  { label: /^country/i, value: /united states/i, accept: /\+1|united states/i },
+]
+
+test("setCombo accepts a readback the adapter's valueAlias names (Country* reads '+1')", async () => {
+  // The fake combo shows "+1" the moment it is set — spec.value is what
+  // shownValue reads. Without the alias every rung reports 'the field reads
+  // "+1"'; with it the first rung commits.
+  const page = fakePage({
+    elements: { "#c": { kind: "combo", value: "+1" } },
+  })
+  const out = await fillPage(
+    page,
+    plan(
+      [
+        {
+          k: "f1",
+          sel: "#c",
+          how: "combo",
+          label: "Country*",
+          value: "United States +1",
+        },
+      ],
+      { valueAliases: COUNTRY_ALIAS },
+    ),
+  )
+  assert.equal(out.failed, 0, JSON.stringify(out.failures))
+  assert.equal(out.ok, 1)
+  assert.equal(out.comboVia.f1, "type-enter", "the first rung was accepted")
+})
+
+test("a readback that differs from the value only in separators is accepted — equality after folding, never a prefix", async () => {
+  // MEASURED on Quora's Ashby School typeahead 2026-08-18: banked
+  // "University of Nevada - Las Vegas", committed "University of Nevada, Las
+  // Vegas" — the right row, failed on a hyphen.
+  const page = fakePage({
+    elements: {
+      "#s": { kind: "combo", value: "University of Nevada, Las Vegas" },
+    },
+  })
+  const out = await fillPage(
+    page,
+    plan([
+      {
+        k: "f1",
+        sel: "#s",
+        how: "combo",
+        label: "School",
+        value: "University of Nevada - Las Vegas",
+      },
+    ]),
+  )
+  assert.equal(out.failed, 0, JSON.stringify(out.failures))
+  // The bound: folding is not containment. "13 years" is not "1-3 years".
+  const page2 = fakePage({
+    elements: { "#y": { kind: "combo", value: "13 years" } },
+  })
+  const out2 = await fillPage(
+    page2,
+    plan([
+      { k: "f1", sel: "#y", how: "combo", label: "Years", value: "1-3 years" },
+    ]),
+  )
+  assert.equal(out2.failed, 1)
+})
+
+test("the alias is keyed on the field's LABEL and the planned VALUE — a different field reading '+1' still fails", async () => {
+  const page = fakePage({
+    elements: { "#c": { kind: "combo", value: "+1" } },
+  })
+  const out = await fillPage(
+    page,
+    plan(
+      [{ k: "f1", sel: "#c", how: "combo", label: "Gender", value: "Man" }],
+      { valueAliases: COUNTRY_ALIAS },
+    ),
+  )
+  assert.equal(out.failed, 1)
+  assert.match(out.failures[0].why, /the field reads "\+1"/)
+})
+
+test("an alias serialised as {source, flags} (the JSON path) is read exactly like a RegExp", async () => {
+  const page = fakePage({
+    elements: { "#c": { kind: "combo", value: "+1" } },
+  })
+  const serialised = JSON.parse(
+    JSON.stringify(COUNTRY_ALIAS, (k, v) =>
+      v instanceof RegExp ? { source: v.source, flags: v.flags } : v,
+    ),
+  )
+  assert.deepEqual(serialised[0].accept, {
+    source: "\\+1|united states",
+    flags: "i",
+  })
+  const out = await fillPage(
+    page,
+    plan(
+      [
+        {
+          k: "f1",
+          sel: "#c",
+          how: "combo",
+          label: "Country*",
+          value: "United States +1",
+        },
+      ],
+      { valueAliases: serialised },
+    ),
+  )
+  assert.equal(out.failed, 0, JSON.stringify(out.failures))
+})
+
+test("the verify pass is asked to accept the alias too, and a check item is verified by its tick", async () => {
+  // What the engine hands the verify evaluate: the alias as {source, flags} on
+  // the combo probe, and want "true" — not the option text — on a check item.
+  let probes = null
+  const page = fakePage({
+    elements: {
+      "#c": { kind: "combo", value: "+1" },
+      "#opt": { kind: "input", value: "" },
+    },
+  })
+  const raw = page.evaluate
+  page.evaluate = async (fn, arg) => {
+    if (String(fn).includes("requiredEmpty")) probes = arg
+    return raw(fn, arg)
+  }
+  await fillPage(
+    page,
+    plan(
+      [
+        {
+          k: "f1",
+          sel: "#c",
+          how: "combo",
+          label: "Country*",
+          value: "United States +1",
+        },
+        {
+          k: "g1",
+          sel: "#opt",
+          how: "check",
+          label: "Export control",
+          value: "None/Not applicable",
+          pick: "f9",
+        },
+      ],
+      { valueAliases: COUNTRY_ALIAS },
+    ),
+  )
+  assert.ok(Array.isArray(probes), "the verify pass ran with the probe list")
+  const combo = probes.find((p) => p.k === "f1")
+  assert.deepEqual(combo.accept, { source: "\\+1|united states", flags: "i" })
+  const check = probes.find((p) => p.k === "g1")
+  assert.equal(check.want, "true", "a tick is verified as a tick")
+  assert.equal(check.how, "check")
+})
+
+// --- ENTER NEVER SUBMITS A FORM (2026-08-18) ---------------------------------
+//
+// MEASURED on Torc's Greenhouse embed form: type-enter pressed Enter in a
+// react-select input whose menu had no focused row, and the browser performed
+// its implicit form submission — the board validated the whole form. Nothing
+// went out only because required fields were still empty. Two controls now
+// stand between a keystroke and a submit: the strategy presses Enter only when
+// the page reports a focused row, and a window-capture submit guard is armed
+// for the whole fill.
+test("type-enter presses Enter ONLY when the page reports a focused row; with none it fails to the next strategy", async () => {
+  const page = fakePage({
+    elements: { "#c": { kind: "combo", value: "" } },
+    focusedOption: false,
+  })
+  const out = await fillPage(
+    page,
+    plan([{ k: "f1", sel: "#c", how: "combo", value: "United States" }]),
+  )
+  assert.equal(out.failed, 1, "nothing committed on this fake either way")
+  assert.ok(
+    page.log.some((e) => e[0] === "focusedProbe"),
+    "the page was asked",
+  )
+  assert.ok(
+    !page.log.some((e) => e[0] === "press" && e[1] === "Enter"),
+    "no focused row, no Enter — the keystroke that submits a form is never sent",
+  )
+  // The other rungs still ran: a click on the row is not a submit.
+  assert.ok(page.log.filter((e) => e[0] === "type").length >= 2)
+  assert.match(
+    out.failures[0].why,
+    /no row focused|the field reads/,
+    "the failure names why type-enter did not commit",
+  )
+})
+
+test("the submit guard is armed before the first item and disarmed after the last, and its count is reported", async () => {
+  const page = fakePage({ elements: { "#a": { kind: "input" } } })
+  const out = await fillPage(
+    page,
+    plan([{ k: "f1", sel: "#a", how: "fill", value: "x" }]),
+  )
+  const arm = page.log.findIndex((e) => e[0] === "arm")
+  const disarm = page.log.findIndex((e) => e[0] === "disarm")
+  const firstFill = page.log.findIndex((e) => e[0] === "fill")
+  assert.ok(arm >= 0 && disarm >= 0, "both halves ran")
+  assert.ok(arm < firstFill, "armed before anything was typed")
+  assert.ok(disarm > firstFill, "disarmed after the last action")
+  assert.equal(out.submitsBlocked, 0)
+  assert.ok(!(out.signals || []).some((s) => /submission attempt/.test(s)))
+})
+
+test("the submit guard is disarmed on the page-guard refusal path too", async () => {
+  const page = fakePage({ elements: { "#a": { kind: "input" } } })
+  const out = await fillPage(
+    page,
+    plan([{ k: "f1", sel: "#a", how: "fill", value: "x" }], {
+      pageGuard: ["#not-on-this-page"],
+    }),
+  )
+  assert.equal(out.failures[0]?.how, "guard")
+  assert.ok(
+    page.log.some((e) => e[0] === "disarm"),
+    "no guard left behind",
+  )
+})
+
 test("reports the next button without ever clicking it", async () => {
   const page = fakePage({ elements: { "#a": { kind: "input" } } })
   const out = await fillPage(
@@ -1104,8 +1437,15 @@ test("skip items are never touched", async () => {
   const out = await fillPage(page, plan([{ k: "f1", sel: "#a", how: "skip" }]))
   assert.equal(out.ok, 0)
   assert.equal(out.failed, 0)
+  // The submit guard's arm/disarm are page-level listeners, not a touch on
+  // any control; the verify pass and waits likewise.
   const touched = page.log.filter(
-    (e) => e[0] !== "verify" && e[0] !== "wait" && e[0] !== "waitFor",
+    (e) =>
+      e[0] !== "verify" &&
+      e[0] !== "wait" &&
+      e[0] !== "waitFor" &&
+      e[0] !== "arm" &&
+      e[0] !== "disarm",
   )
   assert.equal(touched.length, 0)
 })
@@ -2997,10 +3337,13 @@ test("a cut option list says it was cut, and how long it really was", async (t) 
   // 40 survivors of a 200-option country list used to be indistinguishable
   // from a genuine 40-option list: the field cache stored the short list as
   // complete, and an answer the form does offer, past the cut, resolved as
-  // "not on offer" and was deferred to the user for nothing.
+  // "not on offer" and was deferred to the user for nothing. The cap is 250
+  // since 2026-08-21 (a real 197-row country list lost the banked answer's
+  // option to the old 40), so the fixture list is 300 to stay past it — the
+  // property pinned here is that a cut is STATED, whatever the cap.
   const { scan } = await withPage(async (page) => {
     const opts = Array.from(
-      { length: 200 },
+      { length: 300 },
       (_, i) => "<option>C" + i + "</option>",
     ).join("")
     await page.setContent(
@@ -3015,9 +3358,9 @@ test("a cut option list says it was cut, and how long it really was", async (t) 
     return scanPage(page, { probeMax: 0 })
   })
   const country = scan.fields.find((f) => f.l === "Country")
-  assert.equal(country.opts.length, 40)
+  assert.equal(country.opts.length, 250)
   assert.equal(country.optsTruncated, true)
-  assert.equal(country.optsTotal, 200)
+  assert.equal(country.optsTotal, 300)
   // A list that fits is not flagged, or the flag means nothing.
   const state = scan.fields.find((f) => f.l === "State")
   assert.equal(state.opts.length, 2)
@@ -3610,4 +3953,75 @@ test("BOUNDARY: a 'gone' input is still not subject to the filename check", asyn
     out.uploads.map((u) => u.seen),
     ["gone", "gone"],
   )
+})
+
+test("a date widget re-rendering ISO as MM/DD/YYYY is NOT a mismatch — same day, same value", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // MEASURED on OpenAI's Ashby form 2026-08-21: "When can you start a new
+  // role?" is a react date widget over a text input; the engine typed
+  // "2026-08-18" and the widget committed it as "08/18/2026", so every
+  // strategy "failed" and the verify pass mismatched a field the widget had
+  // filled correctly. The equivalence is recognised shapes + all three parts
+  // equal, never a fuzzy parse — a DIFFERENT day is still a mismatch.
+  const out = await withPage(async (page) => {
+    await page.setContent(
+      "<form>" +
+        '<label for="d1">When can you start a new role?</label>' +
+        '<input id="d1" name="start">' +
+        "<script>" +
+        "document.getElementById('d1').addEventListener('change', (e) => {" +
+        "  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(e.target.value);" +
+        "  if (m) e.target.value = m[2] + '/' + m[3] + '/' + m[1];" +
+        "})" +
+        "</script>" +
+        "</form>",
+    )
+    return fillPage(page, {
+      items: [
+        {
+          k: "d1",
+          how: "fill",
+          sel: "#d1",
+          value: "2026-08-21",
+          label: "When can you start a new role?",
+        },
+      ],
+    })
+  })
+  assert.equal(out.failed, 0, JSON.stringify(out.failures))
+  assert.equal(
+    out.verify.mismatch.length,
+    0,
+    "same calendar day must not mismatch: " +
+      JSON.stringify(out.verify.mismatch),
+  )
+})
+
+test("a date widget committing a DIFFERENT day is still a mismatch — the equivalence is not a parse", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  const out = await withPage(async (page) => {
+    await page.setContent(
+      "<form>" +
+        '<label for="d1">When can you start a new role?</label>' +
+        '<input id="d1" name="start">' +
+        "<script>" +
+        "document.getElementById('d1').addEventListener('change', (e) => {" +
+        "  e.target.value = '01/01/2020';" +
+        "})" +
+        "</script>" +
+        "</form>",
+    )
+    return fillPage(page, {
+      items: [
+        {
+          k: "d1",
+          how: "fill",
+          sel: "#d1",
+          value: "2026-08-21",
+          label: "When can you start a new role?",
+        },
+      ],
+    })
+  })
+  assert.equal(out.verify.mismatch.length, 1, "a wrong day must still surface")
 })

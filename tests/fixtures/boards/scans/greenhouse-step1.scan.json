@@ -60,6 +60,7 @@
       "k": "f1",
       "t": "combo",
       "l": "Country *",
+      "labelExact": true,
       "req": true,
       "v": "Select..."
     },
@@ -69,6 +70,7 @@
       "n": "job_application[answers][0]",
       "t": "textarea",
       "l": "Please describe, in as much detail as you are comfortable sharing, the single engineering decision you are most proud of",
+      "lFull": "Please describe, in as much detail as you are comfortable sharing, the single engineering decision you are most proud of and what you would do differently today *",
       "req": true
     },
     {
@@ -77,10 +79,24 @@
       "l": "Are you legally authorized to work in the United States?",
       "labelWhy": "label source is fieldset legend",
       "o": [
-        { "k": "f9", "n": "job_application[answers][1]", "l": "Yes" },
-        { "k": "f10", "n": "job_application[answers][1]", "l": "No" }
+        {
+          "k": "f9",
+          "n": "job_application[answers][1]",
+          "l": "Yes"
+        },
+        {
+          "k": "f10",
+          "n": "job_application[answers][1]",
+          "l": "No"
+        }
       ]
     }
   ],
-  "btns": [{ "k": "b1", "l": "Save and Continue", "r": "next" }]
+  "btns": [
+    {
+      "k": "b1",
+      "l": "Save and Continue",
+      "r": "next"
+    }
+  ]
 }

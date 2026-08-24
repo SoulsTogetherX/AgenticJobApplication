@@ -1528,6 +1528,13 @@ export const AUTO_QUEUE_TERMINAL = new Set([
 // The machine did not understand something, or the environment declined.
 // NOT a malfunction, and never a reason to stop the run.
 export const AUTO_DEFER_KINDS = Object.freeze([
+  // A DRY RUN FINISHED AND SENT NOTHING. The rehearsal filled the form and
+  // stopped at the submit, which is a deferral in the literal sense: this run
+  // is done with the job and a later LIVE run should look again. Until
+  // 2026-08-24 job.mjs wrote the queue row terminal `submitted` for this,
+  // which let a rehearsal permanently consume the live slot for a slug — see
+  // the write site for the measured case.
+  "rehearsed",
   "confirm-field",
   "confirm-widget",
   "consent-tickbox",
@@ -1729,6 +1736,13 @@ export const AUTO_REQUEUEABLE_KINDS = Object.freeze([
   "doc-unverified",
   // Cleared by running render-pdf — the next --enqueue should look again.
   "doc-unrendered",
+  // Cleared by the user shortening or re-banking the long answer through
+  // save-answer.mjs — the same user-action shape as fact-base-changed. Left
+  // off this list until 2026-08-23, which stranded a job as deferred with a
+  // STALE length reason after the user had already replaced the 383-char
+  // answer with a 197-char one; re-planning is the only way the new length
+  // gets measured, and a row whose text is still too long simply re-defers.
+  "freetext-disclosure",
   // Cleared by promoting a captured post-submit page for the host — a code
   // change, after which the next --enqueue should look again.
   "board-unsighted",
@@ -1745,6 +1759,13 @@ export const AUTO_REQUEUEABLE_KINDS = Object.freeze([
   // A fresh run re-navigates and re-fills, which re-stamps the form; the
   // retry usually lands.
   "submit-control-lost",
+  // A DRY RUN FINISHED AND SENT NOTHING. Cleared by arming the runner
+  // (auto_apply.dry_run: false); the next --enqueue should look again. This
+  // kind exists because the alternative — writing the queue row terminal
+  // `submitted` after a rehearsal, which is what job.mjs did until
+  // 2026-08-24 — let a dry run permanently consume the live slot for a slug.
+  // See the comment at that write for the measured case.
+  "rehearsed",
 ])
 const REQUEUEABLE_SQL = AUTO_REQUEUEABLE_KINDS.map((k) => `'${k}'`).join(", ")
 

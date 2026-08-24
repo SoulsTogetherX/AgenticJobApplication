@@ -477,4 +477,12 @@ reasoning, and the reasoning is what stops you re-introducing the bug — so
   named after its own option groups by `<fieldset>`; a dry run colliding with
   a dry-run ledger row is a repeat rehearsal, not a STOP.
 - **field cache** — a `v` mismatch against `CACHE_VERSION` discards every
-  remembered shape **silently**, dropping the whole pipeline to amber.
+  remembered shape, dropping the whole pipeline to amber. **No longer
+  silently** — corrected 2026-08-24, and this line said "silently" for three
+  weeks after it stopped being true, which sent readers hunting a closed bug.
+  `field-cache.mjs` logs the discard to stderr and returns
+  `discarded: {fromVersion, toVersion, forms}` (fixed 2026-08-01). The
+  **residual** defect is one layer out and is the one to know: nothing outside
+  the tests consumed that field, and `cycle.mjs` sets `stderr: ""` on a step
+  that SUCCEEDS — so the warning is thrown away by the code that captured it,
+  on the only path that runs unattended.

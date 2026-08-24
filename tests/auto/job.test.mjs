@@ -136,14 +136,45 @@ function rig(t, over = {}) {
 const queue = (db) =>
   db.prepare("SELECT * FROM auto_queue WHERE slug = ?").get(SLUG)
 
-test("the happy dry-run path reaches submitted with no reason to explain", async (t) => {
+test("the happy dry-run path DEFERS as 'rehearsed' — a rehearsal is not a submission", async (t) => {
+  // ASSERTION INVERTED 2026-08-24, deliberately. This used to assert
+  // `state: "submitted"`, and that was the bug: `auto_queue` is keyed by slug
+  // alone with no `mode` column, so a dry run's terminal `submitted` row is
+  // indistinguishable from a real application and permanently consumes the
+  // live slot for that slug. Measured on
+  // eliza-associate-forward-deployed-engineer, rehearsed 2026-08-18: it
+  // re-selected on every --enqueue for six days, was dropped at the resumable
+  // SELECT one stage before the claim (so nothing ever logged a refusal), and
+  // no live attempt could reach it. `auto_submissions` got this right — it is
+  // keyed (slug, mode) — and the queue never learned the same lesson.
+  //
+  // `deferred/rehearsed` is the honest record: nothing was sent, this run is
+  // finished with the job, and a later LIVE run should look again. The kind is
+  // on AUTO_REQUEUEABLE_KINDS so the next --enqueue picks it up, which is
+  // exactly the rehearse-then-arm workflow dry_run exists to support.
   const r = rig(t)
   const out = await runJob(r.base)
-  assert.equal(out.state, "submitted")
-  assert.equal(out.kind, null)
+  assert.equal(out.state, "deferred")
+  assert.equal(out.kind, "rehearsed")
   const row = queue(r.db)
-  assert.equal(row.state, "submitted")
-  assert.equal(row.reason_kind, null)
+  assert.equal(row.state, "deferred")
+  assert.equal(row.reason_kind, "rehearsed")
+  // The reason must say plainly that nothing went out — this string is what a
+  // human reads when asking "did it apply?".
+  assert.match(row.reason_detail, /Nothing was sent/)
+})
+
+test("a rehearsed job is re-queued by the next enqueue, and a submitted one is not", async (t) => {
+  // The half that makes the inversion above worth anything: the live attempt
+  // must actually be able to reach the slug afterwards.
+  const r = rig(t)
+  await runJob(r.base)
+  assert.equal(queue(r.db).state, "deferred")
+  const n = enqueueAutoJobs(r.db, [
+    { slug: queue(r.db).slug, origin: "o", board_key: "b" },
+  ])
+  assert.equal(n, 1, "a rehearsal must not block the live run")
+  assert.equal(queue(r.db).state, "queued")
 })
 
 // --- the duration reaches the row, on every exit ---------------------------
@@ -153,10 +184,13 @@ test("the happy dry-run path reaches submitted with no reason to explain", async
 // column must be the SAME number: a caller that trusts one and a digest that
 // reads the other would disagree about the same job.
 
-test("a submitted job records how long it took, in the row", async (t) => {
+test("a completed job records how long it took, in the row", async (t) => {
+  // The rig is a DRY RUN, so its terminal state is `deferred/rehearsed` since
+  // 2026-08-24 (see the inversion note above). What this test is about is the
+  // DURATION reaching the row on a clean exit, which is unchanged.
   const r = rig(t)
   const out = await runJob(r.base)
-  assert.equal(out.state, "submitted")
+  assert.equal(out.state, "deferred")
   const row = queue(r.db)
   assert.ok(
     Number.isInteger(row.wall_ms) && row.wall_ms >= 0,
@@ -274,7 +308,11 @@ test("a retried navigation that succeeds is not a failure", async (t) => {
     sleep: async () => {},
   }
   const out = await runJob(flaky)
-  assert.equal(out.state, "submitted")
+  // The rig is a dry run, so a clean finish is `deferred/rehearsed`. What this
+  // test asserts is that the retried navigation did NOT type the job as a
+  // failure — the two attempts and the non-failure exit are the point.
+  assert.equal(out.state, "deferred")
+  assert.equal(out.kind, "rehearsed")
   assert.equal(attempts, 2)
 })
 
@@ -426,7 +464,11 @@ test("LIVE on a host with no captured confirmation page defers board-unsighted B
 test("a DRY RUN on the same blind host proceeds — nothing is clicked, so nothing needs reading", async (t) => {
   const r = rig(t, { hostSighted: () => false }) // mode: dry_run
   const out = await runJob(r.base)
-  assert.equal(out.state, "submitted", out.detail)
+  // Past the board-unsighted gate — that is what this test asserts. It ends at
+  // `rehearsed` rather than `submitted` because a dry run sends nothing; the
+  // point here is that it was NOT stopped by the sightedness check.
+  assert.equal(out.state, "deferred", out.detail)
+  assert.equal(out.kind, "rehearsed", out.detail)
 })
 
 test("LIVE on a SIGHTED host proceeds past the gate", async (t) => {
@@ -603,9 +645,8 @@ test("a duplicate refusal is reported as already-applied, not a malfunction", as
 // boundary; global scope still throws, because that STOP means stop.
 
 test("a company-scoped STOP defers the job as company-stopped, throwing nothing", async (t) => {
-  const { StopError, scopedStopPath } = await import(
-    "../../scripts/auto/guard.mjs"
-  )
+  const { StopError, scopedStopPath } =
+    await import("../../scripts/auto/guard.mjs")
   const r = rig(t)
   const stopPath = path.join(r.dir, "jobs", ".auto", "STOP")
   const brake = scopedStopPath("company", "Acme", { stopPath })
@@ -687,7 +728,11 @@ test("a dead submit stamp triggers ONE re-scan, and the retry submits", async (t
         kind: "form",
         // The remount gave the fresh scan a different stamp key.
         buttons: [
-          { k: scans === 1 ? "b1" : "b2", l: "Submit application", r: "submit" },
+          {
+            k: scans === 1 ? "b1" : "b2",
+            l: "Submit application",
+            r: "submit",
+          },
         ],
       }
     },
@@ -698,7 +743,8 @@ test("a dead submit stamp triggers ONE re-scan, and the retry submits", async (t
           async click() {},
           async waitFor() {
             // b1 died with the remount; b2 is the re-scan's live stamp.
-            if (sel.includes("b1")) throw new Error("Timeout waiting for " + sel)
+            if (sel.includes("b1"))
+              throw new Error("Timeout waiting for " + sel)
           },
         }),
         async waitForLoadState() {},

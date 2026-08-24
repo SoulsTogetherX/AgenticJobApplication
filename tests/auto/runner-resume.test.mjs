@@ -235,10 +235,18 @@ test("resuming after a crash never produces a duplicate submission row", (t) => 
   assert.equal(submissionRows(w.dbFile).length, 0)
 
   // A second invocation picks the job up and carries it to the end.
+  //
+  // LIVE mode since 2026-08-24: a dry run no longer reaches `submitted` at all
+  // — it ends at `deferred/rehearsed`, because a rehearsal writing the terminal
+  // row let it permanently consume the live slot for a slug (job.mjs has the
+  // measured case). The fixture's `submitted` leg therefore runs
+  // live-against-nothing, exactly as its `challenged` leg already did. What
+  // this test is about — one row, never two — is unchanged, and the mode
+  // assertion now pins the mode the leg actually runs in.
   driveTo(w, "submitted")
   const after = submissionRows(w.dbFile)
   assert.equal(after.length, 1, "exactly one row, after a crash and a resume")
-  assert.equal(after[0].mode, "dry_run")
+  assert.equal(after[0].mode, "live")
   assert.equal(after[0].outcome, "submitted")
 
   // And a THIRD invocation adds nothing: the queue row is terminal, so the job

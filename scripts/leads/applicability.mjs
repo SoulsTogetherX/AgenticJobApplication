@@ -29,10 +29,22 @@ import { allowlistEntry } from "../auto/trust.mjs"
 // — SmartRecruiters, Workday and Oracle Cloud all resolve here and none has an
 // adapter this repo ships. Those rank above the unresolvable ones (they are one
 // adapter away from automatable) and below the ones that work today.
+// TIER 3 IS ABOUT THE USER, NOT THE BOARD. Every tier above asks "can the
+// machine finish this"; this one asks "is there anything left to do". A lead
+// the user has already applied to is not a recommendation at any rank, and
+// recommend.mjs had no way to know: it imports no application-store symbol, so
+// `--applicable` ranked `torc-robotics-software-engineer-ii-build-tools` first
+// on 2026-08-24 with an `applications` row dated 2026-08-18. All four Torc
+// leads were in the ledger and all four still read `status: "new"`.
+//
+// RANKED LAST, NOT DROPPED — the same principle as the comment above. "You
+// already applied to this on the 18th" is information; silently shrinking the
+// list is how the user stops trusting the count.
 export const APPLICABILITY = Object.freeze({
   AUTOMATABLE: 0, // resolved to an ATS posting on the user's allowlist
   RESOLVED_OFF_ALLOWLIST: 1, // resolved, but no adapter/allowlist entry serves it
   MANUAL_ONLY: 2, // never resolved past the aggregator — hand-apply only
+  ALREADY_APPLIED: 3, // in the application ledger — nothing left to recommend
 })
 
 /** Tier -> the name reported to agents and humans. Indexed by tier number. */
@@ -40,6 +52,7 @@ export const APPLICABILITY_NAMES = Object.freeze([
   "automatable",
   "off-allowlist",
   "manual-only",
+  "already-applied",
 ])
 
 /**
@@ -47,7 +60,12 @@ export const APPLICABILITY_NAMES = Object.freeze([
  * allowlist (an empty one collapses tier 0 into tier 1, which is correct — with
  * no allowlist nothing is automatable).
  */
-export function applicability(lead, entries = []) {
+export function applicability(lead, entries = [], { isApplied = null } = {}) {
+  // Checked FIRST: "already done" outranks every question about reachability.
+  // `isApplied` is injected rather than imported so this module stays pure and
+  // db-free; recommend.mjs passes a closure over findPriorApplication.
+  if (typeof isApplied === "function" && isApplied(lead))
+    return APPLICABILITY.ALREADY_APPLIED
   if (!lead?.apply_url) return APPLICABILITY.MANUAL_ONLY
   let host
   try {
@@ -71,10 +89,18 @@ export function applicability(lead, entries = []) {
  * Reordering upstream of clusterLeads() keeps leaders and members consistent
  * because the leaders are re-derived from this order.
  */
-export function preferApplicable(ranked, entries = []) {
+export function preferApplicable(
+  ranked,
+  entries = [],
+  { isApplied = null } = {},
+) {
   return (
     [...(ranked ?? [])]
-      .map((lead, i) => ({ lead, i, tier: applicability(lead, entries) }))
+      .map((lead, i) => ({
+        lead,
+        i,
+        tier: applicability(lead, entries, { isApplied }),
+      }))
       // Score order is preserved within a tier: `i` breaks every tie, so this is
       // a reordering by applicability and nothing else.
       .sort((a, b) => a.tier - b.tier || a.i - b.i)

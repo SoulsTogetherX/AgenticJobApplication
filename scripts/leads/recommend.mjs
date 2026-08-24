@@ -28,6 +28,7 @@ import {
   resolveLeadSource,
   openDb,
   keywordMap,
+  findPriorApplication,
 } from "../lib/db.mjs"
 import { matchTitleKeyword, loadLimits } from "./find-jobs.mjs"
 import { readLimits, normalizeAllowlist } from "../auto/trust.mjs"
@@ -204,6 +205,53 @@ function flag(args, name) {
  * falls back to loadLimits' own built-in defaults, which is what keeps
  * titleScore's DEFAULT_TITLE_RANK fallback reachable rather than throwing.
  */
+/**
+ * A predicate answering "has the user already applied to this lead", backed by
+ * `findPriorApplication` — the same helper the submit gate uses.
+ *
+ * Returns a function that is always safe to call. A store that cannot be
+ * opened yields a predicate that says NO to everything, which degrades to the
+ * pre-2026-08-24 behaviour (an applied job may be recommended) rather than
+ * suppressing real recommendations on a bad read. That is the right direction
+ * here: the cost of a false positive is a job the user never sees again, and
+ * the cost of a false negative is one line saying "already applied".
+ */
+export function buildAppliedPredicate(
+  leadsPath,
+  { warn = console.error } = {},
+) {
+  if (!String(leadsPath ?? "").endsWith(".db")) return () => false
+  let db
+  try {
+    db = openDb(leadsPath)
+  } catch (e) {
+    warn(`warn: application ledger unavailable (${e.message})`)
+    return () => false
+  }
+  try {
+    const cache = new Map()
+    return (lead) => {
+      const slug = lead?.slug ?? null
+      const urls = [lead?.apply_url, lead?.url].filter(Boolean)
+      const key = `${slug ?? ""}|${urls.join("|")}`
+      if (cache.has(key)) return cache.get(key)
+      let hit = false
+      try {
+        hit = !!findPriorApplication(db, { slug, urls })
+      } catch {
+        hit = false
+      }
+      cache.set(key, hit)
+      return hit
+    }
+  } finally {
+    // The predicate closes over `db`, so it must outlive this function. Closed
+    // by the process exiting — the same lifetime rankingContext's keyword map
+    // would have had if it were lazy. Kept explicit so nobody "fixes" it into
+    // a close() that breaks every later call.
+  }
+}
+
 export function rankingContext(leadsPath, { warn = console.error } = {}) {
   let keywords = null
   if (String(leadsPath ?? "").endsWith(".db")) {
@@ -285,6 +333,19 @@ function main() {
     readLimits(limitsPath)?.auto_apply?.board_allowlist,
   )
   const profileBlob = profileText(loadYamlFile(profilePath))
+
+  // ONE ANSWER TO "HAS THIS BEEN APPLIED TO", and it is `findPriorApplication`
+  // (lib/db.mjs). This file had none — it imports no application-store symbol —
+  // and prep-queue.mjs has a THIRD answer: a fuzzy company+title key against
+  // the YAML export, which is exactly the match db.mjs refuses to make because
+  // "two real openings at one employer often differ only by a level or a team
+  // name, and a false positive silently withholds an application the user
+  // wanted". Slug or URL, from the store of record, same as the submit gate.
+  //
+  // The map is built ONCE for the whole ranking rather than per lead: this runs
+  // over every lead in the store when --applicable is set.
+  const isApplied = buildAppliedPredicate(leadsPath)
+
   // --applicable: rank EVERYTHING, lift what the machine can finish, then cut.
   // Cutting first and lifting inside the window is the defect prep-queue had
   // (see its header); the same order is used here on purpose.
@@ -292,9 +353,11 @@ function main() {
     ? preferApplicable(
         rankLeads(leads, profileBlob, { top: leads.length, keywords, limits }),
         allow,
+        { isApplied },
       ).slice(0, top)
     : rankLeads(leads, profileBlob, { top, keywords, limits })
-  const tierOf = (r) => APPLICABILITY_NAMES[applicability(r, allow)]
+  const tierOf = (r) =>
+    APPLICABILITY_NAMES[applicability(r, allow, { isApplied })]
   // Ties mean the sort fell through to alphabetical-by-company — a flat list
   // labelled as ranked is worse than a flat list labelled as flat (P2 interim,
   // retarget-readiness audit 2026-08). This is checked on every output mode

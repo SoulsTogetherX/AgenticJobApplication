@@ -1,0 +1,130 @@
+// Strict flag validation — scripts/lib/args.mjs.
+//
+// The cases that matter are the two fail-open typos measured 2026-08-24:
+// `--skip-aply` (cycle submits instead of preparing) and `--enqeue`
+// (auto-apply submits instead of enqueuing). Everything else here exists to
+// keep the checker from being so eager that someone turns it off.
+import test from "node:test"
+import assert from "node:assert/strict"
+import { assertKnownFlags, nearestFlag } from "../../scripts/lib/args.mjs"
+
+const CYCLE = {
+  known: ["--top", "--limit", "--json", "--skip-search", "--skip-apply"],
+  valueFlags: ["--top", "--limit"],
+  script: "cycle.mjs",
+}
+
+test("a correctly spelled flag set passes", () => {
+  assert.equal(
+    assertKnownFlags(["--skip-apply", "--top", "10", "--json"], CYCLE),
+    true,
+  )
+})
+
+test("an empty argv passes — a bare run is not a usage error here", () => {
+  assert.equal(assertKnownFlags([], CYCLE), true)
+})
+
+test("THE INCIDENT: --skip-aply is refused, not ignored", () => {
+  assert.throws(
+    () => assertKnownFlags(["--skip-aply"], CYCLE),
+    (e) => {
+      assert.match(e.message, /Unrecognised flag --skip-aply/)
+      // The suggestion is the whole point: the user meant the real flag.
+      assert.match(e.message, /Did you mean --skip-apply\?/)
+      // And the consequence, because "unknown flag" alone reads as pedantry.
+      assert.match(e.message, /submits applications|NOT ignored/)
+      return true
+    },
+  )
+})
+
+test("THE OTHER INCIDENT: --enqeue is refused with the right suggestion", () => {
+  assert.throws(
+    () =>
+      assertKnownFlags(["--enqeue"], {
+        known: ["--enqueue", "--limit", "--fixture"],
+        script: "auto-apply.mjs",
+      }),
+    /Did you mean --enqueue\?/,
+  )
+})
+
+test("--fixtur is refused — the isolation guard only fires when it parses", () => {
+  assert.throws(
+    () =>
+      assertKnownFlags(["--fixtur", "--db", "/tmp/x.db"], {
+        known: ["--fixture", "--db", "--enqueue"],
+        valueFlags: ["--db"],
+        script: "auto-apply.mjs",
+      }),
+    /Did you mean --fixture\?/,
+  )
+})
+
+test("a value is not mistaken for a flag", () => {
+  // `25` follows a value flag and must not be inspected at all.
+  assert.equal(assertKnownFlags(["--limit", "25"], CYCLE), true)
+  // A value that LOOKS like a path is equally fine.
+  assert.equal(
+    assertKnownFlags(["--jobs-dir", "jobs"], {
+      known: ["--jobs-dir"],
+      valueFlags: ["--jobs-dir"],
+      script: "x",
+    }),
+    true,
+  )
+})
+
+test("a value flag followed by another flag is refused, not silently bound", () => {
+  // `--jobs-dir --json` used to set jobsDir to the literal "--json".
+  assert.throws(
+    () =>
+      assertKnownFlags(["--jobs-dir", "--json"], {
+        known: ["--jobs-dir", "--json"],
+        valueFlags: ["--jobs-dir"],
+        script: "x",
+      }),
+    /--jobs-dir needs a value/,
+  )
+})
+
+test("a value flag at the end of argv is refused", () => {
+  assert.throws(() => assertKnownFlags(["--top"], CYCLE), /--top needs a value/)
+})
+
+test("--flag=value is checked on the name half only", () => {
+  assert.equal(assertKnownFlags(["--top=10"], CYCLE), true)
+  assert.throws(() => assertKnownFlags(["--tpo=10"], CYCLE), /--tpo/)
+})
+
+test("everything after -- is left alone", () => {
+  assert.equal(
+    assertKnownFlags(["--json", "--", "--not-a-flag", "--nonsense"], CYCLE),
+    true,
+  )
+})
+
+test("positionals are not flags and are not checked", () => {
+  assert.equal(assertKnownFlags(["some-slug", "--json"], CYCLE), true)
+})
+
+test("a wildly wrong flag gets no suggestion rather than a misleading one", () => {
+  // Suggesting --limit for --xyzzy would teach people to ignore the hint.
+  assert.equal(nearestFlag("--xyzzy", CYCLE.known), null)
+  assert.throws(
+    () => assertKnownFlags(["--xyzzy"], CYCLE),
+    (e) => {
+      assert.match(e.message, /Unrecognised flag --xyzzy/)
+      assert.doesNotMatch(e.message, /Did you mean/)
+      return true
+    },
+  )
+})
+
+test("the message lists the known flags, so the fix needs no second command", () => {
+  assert.throws(
+    () => assertKnownFlags(["--nope"], CYCLE),
+    /Known flags: --top --limit --json --skip-search --skip-apply/,
+  )
+})

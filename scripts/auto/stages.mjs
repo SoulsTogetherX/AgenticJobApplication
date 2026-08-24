@@ -116,6 +116,12 @@ export function makeStages({
   // on purpose (see submitReadiness).
   const assent = loadAssentPolicy({ limitsFile })
 
+  // Set by plan() when loadCache reports a whole-cache discard. Read by the
+  // runner through cacheDiscard() below, so a version bump that throws away
+  // every remembered form shape is a run-level fact rather than a stderr line
+  // the cycle deletes on success.
+  let lastCacheDiscard = null
+
   // THE VOUCH TRAVELS OUT OF BAND, and this WeakMap is how.
   //
   // scanPage returns `{scan, vouchedLabels}`: it lifts every vouched label OUT
@@ -232,7 +238,23 @@ export function makeStages({
     const files = slug ? renderedFiles(slug, { jobsDir }) : {}
 
     const fp = fingerprint(pageScan, adapter.id)
-    const cachedEntry = loadCache(cachePath).forms[fp]
+    const cache = loadCache(cachePath)
+    // A WHOLE-CACHE DISCARD IS A RUN-LEVEL EVENT, NOT A LINE OF STDERR.
+    //
+    // loadCache warns and returns `discarded` when the on-disk version does not
+    // match CACHE_VERSION (the 2026-08-01 fix). Nothing outside the tests ever
+    // read that field, and the warning it prints does not survive either:
+    // cycle.mjs runs its children with piped stderr and sets `stderr: ""` for
+    // any step that EXITS 0, so a successful run with a cold cache loses the
+    // message entirely — on the scheduled 7:00 run, which is the one path where
+    // every board must be re-probed as a result and nobody is watching.
+    //
+    // Recorded on the stage output so it reaches auto-apply's --json and the
+    // cycle's structured record, where a discard is distinguishable from a
+    // pipeline that is amber for real reasons. Same report-don't-swallow shape
+    // as the cache-WRITE handler further down.
+    if (cache.discarded) lastCacheDiscard = cache.discarded
+    const cachedEntry = cache.forms[fp]
     applyCache(pageScan, cachedEntry)
 
     const resolved = resolveFields(pageScan.fields, {
@@ -276,6 +298,53 @@ export function makeStages({
     // the plan's sha (multipage.mjs hashes the returned object), so the sha
     // covers it like every other plan field.
     built.fp = fp
+
+    // PERSIST THE PLAN, because the unattended path is the one that cannot be
+    // re-run to find out what it decided.
+    //
+    // fill-plan.mjs's main() writes jobs/<slug>/fill-plan.json and is the only
+    // writer in the repo — so the ATTENDED path leaves a full record and the
+    // unattended path left none, the exact inverse of where the record is
+    // needed. Measured 2026-08-24: 32 of 68 workspaces had neither plan nor
+    // scan, and every job the runner had touched was among them, including
+    // three Torc applications it actually SUBMITTED. The only surviving
+    // diagnostic was auto_queue.reason_detail, which taxonomy.mjs caps at one
+    // label of 80 chars plus a count — so "6 field(s) need a human; first:
+    // Please read the arbitration agreement below" was all that could ever be
+    // known about six fields, and learning the other five required another
+    // live browser session against a real employer.
+    //
+    // NOT REDACTED, deliberately. /jobs/ is gitignored in full (0 tracked
+    // files) and the attended path already writes this same file unredacted to
+    // this same directory, so this introduces no new class of exposure. A
+    // redacted plan would blank the resolved values, which are precisely what
+    // a defer investigation needs to read. capture-post-submit.mjs's
+    // redactCapture() remains the right tool for anything meant to LEAVE the
+    // machine.
+    //
+    // Best-effort: a workspace that cannot be written is not a reason to fail
+    // a fill that otherwise succeeded, and the failure is reported rather than
+    // swallowed — the same shape as the cache-write handler just above.
+    if (slug) {
+      try {
+        const dir = path.join(jobsDir, slug)
+        fs.mkdirSync(dir, { recursive: true })
+        fs.writeFileSync(
+          path.join(dir, "fill-plan.json"),
+          `${JSON.stringify(built, null, 2)}\n`,
+        )
+        // The scan too, under the name rebuild-plans.mjs looks for. Without it
+        // that sweep skips the slug as `no-scan` forever, so these 32
+        // workspaces were outside the rebuild loop as well as outside the
+        // diagnostic one.
+        fs.writeFileSync(
+          path.join(dir, "scan-p1.json"),
+          `${JSON.stringify(pageScan, null, 2)}\n`,
+        )
+      } catch (e) {
+        console.error(`warn: plan not persisted for ${slug}: ${e.message}`)
+      }
+    }
     return built
   }
 
@@ -318,5 +387,8 @@ export function makeStages({
     return classifyPage(url, html)
   }
 
-  return { scan, plan, fill, classify }
+  /** The whole-cache discard this makeStages() saw, or null. */
+  const cacheDiscard = () => lastCacheDiscard
+
+  return { scan, plan, fill, classify, cacheDiscard }
 }

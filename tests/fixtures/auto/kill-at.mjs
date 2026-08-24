@@ -191,7 +191,12 @@ const docs = {
 // confirmation. So this leg runs live-against-nothing — a fake page, a fake
 // classifier, no employer anywhere near it — because the alternative is leaving
 // the state untested and saying it was covered.
-const live = target === "challenged"
+// `submitted` joined it on 2026-08-24: a dry run now ends at
+// `deferred/rehearsed`, because writing the queue row terminal `submitted`
+// after a rehearsal let a dry run permanently consume the live slot for a slug
+// (job.mjs has the measured case). So a rehearsal can no longer produce this
+// state either, and the same fake-page/fake-classifier treatment applies.
+const live = target === "challenged" || target === "submitted"
 const limits = live
   ? { auto_apply: { ...LIMITS.auto_apply, dry_run: false } }
   : LIMITS
@@ -209,7 +214,11 @@ const out = await runCampaign({
   scan,
   plan,
   fill,
-  classify: live ? () => "bot-challenge" : null,
+  // The two live legs want opposite answers from the classifier: `submitted`
+  // needs the page to read as a confirmation, `challenged` needs it not to.
+  classify: live
+    ? () => (target === "submitted" ? "confirmation" : "bot-challenge")
+    : null,
   profileApproved: true,
   documentsFor: () => docs,
   jobs: [job],

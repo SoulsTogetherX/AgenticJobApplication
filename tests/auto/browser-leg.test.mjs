@@ -176,19 +176,31 @@ test("the runner drives a real browser through a real form and reaches the submi
   const row = rows.find((r) => r.slug === SLUG)
 
   // THE ASSERTION, and it is deliberately about STATE rather than about a
-  // count. `submitted` in dry_run means every stage ran for real: the page
+  // count. `rehearsed` in dry_run means every stage ran for real: the page
   // opened, scan-page.js installed and returned fields, fill-plan resolved them
   // from the fact base with ZERO defers, the fill engine typed them into a live
   // DOM, the trust gate and every authorization check passed, the durable
   // (slug, mode) row was written, and submitOnce located the submit control —
   // without clicking it, which is what dry_run means.
+  //
+  // THE EXPECTED STATE CHANGED ON 2026-08-24 AND THE MEANING DID NOT. A dry run
+  // used to end at terminal `submitted`, which is what let a rehearsal
+  // permanently consume the live slot for a slug (job.mjs has the measured
+  // case). It now ends at `deferred/rehearsed`. That is still "every stage ran
+  // and the submit control was found"; `rehearsed` is reached ONLY from
+  // submitOnce's dry-run return, so it certifies the same walk this test was
+  // written to certify — a defer at any earlier stage carries a different kind
+  // and fails this assertion exactly as it did before.
   assert.deepEqual(
     { state: row?.state, kind: row?.reason_kind ?? null, outcome: out.outcome },
-    { state: "submitted", kind: null, outcome: "ok" },
+    { state: "deferred", kind: "rehearsed", outcome: "ok" },
     `the browser leg did not complete. Row: ${JSON.stringify(row)}\n` +
       `Run: ${JSON.stringify(out)}\n` +
       "This is the test that tells 'the runner is wired' from 'the runner works'.",
   )
+  // And nothing was clicked: no submission row may exist for a rehearsal that
+  // reached the control.
+  assert.equal(row.reason_stage, "attempt")
 })
 
 test("the stages are the SAME code the attended path uses, not a second implementation", () => {

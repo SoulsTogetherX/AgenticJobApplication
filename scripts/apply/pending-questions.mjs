@@ -28,7 +28,13 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { isTerse } from "../lib/lib.mjs"
 import { detectAts } from "./ats/index.mjs"
 import { loadCache } from "./field-cache.mjs"
-import { isConsent, resolveFields, labelHazard } from "./fill-plan.mjs"
+import {
+  isConsent,
+  looksLikeAgreementProse,
+  isUnprobedButAnswered,
+  resolveFields,
+  labelHazard,
+} from "./fill-plan.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -171,10 +177,33 @@ const NEEDS_HUMAN = new Set(["UNKNOWN", "NEEDS-CHOICE", "MAYBE"])
 export function questionsFromPredicted(fields, resolved) {
   const byKey = new Map(resolved.map((r) => [r.k, r]))
   const found = []
+  // Counted, not silently dropped — the same rule the stale-plan skip above
+  // follows. A suppressed question that nobody can account for is the original
+  // bug pointing the other way.
+  const suppressed = { answered: 0, consent: 0 }
   for (const f of fields) {
-    if (isConsent(f.l)) continue
+    // BOTH consent predicates, matching buildPlan. `isConsent` alone was a
+    // NARROWER filter than the planner's, so boxes the planner routes into its
+    // protected branch still reached the user as questions: nine of them on
+    // 2026-08-24, including "Please read the arbitration agreement below" and
+    // four demographic-data consent boxes. That contradicted this file's own
+    // header promise that consent and e-signature fields are never listed.
+    // `looksLikeAgreementProse` is the shape half — long single-sentence prose
+    // on a tickbox — and it is what catches a reworded box.
+    if (isConsent(f.l) || looksLikeAgreementProse(f, f.l)) {
+      suppressed.consent += 1
+      continue
+    }
     const r = byKey.get(f.k) ?? {}
     if (r.status && !NEEDS_HUMAN.has(r.status)) continue
+    // The fact base already answers it and only a probe is missing. Asking a
+    // human cannot supply a probe, so this is not a question — see
+    // isUnprobedButAnswered in fill-plan.mjs for why this is not a licence to
+    // fill it either.
+    if (isUnprobedButAnswered(f, r)) {
+      suppressed.answered += 1
+      continue
+    }
     found.push({
       source: "predicted",
       slug: null,
@@ -186,6 +215,7 @@ export function questionsFromPredicted(fields, resolved) {
       optsTruncated: f.optsTruncated || undefined,
     })
   }
+  found.suppressed = suppressed
   return found
 }
 
@@ -220,12 +250,44 @@ function readJson(file) {
 // every planner change, and being forgotten is precisely the shape of this bug.
 // mtime errs toward calling a plan stale — that direction costs a rebuild, the
 // other costs the user's confidence that answering anything matters.
-const PLAN_INPUT_PATHS = [
-  "scripts/apply/fill-plan.mjs",
-  "scripts/apply/answer-bank.mjs",
-  "scripts/apply/assent-policy.mjs",
-  "scripts/apply/ats",
-]
+//
+// DIRECTORIES, NOT A FILE LIST — and that correction is the whole point of the
+// paragraph above. The list used to name four paths by hand, and the comment
+// warning that "a constant has to be remembered on every planner change, and
+// being forgotten is precisely the shape of this bug" described exactly what
+// then happened to it: the constant did not disappear, it just moved up one
+// level, from a version number to a path list, and was forgotten in the same
+// way. Measured 2026-08-24, the hand-written list omitted `intents.mjs` (the
+// 948-line polarity and typed-proposition engine, and the most defect-prone
+// input `buildPlan` has), `disclosure.mjs`, `field-cache.mjs`,
+// `scan-engine.mjs`, and everything in `lib/` — so a fix landing in any of them
+// marked ZERO plans stale and every plan on disk kept answering with the old
+// code's verdict.
+//
+// The two directories below are the real transitive closure of `buildPlan` and
+// `resolveFields`, taken from the import graph rather than from memory. Naming
+// a directory costs a `readdirSync` per run and cannot be forgotten when a new
+// planner file lands beside the others, which is the failure being closed.
+const PLAN_INPUT_PATHS = ["scripts/apply", "scripts/lib"]
+
+// The fact base is an input too, and BOTH halves of it are. `profile.yaml` was
+// missing until 2026-08-24: `resolveFields` reads it for address, name and
+// education, so an edit there changed what a plan would decide while every plan
+// on disk still read as current.
+export const FACT_BASE_INPUTS = ["profile/answers.yaml", "profile/profile.yaml"]
+
+/**
+ * The fact-base paths to pass as `extra`, honouring an explicit --answers
+ * override so a test pointed at a fixture bank does not stat the real one.
+ */
+export function factBaseInputs({ answersFlag = null, root = ROOT } = {}) {
+  return [
+    typeof answersFlag === "string"
+      ? path.resolve(answersFlag)
+      : path.join(root, "profile", "answers.yaml"),
+    path.join(root, "profile", "profile.yaml"),
+  ]
+}
 
 export function newestInputMtime(extra = []) {
   let newest = 0
@@ -283,11 +345,7 @@ function main() {
 
   // The fact base counts as an input too: banking an answer is the single most
   // common reason a recorded defer stops being true.
-  const newestInput = newestInputMtime([
-    typeof answersFlag === "string"
-      ? path.resolve(answersFlag)
-      : path.join(ROOT, "profile", "answers.yaml"),
-  ])
+  const newestInput = newestInputMtime(factBaseInputs({ answersFlag }))
 
   const plans = []
   const stalePlans = []

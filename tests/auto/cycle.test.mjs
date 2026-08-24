@@ -16,8 +16,12 @@ import {
   stepDetail,
   stageRecord,
   prepareDocuments,
+  runCycle,
+  CYCLE_FLAGS,
+  CYCLE_VALUE_FLAGS,
   STDERR_TAIL_LINES,
 } from "../../scripts/auto/cycle.mjs"
+import { assertKnownFlags } from "../../scripts/lib/args.mjs"
 import { EXIT_NO_FIT } from "../../scripts/documents/assemble-resume.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -235,4 +239,60 @@ test("prepareDocuments runs the stages in order and passes each the right argume
   const tail = (p) => p.split(/[\\/]/).slice(-2).join("/")
   assert.equal(tail(calls[2].args[1]), "acme-dev/resume.md")
   assert.equal(tail(calls[3].args[1]), "acme-dev/resume.pdf")
+})
+
+// --- the applier gate is spelled, not guessed -------------------------------
+//
+// MEASURED 2026-08-24. `cycle.mjs` gated the runner on
+// `!argv.includes("--skip-apply")`, so the gate FAILED OPEN: any misspelling of
+// the flag meant the cycle submitted applications instead of preparing them.
+// The user's registered 7:00 Windows task passes `--skip-apply` to prepare
+// only, and one mistyped character in that registration would have sent real
+// applications with nothing in the log saying so. These pin the refusal and
+// the log line that makes the mode readable after the fact.
+
+test("a misspelled --skip-apply is REFUSED — the applier gate fails open otherwise", async () => {
+  await assert.rejects(
+    () => runCycle(["--skip-aply"]),
+    (e) => {
+      assert.equal(e.isUsage, true, "must be a usage error, not a crash")
+      assert.equal(e.exitCode, 2)
+      assert.match(e.message, /Did you mean --skip-apply\?/)
+      // The consequence has to be in the message: "unknown flag" on its own
+      // reads as pedantry and gets worked around rather than fixed.
+      assert.match(e.message, /submits applications/)
+      return true
+    },
+  )
+})
+
+test("every flag the cycle actually reads is in CYCLE_FLAGS", () => {
+  // The list and the reads must not drift apart: a flag added to runCycle but
+  // not to the list would be refused, and one removed from runCycle but left in
+  // the list would be silently ignored again.
+  const src = fs.readFileSync(
+    path.join(ROOT, "scripts", "auto", "cycle.mjs"),
+    "utf8",
+  )
+  const read = new Set()
+  for (const m of src.matchAll(/(?:argv|args)\.includes\("(--[a-z-]+)"\)/g))
+    read.add(m[1])
+  for (const m of src.matchAll(/flag\(argv,\s*"(--[a-z-]+)"/g)) read.add(m[1])
+  for (const f of read)
+    assert.ok(
+      CYCLE_FLAGS.includes(f),
+      `${f} is read by cycle.mjs but missing from CYCLE_FLAGS`,
+    )
+})
+
+test("a correctly spelled prepare-only invocation is not refused", () => {
+  // The guard must not be so eager that the real command stops working. This
+  // asserts the parse only — running the cycle would spawn every stage.
+  assert.doesNotThrow(() =>
+    assertKnownFlags(["--skip-apply", "--top", "10", "--json"], {
+      known: CYCLE_FLAGS,
+      valueFlags: CYCLE_VALUE_FLAGS,
+      script: "cycle.mjs",
+    }),
+  )
 })

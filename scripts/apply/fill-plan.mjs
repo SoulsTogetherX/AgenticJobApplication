@@ -294,7 +294,26 @@ export const CONSENT_NEGATION =
 const MIN_AGREEMENT_WORDS = 8
 export function looksLikeAgreementProse(field, label) {
   if (field?.t !== "checkbox") return false
-  if (!Array.isArray(field?.o) || field.o.length !== 1) return false
+  // ONE BOX, NEVER A GROUP — but "how many boxes" is only knowable when the
+  // options were actually stamped. A live scan ALWAYS stamps them: a single
+  // tickbox is o.length === 1 and a group is o.length > 1, which is exactly
+  // what `singleBox` reads further down this file. So on the scan path the
+  // first branch below is the whole rule and nothing has changed.
+  //
+  // ABSENT is a third state, and it means "asked about a REMEMBERED field".
+  // jobs/.field-cache.json stores only {t, l, req} for a checkbox — measured
+  // 2026-08-24 across all 34 cached checkboxes — so a predicted field can
+  // never carry `o`, and requiring it made this predicate silently inert on
+  // the path pending-questions.mjs uses. Nine agreement boxes reached the user
+  // as questions because of it, arbitration among them.
+  //
+  // Falling back to the word count there is the conservative direction. A
+  // checkbox GROUP's label is a short question ("Select all that you are
+  // proficient in." is 7 words); agreement prose is long by construction, and
+  // MIN_AGREEMENT_WORDS is what separates them. The cost of a false positive
+  // is one speculative prompt not shown; the cost of the false negative was
+  // an arbitration clause presented to the user as an ordinary question.
+  if (Array.isArray(field?.o) && field.o.length !== 1) return false
   const text = String(label ?? "").trim()
   if (!text) return false
   const words = text.split(/\s+/).filter(Boolean)
@@ -374,6 +393,39 @@ const BANK_ID_RE = /^(a-\d+)@/
 // refused as unapproved. A profile fact is an approved provenance whichever
 // way the rule spells its source.
 const APPROVED_SOURCE = /^(a-\d+@|contact\.|experience\.|education(\.|$))/
+
+/**
+ * Did the fact base answer this field, and is the ONLY thing missing the
+ * grounding a probe would have supplied?
+ *
+ * SHARED WITH pending-questions.mjs ON PURPOSE. That file had its own,
+ * narrower idea of "is this a question" — the raw answer-bank status — and so
+ * re-asked answers the planner resolves. Measured 2026-08-24: 49 of 87
+ * needs-human predicted field instances already carried a resolved value, and
+ * the user was shown "Degree", "School", "Where are you currently located?"
+ * and the rest as open questions with `Bachelor's Degree`, `University of
+ * Nevada - Las Vegas` and `North Las Vegas, Nevada, United States` sitting in
+ * answers.yaml.
+ *
+ * THIS IS NOT A LICENCE TO FILL. It says only that ASKING A HUMAN cannot
+ * help: the note on these is "field was not probed — no options were recorded,
+ * so the resolved value could not be checked against the real list", and no
+ * answer the user types probes the field. The decision to actually enter a
+ * value still needs the adapter's typeahead declaration (see buildPlan), which
+ * is rule 6's first lawful route and is deliberately NOT part of this
+ * predicate.
+ *
+ * `NEEDS-CHOICE` only, never `UNKNOWN` — rule 6: UNKNOWN means nothing
+ * deterministic understood the field, and that is always a real question.
+ */
+export function isUnprobedButAnswered(field, resolution) {
+  return !!(
+    resolution?.status === "NEEDS-CHOICE" &&
+    !(field?.opts?.length || field?.o?.length) &&
+    resolution.value &&
+    APPROVED_SOURCE.test(resolution.source ?? "")
+  )
+}
 
 // answers.yaml keyed by id, loaded once per resolveFields() call (not once
 // per field — see the classification loop below for the cost this is
@@ -1427,6 +1479,18 @@ export function buildPlan({
         // Hard consent under `non-legal` (or under any policy on a shape the
         // grant does not cover): the user's own line — legal-weight boxes stay
         // theirs — and it is said in the defer rather than left implicit.
+        //
+        // THE NOTE MUST NOT NAME A POLICY THE USER IS NOT RUNNING. It used to
+        // hardcode `required_consent=non-legal` into the string, so a user
+        // whose file says `all` was told their setting was `non-legal` —
+        // measured 2026-08-24 on the Anthropic arbitration box, where the
+        // deferral was the only surviving diagnostic and it pointed at the
+        // wrong cause. Under `all` a legal-weight box IS grantable, so
+        // arriving here means the field fell through for a DIFFERENT reason:
+        // an unvouched label, or a shape the grant does not cover (not a
+        // single tickbox, not a probed one-affirmative combo). Say the value
+        // that is actually set, and say which of the two it was.
+        const hardBlocked = hard && assent.required_consent !== "all"
         defer.push({
           k: f.k,
           label: displayLabel,
@@ -1434,7 +1498,15 @@ export function buildPlan({
           why: "consent",
           ...(assent.required_consent !== "none" || assent.optional === "skip"
             ? {
-                note: "legal-weight consent (arbitration / background check / e-signature) stays yours under unattended_assent.required_consent=non-legal",
+                note: hardBlocked
+                  ? `legal-weight consent (arbitration / background check / ` +
+                    `e-signature) stays yours under ` +
+                    `unattended_assent.required_consent=${assent.required_consent}`
+                  : `consent not granted under ` +
+                    `unattended_assent.required_consent=${assent.required_consent}` +
+                    ` — the label was not vouched, or this is not a shape the ` +
+                    `grant covers (a single tickbox, or a probed list with ` +
+                    `exactly one affirmative)`,
               }
             : {}),
           req: !!f.req,

@@ -239,7 +239,52 @@ export function reverifySweep({
 
 // --- CLI ---------------------------------------------------------------------
 
+const REVERIFY_FLAGS = [
+  "--db",
+  "--jobs-dir",
+  "--profile",
+  "--answers",
+  "--prune-orphans",
+  "--json",
+  "--help",
+]
+const REVERIFY_VALUE_FLAGS = ["--db", "--jobs-dir", "--profile", "--answers"]
+
+const USAGE = `reverify.mjs — re-check documents whose verification predates the fact base
+
+  --db <file>        the store. Defaults to jobs/leads.db
+  --jobs-dir <dir>   workspace root. Defaults to jobs/
+  --profile <file>   the fact base
+  --answers <file>   the answer bank
+  --prune-orphans    DELETE verification rows for slugs with no workspace
+  --json             machine-readable output
+
+THIS COMMAND WRITES. It records a verification row for every stale document it
+re-checks, and --prune-orphans deletes rows. It is not a read-only report.
+`
+
 async function main(args = process.argv.slice(2)) {
+  // STRICT, because this command WRITES and used to ignore what it was given.
+  // Measured 2026-08-24: `reverify.mjs --help` ignored the flag and ran a full
+  // 61-job sweep, recording a verification row for every stale document — a
+  // flag passed to ask a question performed a write. It had no --help, no
+  // usage, and no way to tell "no arguments" from "help wanted".
+  const { assertKnownFlags } = await import("../lib/args.mjs")
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(USAGE)
+    return 0
+  }
+  try {
+    assertKnownFlags(args, {
+      known: REVERIFY_FLAGS,
+      valueFlags: REVERIFY_VALUE_FLAGS,
+      script: "reverify.mjs",
+      note: "this command records verification rows, and --prune-orphans deletes them",
+    })
+  } catch (e) {
+    process.stderr.write(`${e.message}\n`)
+    return e.exitCode ?? 2
+  }
   const flag = (name, dflt) => {
     const i = args.indexOf(name)
     return i !== -1 && args[i + 1] ? args[i + 1] : dflt

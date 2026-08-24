@@ -67,6 +67,7 @@ import { classifyPlanDefers, reasonRecord, toStateOpts } from "./taxonomy.mjs"
 import { safeText } from "./untrusted-text.mjs"
 import { StopError } from "./guard.mjs"
 import { isHostSighted } from "./classify.mjs"
+import { stageCapture } from "../apply/capture-post-submit.mjs"
 
 /** The hostname of a url, for a message; never throws. */
 function hostOf(url) {
@@ -550,6 +551,13 @@ export async function runJob({
             profileApproved,
             scan,
             classify,
+            // Auto-stage the real post-submit page when it does not classify
+            // as a confirmation (submit.mjs's stagePostSubmit doc has the
+            // full reasoning). Redaction and the gitignored staging dir are
+            // stageCapture's own guarantees; promotion into the corpus stays
+            // the user's reviewed act.
+            stagePostSubmit: ({ url, html, slug: s }) =>
+              stageCapture({ url, html, slug: s }),
             dbFile,
             ...(stopPath === undefined ? {} : { stopPath }),
             job,
@@ -606,7 +614,42 @@ export async function runJob({
       throw e
     }
 
-    if (result.outcome === "dry-run" || result.outcome === "confirmation") {
+    // A REHEARSAL IS NOT A SUBMISSION, AND THE QUEUE ROW MUST NOT SAY IT WAS.
+    //
+    // These two outcomes were collapsed into one terminal `submitted` row, and
+    // the dry-run signal was sitting in the condition being tested:
+    // submit.mjs returns `outcome: "dry-run"` from its `if (mode !== "live")`
+    // branch. `auto_submissions` got this right — it is keyed (slug, mode) and
+    // db.mjs:243-250 explains why at length — but `auto_queue` has a single
+    // slug key and never learned the same lesson, so a rehearsal wrote a
+    // terminal row that the live attempt could then never claim.
+    //
+    // MEASURED 2026-08-24: eliza-associate-forward-deployed-engineer was
+    // rehearsed on 2026-08-18 and had read `submitted` ever since, with no
+    // `applications` row and no live `auto_submissions` row. It re-selected on
+    // every --enqueue and was dropped at the resumable SELECT — one stage
+    // BEFORE the claim, so it never even reached the point where a refusal
+    // gets logged. A dry run had permanently consumed the live slot.
+    //
+    // `deferred/rehearsed` is the honest record: nothing was sent, this run is
+    // finished with the job, and a later LIVE run should look again. The kind
+    // is on AUTO_REQUEUEABLE_KINDS so the next --enqueue re-queues it, which
+    // is exactly the "rehearse, then arm" workflow dry_run exists to support.
+    if (result.outcome === "dry-run") {
+      // Through `terminate`, not a hand-rolled setAutoJobState: that is the
+      // one funnel where reasonRecord validates the kind against the taxonomy
+      // and decides the state. Writing the row directly here would skip both.
+      return terminate(
+        "rehearsed",
+        // "attempt" — the stage the click belongs to. There is no "submit"
+        // stage; the taxonomy names this one for the click itself, and a dry
+        // run is precisely a run that reached it and stopped.
+        "attempt",
+        "dry run completed — the form was filled and the submit was NOT " +
+          "clicked. Nothing was sent. A live run will attempt this job again.",
+      )
+    }
+    if (result.outcome === "confirmation") {
       setAutoJobState(db, slug, "submitted", {
         run_id: run.id,
         wall_ms: wallMs(),

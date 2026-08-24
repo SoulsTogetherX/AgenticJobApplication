@@ -445,3 +445,126 @@ test("labelHazard is computed over the FULL text — an instruction past the cut
     "the hazard scan must see past the 120-char cut",
   )
 })
+
+// --- the predicted path re-asked banked answers -----------------------------
+//
+// MEASURED 2026-08-24. `questionsFromPredicted` used the RAW answer-bank status
+// as its question predicate, while `questionsFromPlans` reads a post-buildPlan
+// defer list. Two different definitions of "is this a question", and the
+// predicted one was both more pessimistic and narrower:
+//
+//   * 49 of 87 needs-human predicted instances already carried a resolved
+//     value from the fact base. "Degree", "School", "Where are you currently
+//     located?" were shown as open questions with the answers sitting in
+//     answers.yaml. The note on each was "field was not probed — no options
+//     were recorded", which is not a thing a human can answer: no reply the
+//     user types probes a field.
+//   * it filtered consent with `isConsent` alone, while buildPlan uses
+//     `isConsent || looksLikeAgreementProse`. Nine agreement boxes reached the
+//     user, including "Please read the arbitration agreement below" — directly
+//     contradicting this file's header promise.
+
+test("an unprobed field the fact base already answers is NOT a question", () => {
+  const fields = [
+    { k: "f1", t: "combo", l: "Where are you currently located?", ats: "ashby" },
+  ]
+  const resolved = [
+    {
+      k: "f1",
+      status: "NEEDS-CHOICE",
+      value: "North Las Vegas, Nevada, United States",
+      source: "a-091@answers",
+      note: "field was not probed — no options were recorded",
+    },
+  ]
+  const qs = questionsFromPredicted(fields, resolved)
+  assert.equal(qs.length, 0)
+  // Suppressed, and COUNTED — a hidden question is the same bug reversed.
+  assert.equal(qs.suppressed.answered, 1)
+})
+
+test("an unprobed field with NO banked answer IS still a question", () => {
+  const fields = [{ k: "f1", t: "combo", l: "School", ats: "ashby" }]
+  const qs = questionsFromPredicted(fields, [
+    { k: "f1", status: "NEEDS-CHOICE", value: null, source: null },
+  ])
+  assert.equal(qs.length, 1, "no value means the user really must supply one")
+})
+
+test("a value from an UNAPPROVED source does not suppress the question", () => {
+  // A rule's own static guess is not a banked answer. Rule 6's third route is
+  // an answer the USER approved, and only that.
+  const fields = [{ k: "f1", t: "combo", l: "Degree", ats: "ashby" }]
+  const qs = questionsFromPredicted(fields, [
+    { k: "f1", status: "NEEDS-CHOICE", value: "Bachelor's", source: "guess" },
+  ])
+  assert.equal(qs.length, 1)
+})
+
+test("UNKNOWN is never suppressed, however well the fact base answers", () => {
+  // Rule 6: UNKNOWN means nothing deterministic understood the field. That is
+  // always a real question, and this is the boundary the suppression must not
+  // cross.
+  const fields = [{ k: "f1", t: "text", l: "Why Anthropic?", ats: "greenhouse" }]
+  const qs = questionsFromPredicted(fields, [
+    { k: "f1", status: "UNKNOWN", value: "something", source: "a-001@answers" },
+  ])
+  assert.equal(qs.length, 1)
+})
+
+test("a field whose options WERE read keeps deferring — that is a real mismatch", () => {
+  // A list that was enumerated and did not contain the value is the opposite
+  // situation from an unprobed one: it says "this value is not offered".
+  const fields = [
+    { k: "f1", t: "select", l: "Degree", opts: ["PhD", "MD"], ats: "ashby" },
+  ]
+  const qs = questionsFromPredicted(fields, [
+    {
+      k: "f1",
+      status: "NEEDS-CHOICE",
+      value: "Bachelor's Degree",
+      source: "a-129@answers",
+    },
+  ])
+  assert.equal(qs.length, 1)
+  assert.equal(qs.suppressed.answered, 0)
+})
+
+test("an arbitration box is filtered by SHAPE, not just by the word", () => {
+  // looksLikeAgreementProse is the half isConsent cannot do: long
+  // single-sentence prose on a tickbox, which is how a reworded box arrives.
+  const fields = [
+    {
+      k: "f1",
+      t: "checkbox",
+      req: true,
+      l:
+        "By checking this box, I confirm I have read, reviewed and understood " +
+        "the guidelines outlined in the Candidate Responsible Use Policy and " +
+        "agree to abide by them throughout the application process.",
+      ats: "greenhouse",
+    },
+  ]
+  const qs = questionsFromPredicted(fields, [{ k: "f1", status: "UNKNOWN" }])
+  assert.equal(qs.length, 0, "consent must never be surfaced as a question")
+  assert.equal(qs.suppressed.consent, 1)
+})
+
+test("a checkbox GROUP is still a question — the relaxation is bounded by length", () => {
+  // The cache cannot say how many boxes a checkbox field has, so the word
+  // count is the only discriminator left on the predicted path. A group's
+  // label is a short question; agreement prose is long. This pins the boundary
+  // so a future MIN_AGREEMENT_WORDS change cannot quietly swallow real ones.
+  const fields = [
+    {
+      k: "f1",
+      t: "checkbox",
+      req: true,
+      l: "Select all that you are proficient in.",
+      ats: "ashby",
+    },
+  ]
+  const qs = questionsFromPredicted(fields, [{ k: "f1", status: "UNKNOWN" }])
+  assert.equal(qs.length, 1)
+  assert.equal(qs.suppressed.consent, 0)
+})

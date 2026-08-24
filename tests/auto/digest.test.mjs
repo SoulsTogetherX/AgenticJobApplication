@@ -99,7 +99,14 @@ function fixture(t) {
     run_id: "run-1",
     slug: "lv-sent",
     company: "Lever Co",
-    mode: "dry_run",
+    // LIVE, because this row is the one the latency assertion below calls
+    // "the number the product is FOR". Since 2026-08-24 buildAutoStatus asks
+    // readSubmitLatencies for live rows only: the helper always took that
+    // filter and the call never passed it, so a rehearsal — which sends
+    // nothing — sat in the posted->submitted sample. A dry_run row here would
+    // now be excluded, correctly, and this fixture would be asserting the
+    // market latency of an application that was never sent.
+    mode: "live",
     submitted_at: ago(6).toISOString(),
     outcome: "submitted",
     doc: JSON.stringify({ ok: true }),
@@ -477,22 +484,22 @@ test("every assent a confirmed submission made for the user is NAMED in the dige
     // `actuated` rides on the record itself — recordAutoSubmission stores the
     // whole object as the row's doc, which is exactly what audit.mjs writes.
     actuated: [
-        {
-          k: "f9",
-          label: "Are you legally authorized to work in the United States?",
-          value: "Yes",
-          grant: "required-assertion",
-          req: true,
-        },
-        {
-          k: "g2",
-          label: "I certify that the information provided is true.",
-          value: true,
-          pick: "f10",
-          grant: "required-consent",
-          req: true,
-        },
-      ],
+      {
+        k: "f9",
+        label: "Are you legally authorized to work in the United States?",
+        value: "Yes",
+        grant: "required-assertion",
+        req: true,
+      },
+      {
+        k: "g2",
+        label: "I certify that the information provided is true.",
+        value: true,
+        pick: "f10",
+        grant: "required-consent",
+        req: true,
+      },
+    ],
   })
   const a = buildAutoStatus(f.db, { now: NOW, stopPath: f.stopPath })
   assert.equal(a.assents_24h.length, 1, "only the row that actuated something")
@@ -500,8 +507,16 @@ test("every assent a confirmed submission made for the user is NAMED in the dige
   assert.deepEqual(
     a.assents_24h[0].assents.map((x) => [x.label, x.value, x.grant]),
     [
-      ["Are you legally authorized to work in the United States?", "Yes", "required-assertion"],
-      ["I certify that the information provided is true.", true, "required-consent"],
+      [
+        "Are you legally authorized to work in the United States?",
+        "Yes",
+        "required-assertion",
+      ],
+      [
+        "I certify that the information provided is true.",
+        true,
+        "required-consent",
+      ],
     ],
   )
   const { formatAutoTerse, formatAutoProse } = await await_import()
@@ -510,7 +525,10 @@ test("every assent a confirmed submission made for the user is NAMED in the dige
   assert.match(terse, /grant=required-assertion/)
   const prose = formatAutoProse(a).join("\n")
   assert.match(prose, /Asserted on your behalf/)
-  assert.match(prose, /I certify that the information provided is true\. → ticked \[required-consent\]/)
+  assert.match(
+    prose,
+    /I certify that the information provided is true\. → ticked \[required-consent\]/,
+  )
 })
 
 function await_import() {

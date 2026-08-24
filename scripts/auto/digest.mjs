@@ -129,7 +129,18 @@ export function buildAutoStatus(
   }
 
   // --- the gap the product exists to close ----------------------------------
-  const latencies = readSubmitLatencies(db, { run_id: null }).map((l) => l.ms)
+  // LIVE ONLY. This is the posted -> submitted statistic db.mjs calls "THE
+  // NUMBER THE PRODUCT IS ACTUALLY FOR", and it was computed over every
+  // auto_submissions row regardless of mode — so a rehearsal, which sends
+  // nothing, sat in the sample. Measured 2026-08-24: 10 joined rows, one of
+  // them mode=dry_run. The helper has always taken this filter; the call
+  // simply never passed it. Unfiltered, the join also fans out one queue row
+  // across both rows of any slug that was rehearsed AND submitted, counting it
+  // twice.
+  const latencies = readSubmitLatencies(db, {
+    run_id: null,
+    mode: "live",
+  }).map((l) => l.ms)
   const latency = {
     n: latencies.length,
     p50_ms: percentile(latencies, 50),

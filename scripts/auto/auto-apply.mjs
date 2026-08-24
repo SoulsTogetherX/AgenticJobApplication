@@ -50,6 +50,7 @@ import {
   findPriorApplication,
 } from "../lib/db.mjs"
 import { loadYamlFile } from "../lib/lib.mjs"
+import { assertKnownFlags } from "../lib/args.mjs"
 import {
   verifiedResumeUrls,
   verificationIdentity,
@@ -77,7 +78,46 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 // Args
 // ---------------------------------------------------------------------------
 
+// Every flag the runner understands, and the subset taking a value.
+//
+// TWO OF THESE FAIL OPEN WHEN MISSPELLED, which is why they are validated
+// rather than merely read. `--enqeue` does not enable enqueue-only mode, so the
+// invocation the user meant as "select jobs and stop" SUBMITS. And `--fixtur`
+// leaves `fixture` false, so `assertFixtureIsolation` below — which exists to
+// stop a fixture run writing ledger rows that count toward real caps — never
+// fires, and the run proceeds against the real store. Neither typo produced any
+// output saying so before 2026-08-24.
+export const RUNNER_FLAGS = [
+  "--limit",
+  "--concurrency",
+  "--db",
+  "--limits",
+  "--jobs-dir",
+  "--fixture",
+  "--enqueue",
+  "--json",
+  "--help",
+]
+export const RUNNER_VALUE_FLAGS = [
+  "--limit",
+  "--concurrency",
+  "--db",
+  "--limits",
+  "--jobs-dir",
+]
+
 export function parseArgs(argv) {
+  // Before anything is read, so a typo cannot reach a decision. `-h` is checked
+  // first because it is the one short flag and would otherwise be refused.
+  if (!argv.includes("-h"))
+    assertKnownFlags(argv, {
+      known: RUNNER_FLAGS,
+      valueFlags: RUNNER_VALUE_FLAGS,
+      script: "auto-apply.mjs",
+      note:
+        "a misspelled --enqueue submits instead of enqueuing, and a " +
+        "misspelled --fixture runs against the real lead store",
+    })
   const has = (f) => argv.includes(f)
   const get = (f, d = null) => {
     const i = argv.indexOf(f)
@@ -137,6 +177,60 @@ export function assertFixtureIsolation({
         `user's per-day and per-company caps. Pass --db <a temp file>.`,
     )
   return true
+}
+
+// ---------------------------------------------------------------------------
+// Saying why, which is the whole point of computing a reason
+// ---------------------------------------------------------------------------
+//
+// `selectEligible` builds a `{slug, reason}` for every candidate it turns away,
+// across eight distinct kinds, and the CLI printed `rejected: 54`. Measured
+// 2026-08-24: a run that enqueued 3 of 57 and applied to none gave the user no
+// way to tell "everything worth applying to is already applied" (18 of them)
+// from "two workspaces are structurally unreachable" (2 of them) — and the
+// second is a bug while the first is the system working.
+//
+// `tests/auto/queue.test.mjs:249` already states the principle for the queue:
+// "a deferral without a reason is refused — a silent skip is not a deferral".
+// This applies the same rule one stage earlier, at selection.
+
+/** The stable kind of a rejection reason, for grouping. */
+export function rejectionKind(reason) {
+  const s = String(reason ?? "")
+  // The trust gate returns `${check}: ${detail}` over its five named checks,
+  // so the prefix before the colon is already the kind. Everything else is a
+  // fixed sentence from one of the four `rejected.push` sites.
+  if (/^(allowlist|adapter|screening|https|origin_stable):/.test(s))
+    return s.slice(0, s.indexOf(":"))
+  if (/^lead status is dismissed/.test(s)) return "dismissed"
+  if (/^already applied/.test(s)) return "already-applied"
+  if (/^resume\.pdf is not rendered/.test(s)) return "no-resume-pdf"
+  if (/^workspace has no lead row/.test(s)) return "no-lead-row"
+  return "other"
+}
+
+/** Counts by kind, plus one example slug per kind so the reason is actionable. */
+export function rejectionBreakdown(rejected = []) {
+  const by = new Map()
+  for (const r of rejected) {
+    const kind = rejectionKind(r?.reason)
+    const cur = by.get(kind) ?? { kind, count: 0, example: null, reason: null }
+    cur.count += 1
+    if (!cur.example) {
+      cur.example = r?.slug ?? null
+      cur.reason = String(r?.reason ?? "")
+    }
+    by.set(kind, cur)
+  }
+  return [...by.values()].sort((a, b) => b.count - a.count)
+}
+
+/** The human rendering: one line per kind, commonest first. */
+export function formatRejections(breakdown = []) {
+  if (!breakdown.length) return ""
+  return breakdown
+    .map((b) => `  ${String(b.count).padStart(3)}  ${b.kind}  (${b.example})\n`)
+    .join("")
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +308,32 @@ export function selectEligible({
   const rejected = []
   for (const [url, slug] of urls) {
     if (out.length >= limit) break
-    const lead = bySlugUrl.get(url) ?? { slug, apply_url: url, url }
+    // A WORKSPACE WITH NO LEAD ROW IS NOT A DEGRADED CANDIDATE, IT IS AN
+    // IMPOSSIBLE ONE, and saying so here is the difference between a five
+    // minute fix and an afternoon.
+    //
+    // The candidate set comes from `verifications` (verifiedResumeUrls), which
+    // never touches `leads`. The ATTENDED path — apply-job / tailor-resume —
+    // builds jobs/<slug>/job.json from a pasted URL and runs verify-claims,
+    // writing exactly the row this walk selects on, while never creating a
+    // lead. Measured 2026-08-24: 11 of 69 workspaces are in that state, and
+    // nothing deletes leads (there is no `DELETE FROM leads` in the tree), so
+    // these were never pruned — they were never enrolled.
+    //
+    // The fabricated object below cannot pass: no `id` means every `screens`
+    // lookup misses and the trust gate refuses "no stored screening verdict";
+    // no `status` means the dismissed guard can never fire; no `company` means
+    // authorize's `company_known` check fails; no `posted_at` means it is
+    // excluded from latency even if it somehow submitted. There is no
+    // configuration in which it reaches a submit.
+    //
+    // It used to be refused for the missing VERDICT, which sends the reader to
+    // screen.mjs — where the answer is not, because screening is keyed by
+    // lead_id and there is no lead to key. Two reachable, allowlisted,
+    // fully-verified jobs (ethos-software-engineer,
+    // runpod-software-engineer-full-stack) sat behind that wrong signpost.
+    const known = bySlugUrl.get(url)
+    const lead = known ?? { slug, apply_url: url, url }
     // A DISMISSED LEAD IS NOT A CANDIDATE, whatever its workspace holds. This
     // walk starts from verification rows, so a lead the user (or a prune)
     // marked `dismissed` AFTER its résumé was verified was still queued and
@@ -264,7 +383,37 @@ export function selectEligible({
       { limits, screening, allowLoopbackHttp },
     )
     if (!verdict.ok) {
-      rejected.push({ slug, reason: verdict.reason })
+      // A MISSING LEAD ROW IS A DIFFERENT PROBLEM FROM A MISSING VERDICT, and
+      // only the screening check can confuse the two.
+      //
+      // The candidate set comes from `verifications` (verifiedResumeUrls),
+      // which never touches `leads`. The ATTENDED path — apply-job /
+      // tailor-resume — builds jobs/<slug>/job.json from a pasted URL and runs
+      // verify-claims, writing exactly the row this walk selects on, while
+      // never creating a lead. Measured 2026-08-24: 11 of 69 workspaces are in
+      // that state, and nothing deletes leads (there is no `DELETE FROM leads`
+      // anywhere in the tree), so these were never pruned — never enrolled.
+      //
+      // Such a lead is refused for having no screening verdict, which sends
+      // the reader to screen.mjs — where the answer is not, because screening
+      // is keyed by lead_id and there is no lead to key. Two reachable,
+      // allowlisted, fully-verified jobs sat behind that wrong signpost.
+      //
+      // REPORTED ONLY WHEN IT IS THE ONLY THING WRONG. The trust gate runs
+      // first and its other refusals outrank this one: telling someone to
+      // import a lead for a board that is not on their allowlist sends them to
+      // do work that changes nothing.
+      const missingLead =
+        !known && /^screening:/.test(String(verdict.reason ?? ""))
+      rejected.push({
+        slug,
+        reason: missingLead
+          ? `workspace has no lead row — its job.json was created by the ` +
+            `attended path (apply-job/tailor-resume), so it was never ` +
+            `screened and cannot be: screening is keyed by lead_id. Import ` +
+            `it as a lead, or apply to it attended.`
+          : verdict.reason,
+      })
       continue
     }
     // ALREADY APPLIED, CHECKED HERE TOO. The submit gate has the load-bearing
@@ -729,6 +878,7 @@ async function main(argv) {
   // survive a refusal.
   const db = openDb(dbFile)
   let selection
+  let added = 0
   try {
     selection = selectEligible({
       db,
@@ -737,22 +887,43 @@ async function main(argv) {
       allowLoopbackHttp: args.fixture,
       limit: args.limit,
     })
-    if (args.enqueueOnly) enqueueAutoJobs(db, selection.jobs)
+    // The RETURN VALUE, not the input length. `enqueueAutoJobs` reports how
+    // many rows it actually changed, and both call sites used to throw that
+    // away and print the SELECTED count instead. Measured 2026-08-24:
+    // `enqueued=3` while only 2 rows moved — the third was a slug whose queue
+    // row sat in a terminal state, so it re-selected on every run and was
+    // silently dropped at the resumable SELECT. That one number is what the
+    // whole eliza investigation needed and could not get.
+    if (args.enqueueOnly) added = enqueueAutoJobs(db, selection.jobs)
   } finally {
     db.close()
   }
 
   if (args.enqueueOnly) {
     const out = {
-      enqueued: selection.jobs.length,
+      // `selected` and `added` disagree exactly when a slug cannot enter the
+      // queue — a terminal row, or a conflict clause that did not fire. Naming
+      // both is what makes that visible instead of inferable.
+      selected: selection.jobs.length,
+      added,
+      enqueued: added,
       considered: selection.considered,
       rejected: selection.rejected.length,
+      rejectedBy: rejectionBreakdown(selection.rejected),
     }
     process.stdout.write(
       args.json
         ? `${JSON.stringify(out)}\n`
-        : `enqueued=${out.enqueued} considered=${out.considered} rejected=${out.rejected}\n`,
+        : `enqueued=${out.added} selected=${out.selected} ` +
+            `considered=${out.considered} rejected=${out.rejected}\n` +
+            formatRejections(out.rejectedBy),
     )
+    if (out.selected !== out.added)
+      process.stderr.write(
+        `auto-apply: ${out.selected - out.added} selected job(s) did not enter ` +
+          `the queue — their rows are in a state the conflict clause does not ` +
+          `re-queue. Inspect with: node scripts/auto/requeue.mjs --list\n`,
+      )
     return EXIT.OK
   }
 
@@ -830,12 +1001,25 @@ async function main(argv) {
                 `${r.detail ? ` — ${String(r.detail).replace(/\s+/g, " ").slice(0, 160)}` : ""}\n`,
             ),
     })
+    // A WHOLE-CACHE DISCARD RIDES OUT ON THE RESULT, not on stderr. Every
+    // remembered form shape was thrown away, so every combo on every board
+    // gets re-probed this run and the pipeline reads amber for a reason that
+    // has nothing to do with the boards. cycle.mjs deletes a successful step's
+    // stderr, so the warning field-cache.mjs prints never reaches the log on
+    // the one path that runs unattended — see CLAUDE.md's field-cache entry.
+    const discarded = stages.cacheDiscard?.()
+    if (discarded) result.cache_discarded = discarded
     process.stdout.write(
       args.json
         ? `${JSON.stringify(result)}\n`
         : `run=${result.run_id} mode=${result.mode} outcome=${result.outcome} ` +
             `submitted=${result.submitted ?? 0} deferred=${result.deferred ?? 0} ` +
-            `failed=${result.failed ?? 0}\n`,
+            `failed=${result.failed ?? 0}\n` +
+            (discarded
+              ? `  WARN: the field cache was discarded (v${discarded.fromVersion ?? "?"} -> ` +
+                `v${discarded.toVersion}, ${discarded.forms ?? 0} form(s)) — every combo ` +
+                `was re-probed this run\n`
+              : ""),
     )
     return EXIT.OK
   } finally {

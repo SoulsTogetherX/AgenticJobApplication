@@ -23,7 +23,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { newestInputMtime } from "./pending-questions.mjs"
+import { newestInputMtime, factBaseInputs } from "./pending-questions.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -54,24 +54,34 @@ function newestScan(dir) {
   return best
 }
 
-function main() {
-  const args = process.argv.slice(2)
-  const dryRun = args.includes("--dry-run")
-  const all = args.includes("--all")
-  const i = args.indexOf("--jobs-dir")
-  const jobsDir =
-    i === -1 ? path.join(ROOT, "jobs") : path.resolve(args[i + 1] ?? "")
-  if (i !== -1) args.splice(i, 2)
-  const only = args.filter((a) => !a.startsWith("--"))
-
+/**
+ * Rebuild every stale plan and RETURN what happened, printing nothing.
+ *
+ * EXTRACTED FROM `main()` 2026-08-24 so `cycle.mjs` can own this sweep the way
+ * it already owns `reverifySweep`. Until then this file had NO caller anywhere
+ * — not in the cycle, not in package.json, not scheduled — so the rebuild it
+ * performs happened only when a human remembered to type the command. That is
+ * why 35 of 36 plans were stale two hours after a full rebuild: one
+ * `save-answer.mjs` write moves the fact base mtime past every plan at once,
+ * and nothing swept them afterwards.
+ *
+ * @returns {{rebuilt:number, failed:number, noScan:string[], checked:number,
+ *            results:Array<{slug:string, ok:boolean, head:string}>}}
+ */
+export function rebuildPlans({
+  jobsDir = path.join(ROOT, "jobs"),
+  only = [],
+  all = false,
+  dryRun = false,
+  answersFlag = null,
+} = {}) {
   if (!fs.existsSync(jobsDir)) {
-    console.error(`no jobs directory at ${jobsDir}`)
-    process.exit(2)
+    const e = new Error(`no jobs directory at ${jobsDir}`)
+    e.exitCode = 2
+    throw e
   }
 
-  const threshold = newestInputMtime([
-    path.join(ROOT, "profile", "answers.yaml"),
-  ])
+  const threshold = newestInputMtime(factBaseInputs({ answersFlag }))
 
   const slugs = only.length
     ? only
@@ -108,12 +118,14 @@ function main() {
       `nothing to rebuild (checked=${slugs.length} no-scan=${noScan.length})` +
         (noScan.length ? `\nno-scan\t${noScan.join(",")}` : ""),
     )
-    return
+    return { rebuilt: 0, failed: 0, noScan, checked: slugs.length, results: [] }
   }
 
+  const results = []
   let failed = 0
   for (const { slug, scan } of todo) {
     if (dryRun) {
+      results.push({ slug, ok: true, head: `would rebuild ${scan}` })
       console.log(`would rebuild\t${slug}\t${path.basename(scan)}`)
       continue
     }
@@ -133,9 +145,15 @@ function main() {
       .split("\n")
       .find((l) => l.startsWith("ats="))
     if (r.status === 0) {
+      results.push({ slug, ok: true, head: head ?? "" })
       console.log(`rebuilt\t${slug}\t${head ?? ""}`)
     } else {
       failed += 1
+      results.push({
+        slug,
+        ok: false,
+        head: String(r.stderr ?? "").split("\n")[0],
+      })
       console.log(
         `FAILED\t${slug}\texit=${r.status}\t${String(r.stderr ?? "").split("\n")[0]}`,
       )
@@ -145,7 +163,13 @@ function main() {
     `rebuilt=${todo.length - failed} failed=${failed} no-scan=${noScan.length}` +
       (noScan.length ? `\nno-scan\t${noScan.join(",")}` : ""),
   )
-  if (failed) process.exit(1)
+  return {
+    rebuilt: todo.length - failed,
+    failed,
+    noScan,
+    checked: slugs.length,
+    results,
+  }
 }
 
 // The repo idiom: importing this file must not rebuild 28 plans as a side
@@ -153,4 +177,24 @@ function main() {
 const isMain =
   process.argv[1] &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
-if (isMain) main()
+if (isMain) {
+  // A thin argument shim over rebuildPlans(), so the command a human types and
+  // the sweep cycle.mjs runs cannot drift apart.
+  const args = process.argv.slice(2)
+  const i = args.indexOf("--jobs-dir")
+  const jobsDir =
+    i === -1 ? path.join(ROOT, "jobs") : path.resolve(args[i + 1] ?? "")
+  if (i !== -1) args.splice(i, 2)
+  try {
+    const out = rebuildPlans({
+      jobsDir,
+      only: args.filter((a) => !a.startsWith("--")),
+      all: args.includes("--all"),
+      dryRun: args.includes("--dry-run"),
+    })
+    if (out.failed) process.exit(1)
+  } catch (e) {
+    console.error(e.message)
+    process.exit(e.exitCode ?? 1)
+  }
+}

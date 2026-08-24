@@ -146,3 +146,66 @@ test("terse output names the tier and prefers apply_url over the posting url", (
   )
   assert.match(summary, /^ranked=1 of=4 applicable=true/)
 })
+
+// --- tier 3: already applied ------------------------------------------------
+//
+// MEASURED 2026-08-24. `--applicable` ranked
+// torc-robotics-software-engineer-ii-build-tools FIRST while the applications
+// ledger held a row for it dated 2026-08-18. applicability() asked only where
+// the posting LIVES; nothing in recommend.mjs consulted the ledger at all, and
+// all four Torc leads were still `status: "new"` days after being applied to.
+import {
+  applicability,
+  preferApplicable,
+  APPLICABILITY,
+  APPLICABILITY_NAMES,
+} from "../../scripts/leads/applicability.mjs"
+
+// The shape normalizeAllowlist() actually produces: `domain`, not `host`.
+const ALLOW = [{ domain: "job-boards.greenhouse.io", ats: "greenhouse" }]
+const lead = (slug, host = "job-boards.greenhouse.io") => ({
+  slug,
+  apply_url: `https://${host}/acme/jobs/1`,
+})
+
+test("an applied lead is tier ALREADY_APPLIED, whatever its board", () => {
+  const l = lead("acme-swe")
+  // Without the predicate it is automatable — the board is on the allowlist.
+  assert.equal(applicability(l, ALLOW), APPLICABILITY.AUTOMATABLE)
+  // With it, "already done" outranks every question about reachability.
+  assert.equal(
+    applicability(l, ALLOW, { isApplied: () => true }),
+    APPLICABILITY.ALREADY_APPLIED,
+  )
+})
+
+test("applied leads are RANKED LAST, never dropped", () => {
+  // The module's own principle: an unactionable lead is still information.
+  // Silently shrinking the list is how the user stops trusting the count.
+  const applied = lead("done")
+  const fresh = lead("todo")
+  const ordered = preferApplicable([applied, fresh], ALLOW, {
+    isApplied: (l) => l.slug === "done",
+  })
+  assert.deepEqual(
+    ordered.map((l) => l.slug),
+    ["todo", "done"],
+  )
+  assert.equal(ordered.length, 2, "nothing may be dropped")
+})
+
+test("the tier has a name, so the row can say why it is last", () => {
+  assert.equal(
+    APPLICABILITY_NAMES[APPLICABILITY.ALREADY_APPLIED],
+    "already-applied",
+  )
+})
+
+test("no predicate means the previous behaviour, exactly", () => {
+  // Every existing caller passes no predicate; none of them may change.
+  for (const host of ["job-boards.greenhouse.io", "www.adzuna.com"])
+    assert.equal(
+      applicability(lead("x", host), ALLOW),
+      applicability(lead("x", host), ALLOW, { isApplied: null }),
+    )
+})

@@ -78,7 +78,9 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { openDb, rowToLead, screenIndex } from "../lib/db.mjs"
+import { assertKnownFlags } from "../lib/args.mjs"
 import { reverifySweep } from "../documents/reverify.mjs"
+import { rebuildPlans } from "../apply/rebuild-plans.mjs"
 import { resolveLeadForTrust, readLimits } from "./trust.mjs"
 // The CONSTANT only. The assembler still runs as a child process below (its
 // import graph is pure and `isMain`-guarded, so importing it here spawns
@@ -311,13 +313,50 @@ export function prepareDocuments(slug, lead, { jobsDir, run = step }) {
   return { slug, ok: true, stages }
 }
 
+// Every flag this cycle understands. THE APPLIER IS GATED ON A NEGATION —
+// `!argv.includes("--skip-apply")` below — so an unrecognised flag does not
+// merely get ignored here, it fails OPEN and the cycle submits applications.
+// The user's 7:00 scheduled task passes `--skip-apply` to prepare only; a
+// single mistyped character in that registration would have sent real
+// applications with nothing in the log saying so. See scripts/lib/args.mjs.
+export const CYCLE_FLAGS = [
+  "--top",
+  "--limit",
+  "--json",
+  "--skip-search",
+  "--skip-apply",
+  "--any-board",
+  "--jobs-dir",
+]
+export const CYCLE_VALUE_FLAGS = ["--top", "--limit", "--jobs-dir"]
+
 export async function runCycle(argv = []) {
+  assertKnownFlags(argv, {
+    known: CYCLE_FLAGS,
+    valueFlags: CYCLE_VALUE_FLAGS,
+    script: "cycle.mjs",
+    note:
+      "the applier runs unless --skip-apply is spelled exactly, so a typo " +
+      "here submits applications",
+  })
   const top = Number(flag(argv, "--top", "10"))
   const limit = Number(flag(argv, "--limit", String(top)))
   const jobsDir = path.resolve(
     flag(argv, "--jobs-dir", path.join(ROOT, "jobs")),
   )
-  const out = { started: new Date().toISOString(), stages: {}, leads: [] }
+  // STATED, NOT INFERRED. Whether the applier runs is the single most
+  // consequential thing this process decides, and until 2026-08-24 the log said
+  // nothing about it either way — a prepare-only cycle and a submitting one
+  // produced identical headers, so the only way to know which had happened was
+  // to notice the absence of an `apply:` line. Recorded here, before any stage
+  // runs, so it is in the log even if a stage throws.
+  const willApply = !argv.includes("--skip-apply")
+  const out = {
+    started: new Date().toISOString(),
+    mode: willApply ? "prepare+apply" : "prepare-only",
+    stages: {},
+    leads: [],
+  }
 
   if (!argv.includes("--skip-search")) {
     const r = step(
@@ -337,6 +376,51 @@ export async function runCycle(argv = []) {
       timeout: 600_000,
     })
     out.stages.screen = stageRecord(r)
+  }
+
+  // Fill plans whose recorded defers predate the current planner or fact base
+  // are rebuilt HERE, before reverify and before anything reads a defer list.
+  //
+  // THE SAME BUG AS THE REVERIFY BLOCK BELOW, ONE LAYER OVER, and it went
+  // unnoticed for longer because the command to fix it existed. A fill plan is
+  // a cached derivation of (scan, planner, fact base); one `save-answer.mjs`
+  // write moves the fact base mtime past EVERY plan at once, exactly as it
+  // moves factBaseSha256 past every verification. `rebuild-plans.mjs` was
+  // written to sweep them — and then had no caller anywhere: not here, not in
+  // package.json, not scheduled. It ran only when a human typed it.
+  //
+  // The cost of that gap is not a stale file, it is the user being asked
+  // questions they have already answered: with plans stale, pending-questions
+  // falls back to bare `predicted` rows and re-asks banked answers. Measured
+  // 2026-08-24 — a full rebuild at 12:28 was undone by four answer writes at
+  // 14:14, leaving `planned=1, stale=35` within two hours, so answering
+  // questions was what created the next batch of them.
+  //
+  // Ordered BEFORE reverify on purpose: both sweeps are triggered by the same
+  // event, and running plans first means the digest, the question list and the
+  // reverify report all describe one generation of the fact base. Measured at
+  // ~245 ms/plan and no browser, so ~9 s for a full tree — nothing beside
+  // search (600 s) or apply (1800 s).
+  {
+    const t0 = Date.now()
+    try {
+      const sweep = rebuildPlans({ jobsDir })
+      out.rebuild = sweep
+      out.stages.rebuild = {
+        ok: sweep.failed === 0,
+        detail:
+          `${sweep.rebuilt} rebuilt, ${sweep.failed} failed` +
+          (sweep.noScan.length ? `, ${sweep.noScan.length} with no scan` : "") +
+          ` (${Date.now() - t0}ms)`,
+      }
+    } catch (e) {
+      // A sweep that cannot run leaves the plans stale and the questions
+      // noisy. That is bad, and it is not a reason to abandon the cycle.
+      out.stages.rebuild = {
+        ok: false,
+        detail: `plan rebuild failed: ${e?.message ?? e}`,
+      }
+    }
   }
 
   // Documents whose recorded verification predates the current fact base are
@@ -517,7 +601,7 @@ export async function runCycle(argv = []) {
   // here says the sweep is bringing in postings the user is not tailored for.
   out.unfit = out.leads.filter((l) => l.skipped).length
 
-  if (!argv.includes("--skip-apply")) {
+  if (willApply) {
     // The runner reads the user's own enabled/dry_run. Nothing above this line
     // can change what it decides to do.
     const r = step(
@@ -540,11 +624,28 @@ export async function runCycle(argv = []) {
 }
 
 async function main(argv = process.argv.slice(2)) {
-  const out = await runCycle(argv)
+  let out
+  try {
+    out = await runCycle(argv)
+  } catch (e) {
+    // A usage error is the user's typo, not a crash: one line and exit 2, the
+    // number this repo promises for usage everywhere. A stack trace here would
+    // bury the "did you mean" under twenty frames of node internals, and this
+    // message is the whole fix.
+    if (e?.isUsage) {
+      process.stderr.write(`${e.message}\n`)
+      return e.exitCode ?? 2
+    }
+    throw e
+  }
   if (argv.includes("--json")) {
     process.stdout.write(`${JSON.stringify(out)}\n`)
     return 0
   }
+  // First line of every cycle, before the stages: whether this run could
+  // submit. `logs/cycle.log` is read hours later by someone reconstructing what
+  // happened, and "did it apply?" was previously answerable only by inference.
+  process.stdout.write(`mode: ${out.mode}\n`)
   for (const [name, s] of Object.entries(out.stages)) {
     process.stdout.write(
       `${name}: ${s.ok ? "ok" : "FAILED"}${s.detail ? ` — ${s.detail}` : ""}\n`,

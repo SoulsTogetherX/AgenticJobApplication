@@ -100,6 +100,11 @@ export const REASON_CLASSES = Object.freeze({
     "reconciled-not-sent",
   ]),
   policy: Object.freeze([
+    // The user's own `auto_apply.dry_run` is on, so the run rehearsed and
+    // stopped at the submit. POLICY, not environment: nothing on the page went
+    // wrong and no engineering shrinks this number — arming the runner is the
+    // user's act, exactly like clearing a scoped STOP.
+    "rehearsed",
     "doc-unverified",
     "doc-unrendered",
     "fact-base-changed",
@@ -181,6 +186,13 @@ export const DEFER_PRIORITY = Object.freeze([
   // The user already applied; the queue was stale. A backlog item here would
   // ask someone to fix a job that is finished.
   "already-applied",
+  // BELOW already-applied, and last of the policy tier, because it is the one
+  // reason that says nothing about this job at all. A rehearsal deferred every
+  // job in the run identically — the runner was not armed — so reporting it
+  // ahead of a real per-job reason would replace the whole defer list with one
+  // fact the user already knows. If a job ALSO has a real reason, that reason
+  // is the one worth showing.
+  "rehearsed",
   "cap-company",
   "doc-unverified",
   "doc-unrendered",

@@ -92,10 +92,13 @@ scripts/documents/keyword-plan.mjs acme-fullstack` — `acme-fullstack` is
   "yes" just by being present; others take a value in the next word (`--top 20`,
   `--status new`).
 
-> **Known defect (2026-08-05 audit).** In `find-jobs.mjs`, `cmdImport` and
-> `cmdMark` both find their positional argument by taking _the first word that
-> does not start with `--`_. If you put a flag first, its **value** gets picked
-> up as the positional. `node scripts/leads/find-jobs.mjs mark --status dismissed
+> **Known defect (2026-08-05 audit; scope corrected 2026-08-24).** Six scripts
+> find their positional argument by taking _the first word that does not start
+> with `--`_, while reading flag values with a non-splicing `indexOf`. If you
+> put a flag first, its **value** gets picked up as the positional. This entry
+> named only `find-jobs.mjs` for three weeks; the same defect is in
+> `ats-lint.mjs`, `keyword-plan.mjs`, `flake-rate.mjs`, `applications.mjs` and
+> `manage-sources.mjs`. In `find-jobs.mjs` it is `cmdImport` and `cmdMark`. `node scripts/leads/find-jobs.mjs mark --status dismissed
 greenhouse:acme:1` looks for a lead whose id is `"dismissed"` and reports `no
 lead matches "dismissed"`. Put the positional argument first and this cannot
 > bite you.
@@ -724,10 +727,13 @@ and runs each lead through the four ordered stages `l0`–`l3`. Verdicts are
 **What it prints** (terse): one line per non-passing lead, then a summary like
 `pass=93 caution=12 reject=53 l1=38 l2=15 model-screened=40`.
 
-> **Known defect (2026-08-05 audit).** `--stage` is documented as a diagnostic,
-> but the recording block runs unconditionally. `node scripts/leads/screen.mjs
---stage l0` therefore **overwrites the stored `mechanical` verdict for every
-> lead** with one computed from a single stage — and that stored row is what the
+> **Known defect (2026-08-05 audit; wording corrected 2026-08-24).** `--stage` is
+> documented as a diagnostic, but it is not paired with the recording block —
+> which runs unless `--no-record` is passed. (This entry used to say the block
+> runs "unconditionally"; it does not, and the workaround below was right for
+> the wrong reason.) `node scripts/leads/screen.mjs --stage l0` therefore
+> **overwrites the stored `mechanical` verdict for every lead** with one
+> computed from a single stage — and that stored row is what the
 > unattended runner reads as its screening evidence when no model verdict exists.
 > Pair `--stage` with `--no-record` until this is fixed.
 
@@ -2185,16 +2191,17 @@ Everything runnable, alphabetically within its folder, with what it changes.
 
 ### `scripts/documents/`
 
-| Command               | Task            | Changes                                            |
-| --------------------- | --------------- | -------------------------------------------------- |
-| `assemble-resume.mjs` | Tailor a résumé | `jobs/<slug>/resume.md`, `resume-selection.json`   |
-| `ats-lint.mjs`        | Tailor a résumé | **READ-ONLY**                                      |
-| `keyword-plan.mjs`    | Tailor a résumé | `jobs/<slug>/keywords.json`                        |
-| `letter-plan.mjs`     | Tailor a résumé | **READ-ONLY**                                      |
-| `new-job.mjs`         | Tailor a résumé | `jobs/<slug>/job.json`, `context.json`             |
-| `render-pdf.mjs`      | Tailor a résumé | the PDF, plus a `.render.html` beside it           |
-| `reuse-check.mjs`     | Tailor a résumé | `workspace_stacks` cache rows when the cache is on |
-| `verify-claims.mjs`   | Tailor a résumé | a `verifications` row unless `--no-record`         |
+| Command               | Task                    | Changes                                                                           |
+| --------------------- | ----------------------- | --------------------------------------------------------------------------------- |
+| `assemble-resume.mjs` | Tailor a résumé         | `jobs/<slug>/resume.md`, `resume-selection.json`                                  |
+| `ats-lint.mjs`        | Tailor a résumé         | **READ-ONLY**                                                                     |
+| `keyword-plan.mjs`    | Tailor a résumé         | `jobs/<slug>/keywords.json`                                                       |
+| `letter-plan.mjs`     | Tailor a résumé         | **READ-ONLY**                                                                     |
+| `new-job.mjs`         | Tailor a résumé         | `jobs/<slug>/job.json`, `context.json`                                            |
+| `render-pdf.mjs`      | Tailor a résumé         | the PDF, plus a `.render.html` beside it                                          |
+| `reuse-check.mjs`     | Tailor a résumé         | `workspace_stacks` cache rows when the cache is on                                |
+| `reverify.mjs`        | Keep documents eligible | a `verifications` row per stale document; **deletes rows** with `--prune-orphans` |
+| `verify-claims.mjs`   | Tailor a résumé         | a `verifications` row unless `--no-record`                                        |
 
 ### `scripts/apply/`
 
@@ -2252,13 +2259,14 @@ a library with no command line. So is everything under `scripts/lib/`,
 
 ### `scripts/dev/`
 
-| Command                      | Task                | Changes                                      |
-| ---------------------------- | ------------------- | -------------------------------------------- |
-| `bench-apply.mjs`            | Measure performance | A ledger entry with `--ledger`               |
-| `bench-green-prevalence.mjs` | Measure performance | **READ-ONLY**                                |
-| `bench-runner.mjs`           | Measure performance | Fixture rows; a ledger entry with `--ledger` |
-| `flake-rate.mjs`             | Measure performance | **READ-ONLY**                                |
-| `spawn-counter.cjs`          | Measure performance | Not a command — a `--require` preload        |
+| Command                      | Task                | Changes                                                                                         |
+| ---------------------------- | ------------------- | ----------------------------------------------------------------------------------------------- |
+| `bench-apply.mjs`            | Measure performance | A ledger entry with `--ledger`                                                                  |
+| `bench-green-prevalence.mjs` | Measure performance | **READ-ONLY**                                                                                   |
+| `bench-runner.mjs`           | Measure performance | Fixture rows; a ledger entry with `--ledger`                                                    |
+| `flake-rate.mjs`             | Measure performance | **READ-ONLY**                                                                                   |
+| `scorecard.mjs`              | Measure performance | Appends a row to `docs/scorecard.jsonl` **by default** — pass `--no-record` for a read-only run |
+| `spawn-counter.cjs`          | Measure performance | Not a command — a `--require` preload                                                           |
 
 ---
 

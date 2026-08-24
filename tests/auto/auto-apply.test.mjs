@@ -146,18 +146,53 @@ const LIMITS = {
   },
 }
 
-test("a verified workspace with no screened lead behind it is NOT eligible", (t) => {
+test("a verified workspace with NO LEAD ROW is not eligible, and says so precisely", (t) => {
   // Both halves are required, and this is the half that is easy to forget: the
   // document being verified says nothing about whether any screening stage
   // ever looked at the posting. An unattended submit to a posting nothing
   // screened is precisely what rule 0 is about.
+  //
+  // ASSERTION SHARPENED 2026-08-24, not loosened. This fixture creates no lead
+  // at all, and the refusal used to read "no stored screening verdict" — true,
+  // but it sends the reader to screen.mjs, where the answer is not: screening
+  // is keyed by lead_id and there is no lead to key. Such workspaces come from
+  // the ATTENDED path (apply-job/tailor-resume writes job.json and a
+  // verification row, never a lead); 11 of 69 were in that state when
+  // measured, two of them otherwise ready to submit. The "lead exists but was
+  // never screened" case is the test below.
   const w = world(t)
   workspace(w, "orphan-workspace", "https://boards.greenhouse.io/a/jobs/1")
   const db = openDb(w.dbFile)
   const out = selectEligible({ db, limits: LIMITS, jobsDir: w.jobsDir })
   db.close()
   assert.deepEqual(out.jobs, [])
+  assert.match(out.rejected[0].reason, /workspace has no lead row/)
+})
+
+test("a lead that EXISTS but was never screened still says 'no screening verdict'", (t) => {
+  // The other half of the case above, and the one the message was originally
+  // written for. Here there IS a lead, so screen.mjs is genuinely the answer
+  // and the reader must be sent there rather than told to import a lead they
+  // already have.
+  const w = world(t)
+  workspace(w, "unscreened-job", "https://boards.greenhouse.io/a/jobs/1")
+  const db = openDb(w.dbFile)
+  upsertLeads(db, [
+    {
+      id: "unscreened-job",
+      slug: "unscreened-job",
+      url: "https://boards.greenhouse.io/a/jobs/1",
+      apply_url: "https://boards.greenhouse.io/a/jobs/1",
+      company: "Acme",
+      title: "Full-Stack Engineer",
+      // No `screening` key: enrolled, never screened.
+    },
+  ])
+  const out = selectEligible({ db, limits: LIMITS, jobsDir: w.jobsDir })
+  db.close()
+  assert.deepEqual(out.jobs, [])
   assert.match(out.rejected[0].reason, /no stored screening verdict/)
+  assert.doesNotMatch(out.rejected[0].reason, /no lead row/)
 })
 
 test("selection walks the VERIFICATIONS, never the jobs/ directory", (t) => {
@@ -556,4 +591,83 @@ test("a selected job carries the lead id, so a resumed row can re-read its scree
   assert.equal(out.jobs[0].lead_id, "ok-job")
   assert.equal(out.jobs[0].company, "Acme")
   assert.equal(out.jobs[0].title, "Full-Stack Engineer")
+})
+
+// --- refusals are named, not counted ----------------------------------------
+//
+// MEASURED 2026-08-24. selectEligible builds a {slug, reason} for every
+// candidate it turns away, across eight kinds, and the CLI printed
+// `rejected: 54`. A run that enqueued 3 of 57 and applied to none gave no way
+// to tell "everything worth applying to is already applied" (19 of them, the
+// system working) from "two workspaces are structurally unreachable" (a bug).
+// tests/auto/queue.test.mjs:249 already holds the principle for the queue:
+// "a deferral without a reason is refused — a silent skip is not a deferral".
+import {
+  rejectionKind,
+  rejectionBreakdown,
+  formatRejections,
+} from "../../scripts/auto/auto-apply.mjs"
+
+test("every reason selectEligible produces maps to a named kind", () => {
+  // The five trust checks return `${check}: ${detail}`; the other four sites
+  // are fixed sentences. None may fall through to "other".
+  const cases = [
+    ["lead status is dismissed — not queued while it stays so", "dismissed"],
+    ["already applied on 2026-08-18 (matched by slug)", "already-applied"],
+    [
+      "resume.pdf is not rendered for this workspace — run scripts/documents/render-pdf.mjs",
+      "no-resume-pdf",
+    ],
+    [
+      "workspace has no lead row — its job.json was created by the attended path",
+      "no-lead-row",
+    ],
+    [
+      "allowlist: www.adzuna.com is not on auto_apply.board_allowlist",
+      "allowlist",
+    ],
+    ["screening: no stored screening verdict for this lead", "screening"],
+    ["adapter: no adapter ships for this board", "adapter"],
+    ["https: the apply url is not https", "https"],
+    ["origin_stable: the posting and the form disagree", "origin_stable"],
+  ]
+  for (const [reason, kind] of cases)
+    assert.equal(rejectionKind(reason), kind, reason)
+})
+
+test("an unrecognised reason is 'other' rather than being dropped", () => {
+  assert.equal(rejectionKind("something nobody predicted"), "other")
+  assert.equal(rejectionKind(undefined), "other")
+})
+
+test("the breakdown counts by kind, commonest first, with an example each", () => {
+  const out = rejectionBreakdown([
+    { slug: "a", reason: "lead status is dismissed — x" },
+    { slug: "b", reason: "lead status is dismissed — x" },
+    { slug: "c", reason: "already applied on 2026-08-18 (matched by slug)" },
+  ])
+  assert.deepEqual(
+    out.map((o) => [o.kind, o.count]),
+    [
+      ["dismissed", 2],
+      ["already-applied", 1],
+    ],
+  )
+  // An example slug, because "23 dismissed" without one is still not
+  // actionable — the user cannot tell WHICH leads they dismissed.
+  assert.equal(out[0].example, "a")
+})
+
+test("the no-lead-row reason is distinguishable from an unscreened lead", () => {
+  // These were the same message until 2026-08-24, and the wrong one sent the
+  // reader to screen.mjs — where the answer is not, because screening is keyed
+  // by lead_id and there is no lead to key.
+  assert.notEqual(
+    rejectionKind("workspace has no lead row — created by the attended path"),
+    rejectionKind("screening: no stored screening verdict for this lead"),
+  )
+})
+
+test("an empty rejection list renders as nothing, not as a header", () => {
+  assert.equal(formatRejections([]), "")
 })

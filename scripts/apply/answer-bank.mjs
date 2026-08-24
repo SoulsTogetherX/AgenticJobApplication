@@ -487,12 +487,41 @@ const rowOrdinal = (label) => {
 }
 
 const EEO_RE =
-  /\bgender\b|\brace\b|ethnic|hispanic|latino|veteran|disab|self-?identif|pronoun/i
+  /\bgender\b|\brace\b|ethnic|hispanic|latino|veteran|disab|self-?identif|pronoun|sexual\s+orientation|transgender/i
 // "I do not want to answer" (Affirm's disability option) was one word away from
 // matching, so that field alone went to the user while the other three EEO
 // questions resolved.
 const DECLINE_RE =
   /decline|prefer not|don'?t wish|do not wish|don'?t want|do not want|rather not|not to (answer|say|disclose)|choose not|opt out/i
+
+// Curly apostrophes folded before the decline test, mirroring the exact-key
+// folds below (CURLY_APOSTROPHE_RE): Chime's live checkbox renders
+// "I don’t wish to answer" with U+2019, which "don'?t" cannot match, so the
+// auto-decline walked straight past the decline option it was looking for
+// (MEASURED 2026-08-24, the last blocked field of the day). One helper so the
+// answer-side tests and the option-side lookup cannot drift apart again.
+const isDeclineText = (s) => DECLINE_RE.test(String(s).replace(/[‘’ʼ′]/g, "'"))
+
+// Where a banked DECLINE must land on a board whose self-ID list offers no
+// decline-shaped option at all. MEASURED on Reddit's Greenhouse form
+// 2026-08-23: gender and orientation lists run Agender..Queer and end at a
+// bare "Not listed" — no "decline", no "prefer not to say" — so the user's
+// banked "I don't wish to answer" could not ground and both fields deferred.
+// The user set the policy in chat the same day: on such a list, pick the most
+// ambiguous option offered. A bare "Not listed" / "Not specified" is that
+// option — it is the least-assertive row on a list that forces a row — and
+// this fallback fires ONLY when (a) the BANK already holds a decline (the
+// user's own refusal to state, never inferred) and (b) NO DECLINE_RE option
+// exists. Anchored ^…$ so an option that merely contains the phrase while
+// asserting more ("Not listed above — I identify as…") never matches.
+const DECLINE_FALLBACK_OPTION_RE = /^not (listed|specified)$/i
+const declineOptionIn = (opts) => {
+  const list = opts ?? []
+  return (
+    list.find((o) => isDeclineText(o)) ??
+    list.find((o) => DECLINE_FALLBACK_OPTION_RE.test(String(o).trim()))
+  )
+}
 
 // ---------------------------------------------------------------------------
 // answers-bank fuzzy match
@@ -1760,8 +1789,8 @@ export function createResolver(profile = {}, answersDoc = {}, { now } = {}) {
       // matchOption() does not ground synonyms. Scoped to EEO_RE labels only —
       // a decline is dispositive of intent specifically because these fields
       // are voluntary; a non-EEO exact match still must ground literally.
-      if (EEO_RE.test(label) && DECLINE_RE.test(exact.answer)) {
-        const decline = (opts ?? []).find((o) => DECLINE_RE.test(o))
+      if (EEO_RE.test(label) && isDeclineText(exact.answer)) {
+        const decline = declineOptionIn(opts)
         if (decline) {
           return push(
             "OK",
@@ -1826,8 +1855,8 @@ export function createResolver(profile = {}, answersDoc = {}, { now } = {}) {
         // A SUBSTANTIVE banked answer still falls through to matchOption()
         // and must still ground literally or defer — this shortcut fires only
         // when the bank itself already declined.
-        if (DECLINE_RE.test(banked.answer)) {
-          const decline = (opts ?? []).find((o) => DECLINE_RE.test(o))
+        if (isDeclineText(banked.answer)) {
+          const decline = declineOptionIn(opts)
           if (decline) {
             return push(
               "OK",
@@ -1845,7 +1874,7 @@ export function createResolver(profile = {}, answersDoc = {}, { now } = {}) {
           m.values,
         )
       }
-      const decline = (opts ?? []).find((o) => DECLINE_RE.test(o))
+      const decline = declineOptionIn(opts)
       if (decline) return push("OK", "eeo:decline", decline)
       return push("UNKNOWN", "eeo", "", "voluntary self-ID — ask the user")
     }

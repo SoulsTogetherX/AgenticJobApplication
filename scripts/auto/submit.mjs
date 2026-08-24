@@ -227,6 +227,19 @@ export function findSubmitControl(scan) {
  *                  classifier (§4.10). It is injected rather than imported so
  *                  that this file cannot silently acquire a live path before
  *                  W2 builds and corpus-tests one — see the refusal below.
+ * @param stagePostSubmit  Optional `({url, html, slug}) -> void`. Called on a
+ *                  LIVE click whose page classified as anything OTHER than
+ *                  `confirmation` — the one moment the real post-submit page
+ *                  this host renders is in hand. §4.10's corpus can only grow
+ *                  from real pages, and until 2026-08-24 the runner read one on
+ *                  every live click and threw it away, so every blind host
+ *                  stayed blind (9 clicked-unconfirmed submissions in one
+ *                  week). The hook STAGES (redact → gitignored dir) — promote
+ *                  stays the user's own reviewed act, exactly as
+ *                  capture-post-submit.mjs's three-step design requires.
+ *                  Injected like `classify` and for the same reason; failures
+ *                  are swallowed — losing a capture must never change what the
+ *                  submit reports.
  * @returns {{outcome, confirmationUrl, clicked, row}}
  */
 export async function submitOnce(
@@ -246,6 +259,7 @@ export async function submitOnce(
     profileApproved = false,
     scan = null,
     classify = null,
+    stagePostSubmit = null,
     dbFile = DB_PATH,
     stopPath = undefined,
     clickTimeoutMs = 15_000,
@@ -572,6 +586,22 @@ export async function submitOnce(
   const outcome = classify(url, html)
   const kind = typeof outcome === "string" ? outcome : outcome?.kind
   const confirmationUrl = kind === "confirmation" ? url : null
+
+  // The one moment a blind host's real post-submit page is in hand. Stage it
+  // (redacted, gitignored) so the user can review and promote it into the
+  // classifier's corpus — see the param doc above. Never on a confirmation
+  // (the host is already sighted for this page) and never fatally: a submit
+  // outcome must not change because a capture could not be written.
+  if (kind !== "confirmation" && typeof stagePostSubmit === "function") {
+    try {
+      stagePostSubmit({ url, html, slug })
+    } catch (e) {
+      console.error(
+        `warn: post-submit capture not staged for ${slug}: ` +
+          safeText(e?.message ?? e, 120),
+      )
+    }
+  }
 
   // A CONFIRMED CLICK RESOLVES THE INTENT, HERE, IN THE SAME FUNCTION THAT
   // WROTE IT (2026-08-18). Until this, nothing on the live path ever called

@@ -674,7 +674,31 @@ function matchIntent(intent, text) {
   }
 
   if (polarity !== null) {
-    const rest = `${text.slice(0, span.index)} ${text.slice(span.end)}`
+    // Trim TRAILING sentences off the stray scan; never the leading ones.
+    // ATS labels append advisory sentences after the question proper —
+    // "Please note, answering \"yes\" will not disqualify your application
+    // from consideration." (Chime, measured 2026-08-23: a banked, correct
+    // answer deferred on that "not" for five straight live runs). A negation
+    // in a sentence AFTER the one holding the polarity phrase negates that
+    // sentence's proposition, not the question's, so the scan stops at the
+    // end of the polarity sentence. The scan still starts at 0 — the two
+    // founding defences above put their stray marker BEFORE the phrase
+    // ("unable ... without", "not ... unwilling"), and a symmetric leading
+    // trim was tried and failed the corpus: a lastIndexOf(".") start
+    // boundary read the "." in "U.S." as a sentence break and let
+    // "Are you unable to work in the U.S. without sponsorship?" resolve
+    // confidently. For the same reason the end boundary treats "." as a
+    // break only when what follows looks like a new sentence (end, or
+    // whitespace then a capital); "?" and "!" end abbreviations in no
+    // English an ATS renders, so they always break.
+    let sEnd = text.length
+    for (const m of text
+      .slice(span.end)
+      .matchAll(/[?!]|\.(?=\s+[A-Z]|\s*$)/g)) {
+      sEnd = span.end + m.index
+      break
+    }
+    const rest = `${text.slice(0, span.index)} ${text.slice(span.end, sEnd)}`
     const stray = NEGATION_MARKER.exec(rest)
     if (stray) {
       polarity = null

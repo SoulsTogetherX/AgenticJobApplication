@@ -567,3 +567,48 @@ test("the resolution path contains no model call and no network call", () => {
     )
   }
 })
+
+// --- stray-negation scope: the sentence, not the label -----------------------
+
+test("an advisory sentence AFTER the question does not defer it (Chime, 2026-08-23)", () => {
+  // The measured failure: five straight live runs deferred a banked, correct
+  // non-compete "No" because the label's trailing reassurance — "answering
+  // yes will NOT disqualify your application" — put a negation marker in the
+  // label. That "not" negates DISQUALIFICATION, a different proposition in a
+  // different sentence; the question sentence's polarity is untouched. The
+  // scan is now scoped to the sentence holding the phrase that set polarity.
+  const label =
+    "Are you currently subject to any agreement with a former employer/third " +
+    "party (such as a non-solicitation or non-compete agreement) that may " +
+    "potentially limit your ability to perform the duties of the position " +
+    "you are applying for? If yes, you may be asked to provide a copy for " +
+    "review. Please note, answering yes will not disqualify your " +
+    "application from consideration."
+  const r = resolveIntent(label, BANK)
+  assert.equal(r.concept, "non_compete")
+  assert.equal(r.decision, "answer", r.reason ?? "")
+  // The bank entry says the user is NOT bound; "subject to" polarity is +1, so
+  // the honest literal is false.
+  assert.equal(r.value, false)
+})
+
+test("a negation in the SAME sentence as the polarity phrase still defers", () => {
+  // The scoping must not weaken either founding defence: a stray marker
+  // inside the question sentence is still a negation nobody accounted for.
+  const sameSentence = resolveIntent(
+    "Are you not currently subject to a non-compete agreement?",
+    BANK,
+  )
+  assert.equal(sameSentence.decision, "defer")
+  assert.match(sameSentence.reason ?? "", /negation/i)
+
+  const compound = resolveIntent(
+    "Are you authorized to work without company sponsorship?",
+    BANK,
+  )
+  assert.equal(
+    compound.decision,
+    "defer",
+    "the compound-question defence must survive the sentence scoping",
+  )
+})

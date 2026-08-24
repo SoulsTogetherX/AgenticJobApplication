@@ -793,3 +793,92 @@ test("a dry run never runs the liveness check — its page double has no DOM", a
   assert.equal(out.outcome, "dry-run")
   assert.deepEqual(page.clicks, [], "a dry run must never click")
 })
+
+// ---------------------------------------------------------------------------
+// stagePostSubmit: the corpus grows from real pages, or not at all
+// ---------------------------------------------------------------------------
+
+test("an unclassified live click hands its page to stagePostSubmit", async (t) => {
+  // Until 2026-08-24 the runner read a real post-submit page on every live
+  // click and threw it away, so a blind host stayed blind forever (nine
+  // clicked-unconfirmed submissions in one week). The hook is the fix; this
+  // pins its firing conditions. A confirmation page is NOT staged — the host
+  // is already sighted for that page, and staging it would grow the review
+  // pile with pages nobody needs to look at.
+  const r = rig(t)
+  const staged = []
+  const live = startRun({
+    mode: "live",
+    dbFile: r.dbFile,
+    autoDir: r.autoDir,
+    stopPath: r.stopPath,
+  })
+  const page = fakePage()
+  const out = await submitOnce(page, {
+    ...r.base(),
+    mode: "live",
+    token: r.mint({ config: { ...LIMITS, dry_run: false } }),
+    run: live,
+    queueRow: { slug: SLUG, state: "authorized", run_id: live.id },
+    classify: () => "unclassified",
+    stagePostSubmit: (c) => staged.push(c),
+  })
+  assert.equal(out.outcome, "unclassified")
+  assert.equal(staged.length, 1, "the unclassified page was staged")
+  assert.equal(staged[0].slug, SLUG)
+  assert.ok(typeof staged[0].url === "string" && staged[0].url.length)
+  assert.ok(typeof staged[0].html === "string" && staged[0].html.length)
+  live.finish({ outcome: "stopped", stopReason: "unclassified" })
+})
+
+test("a confirmation is never staged", async (t) => {
+  // Fresh rig: the unclassified test above rightly leaves an unresolved
+  // attempt and a company brake behind it, and this test is about staging,
+  // not about the brake.
+  const r = rig(t)
+  const staged = []
+  const live = startRun({
+    mode: "live",
+    dbFile: r.dbFile,
+    autoDir: r.autoDir,
+    stopPath: r.stopPath,
+  })
+  const out = await submitOnce(fakePage(), {
+    ...r.base(),
+    mode: "live",
+    token: r.mint({ config: { ...LIMITS, dry_run: false } }),
+    run: live,
+    queueRow: { slug: SLUG, state: "authorized", run_id: live.id },
+    classify: () => "confirmation",
+    stagePostSubmit: (c) => staged.push(c),
+  })
+  assert.equal(out.outcome, "confirmation")
+  assert.equal(staged.length, 0, "a confirmation is never staged")
+  live.finish({ outcome: "ok" })
+})
+
+test("a stagePostSubmit that throws never changes what the submit reports", async (t) => {
+  // Staging is an optimisation; redaction can refuse (assertRedacted throws
+  // when an identifier survives), and that refusal must cost the capture,
+  // never the outcome record.
+  const r = rig(t)
+  const live = startRun({
+    mode: "live",
+    dbFile: r.dbFile,
+    autoDir: r.autoDir,
+    stopPath: r.stopPath,
+  })
+  const out = await submitOnce(fakePage(), {
+    ...r.base(),
+    mode: "live",
+    token: r.mint({ config: { ...LIMITS, dry_run: false } }),
+    run: live,
+    queueRow: { slug: SLUG, state: "authorized", run_id: live.id },
+    classify: () => "unclassified",
+    stagePostSubmit: () => {
+      throw new Error("redaction refused")
+    },
+  })
+  assert.equal(out.outcome, "unclassified")
+  live.finish({ outcome: "stopped", stopReason: "unclassified" })
+})

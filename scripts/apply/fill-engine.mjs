@@ -814,6 +814,12 @@ export default async function fillPage(page, plan, opts = {}) {
     if (g.startsWith(w) && /[\s(,\-:/]/.test(g.charAt(w.length))) return true
     const gd = dateParts(g)
     if (gd && gd === dateParts(w)) return true
+    // A bare-year value equals Jan 1 of that year AND NOTHING ELSE — the
+    // deterministic expansion actOn() types into a date widget that refuses
+    // a bare year (measured Quora/Ashby 2026-08-23). Any other day in the
+    // year is NOT accepted: this is recognising our own expansion, never a
+    // fuzzy "same year is close enough".
+    if (/^\d{4}$/.test(w) && gd === `${w}-01-01`) return true
     return foldPunct(g) === foldPunct(w)
   }
 
@@ -1438,6 +1444,42 @@ export default async function fillPage(page, plan, opts = {}) {
   // sequence against a freshly re-resolved locator without duplicating the
   // verb dispatch. Throws on any failure; the caller decides what to do
   // about it (fail outright, or retry once).
+  // A BARE YEAR TYPED INTO A DATE-PARSING WIDGET LANDS IN THE WRONG YEAR.
+  // MEASURED on Quora's Ashby form 2026-08-23: a react date input typed "2019"
+  // parsed it as an ISO year — midnight UTC, 2019-01-01 — and rendered the
+  // LOCAL time of that instant: "12/31/2018". Not a display quirk like the
+  // 08-21 case in accepts(): the committed value is genuinely a day in the
+  // wrong year, and the verify pass rightly deferred the job on it. The
+  // correction is EVIDENCE-DRIVEN: only after blurring (the ORC lesson —
+  // committed, not displayed) and only when the widget demonstrably
+  // re-rendered the year as a full calendar date in a DIFFERENT year is the
+  // field re-filled with "01/01/<year>" — a slash date, which JS parses as
+  // LOCAL time, so the year holds. The day is the widget's demand, not a
+  // claimed fact: the plan's value stays the bare year the fact base holds,
+  // and accepts()/the verify pass treat <year> and Jan 1 of <year> as the
+  // same value — that pair and nothing else. The poll exists because the
+  // widget normalises ASYNCHRONOUSLY after blur: a single early read sees the
+  // raw "2019" still in the box, concludes nothing is wrong, and the wrong
+  // year surfaces only at the verify pass, where nothing refills. Three reads
+  // over ~2s bound the wait; a widget that never re-renders costs the field
+  // 2s once and is left exactly as typed.
+  // A poll-and-correct version of this (blur, wait up to 2.1s, re-fill if the
+  // widget re-rendered the year as a date in the wrong year) was tried first
+  // and never fired: the widget normalises LAZILY — later than any bounded
+  // wait, sometimes not until the form validates — so every read saw the raw
+  // "2019" still in the box and the wrong year surfaced only at the verify
+  // pass, where nothing refills. Hence preemptive: the label's word "date" is
+  // used ONLY to pick a FORMAT (rule 0 note: attacker-controlled text routes
+  // no value here — the year typed is the fact base's year either way, and
+  // the worst a lying label earns is a date-shaped rendering of the same
+  // year). A "…year" label without "date" keeps the bare year.
+  const expandBareYearForDateField = (item) => {
+    const v = String(item.value)
+    return /^\d{4}$/.test(v) && /\bdate\b/i.test(String(item.label ?? ""))
+      ? `01/01/${v}`
+      : v
+  }
+
   const actOn = async (loc, item) => {
     let kind
     try {
@@ -1452,7 +1494,7 @@ export default async function fillPage(page, plan, opts = {}) {
     }
     await loc.scrollIntoViewIfNeeded({ timeout: 2500 })
     if (item.how === "fill") {
-      await loc.fill(String(item.value), { timeout: 2500 })
+      await loc.fill(expandBareYearForDateField(item), { timeout: 2500 })
     } else if (item.how === "select") {
       // A plan item carrying `values` targets a <select multiple>. Playwright
       // replaces the whole selection with exactly this set, so a stale-retry
@@ -1468,7 +1510,7 @@ export default async function fillPage(page, plan, opts = {}) {
       if (on) await loc.check({ timeout: 2500 })
       else await loc.uncheck({ timeout: 2500 })
     } else if (item.how === "type") {
-      await typeInto(loc, String(item.value))
+      await typeInto(loc, expandBareYearForDateField(item))
     } else if (item.how === "combo") {
       const r =
         Array.isArray(item.values) && item.values.length
@@ -2177,7 +2219,13 @@ export default async function fillPage(page, plan, opts = {}) {
             )
           return null
         }
-        const sameDay = dayOf(got) != null && dayOf(got) === dayOf(p.want)
+        const sameDay =
+          dayOf(got) != null &&
+          (dayOf(got) === dayOf(p.want) ||
+            // Mirrors accepts(): a bare-year want equals Jan 1 of that year
+            // and nothing else — actOn()'s deterministic expansion for a
+            // date widget that refuses a bare year (Quora/Ashby 2026-08-23).
+            (/^\d{4}$/.test(n(p.want)) && dayOf(got) === `${n(p.want)}-01-01`))
         const ok =
           p.how === "check"
             ? n(got) === n(p.want)

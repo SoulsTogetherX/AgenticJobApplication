@@ -319,7 +319,9 @@ test("recommend and screen CLIs run against a temp lead store", () => {
             title: "Full Stack Engineer",
             location: "Remote",
             url: "https://example.com/1",
-            posted_at: "2026-07-25T00:00:00Z",
+            // Relative, not literal: a hardcoded date crossed the staleness
+            // gate on 2026-08-24 and turned this test red by calendar alone.
+            posted_at: new Date(Date.now() - 5 * 86_400_000).toISOString(),
             status: "new",
             flags: [],
           },

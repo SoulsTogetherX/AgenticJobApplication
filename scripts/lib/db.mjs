@@ -812,6 +812,49 @@ export function keywordsFor(db, leadId) {
 // Every lead's keywords in one query. Clustering compares each lead against
 // every other one, so the per-lead keywordsFor() would be N round trips to
 // answer a question the store can hand over in a single pass.
+/**
+ * The keyword index for a store path, and whether reading it FAILED.
+ *
+ * A FAILED READ IS NOT AN EMPTY INDEX, and conflating the two was a real
+ * defect in two places at once. `gate-audit.mjs` and `screen.mjs` each opened
+ * the store inside a bare `catch {}`, so a locked or corrupt database left an
+ * empty Map, every lead was scored WITHOUT keywords, and the degraded result
+ * was then PERSISTED — to `jobs/.gate-baseline.json`, the file every future
+ * gate change is diffed against, and to the `screens` table, which is what the
+ * unattended runner reads as screening evidence when no model verdict exists.
+ *
+ * Both callers still run and still print on a failure; what they must not do is
+ * write. Returning the error rather than throwing is what lets them make that
+ * distinction, and having ONE helper is what stops the two drifting apart
+ * again.
+ *
+ * A non-`.db` path is not a failure — it is a JSON store with no index, which
+ * is the ordinary case in tests. `{keywords: empty, error: null}`.
+ *
+ * @returns {{keywords: Map<string, Set<string>>, error: string|null}}
+ */
+export function loadKeywordIndex(leadsPath) {
+  if (!String(leadsPath ?? "").endsWith(".db"))
+    return { keywords: new Map(), error: null }
+  let db
+  try {
+    db = openDb(leadsPath)
+  } catch (e) {
+    return { keywords: new Map(), error: e?.message ?? String(e) }
+  }
+  try {
+    return { keywords: keywordMap(db), error: null }
+  } catch (e) {
+    return { keywords: new Map(), error: e?.message ?? String(e) }
+  } finally {
+    try {
+      db.close()
+    } catch {
+      /* a close failure cannot invalidate an index already read */
+    }
+  }
+}
+
 export function keywordMap(db) {
   const map = new Map()
   for (const r of db

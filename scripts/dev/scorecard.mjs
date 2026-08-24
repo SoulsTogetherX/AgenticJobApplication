@@ -28,6 +28,7 @@
 //   node scripts/dev/scorecard.mjs --json --no-record           # inspect only
 //   node scripts/dev/scorecard.mjs --db jobs/leads.db --out docs/scorecard.jsonl
 import fs from "node:fs"
+import { assertKnownFlags } from "../lib/args.mjs"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -317,8 +318,44 @@ function fmtProse(c) {
   ].join("\n")
 }
 
+const SCORECARD_USAGE = `scorecard.mjs - one line of pipeline funnel numbers
+
+  --db <file>       the store
+  --out <file>      the ledger to append to
+  --note <text>     a note recorded with the row
+  --short           terser output
+  --json            machine-readable output
+  --no-record       do NOT append to the ledger
+
+RECORDING IS THE DEFAULT. --no-record is the read-only mode.
+`
+
 function main() {
   const args = process.argv.slice(2)
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(SCORECARD_USAGE)
+    return 0
+  }
+  // STRICT. recording is the DEFAULT, so a typo appends a bogus row to docs/scorecard.jsonl.
+  try {
+    assertKnownFlags(args, {
+      known: [
+        "--db",
+        "--json",
+        "--no-record",
+        "--note",
+        "--out",
+        "--short",
+        "--help",
+      ],
+      valueFlags: ["--db", "--note", "--out"],
+      script: "scorecard.mjs",
+      note: "recording is the DEFAULT, so a typo appends a bogus row to docs/scorecard.jsonl",
+    })
+  } catch (e) {
+    console.error(e.message)
+    process.exit(e.exitCode ?? 2)
+  }
   const flag = (name, dflt = null) => {
     const i = args.indexOf(name)
     return i >= 0 && args[i + 1] ? args[i + 1] : dflt

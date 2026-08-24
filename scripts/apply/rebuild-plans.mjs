@@ -24,6 +24,7 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { newestInputMtime, factBaseInputs } from "./pending-questions.mjs"
+import { assertKnownFlags } from "../lib/args.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -177,10 +178,43 @@ export function rebuildPlans({
 const isMain =
   process.argv[1] &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+// Every flag this command understands. STRICT, because an unrecognised one used
+// to be dropped by `args.filter((a) => !a.startsWith("--"))` — which left the
+// slug list EMPTY, and an empty slug list means "every workspace". So
+// `rebuild-plans.mjs --help` spawned fill-plan.mjs for all 36 jobs and rewrote
+// every plan and the shared field cache.
+const REBUILD_FLAGS = ["--all", "--dry-run", "--jobs-dir", "--help"]
+const REBUILD_VALUE_FLAGS = ["--jobs-dir"]
+
+const USAGE = `rebuild-plans.mjs — rebuild stale jobs/<slug>/fill-plan.json from the saved scan
+
+  <slug> ...        rebuild only these (default: every workspace with a stale plan)
+  --all             rebuild every workspace, stale or not
+  --dry-run         report what would be rebuilt and write nothing
+  --jobs-dir <dir>  workspace root. Defaults to jobs/
+
+Opens no browser. Writes fill-plan.json and the shared field cache.
+`
+
 if (isMain) {
   // A thin argument shim over rebuildPlans(), so the command a human types and
   // the sweep cycle.mjs runs cannot drift apart.
   const args = process.argv.slice(2)
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(USAGE)
+    process.exit(0)
+  }
+  try {
+    assertKnownFlags(args, {
+      known: REBUILD_FLAGS,
+      valueFlags: REBUILD_VALUE_FLAGS,
+      script: "rebuild-plans.mjs",
+      note: "an unknown flag used to be dropped, leaving an empty slug list, which means EVERY workspace",
+    })
+  } catch (e) {
+    console.error(e.message)
+    process.exit(e.exitCode ?? 2)
+  }
   const i = args.indexOf("--jobs-dir")
   const jobsDir =
     i === -1 ? path.join(ROOT, "jobs") : path.resolve(args[i + 1] ?? "")

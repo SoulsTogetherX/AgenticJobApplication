@@ -19,6 +19,7 @@
 //        node scripts/leads/screen.mjs record <lead-id> --verdict pass|caution|reject
 //          [--reason "..."] [--signals a,b] [--source model]
 import fs from "node:fs"
+import { assertKnownFlags } from "../lib/args.mjs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { isTerse, loadYamlFile, yearsOfExperience } from "../lib/lib.mjs"
@@ -31,7 +32,7 @@ import {
   readLeadStore,
   resolveLeadSource,
   openDb,
-  keywordMap,
+  loadKeywordIndex,
   recordScreens,
   screenIndex,
 } from "../lib/db.mjs"
@@ -289,8 +290,68 @@ function recordVerdict(args) {
   }
 }
 
+const SCREEN_USAGE = `screen.mjs - mechanical screening over the stored leads
+
+  --status all|new|...   which leads to screen
+  --stage l0|l1|l3       run one stage only (diagnostic)
+  --leads <path>         the lead store
+  --limits <file>        application-limits.yaml
+  --profile <file>       the fact base
+  --jobs-dir <dir>       workspace root
+  --skip-screened        skip leads that already have a verdict
+  --json                 machine-readable output
+  --no-record            do NOT write the screens table
+
+RECORDING IS THE DEFAULT, and the rows written here are what the unattended
+runner reads as screening evidence. --no-record is the read-only mode.
+NOTE: --stage narrows the COMPUTATION but still records a full verdict; pair
+it with --no-record.
+`
+
 function main() {
   const args = process.argv.slice(2)
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(SCREEN_USAGE)
+    return 0
+  }
+  // STRICT. recording is the DEFAULT, and the rows it writes are what the unattended runner reads as screening evidence.
+  try {
+    assertKnownFlags(args, {
+      known: [
+        "--jobs-dir",
+        "--json",
+        "--leads",
+        "--limits",
+        "--no-record",
+        "--profile",
+        "--reason",
+        "--signals",
+        "--skip-screened",
+        "--source",
+        "--stage",
+        "--status",
+        "--verdict",
+        "--help",
+      ],
+      valueFlags: [
+        "--jobs-dir",
+        "--leads",
+        "--limits",
+        "--profile",
+        "--reason",
+        "--signals",
+        "--source",
+        "--stage",
+        "--status",
+        "--verdict",
+      ],
+      script: "screen.mjs",
+      note: "recording is the DEFAULT, and the rows it writes are what the unattended runner reads as screening evidence",
+    })
+  } catch (e) {
+    console.error(e.message)
+    process.exit(e.exitCode ?? 2)
+  }
   if (args[0] === "record") return recordVerdict(args)
   // Defaults to jobs/leads.db when it exists, else the legacy JSON store.
   const leadsPath = flag(args, "--leads") || resolveLeadSource().file
@@ -375,17 +436,37 @@ function main() {
   const now = new Date()
   const history = buildHistory(readLeadStore(leadsPath).leads ?? [], { now })
   const profileTech = extractTech(profileText(profile))
-  let keywordIdx = new Map()
-  if (isDb) {
-    try {
-      const db = openDb(leadsPath)
-      try {
-        keywordIdx = keywordMap(db)
-      } finally {
-        db.close()
-      }
-    } catch {}
-  }
+  // A KEYWORD INDEX THAT FAILED TO LOAD IS NOT AN EMPTY KEYWORD INDEX, and
+  // this one is worse than gate-audit's twin: the rows written at the bottom of
+  // this function are what the UNATTENDED RUNNER reads as its screening
+  // evidence when no model verdict exists (selectEligible -> screeningFor ->
+  // the trust gate's `screening` check). A bare `catch {}` here meant a locked
+  // store could silently produce a confident `mechanical` verdict computed
+  // without keywords, and the runner would then treat it as a real screen.
+  //
+  // Named and non-recording: the screen still runs and still prints, but a
+  // verdict it knows is degraded must not become stored evidence.
+  // A KEYWORD INDEX THAT FAILED TO LOAD IS NOT AN EMPTY KEYWORD INDEX, and
+  // this one is worse than gate-audit's twin: the rows written at the bottom of
+  // this function are what the UNATTENDED RUNNER reads as its screening
+  // evidence when no model verdict exists (selectEligible -> screeningFor ->
+  // the trust gate's `screening` check). A bare `catch {}` here meant a locked
+  // store could silently produce a confident `mechanical` verdict computed
+  // without keywords, and the runner would treat it as a real screen.
+  //
+  // Named and non-recording: the screen still runs and still prints, but a
+  // verdict it knows is degraded must not become stored evidence.
+  const { keywords: keywordIdx, error: keywordError } =
+    loadKeywordIndex(leadsPath)
+  if (keywordError)
+    console.error(
+      `screen: the keyword index could not be read (${keywordError}).
+` +
+        `  Every verdict below is computed WITHOUT keywords.
+` +
+        `  Nothing will be recorded — the unattended runner reads stored ` +
+        `screens as evidence, and a degraded verdict is not evidence.`,
+    )
 
   const results = leads.map((l) => {
     const captured = byUrl.get(l.url)
@@ -428,7 +509,8 @@ function main() {
 
   // Recorded for history, not for speed — see the header. Never on a JSON
   // store, which is what the tests point at, so a test run cannot write here.
-  if (isDb && !noRecord && results.length) {
+  // `keywordError` outranks --no-record's default: see the load site above.
+  if (isDb && !noRecord && !keywordError && results.length) {
     const db = openDb(leadsPath)
     try {
       recordScreens(

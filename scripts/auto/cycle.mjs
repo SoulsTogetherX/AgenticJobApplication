@@ -319,7 +319,22 @@ export function prepareDocuments(slug, lead, { jobsDir, run = step }) {
 // The user's 7:00 scheduled task passes `--skip-apply` to prepare only; a
 // single mistyped character in that registration would have sent real
 // applications with nothing in the log saying so. See scripts/lib/args.mjs.
+export const CYCLE_USAGE = `cycle.mjs - one job-application cycle
+
+  --top N          leads to tailor this cycle (default 10)
+  --limit N        applications the runner may attempt (default: --top)
+  --skip-search    reuse the leads already in the store
+  --skip-apply     prepare documents and STOP before the runner
+  --any-board      tailor for leads whose board fails the trust gate too
+  --jobs-dir <dir> workspace root
+  --json           machine-readable output
+
+THE APPLIER RUNS UNLESS --skip-apply IS SPELLED EXACTLY. The registered
+scheduled task passes it to prepare only.
+`
+
 export const CYCLE_FLAGS = [
+  "--help",
   "--top",
   "--limit",
   "--json",
@@ -624,6 +639,10 @@ export async function runCycle(argv = []) {
 }
 
 async function main(argv = process.argv.slice(2)) {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    process.stdout.write(CYCLE_USAGE)
+    return 0
+  }
   let out
   try {
     out = await runCycle(argv)

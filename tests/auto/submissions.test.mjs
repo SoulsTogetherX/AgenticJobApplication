@@ -20,6 +20,7 @@ import {
   countAutoSubmissions,
   companySubmissionBreakdown,
   readOrphanAttempts,
+  readSubmitLatencies,
 } from "../../scripts/lib/db.mjs"
 
 function store(t) {
@@ -416,4 +417,54 @@ test("reopening an already-rebuilt database rebuilds nothing", (t) => {
     undefined,
     "an idempotent open does not rewrite the doc",
   )
+})
+
+// --- the market number counts only submissions that were CONFIRMED ----------
+//
+// readSubmitLatencies is what db.mjs calls "THE NUMBER THE PRODUCT IS ACTUALLY
+// FOR", and it counted every row with a submitted_at regardless of outcome. An
+// `attempted` row means a click went out and nothing came back to confirm it —
+// the application may not exist — so those measured the latency of things that
+// may never have been sent. Measured 2026-08-24: one unconfirmed Ashby click
+// moved p95 from 547h to 653h. A dry_run row was in the same sample until the
+// caller started passing the mode filter the helper always had.
+
+test("an unconfirmed 'attempted' row is NOT in the latency sample", (t) => {
+  const db = store(t).open()
+  db.prepare(
+    `INSERT INTO auto_queue (slug, state, attempt_no, posted_at, updated_at)
+     VALUES ('sent', 'submitted', 1, '2026-08-01T00:00:00.000Z', '2026-08-02T00:00:00.000Z'),
+            ('unsure', 'attempted', 1, '2026-08-01T00:00:00.000Z', '2026-08-02T00:00:00.000Z')`,
+  ).run()
+  for (const [slug, outcome] of [
+    ["sent", "submitted"],
+    ["unsure", "attempted"],
+  ])
+    db.prepare(
+      `INSERT INTO auto_submissions (run_id, slug, mode, outcome, submitted_at, doc)
+       VALUES ('r1', ?, 'live', ?, '2026-08-02T00:00:00.000Z', '{}')`,
+    ).run(slug, outcome)
+
+  const rows = readSubmitLatencies(db, { mode: "live" })
+  assert.deepEqual(
+    rows.map((r) => r.slug),
+    ["sent"],
+    "only a confirmed submission may be measured",
+  )
+})
+
+test("a dry_run row is excluded when the caller asks for live", (t) => {
+  const db = store(t).open()
+  db.prepare(
+    `INSERT INTO auto_queue (slug, state, attempt_no, posted_at, updated_at)
+     VALUES ('rehearsal', 'deferred', 1, '2026-08-01T00:00:00.000Z', '2026-08-02T00:00:00.000Z')`,
+  ).run()
+  db.prepare(
+    `INSERT INTO auto_submissions (run_id, slug, mode, outcome, submitted_at, doc)
+     VALUES ('r1', 'rehearsal', 'dry_run', 'submitted', '2026-08-02T00:00:00.000Z', '{}')`,
+  ).run()
+  assert.equal(readSubmitLatencies(db, { mode: "live" }).length, 0)
+  // And it is still visible to a caller that asks for it — the filter is the
+  // CALLER's choice, not a deletion.
+  assert.equal(readSubmitLatencies(db, { mode: "dry_run" }).length, 1)
 })

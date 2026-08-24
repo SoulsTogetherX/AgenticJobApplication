@@ -591,3 +591,85 @@ function require_sqlite() {
   // for healAutoQueue's siblings reach it.
   return process.getBuiltinModule("node:sqlite")
 }
+
+// --- the staleness clock is the FIRST deferral, not the last write ----------
+//
+// MEASURED 2026-08-24. `setAutoJobState` overwrites `updated_at` on every
+// write, and readStaleDeferred aged rows from it — so re-deferring a job RESET
+// its staleness clock. readStaleDeferred's own doc says it exists to surface
+// "a job that deferred once and was never looked at again", and a REQUEUEABLE
+// deferral is looked at again on every enqueue, so the metric systematically
+// excluded exactly the population it was built for. Only deferrals nothing
+// could fix ever accumulated age.
+
+test("re-deferring does NOT reset the staleness clock", (t) => {
+  const db = store(t).open()
+  enqueueAutoJobs(db, [{ slug: "s1", origin: "o", board_key: "b" }])
+  claimAutoJob(db, "s1", { run_id: "r1" })
+  const first = new Date("2026-08-20T00:00:00.000Z")
+  setAutoJobState(db, "s1", "deferred", {
+    run_id: "r1",
+    reason_kind: "unknown-field",
+    reason_detail: "first",
+    now: first,
+  })
+  // Re-queued and deferred again three days later, as a requeueable kind is.
+  enqueueAutoJobs(db, [{ slug: "s1", origin: "o", board_key: "b" }])
+  claimAutoJob(db, "s1", { run_id: "r2" })
+  const again = new Date("2026-08-23T00:00:00.000Z")
+  setAutoJobState(db, "s1", "deferred", {
+    run_id: "r2",
+    reason_kind: "unknown-field",
+    reason_detail: "again",
+    now: again,
+  })
+
+  const now = new Date("2026-08-24T00:00:00.000Z")
+  const stale = readStaleDeferred(db, { now })
+  assert.equal(stale.length, 1, "4 days of being stuck must still read stale")
+  assert.equal(stale[0].since, first.toISOString(), "aged from the FIRST defer")
+  assert.equal(
+    stale[0].last_seen,
+    again.toISOString(),
+    "the last write is still reported, just not used as the age",
+  )
+  assert.ok(stale[0].age_ms >= 4 * 24 * 3600 * 1000 - 1000)
+})
+
+test("a job that starts moving again loses its deferral stamp", (t) => {
+  // Leaving the queue is the honest reset: the job is no longer stuck.
+  const db = store(t).open()
+  enqueueAutoJobs(db, [{ slug: "s2", origin: "o", board_key: "b" }])
+  claimAutoJob(db, "s2", { run_id: "r1" })
+  setAutoJobState(db, "s2", "deferred", {
+    run_id: "r1",
+    reason_kind: "unknown-field",
+    reason_detail: "x",
+    now: new Date("2026-08-20T00:00:00.000Z"),
+  })
+  enqueueAutoJobs(db, [{ slug: "s2", origin: "o", board_key: "b" }])
+  claimAutoJob(db, "s2", { run_id: "r2" })
+  setAutoJobState(db, "s2", "planned", { run_id: "r2" })
+  const row = db
+    .prepare("SELECT first_deferred_at FROM auto_queue WHERE slug='s2'")
+    .get()
+  assert.equal(row.first_deferred_at, null)
+})
+
+test("a row written before the column ages from updated_at, as it always did", (t) => {
+  // The additive-migration promise: an old queue keeps reporting exactly as it
+  // used to rather than silently reading as brand new (age 0 = never stale).
+  const db = store(t).open()
+  enqueueAutoJobs(db, [{ slug: "s3", origin: "o", board_key: "b" }])
+  claimAutoJob(db, "s3", { run_id: "r1" })
+  setAutoJobState(db, "s3", "deferred", {
+    run_id: "r1",
+    reason_kind: "unknown-field",
+    reason_detail: "x",
+    now: new Date("2026-08-18T00:00:00.000Z"),
+  })
+  db.prepare("UPDATE auto_queue SET first_deferred_at = NULL").run()
+  const stale = readStaleDeferred(db, { now: new Date("2026-08-24T00:00:00.000Z") })
+  assert.equal(stale.length, 1)
+  assert.equal(stale[0].since, "2026-08-18T00:00:00.000Z")
+})

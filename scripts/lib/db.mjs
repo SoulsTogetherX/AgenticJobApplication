@@ -360,6 +360,18 @@ CREATE TABLE IF NOT EXISTS auto_queue (
   posted_at     TEXT,
   claimed_at    TEXT,
   updated_at    TEXT,
+  -- WHEN THIS JOB FIRST STOPPED MOVING, set once and never overwritten.
+  -- updated_at cannot answer that: every write touches it, so re-deferring a
+  -- job RESETS its staleness clock, and readStaleDeferred -- whose whole
+  -- purpose is "a job that deferred once and was never looked at again" --
+  -- systematically excluded the jobs it was built to surface. A REQUEUEABLE
+  -- deferral is looked at again on every enqueue, so it could never age past
+  -- the threshold, and only the deferrals nothing can fix accumulated age.
+  -- Measured 2026-08-24: the count moved 1 -> 6 when five rows crossed 72h,
+  -- while two jobs re-deferred three times that day were pushed OUT of it.
+  -- NOTE: no backticks in this block. SCHEMA is a template literal and one
+  -- would end it (CLAUDE.md gotcha B).
+  first_deferred_at TEXT,
   wall_ms       INTEGER,
   apply_url     TEXT,
   lead_id       TEXT,
@@ -578,6 +590,11 @@ function healAutoQueue(db) {
   // seed, so an old queue keeps working while a new one no longer needs it.
   for (const col of ["apply_url", "lead_id", "company", "title"])
     if (!have.has(col)) db.exec(`ALTER TABLE auto_queue ADD COLUMN ${col} TEXT`)
+  // Additive like the rest. An existing deferred row gets NULL, which
+  // readStaleDeferred falls back from to `updated_at` — the old behaviour, so
+  // a queue written before this column keeps reporting exactly as it did.
+  if (!have.has("first_deferred_at"))
+    db.exec("ALTER TABLE auto_queue ADD COLUMN first_deferred_at TEXT")
 }
 
 // The same additive story again, for board_stats's sweeps/zero_streak.
@@ -1982,6 +1999,16 @@ export function setAutoJobState(db, slug, state, opts = {}) {
               reason_stage = $reason_stage,
               reason_detail = $reason_detail,
               wall_ms = COALESCE($wall_ms, wall_ms),
+              -- SET ONCE, on the FIRST deferral, and never cleared by a later
+              -- one. COALESCE keeps the original stamp through every
+              -- re-deferral; the CASE stops a non-deferred state from
+              -- stamping it at all. Leaving the queue (a claim, a submit)
+              -- clears it, because the job started moving again.
+              first_deferred_at = CASE
+                WHEN $state = 'deferred'
+                  THEN COALESCE(first_deferred_at, $at)
+                ELSE NULL
+              END,
               updated_at = $at
         WHERE slug = $slug
           AND ($run_id IS NULL OR run_id = $run_id)`,
@@ -2261,10 +2288,11 @@ export function readStaleDeferred(
   const requeueable = new Set(AUTO_REQUEUEABLE_KINDS)
   return db
     .prepare(
-      `SELECT slug, board_key, reason_kind, attempt_no, updated_at
+      `SELECT slug, board_key, reason_kind, attempt_no, updated_at,
+              first_deferred_at
          FROM auto_queue
         WHERE state = 'deferred'
-        ORDER BY updated_at, slug`,
+        ORDER BY COALESCE(first_deferred_at, updated_at), slug`,
     )
     .all()
     .map((r) => ({
@@ -2272,10 +2300,17 @@ export function readStaleDeferred(
       board_key: r.board_key,
       reason_kind: r.reason_kind,
       attempt_no: r.attempt_no,
-      since: r.updated_at,
-      age_ms: r.updated_at
-        ? Math.max(0, t - new Date(r.updated_at).getTime())
-        : null,
+      // AGED FROM THE FIRST DEFERRAL, not the last write. Falling back to
+      // updated_at keeps a row written before the column behaving as it did.
+      since: r.first_deferred_at ?? r.updated_at,
+      last_seen: r.updated_at,
+      age_ms:
+        (r.first_deferred_at ?? r.updated_at)
+          ? Math.max(
+              0,
+              t - new Date(r.first_deferred_at ?? r.updated_at).getTime(),
+            )
+          : null,
       requeueable: requeueable.has(r.reason_kind),
     }))
     .filter((r) => r.age_ms === null || r.age_ms >= olderThanMs)
@@ -2295,11 +2330,23 @@ export function readStaleDeferred(
 export function readSubmitLatencies(db, { run_id = null, mode = null } = {}) {
   return db
     .prepare(
+      // `outcome = 'submitted'` ONLY. An `attempted` row means a click went out
+      // and nothing came back to confirm it — the application MAY not exist —
+      // and folding those in measures the latency of things that may never have
+      // been sent. Same class as the dry-run contamination this filter's `mode`
+      // arm exists for, found the same day (2026-08-24) when one unconfirmed
+      // Ashby click moved p95 from 547h to 653h.
+      //
+      // A `challenged` row is excluded for the same reason and more strongly.
+      // Under-reporting here is the safe direction: this number is the argument
+      // FOR the product, so it must never be flattered by a submission nobody
+      // can prove happened.
       `SELECT q.slug, q.board_key, q.posted_at, s.submitted_at, s.mode
          FROM auto_queue q
          JOIN auto_submissions s ON s.slug = q.slug
         WHERE q.posted_at IS NOT NULL
           AND s.submitted_at IS NOT NULL
+          AND s.outcome = 'submitted'
           AND ($mode IS NULL OR s.mode = $mode)
           AND ($run_id IS NULL OR s.run_id = $run_id)`,
     )

@@ -22,7 +22,11 @@ import {
   upsertAutoRun,
   upsertApplications,
 } from "../../scripts/lib/db.mjs"
-import { buildAutoStatus, percentile } from "../../scripts/auto/digest.mjs"
+import {
+  buildAutoStatus,
+  percentile,
+  blindBoards,
+} from "../../scripts/auto/digest.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -536,3 +540,69 @@ function await_import() {
   // the file's existing import list stays as it was.
   return import("../../scripts/auto/digest.mjs").then((m) => m)
 }
+
+// --- allowlisted but unreadable ---------------------------------------------
+//
+// THE ALLOWLIST AND THE EVIDENCE LIST ARE DIFFERENT LISTS and nothing joined
+// them for the user. Being on `board_allowlist` says the user trusts the
+// vendor; having a capture-sourced classifier rule says this repo can READ that
+// vendor's post-submit page. A job can clear the trust gate and still defer
+// `board-unsighted`, and the only place that surfaced was one reason_detail
+// string on one queue row.
+//
+// The obvious line — "N captures staged" — would have been actively
+// misleading. Measured 2026-08-24: all seven unpromoted captures sat on hosts
+// that were ALREADY sighted, so promoting every one of them would have
+// unblocked nothing, and a reader told "7 staged" would have gone and done it.
+
+test("blindBoards names allowlisted hosts with no capture-sourced rule", (t) => {
+  const f = fixture(t)
+  const limits = path.join(f.dir, "limits.yaml")
+  fs.writeFileSync(
+    limits,
+    "auto_apply:\n  board_allowlist:\n" +
+      "    job-boards.greenhouse.io: greenhouse\n" +
+      "    jobs.lever.co: lever\n",
+  )
+  const out = blindBoards(f.db, { limitsFile: limits, stagingDir: "/nope" })
+  assert.deepEqual(
+    out.hosts,
+    ["jobs.lever.co"],
+    "greenhouse has promoted captures; lever has none",
+  )
+})
+
+test("a staged capture on an ALREADY-SIGHTED host does not count as useful", (t) => {
+  // The whole reason this reports `staged_useful` instead of a raw count.
+  const f = fixture(t)
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "staged-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const limits = path.join(dir, "limits.yaml")
+  fs.writeFileSync(
+    limits,
+    "auto_apply:\n  board_allowlist:\n    jobs.lever.co: lever\n",
+  )
+  fs.writeFileSync(
+    path.join(dir, "already-sighted.json"),
+    JSON.stringify({
+      id: "already-sighted",
+      host: "jobs.ashbyhq.com",
+      promoted: false,
+    }),
+  )
+  const out = blindBoards(f.db, { limitsFile: limits, stagingDir: dir })
+  assert.deepEqual(out.hosts, ["jobs.lever.co"])
+  assert.equal(
+    out.staged_useful,
+    0,
+    "a capture on a host that can already be read unblocks nothing",
+  )
+})
+
+test("blindBoards fails SOFT — a missing limits file yields no warning, not a throw", (t) => {
+  const f = fixture(t)
+  assert.deepEqual(
+    blindBoards(f.db, { limitsFile: "/definitely/not/here.yaml" }),
+    { hosts: [], deferred: 0, staged_useful: 0 },
+  )
+})

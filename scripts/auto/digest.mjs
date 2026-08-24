@@ -26,6 +26,81 @@ import {
 } from "../lib/db.mjs"
 import { stopActive, readStop } from "./guard.mjs"
 import { reasonClass, newlyChallengedBoards } from "./taxonomy.mjs"
+import { sightedHosts, isHostSighted } from "./classify.mjs"
+import { readLimits, normalizeAllowlist } from "./trust.mjs"
+import { listStaged } from "../apply/capture-post-submit.mjs"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
+
+const DIGEST_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
+const DEFAULT_LIMITS_FILE = path.join(
+  DIGEST_ROOT,
+  "docs",
+  "application-limits.yaml",
+)
+
+/**
+ * Allowlisted boards this repository cannot READ the post-submit page of, the
+ * jobs stuck behind them, and how many staged captures would actually help.
+ *
+ * Computed from three pure functions that already existed and were never
+ * joined: the user's allowlist, classify.mjs's capture-sourced evidence, and
+ * the staging directory. Everything here fails SOFT — a digest that throws
+ * because a limits file moved is worse than one missing a warning.
+ */
+export function blindBoards(db, { limitsFile, stagingDir } = {}) {
+  let allow = []
+  try {
+    // readLimits takes NO default — `readLimits(undefined)` returns null, which
+    // would have made this warning silently never fire. Resolved here rather
+    // than left to the caller so a digest built with no options still reports.
+    allow = normalizeAllowlist(
+      readLimits(limitsFile ?? DEFAULT_LIMITS_FILE)?.auto_apply
+        ?.board_allowlist,
+    )
+  } catch {
+    return { hosts: [], deferred: 0, staged_useful: 0 }
+  }
+  const sighted = new Set(sightedHosts())
+  const hosts = allow
+    .map((e) => e.domain)
+    .filter(Boolean)
+    .filter((h) => !sighted.has(h) && !isHostSighted(`https://${h}`))
+    .sort()
+  if (!hosts.length) return { hosts: [], deferred: 0, staged_useful: 0 }
+
+  let deferred = 0
+  try {
+    deferred = Number(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM auto_queue
+            WHERE state = 'deferred' AND reason_kind = 'board-unsighted'`,
+        )
+        .get()?.n ?? 0,
+    )
+  } catch {
+    deferred = 0
+  }
+
+  // Only captures on a host that is STILL BLIND count as useful. Measured
+  // 2026-08-24: all seven unpromoted captures were on already-sighted hosts,
+  // so a naive "N staged" line would have sent the reader to promote things
+  // that unblock nothing.
+  let staged_useful = 0
+  try {
+    staged_useful = listStaged(stagingDir ? { stagingDir } : undefined).filter(
+      (c) => !c.promoted && c.host && hosts.includes(c.host),
+    ).length
+  } catch {
+    staged_useful = 0
+  }
+  return { hosts, deferred, staged_useful }
+}
 
 // The scheduled-task cadence the WARN is measured against. The user's
 // `auto_apply` block does not carry one today; `docs/application-limits.yaml`
@@ -67,6 +142,8 @@ export function buildAutoStatus(
     runId = undefined,
     cadenceMs = DEFAULT_CADENCE_MS,
     stopPath,
+    limitsFile,
+    stagingDir,
   } = {},
 ) {
   const at = now instanceof Date ? now : new Date(now)
@@ -203,6 +280,24 @@ export function buildAutoStatus(
     reason_kind: p.reason_kind,
   }))
 
+  // --- boards the machine is allowed to use but cannot READ ----------------
+  //
+  // THE ALLOWLIST AND THE EVIDENCE LIST ARE DIFFERENT LISTS, and nothing joined
+  // them for the user. A board on `board_allowlist` says the user trusts the
+  // vendor; a host with a capture-sourced classifier rule says this repo can
+  // read that vendor's post-submit page. Neither implies the other, so a job
+  // can clear the trust gate and still defer `board-unsighted` — and the only
+  // place that surfaced was one reason_detail string on one queue row.
+  //
+  // THE OBVIOUS DIGEST LINE WOULD HAVE BEEN THE WRONG ONE. "N captures staged"
+  // reads as work waiting to be done; measured 2026-08-24 it would have said
+  // "7 staged" while every one of them sat on a host that is ALREADY sighted,
+  // so promoting all seven unblocks nothing. The actionable fact is the
+  // opposite direction: which trusted boards are blind, and how many jobs are
+  // stuck behind them. `staged_useful` counts only captures on a host that is
+  // still blind — the ones that would actually change something.
+  const blind = blindBoards(db, { limitsFile, stagingDir })
+
   const challenges = readChallengeIncidence(db, { run_id })
   const newly_challenged = newlyChallengedBoards(challenges)
 
@@ -258,6 +353,18 @@ export function buildAutoStatus(
       detail:
         `${paused.length} board(s) paused, holding ${paused.reduce((a, p) => a + p.held, 0)} job(s): ` +
         paused.map((p) => `${p.board_key}(${p.held})`).join(" "),
+    })
+  if (blind.hosts.length && blind.deferred > 0)
+    warnings.push({
+      kind: "board-unsighted",
+      n: blind.deferred,
+      detail:
+        `${blind.deferred} job(s) deferred on ${blind.hosts.length} allowlisted ` +
+        `but UNSIGHTED host(s): ${blind.hosts.join(" ")}. ` +
+        (blind.staged_useful
+          ? `${blind.staged_useful} staged capture(s) would help — review and promote them.`
+          : `No staged capture is on any of those hosts, so only an ATTENDED ` +
+            `apply there can fix this.`),
     })
   if (newly_challenged.length)
     warnings.push({

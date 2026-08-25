@@ -33,6 +33,12 @@ import { pathToFileURL } from "node:url"
 import { isTerse } from "../lib/lib.mjs"
 import { techTermsIn } from "../lib/lib.mjs"
 import { checkWrittenForm } from "../lib/keywords.mjs"
+import { positionals } from "../lib/args.mjs"
+
+// Flags that take a VALUE, so positionals() never reads one as the
+// positional. `ats-lint.mjs --html f.html r.md` linted f.html AS the markdown.
+const VALUE_FLAGS = ["--html", "--pdf", "--plan"]
+
 
 function flag(args, name, fallback = null) {
   const i = args.indexOf(name)
@@ -182,7 +188,7 @@ export function checkCoverage(md, plan) {
 
 function main() {
   const args = process.argv.slice(2)
-  const mdPath = args.find((a) => !a.startsWith("--"))
+  const mdPath = positionals(args, VALUE_FLAGS)[0]
   if (!mdPath) {
     console.error(
       "usage: ats-lint.mjs <resume.md> [--html <f.render.html>] [--pdf <f.pdf>] [--plan <keywords.json>] [--json]",

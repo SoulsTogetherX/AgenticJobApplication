@@ -37,6 +37,12 @@
 import { spawn } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { positionals } from "../lib/args.mjs"
+
+// Flags that take a VALUE, so positionals() never reads one as the
+// positional. `flake-rate.mjs --runs 20 t.test.mjs` ran the target "20".
+const VALUE_FLAGS = ["--runs", "--load", "--alongside"]
+
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -226,7 +232,7 @@ async function main() {
     process.stdout.write(USAGE + "\n")
     return
   }
-  const target = argv.find((a) => !a.startsWith("--"))
+  const target = positionals(argv, VALUE_FLAGS)[0]
   const num = (flag, dflt) => {
     const i = argv.indexOf(flag)
     return i === -1 ? dflt : Number(argv[i + 1])

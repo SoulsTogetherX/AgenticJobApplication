@@ -38,6 +38,10 @@
 // `--cache on` forces it (the tests need the cached path to be reachable at any
 // size), `--cache off` forbids it.
 import fs from "node:fs"
+import { positionals } from "../lib/args.mjs"
+
+// Flags that take a VALUE, so one is never read as the slug.
+const REUSE_VALUE_FLAGS = ["--cache", "--db", "--dir", "--threshold", "--top"]
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { techTermsIn, isTerse, titleTokens, jaccard } from "../lib/lib.mjs"
@@ -241,7 +245,7 @@ function main(argv = process.argv.slice(2)) {
   const cacheMode = flag("--cache", "auto")
   const dbFlag = flag("--db", null)
   const asJson = args.includes("--json")
-  const slug = args.find((a) => !a.startsWith("--"))
+  const slug = positionals(args, REUSE_VALUE_FLAGS)[0]
 
   if (!slug) {
     console.error(

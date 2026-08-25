@@ -69,6 +69,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { isTerse, loadYamlFile } from "../lib/lib.mjs"
+import { positionals } from "../lib/args.mjs"
 import { detectAts } from "./ats/index.mjs"
 import { resolveFieldsFromFiles, normalizeQuestion } from "./answer-bank.mjs"
 // Read-only reuse of scan-engine.mjs's own "is this control safe to click"
@@ -195,6 +196,24 @@ const CONSENT_PATTERNS = [
   /\bconsent to\b/i,
   /\bcode of conduct\b/i,
   /\btrial by jury\b|\bjury trial\b/i,
+]
+
+// Flags that take a VALUE. `--json`, `--no-cache` and `--invalidate` are
+// boolean and deliberately absent.
+export const FILL_PLAN_VALUE_FLAGS = [
+  "--answers",
+  "--assent-limits",
+  "--consent-allowlist",
+  "--cover",
+  "--disclosure-budget",
+  "--jobs-dir",
+  "--max-freetext",
+  "--page",
+  "--profile",
+  "--record-via",
+  "--resume",
+  "--scan",
+  "--url",
 ]
 
 export function isConsent(label) {
@@ -3072,7 +3091,10 @@ function main() {
   // OFF, which is the fail-closed direction.
   const assentLimitsFlag = flag("--assent-limits")
 
-  const slug = args.find((a) => !a.startsWith("--"))
+  // positionals(), not the first non-flag token: this command WRITES
+  // jobs/<slug>/fill-plan.json and the shared field cache, so reading a flag's
+  // value as the slug would plan the wrong workspace.
+  const slug = positionals(args, FILL_PLAN_VALUE_FLAGS)[0]
   if (!slug) {
     console.error(
       "usage: node scripts/apply/fill-plan.mjs <slug> [--scan <path> | --page <N>]",

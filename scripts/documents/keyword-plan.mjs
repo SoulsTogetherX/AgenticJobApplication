@@ -29,6 +29,12 @@ import { extractTech, atsFormsFor, SKILL_BY_NAME } from "../lib/keywords.mjs"
 import { splitRequirements } from "../leads/fit.mjs"
 import { sanitizeUntrusted } from "../lib/untrusted.mjs"
 import { profileText } from "../profile/profile-gaps.mjs"
+import { positionals } from "../lib/args.mjs"
+
+// Flags that take a VALUE, so positionals() never reads one as the
+// positional. `keyword-plan.mjs --jobs-dir jobs acme` used the slug "jobs".
+const VALUE_FLAGS = ["--answers", "--jobs-dir", "--limits", "--profile"]
+
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -315,7 +321,7 @@ export function buildPlan({ job, profileBlob, targets = [] }) {
 
 function main() {
   const args = process.argv.slice(2)
-  const slug = args.find((a) => !a.startsWith("--"))
+  const slug = positionals(args, VALUE_FLAGS)[0]
   if (!slug) {
     console.error("usage: keyword-plan.mjs <slug> [--json]")
     process.exit(2)

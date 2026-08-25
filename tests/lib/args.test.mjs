@@ -6,6 +6,15 @@
 // keep the checker from being so eager that someone turns it off.
 import test from "node:test"
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
+
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 import {
   assertKnownFlags,
   nearestFlag,
@@ -183,5 +192,41 @@ test("order is preserved, so a two-positional command still works", () => {
   assert.deepEqual(
     positionals(["in.md", "out.pdf", "--letter"], ["--css"]),
     ["in.md", "out.pdf"],
+  )
+})
+
+test("no script finds its positional by scanning for the first non-flag token", () => {
+  // THE REPO-WIDE GUARD. `args.find((a) => !a.startsWith("--"))` returns the
+  // first non-flag token, which is the VALUE of the first flag whenever a flag
+  // comes first — and every one of these scripts read its flag values with
+  // indexOf+1 without splicing. Nine sites carried it; two of them
+  // (applications.mjs remove, fill-plan.mjs) WRITE.
+  //
+  // Asserted over the source because the defect is a shape, not a behaviour of
+  // any one command: a new script copying the old idiom would reintroduce it
+  // silently, and there is no runtime moment at which that is detectable.
+  const dir = path.join(ROOT, "scripts")
+  const offenders = []
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name)
+      if (e.isDirectory()) walk(p)
+      else if (e.name.endsWith(".mjs")) {
+        const src = fs.readFileSync(p, "utf8")
+        for (const line of src.split(/\r?\n/)) {
+          // Skip prose: several files legitimately QUOTE the old idiom while
+          // explaining why it was removed.
+          if (/^\s*(\/\/|\*)/.test(line)) continue
+          if (/\.find\(\s*\(\w+\)\s*=>\s*!\w+\.startsWith\("--"\)\s*\)/.test(line))
+            offenders.push(`${path.relative(ROOT, p)}: ${line.trim()}`)
+        }
+      }
+    }
+  }
+  walk(dir)
+  assert.deepEqual(
+    offenders,
+    [],
+    "use positionals(argv, VALUE_FLAGS) instead:\n" + offenders.join("\n"),
   )
 })

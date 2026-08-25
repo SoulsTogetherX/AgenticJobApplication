@@ -46,7 +46,7 @@
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { openDb, AUTO_REQUEUEABLE_KINDS } from "../lib/db.mjs"
-import { assertKnownFlags } from "../lib/args.mjs"
+import { assertKnownFlags, positionals } from "../lib/args.mjs"
 
 export const REQUEUE_FLAGS = ["--list", "--reason", "--db", "--json", "--help"]
 export const REQUEUE_VALUE_FLAGS = ["--reason", "--db"]
@@ -210,7 +210,7 @@ function main(argv = process.argv.slice(2)) {
     }
 
     const reasonAt = argv.indexOf("--reason")
-    const slug = argv.find((a) => !a.startsWith("--"))
+    const slug = positionals(argv, REQUEUE_VALUE_FLAGS)[0]
     if (!slug) {
       process.stderr.write("no slug given. Try --list.\n")
       return 2

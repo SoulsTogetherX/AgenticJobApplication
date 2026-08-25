@@ -26,6 +26,7 @@ import {
   SNIPPET_MAX,
 } from "../lib/lib.mjs"
 import { untrustedSnippet } from "../lib/untrusted.mjs"
+import { positionals } from "../lib/args.mjs"
 import { enrichDescriptions } from "./enrich.mjs"
 import { canonicalizeLeads } from "./canonical.mjs"
 import { withLock, LEADS_LOCK, lockPathFor } from "../lib/lock.mjs"
@@ -50,6 +51,20 @@ const LIMITS_PATH = path.join(ROOT, "docs", "application-limits.yaml")
 const SOURCES_PATH = path.join(ROOT, "docs", "job-sources.yaml")
 
 const STATUSES = ["new", "recommended", "dismissed", "applied"]
+
+// Flags that take a VALUE. Read by positionals() so a value can never be
+// mistaken for the positional argument — the defect docs/operate/01-commands.md
+// recorded for cmdImport and cmdMark (and which turned out to be in five other
+// scripts too).
+const VALUE_FLAGS = [
+  "--concurrency",
+  "--leads",
+  "--max-age",
+  "--notes",
+  "--query",
+  "--source",
+  "--status",
+]
 
 // Fallback if docs/job-sources.yaml is missing — the YAML is the real,
 // user-editable list.
@@ -1748,7 +1763,7 @@ async function cmdSearch(args) {
 }
 
 async function cmdImport(args) {
-  const file = args.find((a) => !a.startsWith("--"))
+  const file = positionals(args, VALUE_FLAGS)[0]
   if (!file) throw new Error("usage: find-jobs.mjs import <file.json>")
   const raw = JSON.parse(fs.readFileSync(file, "utf8"))
   const candidates = Array.isArray(raw) ? raw : (raw.leads ?? [])
@@ -1782,7 +1797,13 @@ function cmdList(args) {
 }
 
 function cmdMark(args) {
-  const key = args.find((a) => !a.startsWith("--"))
+  // positionals(), not `find(a => !a.startsWith("--"))`. THE DOCUMENTED
+  // DEFECT: getFlag reads a value with indexOf+1 and never splices it out, so
+  // `find-jobs.mjs mark --status dismissed <id>` took "dismissed" as the lead
+  // key and reported `no lead matches "dismissed"`. 01-commands.md told the
+  // reader to put the positional first; that workaround still works, and now
+  // so does every other order.
+  const key = positionals(args, VALUE_FLAGS)[0]
   const status = getFlag(args, "--status")
   const notes = getFlag(args, "--notes")
   if (!key || !STATUSES.includes(status)) {

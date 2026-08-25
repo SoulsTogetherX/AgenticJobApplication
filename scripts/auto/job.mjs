@@ -201,28 +201,37 @@ export async function runJob({
    *  existed, and persisted nowhere — so `auto latency` had no per-job sample
    *  to report and said n=0. */
   const wallMs = () => Date.now() - t0
-  const done = (state, record) => ({
+  // MEASURED ONCE PER EXIT, and `ms` is how. The comment above promises the row
+  // and the return value are "the same one"; they were not, because both this
+  // helper and terminate() called wallMs() independently with a database write
+  // and an audit write in between. The two numbers therefore always differed —
+  // by 1-2ms when the box was quiet and by more than the 10ms the test allows
+  // when it was not, which is why that test read as a contention flake for
+  // months. A duration is a fact about a job that already happened, so it is
+  // taken at one instant and handed to both writers.
+  const done = (state, record, ms = wallMs()) => ({
     slug,
     state,
     kind: record?.kind ?? null,
     stage: record?.stage ?? null,
     detail: record?.detail ?? null,
     submitted: state === "submitted",
-    wall_ms: wallMs(),
+    wall_ms: ms,
   })
 
   /** Write a terminal row and return the result. One funnel, so no exit can
    *  skip the taxonomy: reasonRecord throws on an unknown kind. */
   const terminate = (kind, stage, detail, state = null) => {
     const record = reasonRecord({ kind, stage, ...ctx, detail, state })
+    const ms = wallMs()
     setAutoJobState(db, slug, record.state, {
       run_id: run.id,
       ...toStateOpts(record),
-      wall_ms: wallMs(),
+      wall_ms: ms,
     })
     if (record.state === "failed") run.failJob(job, detail)
     else run.deferJob(job, `${record.kind}: ${record.detail ?? ""}`)
-    return done(record.state, record)
+    return done(record.state, record, ms)
   }
 
   // --- claimed --------------------------------------------------------------
@@ -446,15 +455,16 @@ export async function runJob({
         ...ctx,
       })
       if (walkDefer) {
+        const ms = wallMs() // one measurement, both writers — see `done`
         setAutoJobState(db, slug, walkDefer.state, {
           run_id: run.id,
           ...toStateOpts(walkDefer),
           reason_detail: `${walkDefer.detail ?? ""}${suffix}`,
-          wall_ms: wallMs(),
+          wall_ms: ms,
         })
         if (walkDefer.state === "failed") run.failJob(job, walkDefer.detail)
         else run.deferJob(job, `${walkDefer.kind}: ${walkDefer.detail ?? ""}`)
-        return done(walkDefer.state, walkDefer)
+        return done(walkDefer.state, walkDefer, ms)
       }
       return terminate("unknown-field", "plan", `${walk.reason}${suffix}`)
     }
@@ -464,14 +474,15 @@ export async function runJob({
     // in its merged plan would otherwise reach the submit gate.
     const planDefer = classifyPlanDefers(plan.defer, { stage: "plan", ...ctx })
     if (planDefer) {
+      const ms = wallMs() // one measurement, both writers — see `done`
       setAutoJobState(db, slug, planDefer.state, {
         run_id: run.id,
         ...toStateOpts(planDefer),
-        wall_ms: wallMs(),
+        wall_ms: ms,
       })
       if (planDefer.state === "failed") run.failJob(job, planDefer.detail)
       else run.deferJob(job, `${planDefer.kind}: ${planDefer.detail ?? ""}`)
-      return done(planDefer.state, planDefer)
+      return done(planDefer.state, planDefer, ms)
     }
 
     // --- authorized -------------------------------------------------------
@@ -650,11 +661,13 @@ export async function runJob({
       )
     }
     if (result.outcome === "confirmation") {
+      // One measurement, handed to both writers — see `done`.
+      const ms = wallMs()
       setAutoJobState(db, slug, "submitted", {
         run_id: run.id,
-        wall_ms: wallMs(),
+        wall_ms: ms,
       })
-      return done("submitted", null)
+      return done("submitted", null, ms)
     }
 
     // Everything else the classifier can return is a CHALLENGE or an error

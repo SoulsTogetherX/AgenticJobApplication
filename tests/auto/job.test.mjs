@@ -196,10 +196,17 @@ test("a completed job records how long it took, in the row", async (t) => {
     Number.isInteger(row.wall_ms) && row.wall_ms >= 0,
     `the queue row must carry a duration, got ${JSON.stringify(row.wall_ms)}`,
   )
-  assert.ok(
-    Math.abs(row.wall_ms - out.wall_ms) <= 10,
-    `the row (${row.wall_ms}ms) and the return value (${out.wall_ms}ms) must ` +
-      "be the same measurement",
+  // EXACT, not within 10ms. The tolerance was hiding a real defect: wallMs()
+  // was called once for the row and again for the return value, with a
+  // database write and an audit write in between, so the two numbers ALWAYS
+  // differed and only stayed inside the window on a quiet box. That is what
+  // made this test read as a contention flake. runJob now takes one
+  // measurement per exit and hands it to both writers, which is what the
+  // comment on wallMs claimed all along, so equality is now assertable.
+  assert.equal(
+    row.wall_ms,
+    out.wall_ms,
+    "the row and the return value must be the SAME measurement, not two",
   )
 })
 

@@ -29,6 +29,7 @@ import {
   countAutoSubmissions,
   enqueueAutoJobs,
   readAutoQueue,
+  readOrphanAttempts,
   RECONCILED_NOT_SENT,
 } from "../../scripts/lib/db.mjs"
 import { readStop, scopedStopPath } from "../../scripts/auto/guard.mjs"
@@ -62,17 +63,26 @@ function orphan(s, { slug = "acme-dev", company = "Acme", board = null } = {}) {
       apply_url: `https://b.test/apply/${slug}`,
       submitted_at: new Date().toISOString(),
     })
+    // READ THE ORPHAN BACK OUT OF THE STORE rather than hand-building one.
+    //
+    // This function used to return a literal carrying `board_key`, and
+    // readOrphanAttempts could not produce that shape: it selected from
+    // auto_submissions, which has no such column. reconcile.mjs dispatches its
+    // probe on exactly that field, so in production `orphan.board_key` was
+    // ALWAYS undefined and every orphan fell through to `probe = null` — the
+    // module could resolve nothing, including its own loopback fixture. The
+    // test passed throughout, because the fixture was more capable than
+    // production.
+    //
+    // A fixture that can express a shape the code cannot is not a fixture, it
+    // is a second implementation. readOrphanAttempts now joins auto_queue for
+    // the board key, and this reads the real row.
+    const rows = readOrphanAttempts(db)
+    const row = rows.find((r) => r.slug === slug)
+    assert.ok(row, "the orphan must be readable through readOrphanAttempts")
+    return row
   } finally {
     db.close()
-  }
-  return {
-    run_id: "run-1",
-    slug,
-    company,
-    mode: "live",
-    board_key: board,
-    apply_url: `https://b.test/apply/${slug}`,
-    submitted_at: new Date().toISOString(),
   }
 }
 
@@ -400,4 +410,43 @@ test("reconcile.mjs contains no click", () => {
     "utf8",
   )
   assert.equal(/\.click\s*\(/.test(src), false)
+})
+
+test("readOrphanAttempts carries the board_key reconcile dispatches on", (t) => {
+  // THE INVARIANT THE OLD FIXTURE HID. reconcile.mjs picks its probe with
+  // `orphan.board_key ?? orphan.board ?? null`, and readOrphanAttempts
+  // selected only from auto_submissions — a table with no board_key column. So
+  // the field was ALWAYS undefined in production, `probe` was always null, and
+  // the module could not resolve a single orphan, including the loopback
+  // fixture that is the only probe it ships. Every test passed, because the
+  // fixture hand-built an orphan literal carrying a field the query could not
+  // return.
+  const s = sandbox()
+  t.after(() => fs.rmSync(s.root, { recursive: true, force: true }))
+  const o = orphan(s, { slug: "board-key-job", board: "fixture" })
+  assert.equal(
+    o.board_key,
+    "fixture",
+    "without this, reconcileOne cannot select a probe for any orphan",
+  )
+})
+
+test("an orphan whose queue row is gone is still reported, without a board", (t) => {
+  // A LEFT JOIN, deliberately. Dropping the orphan when its queue row has been
+  // pruned would lose the one fact that matters: a click is unaccounted for.
+  // Losing the board key only degrades it to `undecidable`, which is where
+  // every real board lands today anyway.
+  const s = sandbox()
+  t.after(() => fs.rmSync(s.root, { recursive: true, force: true }))
+  orphan(s, { slug: "pruned-job", board: "fixture" })
+  const db = openDb(s.dbFile)
+  try {
+    db.prepare("DELETE FROM auto_queue WHERE slug = 'pruned-job'").run()
+    const rows = readOrphanAttempts(db)
+    const row = rows.find((r) => r.slug === "pruned-job")
+    assert.ok(row, "the unaccounted click must still be reported")
+    assert.equal(row.board_key, null)
+  } finally {
+    db.close()
+  }
 })

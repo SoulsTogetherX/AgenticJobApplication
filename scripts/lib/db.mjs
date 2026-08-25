@@ -1530,9 +1530,28 @@ export function readAttemptsForRun(db, runId) {
 export function readOrphanAttempts(db) {
   return db
     .prepare(
-      `SELECT s.run_id, s.slug, s.company, s.submitted_at, s.mode, s.apply_url
+      // `board_key` COMES FROM THE QUEUE, because auto_submissions has no such
+      // column and reconcile.mjs dispatches its probe on exactly that field.
+      // So `orphan.board_key` was ALWAYS undefined in production and
+      // `reconcileOne` fell through to `probe = null` for every orphan — even
+      // the loopback fixture one, which is the only probe that exists. The
+      // module could not resolve anything, by construction.
+      //
+      // Its test did not catch that because it hand-builds an orphan literal
+      // carrying `board_key`, a shape this function could not produce. A
+      // fixture that is more capable than production is a fixture that tests
+      // nothing; tests/auto/reconcile.test.mjs now asserts the shape here
+      // instead.
+      //
+      // LEFT JOIN: an orphan whose queue row was pruned still has to be
+      // reported. Losing the board key degrades reconcile to `undecidable`,
+      // which is where it lands for every real board today anyway — dropping
+      // the orphan would lose the fact that a click is unaccounted for.
+      `SELECT s.run_id, s.slug, s.company, s.submitted_at, s.mode, s.apply_url,
+              q.board_key, q.origin
          FROM auto_submissions s
          LEFT JOIN auto_runs r ON r.run_id = s.run_id
+         LEFT JOIN auto_queue q ON q.slug = s.slug
         WHERE s.outcome = 'attempted'
           AND (r.run_id IS NULL OR r.finished_at IS NULL)
         ORDER BY s.submitted_at`,

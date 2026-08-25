@@ -30,8 +30,22 @@
 // (the caller falls back to reading the page).
 import fs from "node:fs"
 import path from "node:path"
+import { assertKnownFlags } from "../lib/args.mjs"
 
 const args = process.argv.slice(2)
+// STRICT. this command writes jobs/<slug>/job.json and context.json, so an unrecognised flag must not
+// be ignored. See scripts/lib/args.mjs.
+try {
+  assertKnownFlags(args, {
+    known: ["--company", "--title", "--url", "--description", "--description-file", "--from-lead", "--leads", "--root", "--help"],
+    valueFlags: ["--company", "--title", "--url", "--description", "--description-file", "--from-lead", "--leads", "--root"],
+    script: "new-job.mjs",
+    note: "this command writes jobs/<slug>/job.json and context.json",
+  })
+} catch (e) {
+  console.error(e.message)
+  process.exit(e.exitCode ?? 2)
+}
 function flag(name, dflt) {
   const i = args.indexOf(name)
   if (i !== -1) {

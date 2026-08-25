@@ -9,8 +9,22 @@ import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { marked } from "marked"
+import { assertKnownFlags } from "../lib/args.mjs"
 
 const args = process.argv.slice(2)
+// STRICT. this command renders a PDF and spawns a browser, so an unrecognised flag must not
+// be ignored. See scripts/lib/args.mjs.
+try {
+  assertKnownFlags(args, {
+    known: ["--css", "--letter", "--help"],
+    valueFlags: ["--css"],
+    script: "render-pdf.mjs",
+    note: "this command renders a PDF and spawns a browser",
+  })
+} catch (e) {
+  console.error(e.message)
+  process.exit(e.exitCode ?? 2)
+}
 function flagBool(name) {
   const i = args.indexOf(name)
   if (i !== -1) {

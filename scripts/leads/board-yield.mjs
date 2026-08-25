@@ -34,6 +34,7 @@ import {
 } from "./find-jobs.mjs"
 import { isTerse, mapPool } from "../lib/lib.mjs"
 import { openDb, resolveLeadSource, readBoardStats } from "../lib/db.mjs"
+import { assertKnownFlags } from "../lib/args.mjs"
 
 const DEFAULT_CONCURRENCY = 6
 
@@ -310,6 +311,19 @@ async function historyMain(args) {
 
 async function main() {
   const args = process.argv.slice(2)
+  // STRICT. a bare run performs a LIVE network sweep of every tracked board, so an unrecognised flag must not
+  // be ignored. See scripts/lib/args.mjs.
+  try {
+    assertKnownFlags(args, {
+      known: ["--concurrency", "--dead-days", "--history", "--json", "--live", "--min-qualifying", "--min-sweeps", "--query", "--zero-streak", "--help"],
+      valueFlags: ["--concurrency", "--dead-days", "--history", "--min-qualifying", "--min-sweeps", "--query", "--zero-streak"],
+      script: "board-yield.mjs",
+      note: "a bare run performs a LIVE network sweep of every tracked board",
+    })
+  } catch (e) {
+    console.error(e.message)
+    process.exit(e.exitCode ?? 2)
+  }
   if (args.includes("--history")) return historyMain(args)
   // Comma-separated --query becomes a list here for the same reason it does in
   // cmdSearch: measuring a Workday board with one query measures one slice of

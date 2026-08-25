@@ -90,6 +90,7 @@ import path from "node:path"
 import child_process from "node:child_process"
 import { performance } from "node:perf_hooks"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import { assertKnownFlags } from "../lib/args.mjs"
 
 import {
   ROOT,
@@ -816,8 +817,60 @@ function printHuman(agg, prov) {
   )
 }
 
+const BENCH_FLAGS = [
+  "--allow-dirty",
+  "--apps",
+  "--board",
+  "--concurrency",
+  "--edge-spacing-ms",
+  "--json",
+  "--latency",
+  "--ledger",
+  "--origins",
+  "--profile",
+  "--real-sleep",
+  "--require",
+  "--runs",
+  "--help",
+]
+const BENCH_VALUE_FLAGS = [
+  "--apps",
+  "--board",
+  "--concurrency",
+  "--edge-spacing-ms",
+  "--ledger",
+  "--origins",
+  "--profile",
+  "--require",
+  "--runs",
+]
+
 async function main() {
-  const a = parseArgs(process.argv.slice(2))
+  const argv = process.argv.slice(2)
+  // STRICT, and this one had no --help at all: `bench-runner.mjs --help`
+  // started a full 8-application campaign writing fixture rows. `--allow-dirty`
+  // is worse — misspelled, it silently RE-ARMS the dirty-tree refusal that
+  // stops a measurement being banked against a baseline it does not match.
+  if (argv.includes("--help") || argv.includes("-h")) {
+    process.stdout.write(
+      `bench-runner.mjs — measure the unattended runner against the loopback fixture\n\n` +
+        `  ${BENCH_FLAGS.filter((f) => f !== "--help").join("\n  ")}\n\n` +
+        `THIS RUNS A FULL CAMPAIGN and writes fixture rows.\n`,
+    )
+    return 0
+  }
+  try {
+    assertKnownFlags(argv, {
+      known: BENCH_FLAGS,
+      valueFlags: BENCH_VALUE_FLAGS,
+      script: "bench-runner.mjs",
+      note: "a bare run performs a full application campaign writing fixture rows",
+    })
+  } catch (e) {
+    console.error(e.message)
+    process.exit(e.exitCode ?? 2)
+  }
+  const a = parseArgs(argv)
   const prov = await provenance()
   // REFUSING A DIRTY TREE, on the paths where it matters.
   //

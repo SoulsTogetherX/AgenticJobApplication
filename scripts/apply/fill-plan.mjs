@@ -69,7 +69,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { isTerse, loadYamlFile } from "../lib/lib.mjs"
-import { positionals } from "../lib/args.mjs"
+import { positionals, assertKnownFlags } from "../lib/args.mjs"
 import { detectAts } from "./ats/index.mjs"
 import { resolveFieldsFromFiles, normalizeQuestion } from "./answer-bank.mjs"
 // Read-only reuse of scan-engine.mjs's own "is this control safe to click"
@@ -3051,6 +3051,21 @@ function stripUnvouchedLabelExact(scan) {
 
 function main() {
   const args = process.argv.slice(2)
+  // STRICT. This command WRITES jobs/<slug>/fill-plan.json, fill-plan.js and
+  // the shared jobs/.field-cache.json, and `--record-via` writes that cache
+  // under a lock. `fill-plan.mjs <slug> --help` used to do all of it and
+  // ignore the flag.
+  try {
+    assertKnownFlags(args, {
+      known: [...FILL_PLAN_VALUE_FLAGS, "--json", "--no-cache", "--invalidate", "--help"],
+      valueFlags: FILL_PLAN_VALUE_FLAGS,
+      script: "fill-plan.mjs",
+      note: "this command writes the plan and the shared field cache",
+    })
+  } catch (e) {
+    console.error(e.message)
+    process.exit(e.exitCode ?? 2)
+  }
   const wantJson = args.includes("--json")
   const noCache = args.includes("--no-cache")
   const wantInvalidate = args.includes("--invalidate")

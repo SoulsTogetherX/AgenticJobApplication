@@ -58,6 +58,12 @@ const DANGEROUS = [
   ["scripts/dev/scorecard.mjs", "--no-recrd", "--no-record"],
   ["scripts/leads/screen.mjs", "--no-recrd", "--no-record"],
   ["scripts/auto/requeue.mjs", "--lst", "--list"],
+  // The rest of the audit's ranked list, closed 2026-08-24.
+  ["scripts/documents/render-pdf.mjs", "--lettr", "--letter"],
+  ["scripts/documents/new-job.mjs", "--compnay", "--company"],
+  ["scripts/leads/board-yield.mjs", "--liv", "--live"],
+  ["scripts/dev/bench-runner.mjs", "--allow-dirt", "--allow-dirty"],
+  ["scripts/apply/fill-plan.mjs", "--jsonn", "--json"],
 ]
 
 function run(script, args, env = {}) {

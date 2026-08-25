@@ -82,6 +82,28 @@ test("a bot challenge DOES move it — the board is working as designed", () => 
   assert.equal(movesBreaker("captcha"), true)
 })
 
+test("a rehearsal and the other non-faults do NOT move it", () => {
+  // THE SET IS THE DIFFERENCE BETWEEN A BREAKER AND A THROTTLE. A dry run
+  // defers every job by construction, so with `rehearsed` missing from
+  // NOT_A_MALFUNCTION a 12-job rehearsal produced rehearsed=4 and
+  // board-paused=8 — every board the run touched paused on evidence that
+  // nothing had gone wrong. Measured 2026-08-25, alongside the
+  // already-applied omission that preceded it.
+  //
+  // The rest are outcomes rather than faults: a closed req, the two human
+  // brakes this module itself respects (counting one as a failure would let a
+  // brake manufacture the evidence for more braking), and a form this repo
+  // cannot walk, which is a gap in our adapters and not a board misbehaving.
+  for (const k of [
+    "rehearsed",
+    "posting-gone",
+    "company-stopped",
+    "board-stopped",
+    "multipage-unresolvable",
+  ])
+    assert.equal(movesBreaker(k), false, k)
+})
+
 test("only nav-timeout and browser-crash are transient", () => {
   assert.ok(isTransient("nav-timeout"))
   assert.ok(isTransient("browser-crash"))

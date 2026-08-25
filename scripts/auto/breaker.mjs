@@ -99,6 +99,22 @@ const NOT_A_MALFUNCTION = new Set([
   // malfunctioned. (Was missing here; a stale queue of ten already-applied
   // rows moved the breaker as if a board had failed ten times.)
   "already-applied",
+  // A DRY RUN IS A REHEARSAL, AND A REHEARSAL IS THE SYSTEM WORKING. This was
+  // the same omission as `already-applied` and cost more: a dry run defers
+  // every job by construction, so a 12-job rehearsal produced rehearsed=4 and
+  // board-paused=8 — the breaker pausing every board the run touched, on
+  // evidence that nothing at all had gone wrong.
+  "rehearsed",
+  // The four below are outcomes, not faults. A posting that is gone is the
+  // employer closing a req; a company or board STOP is a human brake this
+  // very module respects elsewhere, so counting it as a failure would let a
+  // brake manufacture the evidence for more braking; and a form still
+  // offering `next` after maxPages is a form this repo cannot walk, which is
+  // a gap in our adapters rather than a board malfunctioning.
+  "posting-gone",
+  "company-stopped",
+  "board-stopped",
+  "multipage-unresolvable",
 ])
 
 /**

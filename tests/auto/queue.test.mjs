@@ -636,24 +636,80 @@ test("re-deferring does NOT reset the staleness clock", (t) => {
   assert.ok(stale[0].age_ms >= 4 * 24 * 3600 * 1000 - 1000)
 })
 
-test("a job that starts moving again loses its deferral stamp", (t) => {
-  // Leaving the queue is the honest reset: the job is no longer stuck.
+test("THE FULL CYCLE: defer -> enqueue -> claim -> planned -> defer keeps the stamp", (t) => {
+  // THIS IS THE TEST THAT WAS MISSING, AND ITS ABSENCE MADE THE WHOLE FEATURE
+  // INERT. The pair above went enqueue -> claim -> deferred and passed, but
+  // job.mjs writes `planned` for EVERY re-queued job on its way back to a
+  // deferral, and the CASE's old `ELSE NULL` cleared the stamp on every
+  // non-deferred transition — `planned` included. So in production the stamp
+  // was wiped by the very cycle it exists to measure: defer 08-01 -> re-plan
+  // -> stamp null -> re-defer, and readStaleDeferred(72h) on 08-06 returned
+  // EMPTY.
+  //
+  // The test that stood here asserted `planned` clears the stamp, which is
+  // the bug written down as an intention. It was not weakened, it was wrong.
   const db = store(t).open()
+  const first = new Date("2026-08-20T00:00:00.000Z")
   enqueueAutoJobs(db, [{ slug: "s2", origin: "o", board_key: "b" }])
   claimAutoJob(db, "s2", { run_id: "r1" })
   setAutoJobState(db, "s2", "deferred", {
     run_id: "r1",
     reason_kind: "unknown-field",
     reason_detail: "x",
-    now: new Date("2026-08-20T00:00:00.000Z"),
+    now: first,
   })
+  // The re-queue, exactly as job.mjs drives it.
   enqueueAutoJobs(db, [{ slug: "s2", origin: "o", board_key: "b" }])
   claimAutoJob(db, "s2", { run_id: "r2" })
   setAutoJobState(db, "s2", "planned", { run_id: "r2" })
-  const row = db
+  const mid = db
     .prepare("SELECT first_deferred_at FROM auto_queue WHERE slug='s2'")
     .get()
-  assert.equal(row.first_deferred_at, null)
+  assert.equal(
+    mid.first_deferred_at,
+    first.toISOString(),
+    "an intermediate state is the same stuck job moving, not a fresh start",
+  )
+  setAutoJobState(db, "s2", "deferred", {
+    run_id: "r2",
+    reason_kind: "unknown-field",
+    reason_detail: "x again",
+    now: new Date("2026-08-23T00:00:00.000Z"),
+  })
+  const stale = readStaleDeferred(db, {
+    now: new Date("2026-08-24T00:00:00.000Z"),
+  })
+  assert.equal(stale.length, 1, "four days stuck must read stale")
+  assert.equal(stale[0].since, first.toISOString(), "aged from the FIRST defer")
+})
+
+test("a job that actually leaves the queue loses its deferral stamp", (t) => {
+  // The honest reset, and the reason the CASE is a list rather than an ELSE:
+  // these three mean the job is no longer waiting on a human. It was clicked,
+  // it landed, or it hit a challenge.
+  for (const state of ["attempted", "submitted", "challenged"]) {
+    const db = store(t).open()
+    const slug = `s-${state}`
+    enqueueAutoJobs(db, [{ slug, origin: "o", board_key: "b" }])
+    claimAutoJob(db, slug, { run_id: "r1" })
+    setAutoJobState(db, slug, "deferred", {
+      run_id: "r1",
+      reason_kind: "unknown-field",
+      reason_detail: "x",
+      now: new Date("2026-08-20T00:00:00.000Z"),
+    })
+    setAutoJobState(db, slug, state, {
+      run_id: "r1",
+      // `challenged` is a reason-bearing state (hard rule 6: a silent skip is
+      // not a deferral), so it must be given one even here.
+      ...(state === "challenged" ? { reason_kind: "bot-challenge" } : {}),
+    })
+    const row = db
+      .prepare("SELECT first_deferred_at FROM auto_queue WHERE slug = ?")
+      .get(slug)
+    assert.equal(row.first_deferred_at, null, state)
+    db.close()
+  }
 })
 
 test("a row written before the column ages from updated_at, as it always did", (t) => {

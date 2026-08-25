@@ -57,6 +57,7 @@ import {
   isTerse,
 } from "../lib/lib.mjs"
 import { extractTech } from "../lib/keywords.mjs"
+import { positionals } from "../lib/args.mjs"
 import { buildPlan } from "./keyword-plan.mjs"
 import { profileText } from "../profile/profile-gaps.mjs"
 import { loadFactContext, verifyDocument } from "./verify-claims.mjs"
@@ -851,7 +852,7 @@ export function main(argv = process.argv.slice(2)) {
     console.error(m)
     process.exit(2)
   }
-  const slug = argv.find((a) => !a.startsWith("--") && !isFlagValue(argv, a))
+  const slug = positionals(argv, ASSEMBLE_VALUE_FLAGS)[0]
   if (!slug)
     die(
       "usage: assemble-resume.mjs <slug> [--budget N] [--out f] [--json] [--diff]",
@@ -955,11 +956,27 @@ export function main(argv = process.argv.slice(2)) {
   return 0
 }
 
-// `--out foo` must not make "foo" look like the slug.
-function isFlagValue(argv, token) {
-  const i = argv.indexOf(token)
-  return i > 0 && argv[i - 1].startsWith("--")
-}
+// The flags that consume the NEXT token, so `positionals()` can tell
+// `--out foo` (foo is a value) from `--json foo` (foo is the slug). Kept
+// beside main() rather than inside it because it is a property of this CLI's
+// grammar, not of one invocation.
+//
+// WHY NOT THE OLD `isFlagValue`: it answered "is the token before this one a
+// flag?", which is true of the slug in `--json <slug>` — every boolean flag
+// swallowed whatever followed it, and the documented
+// `assemble-resume.mjs --json <slug>` died on "usage:". It also used
+// `indexOf`, which finds the FIRST occurrence of a repeated token rather than
+// the one being asked about. positionals() in scripts/lib/args.mjs exists for
+// exactly this and handles `--flag=value` and the `--` terminator besides.
+const ASSEMBLE_VALUE_FLAGS = [
+  "--answers",
+  "--audit-rephrase",
+  "--budget",
+  "--jobs-dir",
+  "--limits",
+  "--out",
+  "--profile",
+]
 
 function auditRephrase({ argv, rephraseFile, ctx, markdown }) {
   if (argv.includes("--unattended")) {

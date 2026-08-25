@@ -316,7 +316,11 @@ async function main() {
   try {
     assertKnownFlags(args, {
       known: ["--concurrency", "--dead-days", "--history", "--json", "--live", "--min-qualifying", "--min-sweeps", "--query", "--zero-streak", "--help"],
-      valueFlags: ["--concurrency", "--dead-days", "--history", "--min-qualifying", "--min-sweeps", "--query", "--zero-streak"],
+      // NOT "--history": it is a boolean that SELECTS a subcommand
+      // (`if (args.includes("--history")) return historyMain(args)` below),
+      // so declaring it as taking a value made the documented `--history`
+      // refuse to run — "needs a value ... it was followed by nothing".
+      valueFlags: ["--concurrency", "--dead-days", "--min-qualifying", "--min-sweeps", "--query", "--zero-streak"],
       script: "board-yield.mjs",
       note: "a bare run performs a LIVE network sweep of every tracked board",
     })

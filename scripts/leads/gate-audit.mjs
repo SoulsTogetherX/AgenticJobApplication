@@ -90,6 +90,7 @@ const GATE_AUDIT_USAGE = `gate-audit.mjs - re-run every screening stage over the
   --leads <path>         the lead store
   --profile <file>       the fact base
   --json                 machine-readable output
+  --save                 write the baseline (the default; states it explicitly)
   --no-save              do NOT write the baseline
 
 SAVING IS THE DEFAULT. --no-save is the read-only mode.
@@ -108,6 +109,11 @@ function main() {
         "--baseline",
         "--json",
         "--leads",
+        // Saving is the default, so --save is a no-op that states the intent
+        // explicitly. It is documented in this file's own usage header and in
+        // docs/operate/01-commands.md, and omitting it here made a documented
+        // command exit 2 — the strictness is right, the list was incomplete.
+        "--save",
         "--no-save",
         "--profile",
         "--status",

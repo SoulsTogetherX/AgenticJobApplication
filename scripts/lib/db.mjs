@@ -2020,13 +2020,29 @@ export function setAutoJobState(db, slug, state, opts = {}) {
               wall_ms = COALESCE($wall_ms, wall_ms),
               -- SET ONCE, on the FIRST deferral, and never cleared by a later
               -- one. COALESCE keeps the original stamp through every
-              -- re-deferral; the CASE stops a non-deferred state from
-              -- stamping it at all. Leaving the queue (a claim, a submit)
-              -- clears it, because the job started moving again.
+              -- re-deferral.
+              --
+              -- CLEARED ONLY WHEN THE JOB ACTUALLY LEAVES THE QUEUE. The
+              -- bare ELSE NULL that stood here cleared the stamp on EVERY
+              -- non-deferred transition -- queued, claimed, planned and
+              -- authorized included -- and job.mjs writes 'planned' for
+              -- every re-queued job on its way back to a deferral. So the
+              -- stamp was wiped by the very cycle it exists to measure:
+              -- defer 08-01 -> re-plan -> stamp null -> re-defer 08-01, and
+              -- readStaleDeferred(72h) on 08-06 returned EMPTY. The whole
+              -- stale-deferral feature was inert from the day it shipped.
+              --
+              -- The states below are the ones that mean the job is no longer
+              -- waiting on a human: it was clicked, it landed, or it hit a
+              -- challenge. Everything else is still the same stuck job
+              -- moving through the queue's intermediate states, and its
+              -- original deferral time is exactly what a reader wants.
               first_deferred_at = CASE
                 WHEN $state = 'deferred'
                   THEN COALESCE(first_deferred_at, $at)
-                ELSE NULL
+                WHEN $state IN ('attempted', 'submitted', 'challenged')
+                  THEN NULL
+                ELSE first_deferred_at
               END,
               updated_at = $at
         WHERE slug = $slug

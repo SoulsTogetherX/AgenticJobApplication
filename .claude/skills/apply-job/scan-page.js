@@ -1775,7 +1775,44 @@ window.__ajScan = async (PROBE = true) => {
           k: "g" + ++ngroup,
           t: recognised ? "radio" : "widget",
           l: question,
-          req: isReq(a, raw) || undefined,
+          // entryLabelRequired IS THE RULE WRITTEN FOR THIS EXACT SHAPE, and
+          // until 2026-08-25 this was the one path that never called it — see
+          // its own doc comment above, whose worked example is literally
+          // `<div> <button>Yes</button> <button>No</button> </div>`. The two
+          // native paths call it; this one asked only `isReq`.
+          //
+          // WHAT THAT COST. Ashby marks a required question with a CSS
+          // `::after` asterisk from a `_required_` class and supplies neither
+          // `aria-required` nor a literal `*`, so `isReq` answers false and
+          // EVERY Ashby yes/no group scanned as not-required. The user's
+          // `unattended_assent.required_widgets: true` only reaches REQUIRED
+          // widgets, so the grant they had switched on could never fire;
+          // `optional: skip` then left the group blank and stopped it
+          // blocking; the submit was clicked; Ashby's own client validation
+          // refused it; the page stayed on the form; the classifier correctly
+          // said `unclassified`; a company brake went up — and a run that sent
+          // NOTHING was recorded as a possible application. Measured on the
+          // staged capture of a real 2026-08-24 Eliza click: the page is still
+          // the form, and both required work-auth groups read
+          // `aria-pressed="false"` on BOTH options.
+          //
+          // This is CLAUDE.md's "A KEY THAT IS ON IS NOT A KEY THAT CAN REACH
+          // ANYTHING" for the third time (after the Ashby consent fieldset and
+          // the consent-as-dropdown, both 2026-08-20).
+          //
+          // The bounds are untouched: four ancestors, exactly one direct-child
+          // LABEL/LEGEND, separator-bounded REQ_TOKEN, REQ_NEGATED
+          // disqualifier. Those are what stop "required appears in a class
+          // name" becoming a licence, and they are not to be loosened to make
+          // more fields eligible.
+          // PASS THE CONTROL, NOT THE CONTAINER. entryLabelRequired starts its
+          // walk at `el.parentElement`, so handing it `a` — which is already
+          // the container the pair was found in — skips the very node whose
+          // single direct-child label carries the marker. Both native call
+          // sites pass the control for exactly this reason; `el` is the first
+          // button of the pair. Measured: passing `a` leaves req undefined on
+          // the real Ashby shape.
+          req: isReq(a, raw) || entryLabelRequired(el) || undefined,
           o: opts.map((o) => ({
             k: stamp(o.el, "f"),
             sel: stableSel(o.el),

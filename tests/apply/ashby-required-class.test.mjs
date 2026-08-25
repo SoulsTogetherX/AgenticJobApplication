@@ -178,3 +178,97 @@ test("a required combo is no longer skipped as optional", async () => {
     "an async typeahead has no enumerable options until it is probed",
   )
 })
+
+// --- THE BUTTON-PAIR PATH, which never asked (2026-08-25) -------------------
+//
+// Ashby renders its yes/no questions as a PAIR OF <button> ELEMENTS, not as
+// native radios. The scanner has a dedicated path for that shape, and until
+// 2026-08-25 it was the one required-ness site that never called
+// entryLabelRequired — even though that function's own worked example is
+// literally `<div> <button>Yes</button> <button>No</button> </div>`.
+//
+// THE COST, and it is the serious direction again. Ashby's asterisk is CSS
+// ::after from a _required_ class, so isReq() answered false and every Ashby
+// yes/no group scanned as not-required. `unattended_assent.required_widgets`
+// only reaches REQUIRED widgets, so the user's switched-on grant could never
+// fire; `optional: skip` left the group blank and stopped it blocking; the
+// submit went; Ashby's client validation refused it; the page stayed on the
+// form; the classifier said `unclassified`; a company brake went up — and a
+// run that sent NOTHING was recorded as a possible application. Measured on
+// the staged capture of a real Eliza click: still the form, both required
+// work-auth groups `aria-pressed="false"` on BOTH options.
+const pairGroup = (labelCls, question) => `
+  <div class="_fieldEntry_1e3gg_28">
+    <label class="_heading_f7cvd_52 ${labelCls}">${question}</label>
+    <div>
+      <button type="button" aria-pressed="false">Yes</button>
+      <button type="button" aria-pressed="false">No</button>
+    </div>
+  </div>`
+
+const groupOf = (out) =>
+  (out.fields || []).find((f) => f.widget === "buttons")
+
+test("a BUTTON-PAIR group whose entry label carries the marker is required", async () => {
+  const out = await runScanner(
+    page(
+      pairGroup(
+        "_required_f7cvd_91",
+        "Are you legally authorized to work in the United States of America?",
+      ),
+    ),
+  )
+  const g = groupOf(out)
+  assert.ok(g, "the button pair is reported as a group")
+  assert.equal(
+    g.req,
+    true,
+    "THE REGRESSION GUARD: a button pair must read the same marker the " +
+      "native radio path has always read. When this goes red, Ashby submits " +
+      "start silently failing again.",
+  )
+})
+
+test("a BUTTON-PAIR group with no marker stays optional", async () => {
+  const out = await runScanner(
+    page(pairGroup("_label_1e3gg_42", "Would you like to receive updates?")),
+  )
+  const g = groupOf(out)
+  assert.ok(g, "the group is still reported")
+  assert.ok(!g.req, "nothing marked it required, so it is not marked required")
+})
+
+test("the pair path does not widen the marker's bounds", async () => {
+  // The same negation and token-boundary rules the native paths obey. Reading
+  // a marker must not become a licence to mark a field required because the
+  // word appears somewhere in a page-controlled class list — a page author
+  // controls these strings.
+  for (const cls of ["not-required", "requiredness", "prerequired"]) {
+    const out = await runScanner(page(pairGroup(cls, "Do you agree?")))
+    const g = groupOf(out)
+    assert.ok(
+      g && !g.req,
+      `"${cls}" must not be read as the required token on the pair path`,
+    )
+  }
+})
+
+test("a pair wrapper holding TWO labels lends its marker to neither", async () => {
+  const out = await runScanner(
+    page(`
+      <div class="_fieldEntry_1e3gg_28">
+        <label class="_heading_f7cvd_52 _required_f7cvd_91">First question?</label>
+        <label class="_heading_f7cvd_52">Second question?</label>
+        <div>
+          <button type="button" aria-pressed="false">Yes</button>
+          <button type="button" aria-pressed="false">No</button>
+        </div>
+      </div>`),
+  )
+  const g = groupOf(out)
+  if (g)
+    assert.ok(
+      !g.req,
+      "two labels means the container cannot say WHICH question is required",
+    )
+})

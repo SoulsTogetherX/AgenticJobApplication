@@ -6,7 +6,11 @@
 // keep the checker from being so eager that someone turns it off.
 import test from "node:test"
 import assert from "node:assert/strict"
-import { assertKnownFlags, nearestFlag } from "../../scripts/lib/args.mjs"
+import {
+  assertKnownFlags,
+  nearestFlag,
+  positionals,
+} from "../../scripts/lib/args.mjs"
 
 const CYCLE = {
   known: ["--top", "--limit", "--json", "--skip-search", "--skip-apply"],
@@ -126,5 +130,58 @@ test("the message lists the known flags, so the fix needs no second command", ()
   assert.throws(
     () => assertKnownFlags(["--nope"], CYCLE),
     /Known flags: --top --limit --json --skip-search --skip-apply/,
+  )
+})
+
+// --- positionals: a flag's value is not the positional -----------------------
+//
+// MEASURED 2026-08-24 in six scripts. Each read a flag value with indexOf+1
+// without splicing, then took `args.find((a) => !a.startsWith("--"))` as the
+// positional — so the value of the first flag WAS the positional.
+// docs/operate/01-commands.md recorded it as a find-jobs.mjs-only defect for
+// three weeks.
+
+test("THE DEFECT: a flag value is not mistaken for the positional", () => {
+  // `ats-lint.mjs --html f.html r.md` linted f.html as the markdown.
+  assert.deepEqual(positionals(["--html", "f.html", "r.md"], ["--html"]), [
+    "r.md",
+  ])
+  // `keyword-plan.mjs --jobs-dir jobs acme` used the slug "jobs".
+  assert.deepEqual(
+    positionals(["--jobs-dir", "jobs", "acme"], ["--jobs-dir"]),
+    ["acme"],
+  )
+  // `find-jobs.mjs mark --status dismissed <id>` looked for a lead "dismissed".
+  assert.deepEqual(
+    positionals(["mark", "--status", "dismissed", "gh:acme:1"], ["--status"]),
+    ["mark", "gh:acme:1"],
+  )
+})
+
+test("positional-first still works — the documented workaround must not break", () => {
+  assert.deepEqual(positionals(["r.md", "--html", "f.html"], ["--html"]), [
+    "r.md",
+  ])
+})
+
+test("a boolean flag does not eat the next token", () => {
+  assert.deepEqual(positionals(["--json", "acme"], ["--jobs-dir"]), ["acme"])
+})
+
+test("--flag=value carries its own value and eats nothing", () => {
+  assert.deepEqual(positionals(["--jobs-dir=jobs", "acme"], ["--jobs-dir"]), [
+    "acme",
+  ])
+})
+
+test("everything after -- is a positional, even if it looks like a flag", () => {
+  assert.deepEqual(positionals(["--json", "--", "--weird"], []), ["--weird"])
+})
+
+test("order is preserved, so a two-positional command still works", () => {
+  // render-pdf.mjs and verify-claims.mjs both take two.
+  assert.deepEqual(
+    positionals(["in.md", "out.pdf", "--letter"], ["--css"]),
+    ["in.md", "out.pdf"],
   )
 })

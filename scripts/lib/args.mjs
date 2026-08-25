@@ -42,6 +42,51 @@
 // directory. Both are checked.
 
 /**
+ * The positional arguments, with flag VALUES excluded.
+ *
+ * THE DEFECT THIS REPLACES, in six scripts at once. Each read a flag's value
+ * with `args.indexOf(name) + 1` and did NOT splice it out, then took the
+ * positional as `args.find((a) => !a.startsWith("--"))` — the first non-flag
+ * token. So the value of the first flag became the positional:
+ *
+ *   ats-lint.mjs --html f.html r.md      lints f.html AS the markdown
+ *   keyword-plan.mjs --jobs-dir jobs acme uses the slug "jobs"
+ *   flake-rate.mjs --runs 20 t.test.mjs   runs the target "20"
+ *   find-jobs.mjs mark --status dismissed <id>   looks for a lead id "dismissed"
+ *
+ * docs/operate/01-commands.md recorded this as a find-jobs.mjs-only defect for
+ * three weeks; it is in `applications.mjs` and `manage-sources.mjs` too, both
+ * of which WRITE.
+ *
+ * `--` ends the flags, and `--flag=value` consumes no following token.
+ *
+ * @param {string[]} argv
+ * @param {string[]} valueFlags flags that take a following value
+ * @returns {string[]} the real positionals, in order
+ */
+export function positionals(argv = [], valueFlags = []) {
+  const takesValue = new Set(valueFlags)
+  const out = []
+  let flagsEnded = false
+  for (let i = 0; i < argv.length; i++) {
+    const tok = argv[i]
+    if (!flagsEnded && tok === "--") {
+      flagsEnded = true
+      continue
+    }
+    if (!flagsEnded && typeof tok === "string" && tok.startsWith("--")) {
+      // `--flag=value` carries its own value; a bare `--flag` in the
+      // value-taking set eats the NEXT token, which is therefore not a
+      // positional.
+      if (tok.indexOf("=") === -1 && takesValue.has(tok)) i++
+      continue
+    }
+    out.push(tok)
+  }
+  return out
+}
+
+/**
  * A usage error, tagged so a caller can map it to exit 2 without matching on
  * the message text. `EXIT.USAGE` is 2 in preflight.mjs and save-answer.mjs
  * alike; docs/operate/01-commands.md promises that number repo-wide, and until

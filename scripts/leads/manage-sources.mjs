@@ -14,6 +14,7 @@
 // docs/job-sources.yaml is edited line-by-line (entries are single-line flow
 // maps) so the file's comments survive every add/remove.
 import fs from "node:fs"
+import { positionals } from "../lib/args.mjs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import yaml from "js-yaml"
@@ -168,6 +169,19 @@ export function addEntryToText(text, entry) {
 // Commands
 // ---------------------------------------------------------------------------
 
+// The flags that take a VALUE, so positionals() never reads one as the key.
+// `manage-sources.mjs remove --company Acme greenhouse:acme` used to look for
+// a source keyed "Acme".
+const VALUE_FLAGS = [
+  "--company",
+  "--eid",
+  "--host",
+  "--site",
+  "--slug",
+  "--tenant",
+  "--type",
+]
+
 function getFlag(args, name, fallback = null) {
   const i = args.indexOf(name)
   return i !== -1 && args[i + 1] !== undefined ? args[i + 1] : fallback
@@ -249,7 +263,7 @@ async function cmdAdd(args) {
 }
 
 function cmdRemove(args) {
-  const key = args.find((a) => !a.startsWith("--"))
+  const key = positionals(args, VALUE_FLAGS)[0]
   if (!key) throw new Error('usage: remove "<company or slug>"')
   const { text, removed } = removeEntryFromText(readSourcesText(), key)
   if (!removed) throw new Error(`no tracked board matches "${key}"`)

@@ -29,6 +29,13 @@ import {
   exportApplicationsYaml,
   APPLICATIONS_PATH,
 } from "../lib/db.mjs"
+import { positionals } from "../lib/args.mjs"
+
+// The flags that take a VALUE. Used by positionals() so a value is never read
+// as the positional — `applications.mjs remove --company Acme my-slug` used to
+// take "Acme" as the slug, because the positional was found with
+// `args.find((a) => !a.startsWith("--"))` and the value was never spliced out.
+const VALUE_FLAGS = ["--company", "--status", "--file"]
 
 function flag(args, name, fallback = null) {
   const i = args.indexOf(name)
@@ -108,7 +115,7 @@ function main() {
   }
 
   if (cmd === "find") {
-    const q = args.find((a) => !a.startsWith("--"))
+    const q = positionals(args, VALUE_FLAGS)[0]
     if (!q) {
       console.error('usage: applications.mjs find "<company|title|slug>"')
       process.exit(2)
@@ -138,7 +145,7 @@ function main() {
   }
 
   if (cmd === "remove") {
-    const slug = args.find((a) => !a.startsWith("--"))
+    const slug = positionals(args, VALUE_FLAGS)[0]
     if (!slug) {
       console.error("usage: applications.mjs remove <slug> --confirm")
       process.exit(2)

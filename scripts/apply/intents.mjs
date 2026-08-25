@@ -655,12 +655,30 @@ function matchIntent(intent, text) {
   let reason = null
   if (neg && pos) {
     if (contains(neg, pos)) {
+      // A negated phrase that SPANS the affirmative one is the wider
+      // construct and governs: "unable to work without sponsorship" is the
+      // negation of the whole proposition, and -1 is right.
       polarity = -1
       span = neg
-    } else if (contains(pos, neg)) {
-      polarity = 1
-      span = pos
     } else {
+      // The mirror case is NOT symmetric, and reading it as +1 shipped
+      // inverted answers to real employers (measured 2026-08-25).
+      //
+      // Affirmative patterns join their parts with a lazy `[^?.!]{0,25}?`
+      // gap, so an affirmative "match" can be an affirmative phrase that has
+      // SWALLOWED a negation: "able to work WITHOUT relocating" matches the
+      // positive relocation pattern end-to-end. Because the negation then
+      // sits INSIDE `span`, the stray-negation guard below — which only ever
+      // scans OUTSIDE the span — cannot see it, and the question resolves
+      // `affirmative` with the truth value exactly reversed. These are
+      // `class: "assertion"` questions, so under the user's live
+      // `required_assertions` key they are filled and submitted.
+      //
+      // So containment in this direction is treated identically to the
+      // disjoint case: both phrasings are present, nothing here can tell
+      // which one carries the question, and that is a defer. Measured cost
+      // of the defer at the time of the change: zero — 0 of 302 real labels
+      // in `jobs/.field-cache.json` and 0 of the pinned corpus reach it.
       reason = `both an affirmative ("${pos.text}") and a negated ("${neg.text}") phrasing of ${intent.concept} are present`
     }
   } else if (neg) {

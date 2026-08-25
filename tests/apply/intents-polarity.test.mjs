@@ -536,6 +536,63 @@ test("a double negative defers rather than attempting a re-inversion", () => {
   }
 })
 
+// --- an affirmative phrase that SWALLOWED the negation (measured 2026-08-25) --
+
+test("an affirmative phrase containing a negation defers, never inverts", () => {
+  // THE BUG THIS PINS SHIPPED WRONG ANSWERS TO REAL EMPLOYERS.
+  //
+  // Affirmative patterns join their parts with a lazy `[^?.!]{0,25}?` gap, so
+  // "able to work WITHOUT relocating" matched the POSITIVE relocation pattern
+  // end-to-end. The old matcher read that containment as polarity +1, and
+  // because the swallowed "without" sat INSIDE the polarity span, the
+  // stray-negation guard — which only scans outside the span — could not see
+  // it. The first four below resolved `answer` with `value: false` ("No")
+  // when the honest answer is Yes: the user can work without relocating,
+  // that being the whole point of a remote role. They are `class:
+  // "assertion"` questions, so under the user's live `required_assertions`
+  // key they were filled and submitted, not deferred.
+  //
+  // The last two already deferred before the fix, on a different branch.
+  // They are pinned anyway: they are the same shape, and a future widening
+  // of the positive patterns is exactly what would turn them into the first
+  // four.
+  for (const q of [
+    "Are you able to work without relocating?",
+    "Are you open to working without relocation?",
+    "Are you willing to work without relocating to the office?",
+    "Are you able to start without relocating?",
+    "Are you authorized to work in the U.S. without sponsorship?",
+    "Are you eligible to work without visa sponsorship?",
+  ]) {
+    const r = resolveIntent(q, BANK)
+    assert.equal(r.decision, "defer", q)
+    assert.match(r.reason, /polarity/i, q)
+  }
+})
+
+test("the containment fix costs nothing it should not cost", () => {
+  // The other containment direction — a NEGATED phrase spanning the
+  // affirmative one — is the wider construct and still governs, so these must
+  // keep answering. Without this half the test above is satisfiable by
+  // deferring the entire concept, which is not the fix and would be a
+  // throughput regression dressed as a safety one.
+  //
+  // The zero-cost claim was measured the same way at the time of the change:
+  // 0 of the 302 real labels in `jobs/.field-cache.json` reached the changed
+  // branch, and 0 sides of the pinned corpus above it did either.
+  for (const q of [
+    "Are you willing to consider a role without relocating?",
+    "Would you accept this position without relocation assistance?",
+    "Are you comfortable working without relocating?",
+    "Are you able to accept the offer without relocating?",
+    "Are you free of any non-compete agreement?",
+  ]) {
+    const r = resolveIntent(q, BANK)
+    assert.equal(r.decision, "answer", `${q} — ${r?.reason ?? ""}`)
+    assert.equal(r.value, true, q)
+  }
+})
+
 test("a question the closed set does not claim types to nothing at all", () => {
   // The fence has to have an outside. If typeQuestion() claimed everything,
   // the ordinary token-similarity tier would be dead and every unrecognised

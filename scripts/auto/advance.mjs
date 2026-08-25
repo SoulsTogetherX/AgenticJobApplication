@@ -162,6 +162,7 @@ export async function advanceOnce(
     scan = null,
     clickTimeoutMs = 15_000,
     settleMs = 20_000,
+    pollMs = 500,
   } = {},
 ) {
   // --- the token, checked but NOT SPENT ------------------------------------
@@ -233,6 +234,30 @@ export async function advanceOnce(
     throw new AdvanceAmbiguous(safeText(e?.message ?? e, 200))
   }
 
+  // THE SAME 75ms BUG SUBMIT.MJS HAD (2026-08-25). A lone
+  // `waitForLoadState("domcontentloaded")` resolves IMMEDIATELY when the
+  // document already reached that state — which it has, since we clicked a
+  // control on it. On a board that advances in place (Ashby; the Greenhouse
+  // embed swaps its body via XHR) no navigation ever happens, so the wait
+  // returned at once and `page.url()` below read the PRE-CLICK url.
+  //
+  // Here that is not a missed confirmation but a missed origin check: the
+  // check below re-reads the origin precisely because a click is the moment a
+  // board can move the browser, and running it against the stale url is
+  // checking the page that is no longer there. A cross-origin redirect would
+  // have passed it.
+  //
+  // So the wait becomes the floor of a bounded poll for either signal that the
+  // click landed: the url changed (a real navigation), or the control we just
+  // clicked is detached (an in-place re-render — CLAUDE.md records that
+  // Greenhouse's embed replaces its document root and every `data-aj` stamp
+  // dies with it). Either exits at once, so an in-place advance does not pay
+  // the settle. Only a click that produced NEITHER spends the full budget,
+  // and that case is worth waiting on.
+  //
+  // The stamp is read for TIMING ONLY — whether to stop waiting. Nothing is
+  // concluded from the page's content here, and this verb still clicks a
+  // `next`-role control and nothing else.
   try {
     await page.waitForLoadState("domcontentloaded", { timeout: settleMs })
   } catch {
@@ -240,13 +265,35 @@ export async function advanceOnce(
   }
 
   let url = pageUrl
-  try {
-    url = page.url()
-  } catch (e) {
-    throw new AdvanceAmbiguous(
-      `the click returned but the page url could not be read: ` +
-        safeText(e?.message ?? e, 160),
-    )
+  const readUrl = () => {
+    try {
+      return page.url()
+    } catch (e) {
+      throw new AdvanceAmbiguous(
+        `the click returned but the page url could not be read: ` +
+          safeText(e?.message ?? e, 160),
+      )
+    }
+  }
+  const stampGone = async () => {
+    try {
+      return (await locator.count()) === 0
+    } catch {
+      // A detached frame or a destroyed context throws here. That IS the
+      // page having gone away, but saying so from a caught error would be
+      // guessing; keep polling and let the url check or the budget decide.
+      return false
+    }
+  }
+
+  url = readUrl()
+  {
+    const deadline = Date.now() + settleMs
+    while (url === pageUrl && !(await stampGone()) && Date.now() < deadline) {
+      const left = deadline - Date.now()
+      await page.waitForTimeout(Math.min(pollMs, Math.max(0, left)))
+      url = readUrl()
+    }
   }
 
   // ORIGIN AGAIN, AFTER THE NAVIGATION. The click is the moment a board can

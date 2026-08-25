@@ -62,13 +62,28 @@ function form({ pages = 1, deferAt = null, lastHasSubmit = true } = {}) {
   const clicked = []
   const page = {
     url: () => APPLY_URL,
-    locator: () => ({
-      async click() {
-        clicked.push(current)
-        current += 1
-      },
-    }),
+    // This form advances IN PLACE — the url never changes, which is what
+    // Ashby and the Greenhouse embed actually do. So the landing signal
+    // advanceOnce polls for is the clicked control's stamp going away, and
+    // the double has to model that: a locator is minted per advanceOnce call,
+    // so it reports detached once the form has moved past the page it was
+    // taken on. Without this the walk waits out the whole settle per page.
+    locator: () => {
+      const takenOn = current
+      return {
+        async click() {
+          clicked.push(current)
+          current += 1
+        },
+        async count() {
+          return current > takenOn ? 0 : 1
+        },
+      }
+    },
     async waitForLoadState() {},
+    async waitForTimeout(ms) {
+      await new Promise((r) => setTimeout(r, Math.min(ms, 5)))
+    },
   }
   return {
     page,

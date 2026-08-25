@@ -419,13 +419,23 @@ test("a mid-walk authorisation refusal is typed through CHECK_TO_KIND, exactly l
     openPage: async (url) => ({
       page: {
         url: () => url,
-        locator: () => ({
-          async click() {
-            /* the Next click on page 1 */
-          },
-          async waitFor() {},
-        }),
+        locator: () => {
+          let gone = false
+          return {
+            async click() {
+              // the Next click on page 1
+              gone = true
+            },
+            async waitFor() {},
+            // advanceOnce polls for a landing signal after the click; an
+            // in-place advance signals it by the stamp detaching.
+            async count() {
+              return gone ? 0 : 1
+            },
+          }
+        },
         async waitForLoadState() {},
+        async waitForTimeout() {},
       },
       url,
       status: 200,

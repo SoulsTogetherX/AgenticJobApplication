@@ -39,23 +39,53 @@ const SUBMIT_SCAN = Object.freeze({
   buttons: [{ k: "b9", l: "Submit application", r: "submit" }],
 })
 
-/** A page that RECORDS clicks instead of performing them. */
-function fakePage({ url = APPLY_URL, urlAfter = null, onClick = null } = {}) {
+/** A page that RECORDS clicks instead of performing them.
+ *
+ *  `settleAfter` MODELS A BOARD THAT DOES NOT RESPOND INSTANTLY. Until
+ *  2026-08-25 this double applied `urlAfter` synchronously inside `click()`
+ *  and its `waitForLoadState` was a bare no-op, so the post-click url was
+ *  already correct on the first look. Production is not like that: the lone
+ *  `waitForLoadState("domcontentloaded")` returned at once (the document had
+ *  long since reached that state) and `page.url()` read the PRE-CLICK url.
+ *  `settleAfter: n` delays the effect by n polls, so a double that could not
+ *  express "not yet" can now fail on it.
+ *
+ *  `detachAfter` is the other landing signal: the in-place re-render that
+ *  kills every `data-aj` stamp without ever navigating. */
+function fakePage({
+  url = APPLY_URL,
+  urlAfter = null,
+  onClick = null,
+  settleAfter = 0,
+  detachAfter = null,
+} = {}) {
   const clicks = []
+  const waits = []
   let current = url
+  let clicked = false
+  const landed = () => clicked && waits.length >= settleAfter
   return {
     clicks,
-    url: () => current,
+    waits,
+    url: () => (urlAfter && landed() ? urlAfter : current),
     locator(sel) {
       return {
         async click(opts) {
           clicks.push({ sel, opts })
+          clicked = true
           if (onClick) await onClick(sel)
-          if (urlAfter) current = urlAfter
+        },
+        async count() {
+          if (detachAfter === null) return 1
+          return clicked && waits.length >= detachAfter ? 0 : 1
         },
       }
     },
     async waitForLoadState() {},
+    async waitForTimeout(ms) {
+      waits.push(ms)
+      await new Promise((r) => setTimeout(r, Math.min(ms, 5)))
+    },
   }
 }
 
@@ -133,7 +163,7 @@ test("the refusal says THIS IS THE LAST PAGE, not 'no control found'", () => {
 test("a scan carrying BOTH still refuses to click the submit", async (t) => {
   // The realistic shape: a review page with Back, Next and Submit on it.
   const r = rig(t)
-  const page = fakePage()
+  const page = fakePage({ detachAfter: 0 })
   const scan = {
     buttons: [
       { k: "b1", l: "Back", r: "back" },
@@ -278,12 +308,62 @@ test("THE TOKEN IS NOT SPENT — a form needs many advances and one submit", asy
   // Spending it here would leave nothing to authorise the submit at the end of
   // the form; minting a fresh one per page would make the nonce meaningless.
   const r = rig(t)
-  const page = fakePage()
+  // `detachAfter: 0` — the stamp is already gone by the first look, which is
+  // what an in-place re-render does. Without it each advance rightly spends
+  // the whole settle budget waiting for a landing signal that never comes,
+  // and this test is about the token, not about the wait.
+  const page = fakePage({ detachAfter: 0 })
   await advanceOnce(page, r.args())
   await advanceOnce(page, r.args())
   const third = await advanceOnce(page, r.args())
   assert.equal(third.advanced, true, "a third page still advances")
   assert.equal(page.clicks.length, 3)
+})
+
+// --- the post-click url is read on a POLL, not once (2026-08-25) -------------
+
+test("a navigation that lands LATE is still seen, not read as the old url", async (t) => {
+  // The same 75ms bug submit.mjs had. `waitForLoadState("domcontentloaded")`
+  // resolves immediately when the document already reached that state — it
+  // has, we clicked a control on it — so the url was read before the board
+  // moved. Here the cost is not a missed confirmation but a missed ORIGIN
+  // CHECK: the check below re-reads the origin precisely because the click is
+  // the moment a board can move the browser, and running it against the
+  // pre-click url checks a page that is no longer there.
+  const r = rig(t)
+  const page = fakePage({
+    urlAfter: `${APPLY_URL}/step-2`,
+    settleAfter: 2,
+  })
+  const got = await advanceOnce(page, r.args({ settleMs: 2_000, pollMs: 10 }))
+  assert.equal(got.advanced, true)
+  assert.equal(got.url, `${APPLY_URL}/step-2`, "the LATER url is what counts")
+  assert.ok(page.waits.length >= 2, "it actually waited for the navigation")
+})
+
+test("an in-place advance exits on the dead stamp without paying the settle", async (t) => {
+  // A board that re-renders without navigating (Ashby; the Greenhouse embed)
+  // never changes the url, so a poll that waited only on the url would burn
+  // the full 20s budget on every page of every multi-page form. The stamp
+  // dying IS the landing signal there — CLAUDE.md records that Greenhouse's
+  // embed replaces its document root and every data-aj stamp with it.
+  const r = rig(t)
+  const page = fakePage({ detachAfter: 1 })
+  const got = await advanceOnce(page, r.args({ settleMs: 10_000, pollMs: 10 }))
+  assert.equal(got.advanced, true)
+  assert.equal(got.url, APPLY_URL, "no navigation happened, and that is fine")
+  assert.ok(page.waits.length <= 3, `exited promptly, not after the settle`)
+})
+
+test("a click that produces NO signal at all spends the budget and reports the url it has", async (t) => {
+  // The honest floor. Neither signal arrived, so nothing is known beyond the
+  // url we already had — and the origin check below still runs on it.
+  const r = rig(t)
+  const page = fakePage()
+  const got = await advanceOnce(page, r.args({ settleMs: 60, pollMs: 10 }))
+  assert.equal(got.advanced, true)
+  assert.equal(got.url, APPLY_URL)
+  assert.ok(page.waits.length > 1, "it spent the budget rather than looking once")
 })
 
 // --- a click that threw ------------------------------------------------------

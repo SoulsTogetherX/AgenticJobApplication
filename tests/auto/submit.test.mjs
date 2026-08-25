@@ -57,17 +57,36 @@ const SCAN = Object.freeze({
   buttons: [{ k: "b7", l: "Submit application", r: "submit" }],
 })
 
+const CONFIRMED_HTML = "<html><body>Thanks for applying</body></html>"
+const FORM_HTML = "<html><body><form>Apply for this job</form></body></html>"
+
 /** A page that RECORDS clicks instead of performing them. `stampAttached:
  *  false` makes the pre-click liveness check see a dead stamp (the Greenhouse
- *  post-upload remount) without touching the click path. */
+ *  post-upload remount) without touching the click path.
+ *
+ *  `confirmAfterReads` MODELS THE DELAY THAT PRODUCTION ACTUALLY FACES. Until
+ *  2026-08-25 this double returned the confirmation on the very first
+ *  `content()` and its `waitForLoadState` was a bare no-op, which made the
+ *  fixture strictly more capable than the real thing: the board under test
+ *  confirmed instantly, so the single pre-poll read passed here and returned
+ *  the FORM on every real board (10 live clicks, 0 confirmations). A double
+ *  that cannot express "the page has not changed yet" cannot fail on the bug
+ *  that mattered. */
 function fakePage({
   url = APPLY_URL,
   onClick = null,
   stampAttached = true,
+  confirmAfterReads = 0,
+  confirmedHtml = CONFIRMED_HTML,
+  formHtml = FORM_HTML,
 } = {}) {
   const clicks = []
+  const waits = []
+  let reads = 0
   return {
     clicks,
+    waits,
+    reads: () => reads,
     url: () => url,
     locator(sel) {
       return {
@@ -82,9 +101,15 @@ function fakePage({
       }
     },
     async content() {
-      return "<html><body>Thanks for applying</body></html>"
+      const html = reads >= confirmAfterReads ? confirmedHtml : formHtml
+      reads += 1
+      return html
     },
     async waitForLoadState() {},
+    async waitForTimeout(ms) {
+      waits.push(ms)
+      await new Promise((r) => setTimeout(r, Math.min(ms, 5)))
+    },
   }
 }
 
@@ -822,12 +847,91 @@ test("an unclassified live click hands its page to stagePostSubmit", async (t) =
     queueRow: { slug: SLUG, state: "authorized", run_id: live.id },
     classify: () => "unclassified",
     stagePostSubmit: (c) => staged.push(c),
+    // A page that NEVER becomes classifiable must still settle out and STOP.
+    // Shortened only so the suite does not spend the real 20s budget doing it.
+    settleMs: 60,
+    pollMs: 10,
   })
   assert.equal(out.outcome, "unclassified")
+  assert.ok(page.reads() > 1, "it kept re-reading until the budget expired")
   assert.equal(staged.length, 1, "the unclassified page was staged")
   assert.equal(staged[0].slug, SLUG)
   assert.ok(typeof staged[0].url === "string" && staged[0].url.length)
   assert.ok(typeof staged[0].html === "string" && staged[0].html.length)
+  live.finish({ outcome: "stopped", stopReason: "unclassified" })
+})
+
+// ---------------------------------------------------------------------------
+// The post-click read is a POLL, not a single look (2026-08-25)
+// ---------------------------------------------------------------------------
+
+test("the post-click page is re-read until it classifies, then confirmed", async (t) => {
+  // THE BUG: `waitForLoadState("domcontentloaded")` resolves IMMEDIATELY when
+  // the document already reached that state, which it always has — we clicked
+  // a control on it. So the 20s settle was never spent on a board that
+  // confirms in place (Ashby) or swaps its body via XHR (the Greenhouse
+  // embed), `page.content()` returned the FORM, and classify() correctly said
+  // `unclassified` about it. Measured on the ledger: submitted_at 22:14:37.876Z
+  // against the staged capture's captured_at 22:14:37.951Z — 75ms. Ten live
+  // clicks, zero confirmations, every success recorded as a failure and four
+  // company brakes raised against companies that HAD been applied to.
+  const r = rig(t)
+  const live = startRun({
+    mode: "live",
+    dbFile: r.dbFile,
+    autoDir: r.autoDir,
+    stopPath: r.stopPath,
+  })
+  // The confirmation arrives on the third read, not the first.
+  const page = fakePage({ confirmAfterReads: 2 })
+  const out = await submitOnce(page, {
+    ...r.base(),
+    mode: "live",
+    token: r.mint({ config: { ...LIMITS, dry_run: false } }),
+    run: live,
+    queueRow: { slug: SLUG, state: "authorized", run_id: live.id },
+    classify: (_url, html) =>
+      /thanks for applying/i.test(html) ? "confirmation" : "unclassified",
+    settleMs: 2_000,
+    pollMs: 10,
+  })
+  assert.equal(out.outcome, "confirmation", "the LATER page is what counts")
+  assert.equal(out.confirmationUrl, APPLY_URL)
+  assert.equal(page.reads(), 3, "it read the form twice before the confirmation")
+  assert.ok(page.waits.length >= 2, "it actually waited between reads")
+  live.finish({ outcome: "ok" })
+})
+
+test("a page that never changes still hard-STOPs at unclassified", async (t) => {
+  // THE HALF THAT KEEPS THE FIX HONEST. Polling changes WHEN the page is read,
+  // never what may be concluded from it. A board whose post-submit page this
+  // repo has no captured evidence for classifies `unclassified` after the full
+  // settle exactly as it did before, and that is still a hard STOP. If this
+  // test ever goes green by way of a confirmation, someone has loosened an
+  // evidence-bounded classifier rule to paper over timing — rule 0's forbidden
+  // guess with the model removed.
+  const r = rig(t)
+  const live = startRun({
+    mode: "live",
+    dbFile: r.dbFile,
+    autoDir: r.autoDir,
+    stopPath: r.stopPath,
+  })
+  const page = fakePage({ confirmAfterReads: Number.MAX_SAFE_INTEGER })
+  const out = await submitOnce(page, {
+    ...r.base(),
+    mode: "live",
+    token: r.mint({ config: { ...LIMITS, dry_run: false } }),
+    run: live,
+    queueRow: { slug: SLUG, state: "authorized", run_id: live.id },
+    classify: (_url, html) =>
+      /thanks for applying/i.test(html) ? "confirmation" : "unclassified",
+    settleMs: 60,
+    pollMs: 10,
+  })
+  assert.equal(out.outcome, "unclassified")
+  assert.equal(out.confirmationUrl, null, "nothing is recorded as confirmed")
+  assert.ok(page.reads() > 1, "it spent the budget rather than looking once")
   live.finish({ outcome: "stopped", stopReason: "unclassified" })
 })
 
@@ -878,6 +982,8 @@ test("a stagePostSubmit that throws never changes what the submit reports", asyn
     stagePostSubmit: () => {
       throw new Error("redaction refused")
     },
+    settleMs: 60,
+    pollMs: 10,
   })
   assert.equal(out.outcome, "unclassified")
   live.finish({ outcome: "stopped", stopReason: "unclassified" })

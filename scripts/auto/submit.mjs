@@ -240,6 +240,13 @@ export function findSubmitControl(scan) {
  *                  Injected like `classify` and for the same reason; failures
  *                  are swallowed — losing a capture must never change what the
  *                  submit reports.
+ * @param settleMs  the WHOLE budget for the post-click page to become
+ *                  classifiable, not the timeout of a single wait. See the
+ *                  poll below for why the distinction was worth 10 live
+ *                  clicks and 0 confirmations.
+ * @param pollMs    how long to wait between re-reads while the page still
+ *                  classifies `unclassified`. Injectable so a test can drive
+ *                  the poll without spending wall-clock.
  * @returns {{outcome, confirmationUrl, clicked, row}}
  */
 export async function submitOnce(
@@ -264,6 +271,7 @@ export async function submitOnce(
     stopPath = undefined,
     clickTimeoutMs = 15_000,
     settleMs = 20_000,
+    pollMs = 500,
     stampWaitMs = 250,
     job = null,
   } = {},
@@ -566,25 +574,75 @@ export async function submitOnce(
   // READING THE PAGE HERE IS SANCTIONED AND NARROW (§4.10): the classifier is a
   // pure function over (url, html) and its output is a TYPE, never an
   // instruction. Nothing else is read back out of the page for a decision.
+  //
+  // AND IT IS READ ON A POLL, NOT ONCE (2026-08-25). The single
+  // `waitForLoadState("domcontentloaded")` that stood here RESOLVES
+  // IMMEDIATELY when the document has already reached that state — which it
+  // always has, because the form we just clicked was loaded. So the 20s
+  // `settleMs` was never spent on the boards the user actually applies to:
+  // Ashby confirms in place and the Greenhouse embed swaps its body via XHR,
+  // and neither is a navigation. `page.content()` returned the FORM, and
+  // `classify()` correctly said `unclassified` about it.
+  //
+  // Measured on the ledger: `submitted_at` 22:14:37.876Z against the staged
+  // capture's `captured_at` 22:14:37.951Z — SEVENTY-FIVE MILLISECONDS. Across
+  // every live click this repo has ever made: 10 clicks, 0 `submit.confirmed`,
+  // 0 `confirmation_url`. Every one went `unclassified` ->
+  // terminate("post-submit-unclassified") -> queue `failed` with the ledger row
+  // stuck `attempted` -> a company-scoped brake. Five brakes stood, four of
+  // them against companies that had been successfully applied to.
+  //
+  // WHAT THIS CHANGES IS *WHEN* THE PAGE IS READ, NEVER WHAT MAY BE CONCLUDED
+  // FROM IT. The classifier is the same pure function over the same evidence
+  // bounds; `unclassified` after the full settle is still a hard STOP, and a
+  // host with no capture-sourced rule still never confirms. The loop exists so
+  // that the page being classified is the one the board rendered rather than
+  // the one it is about to replace.
+  //
+  // The deliberate non-fix: do NOT loosen capture-greenhouse-confirmation or
+  // capture-ashby-confirmation to compensate. Those rules were run against the
+  // captured pages and are correct. Relaxing an evidence-bounded rule to paper
+  // over a timing bug is rule 0's forbidden guess with the model removed, and
+  // it fails in the one direction that cannot be recovered — a page misread as
+  // a confirmation records an application that was never sent.
   let url = null
   let html = ""
-  try {
-    await page.waitForLoadState("domcontentloaded", { timeout: settleMs })
-  } catch {
-    /* a slow settle is not evidence of anything; classify what is there */
-  }
-  try {
-    url = page.url()
-    html = await page.content()
-  } catch (e) {
-    throw new SubmitAmbiguous(
-      `the click returned but the resulting page could not be read: ` +
-        safeText(e?.message ?? e, 160),
-    )
+  let outcome = null
+  let kind = null
+  const readPage = async () => {
+    try {
+      url = page.url()
+      html = await page.content()
+    } catch (e) {
+      throw new SubmitAmbiguous(
+        `the click returned but the resulting page could not be read: ` +
+          safeText(e?.message ?? e, 160),
+      )
+    }
+    outcome = classify(url, html)
+    kind = typeof outcome === "string" ? outcome : outcome?.kind
+    return kind
   }
 
-  const outcome = classify(url, html)
-  const kind = typeof outcome === "string" ? outcome : outcome?.kind
+  {
+    // `domcontentloaded` is still awaited first: on a board that DOES navigate
+    // it settles the read cheaply, and on one that does not it costs nothing
+    // because it returns at once. It is the floor of the wait now, not the
+    // whole of it.
+    try {
+      await page.waitForLoadState("domcontentloaded", { timeout: settleMs })
+    } catch {
+      /* a slow settle is not evidence of anything; classify what is there */
+    }
+    const deadline = Date.now() + settleMs
+    await readPage()
+    while (kind === "unclassified" && Date.now() < deadline) {
+      const left = deadline - Date.now()
+      await page.waitForTimeout(Math.min(pollMs, Math.max(0, left)))
+      await readPage()
+    }
+  }
+
   const confirmationUrl = kind === "confirmation" ? url : null
 
   // The one moment a blind host's real post-submit page is in hand. Stage it

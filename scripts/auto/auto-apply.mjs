@@ -48,6 +48,7 @@ import {
   rowToLead,
   screenIndex,
   findPriorApplication,
+  AUTO_QUEUE_TERMINAL,
 } from "../lib/db.mjs"
 import { loadYamlFile } from "../lib/lib.mjs"
 import { assertKnownFlags } from "../lib/args.mjs"
@@ -879,6 +880,7 @@ async function main(argv) {
   const db = openDb(dbFile)
   let selection
   let added = 0
+  let stuck = []
   try {
     selection = selectEligible({
       db,
@@ -894,7 +896,23 @@ async function main(argv) {
     // row sat in a terminal state, so it re-selected on every run and was
     // silently dropped at the resumable SELECT. That one number is what the
     // whole eliza investigation needed and could not get.
-    if (args.enqueueOnly) added = enqueueAutoJobs(db, selection.jobs)
+    if (args.enqueueOnly) {
+      added = enqueueAutoJobs(db, selection.jobs)
+      // WHICH selected slugs are in a state nothing can move them out of.
+      // Computed here, while the connection is open, because this is the one
+      // moment both halves are known: what selection chose, and what the queue
+      // actually holds.
+      const slugs = selection.jobs.map((j) => j.slug)
+      if (slugs.length) {
+        const rows = db
+          .prepare(
+            `SELECT slug, state FROM auto_queue
+              WHERE slug IN (${slugs.map(() => "?").join(",")})`,
+          )
+          .all(...slugs)
+        stuck = rows.filter((r) => AUTO_QUEUE_TERMINAL.has(r.state))
+      }
+    }
   } finally {
     db.close()
   }
@@ -910,6 +928,7 @@ async function main(argv) {
       considered: selection.considered,
       rejected: selection.rejected.length,
       rejectedBy: rejectionBreakdown(selection.rejected),
+      stuck,
     }
     process.stdout.write(
       args.json
@@ -918,11 +937,18 @@ async function main(argv) {
             `considered=${out.considered} rejected=${out.rejected}\n` +
             formatRejections(out.rejectedBy),
     )
-    if (out.selected !== out.added)
+    // ONLY WARN ABOUT THE ONES THAT ARE ACTUALLY STUCK. `selected` and `added`
+    // also differ for the ordinary case of a row that is already resumable —
+    // enqueueAutoJobs leaves those alone by design — so warning on the
+    // difference would fire on almost every run and be ignored by the time it
+    // mattered. A TERMINAL row is the real signal: selection keeps choosing it
+    // and the queue keeps refusing it, silently, forever.
+    if (out.stuck.length)
       process.stderr.write(
-        `auto-apply: ${out.selected - out.added} selected job(s) did not enter ` +
-          `the queue — their rows are in a state the conflict clause does not ` +
-          `re-queue. Inspect with: node scripts/auto/requeue.mjs --list\n`,
+        `auto-apply: ${out.stuck.length} selected job(s) sit in a terminal ` +
+          `state and cannot re-enter the queue: ` +
+          `${out.stuck.map((r) => `${r.slug}(${r.state})`).join(" ")}\n` +
+          `  Inspect with: node scripts/auto/requeue.mjs --list\n`,
       )
     return EXIT.OK
   }

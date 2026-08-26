@@ -36,7 +36,7 @@ import {
 // board HTML, and dom.mjs is the harness that does exactly that without a
 // browser. Read-only use of a fixture owned by qa-adversary.
 import { parseHtml, runScanner } from "../fixtures/boards/dom.mjs"
-import { buildPlan } from "../../scripts/apply/fill-plan.mjs"
+import { buildPlan, engineCanOperate } from "../../scripts/apply/fill-plan.mjs"
 import greenhouseAdapter from "../../scripts/apply/ats/greenhouse.mjs"
 
 const ROOT = path.resolve(
@@ -303,24 +303,44 @@ test("the engine is never put into the page and never read back out", () => {
   assert.match(SRC, /Runtime\.evaluate/)
 })
 
-test("the engine cannot express clicking a button", () => {
-  // The safety property is structural: there is no verb for it. If someone
-  // adds one, this test is the thing that should stop them.
+test("the engine's verb set is closed, and the button verb is the bounded one", () => {
+  // THIS TEST CHANGED ON 2026-08-25 AND THE CHANGE IS THE POINT.
+  //
+  // It used to assert "there is no verb that clicks a button", which was a
+  // true and load-bearing safety property right up until it became the reason
+  // applications were silently not submitted: Ashby renders its REQUIRED
+  // work-authorisation questions as <button> pairs, nothing could actuate
+  // them, and the run clicked submit on a form the board then refused. The
+  // staged capture of a real Eliza click is that page.
+  //
+  // So the property is now NARROWER, not weaker. There is exactly one verb
+  // that clicks a non-native control, it is admitted only for a shape the
+  // scanner GROUPED and that declares its own state, and it must confirm by
+  // readback or fail. The three assertions below are that property; the verb
+  // list stays closed so a second such verb cannot arrive unnoticed.
   const verbs = SRC.match(/item\.how === "(\w+)"/g) || []
   const names = new Set(verbs.map((v) => v.match(/"(\w+)"/)[1]))
   assert.deepEqual(
     [...names].sort(),
-    ["check", "combo", "fill", "select", "skip", "type", "upload"],
-    "verb set changed — a button-clicking verb must never be added here",
+    ["check", "combo", "fill", "select", "skip", "type", "upload", "widget"],
+    "verb set changed — a new verb needs its own admission test and readback",
   )
   assert.ok(
     !/\bnext\b[^\n]*\.click\(/.test(SRC),
     "must never click the next/submit button",
   )
+  // The admission clause that does the work: no declared state, no click.
   assert.match(
     SRC,
-    /deliberately no verb that clicks a button/,
-    "the comment stating the safety property must survive",
+    /widget-admission: this control declares no readable state/,
+    "a control that cannot be read back must be refused, not clicked",
+  )
+  // And the fail-closed direction: an unconfirmed click is a failure, never
+  // a reported fill.
+  assert.match(
+    SRC,
+    /widget-readback:/,
+    "an unconfirmed click must fail the item",
   )
 })
 
@@ -3193,9 +3213,29 @@ test("SHAPE F: everything the sweep reports DEFERS, and gains no verb", async (t
   // with a real click, so that grep is red on correct code and would be
   // "fixed" by weakening the real test. What THIS case owns is narrower and
   // exact: widening the scanner handed the engine no new verb.
+  // The engine gained no verb for a SWEPT control, which is what this case
+  // owns. Asserted against the planner's own gate rather than by grepping the
+  // engine for the string "widget": since 2026-08-25 the engine DOES have a
+  // widget verb, but only for a shape the scanner GROUPED (`widget:"buttons"`
+  // on a recognised, closed answer set). The sweep's shape — `widget:"aria"`,
+  // ANY focusable control nobody classified — must never reach it, however
+  // confidently the bank answers its label. That is the real invariant, and a
+  // source grep can no longer express it.
   assert.ok(
-    !/"widget"|aria-menuitemcheckbox|aria-option/.test(SRC),
-    "the engine must gain no verb for a swept control",
+    !engineCanOperate({ widget: "aria", t: "widget" }),
+    "a swept aria control must gain no verb",
+  )
+  assert.ok(
+    !engineCanOperate({ widget: "buttons", t: "widget" }),
+    "even a button pair the scanner could not TYPE stays verb-less",
+  )
+  assert.ok(
+    engineCanOperate({ widget: "buttons", t: "radio" }),
+    "only a grouped, recognised pair is operable — the fix must still work",
+  )
+  assert.ok(
+    !/aria-menuitemcheckbox|aria-option/.test(SRC),
+    "the engine must not learn the sweep's role names",
   )
 })
 

@@ -105,8 +105,28 @@
 //     application with no resume while the report read ok=4 failed=0. An input
 //     that is GONE is the opposite case and stays a success; see that pass.
 //
-// SAFETY: there is deliberately no verb that clicks a button. "Never click
-// submit" is not a rule this engine follows — it is a thing it cannot express.
+// SAFETY: this engine cannot express clicking a SUBMIT. That is still not a
+// rule it follows but a thing it cannot say — no verb targets an action
+// control, and `armSubmitGuard` blocks a submission raised as a side effect of
+// any fill, for the whole run.
+//
+// UNTIL 2026-08-25 THE SENTENCE HERE WAS BROADER — "there is deliberately no
+// verb that clicks a button" — and that breadth is what silently stopped
+// applications going out. Ashby renders its REQUIRED work-authorisation
+// questions as pairs of <button> elements; no verb could touch them, so the
+// run left them blank, clicked submit, and Ashby's own validation refused the
+// form. The staged capture of a real live click is that page, still offering
+// its submit.
+//
+// The property that replaces it is narrower and checkable: there is exactly
+// ONE verb that clicks a non-native control (`widget`), it is admitted only
+// for a shape the SCANNER grouped as one question with a closed answer set,
+// that control must DECLARE ITS OWN STATE (aria-pressed / aria-checked) or the
+// click is refused outright, and the act is confirmed by reading that state
+// back — including that no sibling option also reads selected — or the item
+// fails. A click this engine cannot verify is a claim it does not make.
+// `tests/apply/fill-page.test.mjs` pins all of it, and the verb list is closed
+// so a second such verb cannot arrive unnoticed.
 //
 // The settle ceilings are per-call options (opts.settle) so tests can compress
 // them; every production caller passes nothing and gets the defaults. They are
@@ -1480,7 +1500,179 @@ export default async function fillPage(page, plan, opts = {}) {
       : v
   }
 
+  // THE WIDGET VERB — the one verb that clicks a control the DOM does not
+  // classify as a form field, and the only one with its own admission test.
+  //
+  // WHY IT EXISTS. Ashby renders its Yes/No questions — work authorisation,
+  // sponsorship, in-office — as PAIRS OF <button> ELEMENTS with a hidden
+  // backing store. `kindOf()` answers "forbidden:button" for those, so no verb
+  // could touch them: the plan deferred, or (before 2026-08-25, when the
+  // scanner did not even mark them required) `optional: skip` left them blank,
+  // the submit was clicked, and Ashby's own validation refused it. The staged
+  // capture of a real Eliza click is that page — still the form, both required
+  // groups unanswered. This verb is CLAUDE.md's sanctioned route: an adapter
+  // that knows a board's shape, never a model resolving a field.
+  //
+  // ADMISSION IS STRICTER THAN kindOf, NOT LOOSER. kindOf still refuses a
+  // <button> for every other verb; this branch runs before it and applies four
+  // clauses of its own, and clause 2 is the load-bearing one:
+  //
+  //   1. actionable — visible, not disabled/aria-disabled/aria-hidden;
+  //   2. IT DECLARES A READABLE STATE — aria-pressed or aria-checked present,
+  //      or a role in the state-carrying set. A bare <button> is REFUSED. Ashby
+  //      shipped exactly that shape before 2026: the chosen option was marked
+  //      only by a build-hashed CSS class, and there is no honest way to read
+  //      which answer is selected. No readback surface, no actuation — because
+  //      a click we cannot verify is a claim we cannot make;
+  //   3. the page agrees with the plan — the element's own text (or aria-label)
+  //      normalises equal to the option the plan chose. A board that re-rendered
+  //      between scan and fill fails here rather than having a stamp clicked
+  //      blind;
+  //   4. a backstop for clause 2's residue: refuse anything whose text reads as
+  //      submit/apply/next/back/continue, in case a board puts aria-pressed on
+  //      an action control.
+  //
+  // IDEMPOTENT BY CONSTRUCTION. actOn is replayed up to STALE_ATTEMPTS on a
+  // detached element, and a TOGGLE re-clicked is a toggle turned off — unlike
+  // fill/select/check, which are idempotent for free. So the state is read
+  // FIRST and a satisfied control is left alone.
+  const WIDGET_STATE_ROLES = new Set([
+    "radio",
+    "checkbox",
+    "switch",
+    "menuitemradio",
+    "menuitemcheckbox",
+    "option",
+  ])
+  const WIDGET_ACTION_TEXT =
+    /^(submit|apply|apply now|next|continue|back|previous|save|cancel|close|delete|withdraw)\b/i
+
+  // Reads the state of every option in the group in ONE evaluate — one turn of
+  // the page's event loop, so it cannot be raced the way N locator reads can.
+  // Returns null for an option that is absent or declares no state at all.
+  const widgetStates = async (item) => {
+    const sels = (item.options ?? [])
+      .map((o) => o.sel || (o.k ? `[data-aj="${o.k}"]` : null))
+      .filter(Boolean)
+    if (!sels.length) return []
+    return page.evaluate((list) => {
+      const on = (el) => {
+        if (!el) return null
+        const p = el.getAttribute("aria-pressed")
+        const c = el.getAttribute("aria-checked")
+        if (p === null && c === null) return null
+        return (p ?? c) === "true"
+      }
+      return list.map((s) => {
+        let el = null
+        try {
+          el = document.querySelector(s)
+        } catch {
+          /* a selector the page rejects reads as absent */
+        }
+        return { sel: s, present: !!el, on: on(el) }
+      })
+    }, sels)
+  }
+
+  const actOnWidget = async (loc, item) => {
+    const want = norm(item.value)
+    const admit = await loc.evaluate((el) => {
+      const txt = (s) =>
+        String(s || "")
+          .replace(/\s+/g, " ")
+          .trim()
+      const style = el.ownerDocument.defaultView.getComputedStyle(el)
+      return {
+        disabled:
+          !!el.disabled ||
+          el.getAttribute("aria-disabled") === "true" ||
+          el.getAttribute("aria-hidden") === "true",
+        hidden:
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          !(
+            el.getBoundingClientRect().width ||
+            el.getBoundingClientRect().height
+          ),
+        pressed: el.getAttribute("aria-pressed"),
+        checked: el.getAttribute("aria-checked"),
+        role: (el.getAttribute("role") || "").toLowerCase(),
+        text: txt(
+          el.innerText || el.textContent || el.getAttribute("aria-label"),
+        ),
+      }
+    })
+    if (admit.disabled || admit.hidden)
+      throw new Error(
+        "widget-admission: the control is disabled or not visible",
+      )
+    const declaresState =
+      admit.pressed !== null ||
+      admit.checked !== null ||
+      WIDGET_STATE_ROLES.has(admit.role)
+    if (!declaresState)
+      throw new Error(
+        "widget-admission: this control declares no readable state " +
+          "(no aria-pressed/aria-checked, no state role) — a click that cannot " +
+          "be verified is not an answer; resolve it by hand",
+      )
+    if (WIDGET_ACTION_TEXT.test(admit.text))
+      throw new Error(
+        `widget-admission: refusing to click an action control ("${admit.text.slice(0, 40)}")`,
+      )
+    if (norm(admit.text) !== want)
+      throw new Error(
+        `widget-admission: the page shows "${admit.text.slice(0, 40)}" where the ` +
+          `plan chose "${String(item.value).slice(0, 40)}" — the page changed ` +
+          `since it was scanned`,
+      )
+
+    // Read first: a satisfied group is left untouched, so a stale replay
+    // cannot toggle a correct answer back off.
+    const chosenSel = item.sel
+    const satisfied = (states) => {
+      const mine = states.find((s) => s.sel === chosenSel)
+      if (!mine || mine.on !== true) return false
+      return !states.some((s) => s.sel !== chosenSel && s.on === true)
+    }
+    const before = await widgetStates(item)
+    if (before.length && satisfied(before)) return
+
+    await loc.scrollIntoViewIfNeeded({ timeout: 2500 })
+    await loc.click({ timeout: 2500 })
+
+    // Poll for positive evidence only, exiting early when it arrives — the
+    // same asymmetry the settle stage uses: silence is not evidence.
+    let states = []
+    for (let i = 0; i < 3; i++) {
+      states = await widgetStates(item)
+      if (states.length && satisfied(states)) return
+      await page.waitForTimeout(SETTLE.pollMs)
+    }
+    states = await widgetStates(item)
+    if (states.length && satisfied(states)) return
+
+    // FAIL CLOSED. Either the control never reported itself pressed, or more
+    // than one option did. Both mean the answer on the page is not the answer
+    // the plan made, and submitReadiness must refuse.
+    const mine = states.find((s) => s.sel === chosenSel)
+    const others = states.filter((s) => s.sel !== chosenSel && s.on === true)
+    if (others.length)
+      throw new Error(
+        `widget-readback: clicked "${item.value}" but ${others.length} other ` +
+          `option(s) also read selected — the group's answer is ambiguous`,
+      )
+    throw new Error(
+      `widget-readback: clicked "${item.value}" and the control still reads ` +
+        `unselected (${mine ? `state=${mine.on}` : "option not found"}) — this ` +
+        `board does not report its own state; answer it by hand`,
+    )
+  }
+
   const actOn = async (loc, item) => {
+    // Before kindOf, which refuses a <button> outright for every other verb.
+    if (item.how === "widget") return actOnWidget(loc, item)
     let kind
     try {
       kind = await kindOf(loc)
@@ -1984,14 +2176,29 @@ export default async function fillPage(page, plan, opts = {}) {
         // "true", and every ticked group mismatched — a false refusal of the
         // submit on each. The pick already chose WHICH box; what is verified
         // here is that it is checked (or, for value false, unchecked).
+        // A WIDGET ITEM IS VERIFIED BY ITS DECLARED STATE, for the same
+        // reason a check item is verified by its tick. `read()` on a <button>
+        // falls through to innerText and returns "Yes" — which would be
+        // compared against the option label and pass whether or not the board
+        // ever recorded the answer. What is verified here is that the control
+        // says it is selected, and (via `others`) that no sibling does.
         want:
           i.how === "upload"
             ? null
-            : i.how === "check"
+            : i.how === "check" || i.how === "widget"
               ? i.value === false || i.value === "false"
                 ? ""
                 : "true"
               : i.value,
+        // The group's OTHER options, so the verify pass can assert
+        // exclusivity rather than only "the one I clicked went on". A radio
+        // group showing two selected answers is not a filled field.
+        others:
+          i.how === "widget" && Array.isArray(i.options)
+            ? i.options
+                .map((o) => o.sel || (o.k ? '[data-aj="' + o.k + '"]' : null))
+                .filter((s) => s && s !== (i.sel || `[data-aj="${i.k}"]`))
+            : undefined,
         // Multi items verify per VALUE — the page renders tokens in its own
         // order, so equality against the joined `want` string would fail a
         // fill that landed every value.
@@ -2139,6 +2346,24 @@ export default async function fillPage(page, plan, opts = {}) {
         ? el.value || ""
         : String(el.innerText || "").trim()
     }
+    // A WIDGET'S ANSWER IS THE STATE IT DECLARES, never its label. Read this
+    // before the tag dispatch below, because the control is typically a
+    // <button> and would otherwise fall through to innerText and read back the
+    // option's own text ("Yes") — which is on the page whether or not the
+    // board ever recorded the answer, so the check would be satisfied by the
+    // element merely existing.
+    const readState = (el) => {
+      if (!el) return ""
+      const p = el.getAttribute("aria-pressed")
+      const c = el.getAttribute("aria-checked")
+      if (p === null && c === null) {
+        // No declared state at act time is refused by admission, so reaching
+        // here means the attribute went away after the click. Absent is not
+        // "off" — it is unreadable, and unreadable must not pass.
+        return ""
+      }
+      return (p ?? c) === "true" ? "true" : ""
+    }
     const read = (el) => {
       const tag = el.tagName.toLowerCase()
       if (tag === "input" && (el.type === "checkbox" || el.type === "radio")) {
@@ -2178,7 +2403,31 @@ export default async function fillPage(page, plan, opts = {}) {
       } catch {}
       if (!el) continue
       planned.add(el)
-      const got = read(el)
+      const got = p.how === "widget" ? readState(el) : read(el)
+      // EXCLUSIVITY, checked here and not only at act time. A group showing
+      // two selected answers is not a filled field, and the act-time poll
+      // could have exited before a late second selection rendered. Any
+      // sibling reading selected turns this into a mismatch below.
+      if (p.how === "widget" && Array.isArray(p.others)) {
+        for (const os of p.others) {
+          let oe = null
+          try {
+            oe = document.querySelector(os)
+          } catch {
+            /* an unusable selector is not evidence of a second answer */
+          }
+          if (oe && readState(oe) === "true") {
+            res.mismatch.push({
+              k: p.k,
+              want: String(p.want).slice(0, 40),
+              got: "two options selected",
+            })
+            planned.add(oe)
+            continue
+          }
+          if (oe) planned.add(oe)
+        }
+      }
       if (p.want != null && p.how !== "upload") {
         // A multi item lands only when EVERY planned value appears in the
         // committed readback (tokens / selected options, joined) — the page
@@ -2227,7 +2476,11 @@ export default async function fillPage(page, plan, opts = {}) {
             // date widget that refuses a bare year (Quora/Ashby 2026-08-23).
             (/^\d{4}$/.test(n(p.want)) && dayOf(got) === `${n(p.want)}-01-01`))
         const ok =
-          p.how === "check"
+          // `widget` verifies exactly like `check`: strict equality on the
+          // declared state. No alias, no containment, no date equivalence —
+          // those exist for values a board may re-render, and "true" is not
+          // a value a board reformats.
+          p.how === "check" || p.how === "widget"
             ? n(got) === n(p.want)
             : Array.isArray(p.wants) && p.wants.length
               ? !!n(got) && p.wants.every((w) => n(got).includes(n(w)))

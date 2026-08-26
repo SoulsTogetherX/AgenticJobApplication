@@ -136,6 +136,34 @@ const ROOT = path.resolve(
   "..",
 )
 
+// WIDGET SHAPES THE ENGINE HAS A VERB FOR — a SET, deliberately, and not a
+// truthiness flip on `f.widget`.
+//
+// `!f.widget` used to mean "the engine cannot act on this", and it was true of
+// every widget until 2026-08-25, when fill-engine gained the `widget` verb for
+// scanner-GROUPED button pairs: a known shape, a known option list, and a
+// control that declares its own state via aria-pressed/aria-checked, which is
+// what makes a click verifiable.
+//
+// THE DISTINCTION THIS SET EXISTS TO HOLD. `widget: "buttons"` is a pair the
+// scanner recognised as one question with a closed answer set. `widget: "aria"`
+// is the generic sweep — ANY focusable non-native control, reported precisely
+// because nothing understood it (fill-page.test.mjs SHAPE F). The sweep exists
+// to end silence, not to license action, and a swept control must gain no verb
+// however confidently the bank answers its label. Adding "aria" here would
+// hand the engine a click on an element nobody classified, which is the exact
+// shape rule 0 and rule 1 forbid.
+//
+// The tier check is the second half: only a group the scanner typed `radio` or
+// `checkbox` — a recognised, closed answer set — is operable. A tier-2 pair
+// (`t: "widget"` — an unrecognised answer set, or a destructive question like
+// "Withdraw my application?") is refused here even though its `widget` name
+// matches.
+const OPERABLE_WIDGET = new Set(["buttons"])
+export const engineCanOperate = (f) =>
+  !f.widget ||
+  (OPERABLE_WIDGET.has(f.widget) && (f.t === "radio" || f.t === "checkbox"))
+
 // Agreements. These are always the user's to accept, so they never become plan
 // items no matter how confidently the bank resolves them — UNLESS the exact
 // label is on the caller's consent allowlist (see isHardConsent/buildPlan).
@@ -1808,8 +1836,25 @@ export function buildPlan({
       // engine cannot act on it, and a recorded act that never happened is
       // worse than a defer.
       // =====================================================================
-      if (assent.required_assertions && f.req && !f.widget) {
+      if (assent.required_assertions && f.req && engineCanOperate(f)) {
         const isCheck = verb === "check"
+        // A grouped button pair is actuated by the `widget` verb, which clicks
+        // the chosen option and CONFIRMS it by reading the control's own
+        // aria-pressed/aria-checked back. Any other widget shape never reaches
+        // here (engineCanOperate), and a failed readback fails the item rather
+        // than reporting a fill that did not happen.
+        const isWidget = !!f.widget
+        // A widget needs a real pick for the same reason a check does: the
+        // element acted on is the OPTION, and a group key resolves to nothing.
+        if (isWidget && !r.pick) {
+          defer.push({
+            k: f.k,
+            why: "confirm-widget",
+            label: displayLabel,
+            detail: "the answer names no option to select",
+          })
+          continue
+        }
         if (!isCheck || r.pick) {
           items.push({
             k: f.k,
@@ -1817,12 +1862,28 @@ export function buildPlan({
             // stamp. Ashby radios carry no id (pickSel undefined) and a group
             // key resolves to no element at all — MEASURED on Flock
             // 2026-08-18: "no unique element for g2" on the SMS radio.
-            sel: isCheck
-              ? (r.pickSel ?? (r.pick ? `[data-aj="${r.pick}"]` : f.sel))
-              : (r.sel ?? f.sel),
-            how: verb,
+            sel:
+              isCheck || isWidget
+                ? (r.pickSel ?? (r.pick ? `[data-aj="${r.pick}"]` : f.sel))
+                : (r.sel ?? f.sel),
+            how: isWidget ? "widget" : verb,
             value: r.value,
-            ...(isCheck ? { pick: r.pick, pickSel: r.pickSel } : {}),
+            ...(isCheck || isWidget
+              ? { pick: r.pick, pickSel: r.pickSel }
+              : {}),
+            // The shape name and the full option list ride along: the engine
+            // admits only shapes it knows, and verifies EXCLUSIVITY across the
+            // group — one option selected, and no sibling also selected.
+            ...(isWidget
+              ? {
+                  widget: f.widget,
+                  options: (f.o ?? []).map((o) => ({
+                    k: o.k,
+                    sel: o.sel,
+                    l: o.l,
+                  })),
+                }
+              : {}),
             ...((verb === "select" || verb === "combo") &&
             Array.isArray(r.values) &&
             r.values.length
@@ -1840,7 +1901,10 @@ export function buildPlan({
             k: f.k,
             label: displayLabel,
             value: r.value,
-            ...(isCheck ? { pick: r.pick } : {}),
+            // Rule 6: every assent this plan actuates must be NAMED in the
+            // report, with its grant. A pressed button is an assent exactly as
+            // a ticked box is.
+            ...(isCheck || isWidget ? { pick: r.pick } : {}),
             bank: r.source,
             grant: GRANTS.REQUIRED_ASSERTION,
             req: true,
@@ -2106,11 +2170,17 @@ export function buildPlan({
       // widget is not ticked even from an exact hit — it is left untouched and
       // out of `defer`, and the plan says so.
       const optionalSkip = !f.req && assent.optional === "skip"
+      // THE EXACT-BANK EXEMPTION KEEPS ITS `!f.widget` GATE, deliberately.
+      // Its authority is rule 6's user-directed path, where the agent is
+      // present and actuates the defer's own value/pick and names it; it buys
+      // round-trips, not correctness. Only the POLICY grant — the user's own
+      // `required_widgets` key, on a required field the bank resolved at OK
+      // with a real pick — reaches the new verb.
       if (
         (policyGrant || (exactBank && !optionalSkip)) &&
         r.status === "OK" &&
         r.pick &&
-        !f.widget
+        (policyGrant ? engineCanOperate(f) : !f.widget)
       ) {
         const granted = policyGrant
           ? {
@@ -2124,10 +2194,20 @@ export function buildPlan({
           // which is no element (see the CONFIRM branch above).
           sel:
             r.pickSel ?? (r.pick ? `[data-aj="${r.pick}"]` : (r.sel ?? f.sel)),
-          how: verb,
+          how: f.widget ? "widget" : verb,
           value: r.value,
           pick: r.pick,
           pickSel: r.pickSel,
+          ...(f.widget
+            ? {
+                widget: f.widget,
+                options: (f.o ?? []).map((o) => ({
+                  k: o.k,
+                  sel: o.sel,
+                  l: o.l,
+                })),
+              }
+            : {}),
           label: displayLabel,
           ...mLabel(),
           // Read by the report. An actuated widget that is not named is the
@@ -3057,7 +3137,13 @@ function main() {
   // ignore the flag.
   try {
     assertKnownFlags(args, {
-      known: [...FILL_PLAN_VALUE_FLAGS, "--json", "--no-cache", "--invalidate", "--help"],
+      known: [
+        ...FILL_PLAN_VALUE_FLAGS,
+        "--json",
+        "--no-cache",
+        "--invalidate",
+        "--help",
+      ],
       valueFlags: FILL_PLAN_VALUE_FLAGS,
       script: "fill-plan.mjs",
       note: "this command writes the plan and the shared field cache",

@@ -2,7 +2,7 @@
 # APPLICATION LIMITS — the user's hard filters for which jobs are worth pursuing.
 #
 # Read by the find-jobs and pipeline-jobs skills; enforced mechanically by
-# scripts/leads/find-jobs.mjs. The user owns this policy: the agent reads it but asks
+# find-jobs.mjs. The user owns this policy: the agent reads it but asks
 # before changing it.
 # =============================================================================
 
@@ -29,7 +29,7 @@ location:
   # "Tulsa, USA" is still an on-site Tulsa role and still filtered.
   #
   # Leave this key out entirely to use the built-in list (US_WIDE_LOCATION in
-  # scripts/leads/find-jobs.mjs); setting it REPLACES the built-in list.
+  # find-jobs.mjs); setting it REPLACES the built-in list.
   remote_synonyms:
     - usa
     - u.s.
@@ -68,7 +68,7 @@ compensation:
   flag_missing: true
 
 experience:
-  # The seniority gate in scripts/leads/screen.mjs. It reads the highest "N+ years"
+  # The seniority gate in screen.mjs. It reads the highest "N+ years"
   # demand out of the posting body and compares it to the tenure computed from
   # profile.yaml (currently 2.5 years).
   #
@@ -84,7 +84,7 @@ experience:
   # max_years_required: 5
 
 fit:
-  # The L2 "can I actually do this job?" stage (scripts/leads/fit.mjs).
+  # The L2 "can I actually do this job?" stage (fit.mjs).
   # It reads the posting's REQUIRED section only — technologies listed under
   # "nice to have" never count against you — and compares the stack named there
   # against the profile.
@@ -92,7 +92,7 @@ fit:
   # User decision 2026-07-29: L2 REJECTS below the threshold rather than only
   # cautioning. min_required_terms is what makes that safe, so raise it if you
   # ever suspect a good job was dropped, and check with:
-  #   node scripts/leads/gate-audit.mjs
+  #   node gate-audit.mjs
   # which lists every lead L2 removed and why.
 
   # A posting naming FEWER than this many technologies in its required section

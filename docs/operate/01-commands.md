@@ -898,7 +898,8 @@ cannot do this one alone" into "you never see this job".
 
 ```
 node src/apply/pending-questions.mjs [<slug> ...] [--jobs-dir jobs]
-     [--no-predict] [--profile <path>] [--answers <path>] [--json]
+     [--no-predict] [--profile <path>] [--answers <path>]
+     [--inputs-dir <dir>] [--json]
 ```
 
 `profile/answers.yaml` is global: "Do you require sponsorship?" answered once
@@ -919,7 +920,10 @@ A plan older than the planner, the adapters or `profile/answers.yaml` is **not
 read at all** — it is counted on a `stale` line instead. A fill plan is a cached
 derivation of (scan, planner, fact base) and only the scan is bound to it, so an
 old plan reports deferrals current code would not produce. Rebuild with §4.6
-before trusting the list.
+before trusting the list. `--inputs-dir` swaps the planner-source roots the
+staleness threshold walks for another directory; it exists for the tests, which
+pin every input to temp files so no run's arithmetic can be disturbed by (or
+disturb) anything else touching the real tree.
 
 **Exit codes:** `0` ok, `2` missing jobs directory.
 

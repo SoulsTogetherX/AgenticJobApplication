@@ -11,6 +11,19 @@
 // plan must not produce questions, AND a current plan must still produce them:
 // a guard that silently swallowed everything would "fix" the complaint by
 // going blind, which is the same bug pointing the other way.
+//
+// HERMETIC ON PURPOSE. These tests used to compute thresholds off the REAL
+// src/ tree, and the sensitivity test proved the guard live by bumping the
+// real fill-plan.mjs mtime a day into the future. Any concurrent walk of that
+// same tree — another gate run, another session sharing the checkout — that
+// straddled a bump between this process's threshold snapshot and the spawned
+// child's own re-walk then read a "fresh" plan as stale, and the two
+// fresh-plan tests here failed while the stale-side ones kept passing (the
+// 2026-08-27 flaky pair; reproduced on demand 2026-08-28 with a bump/restore
+// loop). So every input below is a temp file only this test can touch
+// (--inputs-dir / --answers / --profile), NO test mutates a real source
+// file's timestamps, and the one fact still read from the real tree is
+// asserted read-only ("the default input roots cover the real planner").
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -18,7 +31,11 @@ import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { newestInputMtime } from "../../src/apply/pending-questions.mjs"
+import {
+  newestInputMtime,
+  factBaseInputs,
+  PLAN_INPUT_PATHS,
+} from "../../src/apply/pending-questions.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -31,8 +48,30 @@ const SCRIPT = path.join(ROOT, "src", "apply", "pending-questions.mjs")
 // granularity cannot make the assertion flap.
 const DAY = 24 * 60 * 60 * 1000
 
-function makeJob(dir, slug, { planMtime }) {
-  const jobDir = path.join(dir, slug)
+// A self-contained world: a stand-in planner tree and fact base, so the
+// threshold this process computes and the one the spawned child computes walk
+// exactly the same files, and nothing outside the mkdtemp can move either.
+function makeWorld(dir) {
+  const inputs = path.join(dir, "inputs")
+  fs.mkdirSync(inputs, { recursive: true })
+  fs.writeFileSync(path.join(inputs, "planner.mjs"), "// mtime probe\n")
+  const answers = path.join(dir, "answers.yaml")
+  fs.writeFileSync(answers, "answers: []\n")
+  const profile = path.join(dir, "profile.yaml")
+  fs.writeFileSync(profile, "meta: {}\n")
+  const jobs = path.join(dir, "jobs")
+  fs.mkdirSync(jobs)
+  return { inputs, answers, profile, jobs }
+}
+
+// The same set the spawned child walks: the planner stand-in plus both halves
+// of the fact base.
+function newestOf(w) {
+  return newestInputMtime([w.answers, w.profile], [w.inputs])
+}
+
+function makeJob(jobsDir, slug, { planMtime }) {
+  const jobDir = path.join(jobsDir, slug)
   fs.mkdirSync(jobDir, { recursive: true })
   fs.writeFileSync(
     path.join(jobDir, "job.json"),
@@ -62,10 +101,22 @@ function makeJob(dir, slug, { planMtime }) {
   return planPath
 }
 
-function run(jobsDir) {
+function run(w) {
   const r = spawnSync(
     process.execPath,
-    [SCRIPT, "--jobs-dir", jobsDir, "--no-predict", "--json"],
+    [
+      SCRIPT,
+      "--jobs-dir",
+      w.jobs,
+      "--inputs-dir",
+      w.inputs,
+      "--answers",
+      w.answers,
+      "--profile",
+      w.profile,
+      "--no-predict",
+      "--json",
+    ],
     { encoding: "utf8" },
   )
   assert.equal(r.status, 0, r.stderr)
@@ -75,10 +126,11 @@ function run(jobsDir) {
 test("a plan older than the planner is not a source of questions", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "stale-"))
   try {
-    const threshold = newestInputMtime()
-    makeJob(dir, "old-job", { planMtime: threshold - DAY })
+    const w = makeWorld(dir)
+    const threshold = newestOf(w)
+    makeJob(w.jobs, "old-job", { planMtime: threshold - DAY })
 
-    const out = run(dir)
+    const out = run(w)
     assert.deepEqual(out.stale, ["old-job"])
     assert.equal(out.planned, 0)
     assert.deepEqual(
@@ -94,10 +146,11 @@ test("a plan older than the planner is not a source of questions", () => {
 test("a plan newer than every input is still read", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fresh-"))
   try {
-    const threshold = newestInputMtime()
-    makeJob(dir, "new-job", { planMtime: threshold + DAY })
+    const w = makeWorld(dir)
+    const threshold = newestOf(w)
+    makeJob(w.jobs, "new-job", { planMtime: threshold + DAY })
 
-    const out = run(dir)
+    const out = run(w)
     assert.deepEqual(out.stale, [])
     assert.equal(out.planned, 1)
     assert.deepEqual(
@@ -113,11 +166,12 @@ test("a plan newer than every input is still read", () => {
 test("staleness is decided per job, not for the whole run", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mixed-"))
   try {
-    const threshold = newestInputMtime()
-    makeJob(dir, "old-job", { planMtime: threshold - DAY })
-    makeJob(dir, "new-job", { planMtime: threshold + DAY })
+    const w = makeWorld(dir)
+    const threshold = newestOf(w)
+    makeJob(w.jobs, "old-job", { planMtime: threshold - DAY })
+    makeJob(w.jobs, "new-job", { planMtime: threshold + DAY })
 
-    const out = run(dir)
+    const out = run(w)
     assert.deepEqual(out.stale, ["old-job"])
     assert.equal(out.planned, 1)
     assert.deepEqual(
@@ -134,32 +188,19 @@ test("banking an answer makes every earlier plan stale", () => {
   // question is that the answer takes effect, and a plan built before it was
   // banked cannot have taken it into account.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bank-"))
-  const answers = path.join(dir, "answers.yaml")
   try {
-    fs.writeFileSync(answers, "answers: []\n")
-    const codeOnly = newestInputMtime()
+    const w = makeWorld(dir)
+    // Everything except the answer bank, so the freshly-banked answer is the
+    // one input the plan is older than.
+    const codeOnly = newestInputMtime([w.profile], [w.inputs])
 
     // A plan newer than the code but older than the freshly-banked answer.
     const planMtime = codeOnly + DAY
-    makeJob(dir, "job-a", { planMtime })
+    makeJob(w.jobs, "job-a", { planMtime })
     const banked = (planMtime + DAY) / 1000
-    fs.utimesSync(answers, banked, banked)
+    fs.utimesSync(w.answers, banked, banked)
 
-    const r = spawnSync(
-      process.execPath,
-      [
-        SCRIPT,
-        "--jobs-dir",
-        dir,
-        "--answers",
-        answers,
-        "--no-predict",
-        "--json",
-      ],
-      { encoding: "utf8" },
-    )
-    assert.equal(r.status, 0, r.stderr)
-    const out = JSON.parse(r.stdout)
+    const out = run(w)
     assert.deepEqual(out.stale, ["job-a"])
     assert.deepEqual(out.questions, [])
   } finally {
@@ -168,17 +209,60 @@ test("banking an answer makes every earlier plan stale", () => {
 })
 
 test("newestInputMtime rises when a planner source is touched", () => {
-  const before = newestInputMtime()
-  const probe = path.join(ROOT, "src", "apply", "fill-plan.mjs")
-  const stat = fs.statSync(probe)
+  // The touch lands on the TEMP planner stand-in, never the real one: a real
+  // source carrying a future mtime, however briefly, is exactly what poisoned
+  // concurrent runs' staleness arithmetic (see the header).
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "touch-"))
   try {
+    const w = makeWorld(dir)
+    const before = newestInputMtime([], [w.inputs])
     const bumped = (before + DAY) / 1000
-    fs.utimesSync(probe, bumped, bumped)
+    fs.utimesSync(path.join(w.inputs, "planner.mjs"), bumped, bumped)
     assert.ok(
-      newestInputMtime() > before,
+      newestInputMtime([], [w.inputs]) > before,
       "a planner change must be able to invalidate plans, or the guard is inert",
     )
   } finally {
-    fs.utimesSync(probe, stat.atime, stat.mtime)
+    fs.rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test("the default input roots cover the real planner", () => {
+  // The hermetic tests above prove the arithmetic; this proves the WIRING:
+  // with no override, the walk visits the real planner closure, so a fix
+  // landing in src/apply or src/lib genuinely invalidates plans on disk.
+  // Structural on purpose, twice over: proving it by MUTATING real mtimes is
+  // what made this file flaky, and proving it by COMPARING two live reads of
+  // the same real file (a stat against a walk) still races with any
+  // concurrent toucher of the checkout. A superset check, not deepEqual: new
+  // roots may join the closure freely, losing one of these must be loud.
+  for (const rel of ["src/apply", "src/lib"]) {
+    assert.ok(
+      PLAN_INPUT_PATHS.includes(rel),
+      `${rel} left the default input roots — a planner change no threshold sees cannot invalidate anything`,
+    )
+    assert.ok(
+      fs.statSync(path.join(ROOT, rel)).isDirectory(),
+      `${rel} is not a directory here — the default walk would visit nothing`,
+    )
+  }
+  assert.ok(
+    fs.existsSync(path.join(ROOT, "src", "apply", "fill-plan.mjs")),
+    "the planner itself must sit inside a covered root",
+  )
+})
+
+test("factBaseInputs stats the override, not the real fact base", () => {
+  // The other half of hermeticity: the spawned child honours --answers and
+  // --profile, so a test's threshold never depends on the real profile/ tree.
+  const [a, p] = factBaseInputs({
+    answersFlag: path.join("fx", "answers.yaml"),
+    profileFlag: path.join("fx", "profile.yaml"),
+  })
+  assert.equal(a, path.resolve(path.join("fx", "answers.yaml")))
+  assert.equal(p, path.resolve(path.join("fx", "profile.yaml")))
+  // And with no override, both halves of the real fact base are inputs.
+  const [da, dp] = factBaseInputs()
+  assert.ok(da.endsWith(path.join("profile", "answers.yaml")))
+  assert.ok(dp.endsWith(path.join("profile", "profile.yaml")))
 })

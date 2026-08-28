@@ -19,7 +19,8 @@
 // to tick in the browser, not questions with answers worth storing.
 //
 // Usage: node src/apply/pending-questions.mjs [<slug> ...] [--jobs-dir jobs]
-//        [--no-predict] [--profile <path>] [--answers <path>] [--json]
+//        [--no-predict] [--profile <path>] [--answers <path>]
+//        [--inputs-dir <dir>] [--json]
 //
 // Exit codes: 0 ok, 2 usage / missing jobs dir.
 import fs from "node:fs"
@@ -268,7 +269,10 @@ function readJson(file) {
 // `resolveFields`, taken from the import graph rather than from memory. Naming
 // a directory costs a `readdirSync` per run and cannot be forgotten when a new
 // planner file lands beside the others, which is the failure being closed.
-const PLAN_INPUT_PATHS = ["src/apply", "src/lib"]
+// Exported so the staleness tests can pin this list's coverage structurally,
+// without comparing live mtimes of real sources (a read that races with any
+// concurrent toucher of the same checkout).
+export const PLAN_INPUT_PATHS = ["src/apply", "src/lib"]
 
 // The fact base is an input too, and BOTH halves of it are. `profile.yaml` was
 // missing until 2026-08-24: `resolveFields` reads it for address, name and
@@ -277,19 +281,34 @@ const PLAN_INPUT_PATHS = ["src/apply", "src/lib"]
 export const FACT_BASE_INPUTS = ["profile/answers.yaml", "profile/profile.yaml"]
 
 /**
- * The fact-base paths to pass as `extra`, honouring an explicit --answers
- * override so a test pointed at a fixture bank does not stat the real one.
+ * The fact-base paths to pass as `extra`, honouring an explicit --answers or
+ * --profile override so a test pointed at fixture files does not stat the
+ * real ones.
  */
-export function factBaseInputs({ answersFlag = null, root = ROOT } = {}) {
+export function factBaseInputs({
+  answersFlag = null,
+  profileFlag = null,
+  root = ROOT,
+} = {}) {
   return [
     typeof answersFlag === "string"
       ? path.resolve(answersFlag)
       : path.join(root, "profile", "answers.yaml"),
-    path.join(root, "profile", "profile.yaml"),
+    typeof profileFlag === "string"
+      ? path.resolve(profileFlag)
+      : path.join(root, "profile", "profile.yaml"),
   ]
 }
 
-export function newestInputMtime(extra = []) {
+// `plannerRoots` (absolute paths) replaces the default source walk, and its
+// only intended caller is a test. The staleness tests used to take thresholds
+// off the REAL tree above — and prove sensitivity by bumping a real planner
+// file's mtime a day into the future — so any two runs sharing this checkout
+// could poison each other's arithmetic between one process's snapshot and its
+// spawned child's re-walk: the 2026-08-27 flaky pair, reproduced on demand
+// 2026-08-28. Tests now pin every input to files only they can touch;
+// production callers pass nothing and get the real closure.
+export function newestInputMtime(extra = [], plannerRoots = null) {
   let newest = 0
   const visit = (abs) => {
     let st
@@ -304,7 +323,9 @@ export function newestInputMtime(extra = []) {
     }
     if (st.mtimeMs > newest) newest = st.mtimeMs
   }
-  for (const rel of PLAN_INPUT_PATHS) visit(path.join(ROOT, rel))
+  const roots =
+    plannerRoots ?? PLAN_INPUT_PATHS.map((rel) => path.join(ROOT, rel))
+  for (const abs of roots) visit(abs)
   for (const p of extra) visit(p)
   return newest
 }
@@ -327,6 +348,7 @@ function main() {
   const jobsDir = flag("--jobs-dir") || path.join(ROOT, "jobs")
   const profileFlag = flag("--profile")
   const answersFlag = flag("--answers")
+  const inputsDir = flag("--inputs-dir")
   const only = args.filter((a) => !a.startsWith("--"))
 
   if (!fs.existsSync(jobsDir)) {
@@ -345,7 +367,10 @@ function main() {
 
   // The fact base counts as an input too: banking an answer is the single most
   // common reason a recorded defer stops being true.
-  const newestInput = newestInputMtime(factBaseInputs({ answersFlag }))
+  const newestInput = newestInputMtime(
+    factBaseInputs({ answersFlag, profileFlag }),
+    typeof inputsDir === "string" ? [path.resolve(inputsDir)] : null,
+  )
 
   const plans = []
   const stalePlans = []

@@ -69,11 +69,16 @@ const SRC_ALLOWLIST = [
 ]
 
 // ---------------------------------------------------------------------------
-// (c) scripts/ — SIX files, and every one of them is pinned by something
+// (c) scripts/ — FIVE files, and every one of them is pinned by something
 // outside this repository's control.
+//
+// It was six until 2026-08-28, when the user repointed the Scheduled Task to
+// src\auto\cycle.cmd and the shim was deleted the same hour. That is the
+// intended lifecycle of every entry here: a shim exists to keep ONE external
+// consumer working, and it goes the moment that consumer moves. A shim nobody
+// invokes is precisely the sealed-looking path nothing actually pins.
 // ---------------------------------------------------------------------------
 const SCRIPTS_EXACT = [
-  "scripts/auto/cycle.cmd",
   "scripts/hooks/guard-bash.mjs",
   "scripts/hooks/guard-files.mjs",
   "scripts/hooks/prettify.mjs",
@@ -87,7 +92,7 @@ const SCRIPTS_EXACT = [
 // and admitted deliberately instead of drifting in. A `.md` cannot be invoked
 // by .claude/settings.json or by Task Scheduler, so it cannot acquire the
 // sealed-looking-path problem the rule below exists to prevent — and a
-// document explaining why six files stayed behind is worth more here than
+// document explaining why these files stayed behind is worth more here than
 // anywhere else in the tree. Anything that is not this exact path still fails.
 const SCRIPTS_DOC = "scripts/README.md"
 const SCRIPTS_EXPECTED = [...SCRIPTS_EXACT, SCRIPTS_DOC].sort()
@@ -100,8 +105,6 @@ const SCRIPTS_WHY =
   "      user's file alone; the agent cannot repoint it. A bare re-export\n" +
   "      shim silently runs nothing and exits 0 (measured 2026-08-27), which\n" +
   "      is why they rewrite process.argv[1] first.\n" +
-  "  auto/cycle.cmd  the Windows Scheduled Task invokes this ABSOLUTE path at\n" +
-  "      07:00 daily. Re-registering the task is the user's act.\n" +
   "  profile/{save-answer,apply-profile}.mjs  REAL files, not shims. The\n" +
   "      sealed .claude/hooks/guard-profile-shell.mjs regex pins that literal\n" +
   "      path, so moving them would disarm the guard that stops an accidental\n" +

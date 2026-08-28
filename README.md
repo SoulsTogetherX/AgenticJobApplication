@@ -79,7 +79,7 @@ being prevented is a _wrong_ application, not a missing one.
 
 `src/<domain>/` holds all the deterministic code, one directory per domain, each
 with its own `README.md`. `tests/` mirrors it one for one. `tools/ci/` holds the
-build helpers. `scripts/` is **not** a source directory: it holds exactly six
+build helpers. `scripts/` is **not** a source directory: it holds exactly five
 files whose paths are pinned by something outside this repository — see
 [scripts/README.md](scripts/README.md). `docs/`, `jobs/`, `profile/`, `schemas/`
 and `templates/` are documentation, generated data, your facts, JSON schemas and

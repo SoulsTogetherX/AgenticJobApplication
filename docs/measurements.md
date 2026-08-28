@@ -1365,3 +1365,27 @@ priority: the counted gate went from 234-246s (pre-layer baseline, 2811) to
 268-348s across four post-layer runs - the new gates spawn eslint (~15s),
 prettier --check (~28s) and markdownlint (~8s) inside the counted suite, which
 is the price of a floor that also asserts the linters ran.
+
+### 2026-08-28 - floor 2870 -> 2873 (task repointed, cycle.cmd shim retired)
+
+Two consecutive full-gate runs, 2873 tests / 2870 pass / 0 fail, 284.1s and
+317.2s. +3 over the 2870 set on 2026-08-27: +2 from `ec5ebc2` (the staleness
+tests made hermetic, another session) and +1 net from this change - the
+`scripts/auto/cycle.cmd` shim-parity test was DELETED with its subject, and
+two took its place. The first keeps what that test was really protecting and
+aims it at the real file the Scheduled Task now invokes: an unknown flag must
+exit 2, probed from `os.tmpdir()` rather than the repo, because the registered
+task has no "Start In" directory and only `%~dp0` makes the repo root
+resolvable - a probe run from the repo would pass even with self-location
+broken. The second pins a defect that probe exposed.
+
+MEASURED, the defect: `.gitattributes` forced `* text=auto eol=lf`, so
+`src/auto/cycle.cmd` carried 38 bare LF endings and zero CRLF. cmd.exe parses
+batch files by byte offset and requires CRLF; it lost sync inside the REM
+header and executed the word REGISTERING as a command, printing "is not
+recognized" into `logs/cycle.log` on every run of the 07:00 task since the
+re-layout. The cycle still exited 0 - which is exactly why a day of runs did
+not surface it. After adding `*.cmd text eol=crlf` and re-normalizing: same
+exit 2, and stray output lines 2 -> 0. The task's own last run (2026-08-28
+07:05) had already reported Last Result 0 through the shim, so nothing was
+lost; the cost was noise plus a parser operating outside its contract.

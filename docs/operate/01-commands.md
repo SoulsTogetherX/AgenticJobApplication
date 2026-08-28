@@ -1472,17 +1472,20 @@ thing, and it is the **canonical** path. It pins the working directory to the
 repository root and appends a timestamped log to `logs/cycle.log`. Registering it
 with Task Scheduler is your act, not the agent's — it changes a system setting.
 
-> **The registered task still points at the old path, and that is fine.** Read on
-> 2026-08-27, the `AgenticJobApplication` task's action is
-> `…\scripts\auto\cycle.cmd --skip-apply`. `scripts\auto\cycle.cmd` is a
-> forwarding shim: it `call`s `src\auto\cycle.cmd` and exits with its
-> `%ERRORLEVEL%`, so the scheduled run works unmodified. The shim is deleted only
-> after **you** repoint the task — re-run the `Register-ScheduledTask` block
-> below with the `src\auto\cycle.cmd` path, or
-> `schtasks /Change /TN AgenticJobApplication /TR "<repo>\src\auto\cycle.cmd --skip-apply"`.
-> Re-registering is a system change and stays yours.
-> ([`../../scripts/README.md`](../../scripts/README.md) explains the six pinned
-> paths.) Check the current action with
+> **Repointed 2026-08-28 — the forwarding shim is gone.** With your explicit
+> go-ahead the task's action was changed to
+> `…\src\auto\cycle.cmd --skip-apply`, verified against
+> `schtasks /Query /TN "\AgenticJobApplication" /XML`, and
+> `scripts\auto\cycle.cmd` was deleted. Two things that run reads worth
+> keeping: `schtasks /Change` prints a warning about an **empty run-as
+> password** on any user task — benign here, because the task is
+> `LogonType: InteractiveToken` ("Interactive only"), which stores no password
+> and never did. And the task has **no _Start In_ directory**, so the repo root
+> is resolvable only through `cycle.cmd`'s own `%~dp0`; that is why the
+> post-change probe was run from a foreign working directory rather than from
+> the repo, where it would have passed either way.
+> ([`../../scripts/README.md`](../../scripts/README.md) explains the five
+> remaining pinned paths.) Check the current action any time with
 > `(Get-ScheduledTask AgenticJobApplication).Actions`.
 
 **Registering it (the 2026-08-13 split: the 7:00 task is prepare-only).** From

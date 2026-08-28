@@ -3,3 +3,15 @@
 # file contents read raw from disk; CRLF checkouts silently break those
 # comparisons on Windows.
 * text=auto eol=lf
+
+# EXCEPT batch files, which cmd.exe parses by byte offset and which REQUIRE
+# CRLF. Measured 2026-08-28 on src/auto/cycle.cmd, the file the 07:00
+# Scheduled Task invokes: with 38 bare LFs the parser lost sync inside the
+# REM header and ran the word REGISTERING as a command, printing "is not
+# recognized" into logs/cycle.log on every single run. The cycle still
+# exited 0, which is what made it survive unnoticed — the damage a bare-LF
+# batch file does is silent until a comment edit shifts the parse onto a
+# line that matters. This rule is the fix; do not fold it back into the
+# blanket LF rule above.
+*.cmd text eol=crlf
+*.bat text eol=crlf

@@ -30,7 +30,7 @@
   },
   "testGate": {
     "full": {
-      "floor": 2870,
+      "floor": 2873,
       "maxTodo": 0,
       "requireDirs": [
         "tests",

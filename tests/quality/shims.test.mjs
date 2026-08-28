@@ -1,11 +1,12 @@
 // Gate #16: shim parity, for as long as the shims live.
 //
-// Four paths in scripts/ are pinned by something this repo cannot edit:
+// THREE paths in scripts/ are pinned by something this repo cannot edit:
 // .claude/settings.json wires the three hook paths and is the user's file
-// alone, and the Windows Scheduled Task invokes scripts\auto\cycle.cmd by
-// absolute path at 07:00 daily. Until the user repoints both, the shims sit
-// ON THE GUARDRAIL PATH — a `guard-bash` shim that silently did nothing would
-// disarm the branch protection hook and every run would look normal.
+// alone. (A fourth, scripts\auto\cycle.cmd, served the Windows Scheduled Task
+// until the user repointed it on 2026-08-28; that shim is gone.) Until the
+// user repoints the hooks too, these shims sit ON THE GUARDRAIL PATH — a
+// `guard-bash` shim that silently did nothing would disarm the branch
+// protection hook and every run would look normal.
 //
 // THAT IS NOT HYPOTHETICAL. A naive re-export shim
 // (`export * from "../../src/hooks/guard-bash.mjs"`) runs NOTHING and exits 0,
@@ -23,9 +24,10 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
-import { ROOT } from "./helpers/bins.mjs"
+import { ROOT, trackedFiles } from "./helpers/bins.mjs"
 
 // Each probe is chosen so the hook must DO something observable — deny, or
 // mutate a file. QA-1 (2026-08-27) proved the original design vacuous: it fed
@@ -163,10 +165,16 @@ test("scripts/hooks/prettify.mjs actually formats through the shim", () => {
   }
 })
 
-test("scripts/auto/cycle.cmd forwards exit codes from src/auto/cycle.cmd", (t) => {
+// The scripts/auto/cycle.cmd SHIM was deleted 2026-08-28, the same hour the
+// user repointed the Scheduled Task to src\auto\cycle.cmd. What the shim's
+// parity test was really protecting outlives it, so it is kept below and
+// aimed at the real file: the task now invokes THAT path directly, from a
+// working directory it chooses, and a wrapper that swallows a failure code
+// reports a broken cycle as a success.
+test("src/auto/cycle.cmd refuses an unknown flag with exit 2, from a foreign cwd", (t) => {
   if (process.platform !== "win32") {
     return t.skip(
-      "cmd.exe exists only on Windows; the Scheduled Task this shim serves is Windows-only",
+      "cmd.exe exists only on Windows; the Scheduled Task this serves is Windows-only",
     )
   }
   // A deliberately bogus flag. cycle.mjs refuses unknown flags with exit 2
@@ -177,34 +185,57 @@ test("scripts/auto/cycle.cmd forwards exit codes from src/auto/cycle.cmd", (t) =
   // opens — AND it is a nonzero code, so it proves the .cmd propagates
   // %ERRORLEVEL% instead of swallowing it.
   //
-  // NOTE: cycle.cmd logs unconditionally, so this test appends two entries to
-  // logs/cycle.log per run. That is accepted: logs/ is gitignored and machine
-  // local, and the entries are honest records of two real invocations.
-  // Arguments are passed as separate argv entries, never concatenated into one
-  // quoted string: node spawns cmd.exe directly (no shell), so nothing gets a
-  // second chance to re-parse them.
-  const runWithFlag = (rel) =>
-    spawnSync(
-      "cmd.exe",
-      ["/c", rel.split("/").join("\\"), "--parity-probe-bogus"],
-      { cwd: ROOT, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
-    )
-
-  const shim = runWithFlag("scripts/auto/cycle.cmd")
-  const real = runWithFlag("src/auto/cycle.cmd")
-
-  assert.equal(
-    real.status,
-    2,
-    `src/auto/cycle.cmd exited ${real.status} for an unknown flag; expected 2. ` +
-      `cycle.mjs refuses unrecognised flags on purpose — if that refusal is ` +
-      `gone, a typo like --skip-aply runs the applier.`,
+  // cwd is os.tmpdir(), NOT the repo: the registered task has no "Start In"
+  // directory, so it runs from wherever the scheduler puts it, and the only
+  // thing that makes the repo root resolvable is cycle.cmd's own %~dp0. A
+  // probe run from the repo would pass even if that self-location broke.
+  //
+  // NOTE: cycle.cmd logs unconditionally, so this appends one entry pair to
+  // logs/cycle.log per run. Accepted: logs/ is gitignored and machine-local,
+  // and the entries are honest records of a real invocation.
+  const res = spawnSync(
+    "cmd.exe",
+    ["/c", path.join(ROOT, "src", "auto", "cycle.cmd"), "--parity-probe-bogus"],
+    { cwd: os.tmpdir(), encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
   )
   assert.equal(
-    shim.status,
+    res.status,
     2,
-    `the shim exited ${shim.status} where the real file exited ${real.status}. ` +
-      `A batch wrapper that does not end with \`exit /b %ERRORLEVEL%\` reports ` +
-      `success for a failed cycle, and the 07:00 Scheduled Task calls THIS path.`,
+    `src/auto/cycle.cmd exited ${res.status} for an unknown flag; expected 2. ` +
+      `Either cycle.mjs stopped refusing unrecognised flags (a typo like ` +
+      `--skip-aply then RUNS the applier), or the wrapper stopped propagating ` +
+      `%ERRORLEVEL% and every failed 07:00 cycle now reports success.\n` +
+      `stdout: ${res.stdout}\nstderr: ${res.stderr}`,
+  )
+})
+
+test("every batch file is CRLF — cmd.exe parses by byte offset", () => {
+  // Measured 2026-08-28. .gitattributes forces `* text=auto eol=lf`, which
+  // gave src/auto/cycle.cmd 38 bare LFs and zero CRLFs. cmd.exe lost sync
+  // inside the REM header and executed the word REGISTERING as a command,
+  // printing "is not recognized" into logs/cycle.log on EVERY run of the
+  // 07:00 task. The cycle still exited 0 — which is exactly why it survived
+  // unnoticed for a day. A bare-LF batch file is silent damage until a
+  // comment edit shifts the parse onto a line that matters.
+  //
+  // The fix is the `*.cmd text eol=crlf` rule in .gitattributes; this is the
+  // assertion that keeps it, because the blanket LF rule above it looks more
+  // authoritative than it is.
+  const offenders = []
+  for (const rel of trackedFiles("src", "scripts", "tools")) {
+    if (!/\.(cmd|bat)$/i.test(rel)) continue
+    const buf = fs.readFileSync(path.join(ROOT, rel))
+    let bare = 0
+    for (let i = 0; i < buf.length; i++) {
+      if (buf[i] === 0x0a && (i === 0 || buf[i - 1] !== 0x0d)) bare++
+    }
+    if (bare > 0) offenders.push(`${rel} has ${bare} bare LF line ending(s)`)
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `${offenders.join("; ")}\nAdd the extension to .gitattributes' eol=crlf ` +
+      `rule and re-checkout. cmd.exe requires CRLF; with LF it silently ` +
+      `mis-parses and runs comment text as commands.`,
   )
 })

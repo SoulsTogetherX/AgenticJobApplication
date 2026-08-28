@@ -48,30 +48,30 @@ You do not need any of these to follow this document, but they help:
 
 **The files covered here**
 
-| file                                            | lines | one-line purpose                                                                |
-| ----------------------------------------------- | ----- | ------------------------------------------------------------------------------- |
-| `.claude/hooks/protect-profile.js`              | 55    | denies Edit/Write to the fact base and to the guardrail machinery               |
-| `.claude/hooks/guard-profile-shell.mjs`         | 239   | denies the same targets when reached through a shell command instead            |
-| `src/hooks/guard-bash.mjs`                      | 608   | denies any git command that leaves, or acts outside, the `dev` branch           |
-| `src/hooks/guard-files.mjs`                     | 60    | denies any write whose path lands outside the project directory                 |
-| `src/hooks/prettify.mjs`                        | 71    | runs prettier on every file the agent edits (never blocks)                      |
-| `.claude/settings.json`                         | 54    | wires all five hooks and holds the permission allowlist                         |
-| `package.json`                                  | 74    | npm manifest, the `testGate` floors, and the phase list the reaper reads        |
-| `tools/ci/test-gate.mjs`                        | 505   | runs the suite and asserts the run _proves_ tests executed                      |
-| `.github/workflows/ci.yml`                      | 324   | the GitHub Actions pipeline: six jobs, one required check                       |
-| `tools/ci/scaffolding-reaper.mjs`               | 592   | fails the build when temporary dev-only code outlives its declared phase        |
-| `tools/ci/perf-gate.mjs`                        | 345   | fails the build on a measured performance or model-usage regression             |
-| `tools/ci/report-browsers.mjs`                  | 41    | prints which browser this machine has, so a skipped PDF test is attributable    |
-| `.gitignore`                                    | 61    | keeps personal data and cookies out of git — and keeps test inputs in           |
-| `.gitattributes`                                | 5     | forces LF line endings in every working tree, on every platform                 |
-| `.prettierrc`                                   | 4     | two settings: no semicolons, LF line endings                                    |
-| `.prettierignore`                               | 37    | five housekeeping entries plus the rest, each a contract with its reason        |
-| `.mcp.json`                                     | 17    | declares the Playwright browser server and its persistent profile               |
-| `.env.example`                                  | 12    | the committed template for the never-committed `.env`                           |
-| `eslint.config.mjs`                             | 309   | ESLint 10, hand-picked rules only — never a preset, and never `no-process-exit` |
-| `eslint-suppressions.json`                      | —     | the frozen ratchet baseline: 128 files, shrink-only, never widened              |
-| `.markdownlint-cli2.jsonc`                      | —     | the markdown rule set and corpus, tuned with the measured counts recorded       |
-| `scripts/hooks/*.mjs`, `scripts/auto/cycle.cmd` | 10–14 | forwarding shims for the paths the user's sealed config pins                    |
+| file                                    | lines | one-line purpose                                                                |
+| --------------------------------------- | ----- | ------------------------------------------------------------------------------- |
+| `.claude/hooks/protect-profile.js`      | 55    | denies Edit/Write to the fact base and to the guardrail machinery               |
+| `.claude/hooks/guard-profile-shell.mjs` | 239   | denies the same targets when reached through a shell command instead            |
+| `src/hooks/guard-bash.mjs`              | 608   | denies any git command that leaves, or acts outside, the `dev` branch           |
+| `src/hooks/guard-files.mjs`             | 60    | denies any write whose path lands outside the project directory                 |
+| `src/hooks/prettify.mjs`                | 71    | runs prettier on every file the agent edits (never blocks)                      |
+| `.claude/settings.json`                 | 54    | wires all five hooks and holds the permission allowlist                         |
+| `package.json`                          | 74    | npm manifest, the `testGate` floors, and the phase list the reaper reads        |
+| `tools/ci/test-gate.mjs`                | 505   | runs the suite and asserts the run _proves_ tests executed                      |
+| `.github/workflows/ci.yml`              | 324   | the GitHub Actions pipeline: six jobs, one required check                       |
+| `tools/ci/scaffolding-reaper.mjs`       | 592   | fails the build when temporary dev-only code outlives its declared phase        |
+| `tools/ci/perf-gate.mjs`                | 345   | fails the build on a measured performance or model-usage regression             |
+| `tools/ci/report-browsers.mjs`          | 41    | prints which browser this machine has, so a skipped PDF test is attributable    |
+| `.gitignore`                            | 61    | keeps personal data and cookies out of git — and keeps test inputs in           |
+| `.gitattributes`                        | 5     | forces LF line endings in every working tree, on every platform                 |
+| `.prettierrc`                           | 4     | two settings: no semicolons, LF line endings                                    |
+| `.prettierignore`                       | 37    | five housekeeping entries plus the rest, each a contract with its reason        |
+| `.mcp.json`                             | 17    | declares the Playwright browser server and its persistent profile               |
+| `.env.example`                          | 12    | the committed template for the never-committed `.env`                           |
+| `eslint.config.mjs`                     | 309   | ESLint 10, hand-picked rules only — never a preset, and never `no-process-exit` |
+| `eslint-suppressions.json`              | —     | the frozen ratchet baseline: 128 files, shrink-only, never widened              |
+| `.markdownlint-cli2.jsonc`              | —     | the markdown rule set and corpus, tuned with the measured counts recorded       |
+| `scripts/hooks/*.mjs`                   | 10–14 | forwarding shims for the three hook paths the user's sealed config pins         |
 
 The `tests/quality/*` gates that assert all of this — formatting, lint, doc-path
 truth, structure, shim parity, YAML validity, markdown — are a decision record in
@@ -330,8 +330,12 @@ looked normal. Rewriting `process.argv[1]` first is what makes the forward
 indistinguishable from direct invocation. The deprecation notice goes to
 **stderr**, never stdout — stdout is the hook protocol channel.
 
-`scripts/auto/cycle.cmd` is the same idea for the Windows Scheduled Task, which
-invokes that absolute path daily at 07:00.
+A fourth shim — a batch wrapper that used to sit under `scripts/auto/` — did the
+same job for the Windows Scheduled Task. It was **deleted on 2026-08-28**, the
+same hour the user repointed that task at `src\auto\cycle.cmd`: the intended end
+of a shim's life, and the reason the set here is now three. (Its path is written
+without an extension on purpose — `docs-links.test.mjs` resolves every path
+token in this file, and a deleted file named in full would dangle.)
 
 The two `scripts/profile/*.mjs` files are **not** shims. `guard-profile-shell.mjs`
 matches the literal path `scripts/profile/(save-answer|apply-profile).mjs` to
@@ -342,9 +346,12 @@ regex, does not match the hook's second stage either (which looks for
 returns **without denying**. So moving them would not relocate the guard, it
 would remove it.
 
-`tests/quality/shims.test.mjs` asserts exit-code and stdout parity for as long as
-the shims live; `tests/quality/structure.test.mjs` asserts `scripts/` holds
-exactly that set. Full account: [`../../scripts/README.md`](../../scripts/README.md).
+`tests/quality/shims.test.mjs` asserts parity for as long as the shims live —
+against a **denial**, not an allowed command, because an adversarial pass showed
+a shim that ran nothing still passed the allow-probe (a do-nothing hook also
+exits 0 with empty stdout). `tests/quality/structure.test.mjs` asserts `scripts/`
+holds exactly that set. Full account:
+[`../../scripts/README.md`](../../scripts/README.md).
 
 ---
 

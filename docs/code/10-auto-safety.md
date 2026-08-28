@@ -1680,7 +1680,7 @@ The three rules, and the measured cost of them:
 > BOARD;
 >
 > - same board failing >= 3 of its LAST 5 — pauses that BOARD;
-> - > >\>= 8 of the LAST 10 attempts across >= 2 distinct boards — stops the RUN.
+> - `>= 8` of the LAST 10 attempts across >= 2 distinct boards — stops the RUN.
 >
 > Simulated at 20,000 trials (N=3) and 2,000 (N=999): the run-level stop fires
 > 0.00% at both sizes at p=5%, and 0.45% at p=15%. The cost the simulation
@@ -2670,13 +2670,13 @@ employer."_
 
 `REASON_CLASSES` — the five buckets, with the docstring meanings:
 
-| Class           | Kinds                                                                                                                              | What it means                                                                                                                                                                      |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `understanding` | `unknown-field`, `unprobed-dropdown`, `fill-failed`, `multipage-unresolvable`                                                      | _"THE ONLY CLASS THAT SHRINKS WITH ENGINEERING, and the only sanctioned throughput lever: an adapter, a probed option list, or a banked answer. Never a model reading the field."_ |
-| `assent`        | `confirm-field`, `confirm-widget`, `consent-tickbox`, `freetext-disclosure`                                                        | _"Does not shrink with engineering and MUST NOT: shrinking it is the failure mode hard rule 6 is written to prevent."_                                                             |
-| `environment`   | `captcha`, `bot-challenge`, `email-code-challenge`, `identity-verification`, `posting-gone`, `board-paused`, `reconciled-not-sent` | The board or the posting declined. Not ours, not a bug.                                                                                                                            |
-| `policy`        | `doc-unverified`, `doc-unrendered`, `fact-base-changed`, `board-untrusted`, `board-unsighted`, `l3-rejected`, `cap-company`, `already-applied`                                        | _"Working exactly as intended."_                                                                                                                                                   |
-| `malfunction`   | every kind in `AUTO_FAILURE_KINDS`                                                                                                 | _"The only class worth waking for."_                                                                                                                                               |
+| Class           | Kinds                                                                                                                                          | What it means                                                                                                                                                                      |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `understanding` | `unknown-field`, `unprobed-dropdown`, `fill-failed`, `multipage-unresolvable`                                                                  | _"THE ONLY CLASS THAT SHRINKS WITH ENGINEERING, and the only sanctioned throughput lever: an adapter, a probed option list, or a banked answer. Never a model reading the field."_ |
+| `assent`        | `confirm-field`, `confirm-widget`, `consent-tickbox`, `freetext-disclosure`                                                                    | _"Does not shrink with engineering and MUST NOT: shrinking it is the failure mode hard rule 6 is written to prevent."_                                                             |
+| `environment`   | `captcha`, `bot-challenge`, `email-code-challenge`, `identity-verification`, `posting-gone`, `board-paused`, `reconciled-not-sent`             | The board or the posting declined. Not ours, not a bug.                                                                                                                            |
+| `policy`        | `doc-unverified`, `doc-unrendered`, `fact-base-changed`, `board-untrusted`, `board-unsighted`, `l3-rejected`, `cap-company`, `already-applied` | _"Working exactly as intended."_                                                                                                                                                   |
+| `malfunction`   | every kind in `AUTO_FAILURE_KINDS`                                                                                                             | _"The only class worth waking for."_                                                                                                                                               |
 
 **Two module-load assertions** — not tests; they throw at `import` time:
 

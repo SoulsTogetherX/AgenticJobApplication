@@ -13,7 +13,7 @@ and no rule justified by a page in this directory may fire off loopback.
 `ruleApplies()` enforces that; this note explains it.
 
 The temptation these pages create is the whole reason the enforcement exists. It
-is very easy to write a page here that says what you *think* a real
+is very easy to write a page here that says what you _think_ a real
 confirmation says, cite it as evidence, and ship a rule that reads a real
 employer's page and gets it wrong — silently, in the direction that loses an
 application. §4.6 forbids exactly that guess. A synthetic corpus is not a

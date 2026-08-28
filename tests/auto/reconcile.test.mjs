@@ -151,7 +151,10 @@ test("a confirmation on the board resolves the orphan to submitted", async () =>
   const db = openDb(s.dbFile)
   try {
     assert.equal(readAutoSubmission(db, o.slug, "live").outcome, "submitted")
-    assert.equal(readAutoQueue(db).find((r) => r.slug === o.slug).state, "submitted")
+    assert.equal(
+      readAutoQueue(db).find((r) => r.slug === o.slug).state,
+      "submitted",
+    )
   } finally {
     db.close()
   }

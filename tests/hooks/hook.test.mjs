@@ -4,7 +4,11 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+)
 const HOOK = path.join(ROOT, ".claude", "hooks", "protect-profile.js")
 
 // spawnSync's `input` option feeds stdin byte-clean (no shell BOM/backslash mangling).

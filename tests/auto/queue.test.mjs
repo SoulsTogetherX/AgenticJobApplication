@@ -415,10 +415,21 @@ test("a deferred row on a requeueable kind goes back to 'queued' on the next enq
   const row = readAutoQueue(db)[0]
   assert.equal(row.state, "queued")
   assert.equal(row.reason_kind, null, "the old reason is cleared, not carried")
-  assert.equal(row.plan_sha256, null, "the old plan is forgotten — it is rebuilt on claim")
-  assert.equal(row.attempt_no, 1, "the enqueue itself does not count an attempt")
+  assert.equal(
+    row.plan_sha256,
+    null,
+    "the old plan is forgotten — it is rebuilt on claim",
+  )
+  assert.equal(
+    row.attempt_no,
+    1,
+    "the enqueue itself does not count an attempt",
+  )
 
-  assert.equal(claimAutoJob(db, "co-000", { run_id: "r2", plan_sha256: "new" }), 1)
+  assert.equal(
+    claimAutoJob(db, "co-000", { run_id: "r2", plan_sha256: "new" }),
+    1,
+  )
   assert.equal(readAutoQueue(db)[0].attempt_no, 2, "the claim counts it")
   assert.equal(readAutoQueue(db)[0].plan_sha256, "new")
 })
@@ -426,7 +437,11 @@ test("a deferred row on a requeueable kind goes back to 'queued' on the next enq
 test("every requeueable kind is re-queued; every other defer kind is left terminal", (t) => {
   const db = store(t).open()
   const kinds = [...AUTO_DEFER_KINDS]
-  const jobs = kinds.map((k, i) => ({ slug: `k-${i}`, origin: "o", board_key: "b" }))
+  const jobs = kinds.map((k, i) => ({
+    slug: `k-${i}`,
+    origin: "o",
+    board_key: "b",
+  }))
   enqueueAutoJobs(db, jobs)
   kinds.forEach((kind, i) => {
     claimAutoJob(db, `k-${i}`, { run_id: "r" })
@@ -447,7 +462,14 @@ test("every requeueable kind is re-queued; every other defer kind is left termin
   })
   // The ones a board or the user's policy decided are named here so widening
   // the list is a visible act, not a drift.
-  for (const k of ["posting-gone", "l3-rejected", "cap-company", "board-untrusted", "reconciled-not-sent", "captcha"])
+  for (const k of [
+    "posting-gone",
+    "l3-rejected",
+    "cap-company",
+    "board-untrusted",
+    "reconciled-not-sent",
+    "captcha",
+  ])
     assert.ok(!AUTO_REQUEUEABLE_KINDS.includes(k), `${k} stays terminal`)
 })
 
@@ -458,10 +480,20 @@ test("re-queuing never touches attempted, submitted, challenged or failed rows",
   for (const j of jobs) claimAutoJob(db, j.slug, { run_id: "r" })
   setAutoJobState(db, "co-000", "attempted", { run_id: "r" })
   setAutoJobState(db, "co-001", "submitted", { run_id: "r" })
-  setAutoJobState(db, "co-002", "challenged", { run_id: "r", reason_kind: "captcha", reason_detail: "x" })
-  setAutoJobState(db, "co-003", "failed", { run_id: "r", reason_kind: "nav-timeout", reason_detail: "x" })
+  setAutoJobState(db, "co-002", "challenged", {
+    run_id: "r",
+    reason_kind: "captcha",
+    reason_detail: "x",
+  })
+  setAutoJobState(db, "co-003", "failed", {
+    run_id: "r",
+    reason_kind: "nav-timeout",
+    reason_detail: "x",
+  })
   assert.equal(enqueueAutoJobs(db, jobs), 0)
-  const byState = Object.fromEntries(readAutoQueue(db).map((r) => [r.slug, r.state]))
+  const byState = Object.fromEntries(
+    readAutoQueue(db).map((r) => [r.slug, r.state]),
+  )
   assert.deepEqual(byState, {
     "co-000": "attempted",
     "co-001": "submitted",
@@ -478,16 +510,39 @@ test("readStaleDeferred counts deferred rows older than the threshold, oldest fi
   const fresh = new Date("2026-08-17T04:00:00Z")
   const now = new Date("2026-08-17T12:00:00Z")
   claimAutoJob(db, "co-000", { run_id: "r", now: old })
-  setAutoJobState(db, "co-000", "deferred", { run_id: "r", reason_kind: "confirm-field", reason_detail: "x", now: old })
+  setAutoJobState(db, "co-000", "deferred", {
+    run_id: "r",
+    reason_kind: "confirm-field",
+    reason_detail: "x",
+    now: old,
+  })
   claimAutoJob(db, "co-001", { run_id: "r", now: old })
-  setAutoJobState(db, "co-001", "deferred", { run_id: "r", reason_kind: "posting-gone", reason_detail: "x", now: old })
+  setAutoJobState(db, "co-001", "deferred", {
+    run_id: "r",
+    reason_kind: "posting-gone",
+    reason_detail: "x",
+    now: old,
+  })
   claimAutoJob(db, "co-002", { run_id: "r", now: fresh })
-  setAutoJobState(db, "co-002", "deferred", { run_id: "r", reason_kind: "confirm-field", reason_detail: "x", now: fresh })
+  setAutoJobState(db, "co-002", "deferred", {
+    run_id: "r",
+    reason_kind: "confirm-field",
+    reason_detail: "x",
+    now: fresh,
+  })
 
   const stale = readStaleDeferred(db, { now })
-  assert.deepEqual(stale.map((s) => s.slug), ["co-000", "co-001"], "the fresh one is not stale")
+  assert.deepEqual(
+    stale.map((s) => s.slug),
+    ["co-000", "co-001"],
+    "the fresh one is not stale",
+  )
   assert.equal(stale[0].requeueable, true)
-  assert.equal(stale[1].requeueable, false, "posting-gone stands until a human changes something")
+  assert.equal(
+    stale[1].requeueable,
+    false,
+    "posting-gone stands until a human changes something",
+  )
   assert.ok(stale[0].age_ms > 13 * 24 * 3600 * 1000)
   assert.equal(readStaleDeferred(db, { now, olderThanMs: 0 }).length, 3)
 })
@@ -510,7 +565,8 @@ test("enqueue persists apply_url, lead_id, company and title on the row, and rea
         slug: "torc-build-tools",
         board_key: "job-boards.greenhouse.io/embed?for=torcrobotics",
         origin: "https://job-boards.greenhouse.io",
-        apply_url: "https://job-boards.greenhouse.io/torcrobotics/jobs/8654323002",
+        apply_url:
+          "https://job-boards.greenhouse.io/torcrobotics/jobs/8654323002",
         lead_id: "greenhouse:torcrobotics:8654323002",
         company: "Torc Robotics",
         title: "Software Engineer II - Build Tools",
@@ -519,7 +575,10 @@ test("enqueue persists apply_url, lead_id, company and title on the row, and rea
     1,
   )
   const [row] = readResumableAutoJobs(db)
-  assert.equal(row.apply_url, "https://job-boards.greenhouse.io/torcrobotics/jobs/8654323002")
+  assert.equal(
+    row.apply_url,
+    "https://job-boards.greenhouse.io/torcrobotics/jobs/8654323002",
+  )
   assert.equal(row.lead_id, "greenhouse:torcrobotics:8654323002")
   assert.equal(row.company, "Torc Robotics")
   assert.equal(row.title, "Software Engineer II - Build Tools")
@@ -528,22 +587,44 @@ test("enqueue persists apply_url, lead_id, company and title on the row, and rea
 test("re-queuing a deferred row keeps its identity when the new batch carries none, and fills it in when the row had none", (t) => {
   const db = store(t).open()
   enqueueAutoJobs(db, [
-    { slug: "a", apply_url: "https://jobs.ashbyhq.com/x/1/application", lead_id: "ashby:x:1" },
+    {
+      slug: "a",
+      apply_url: "https://jobs.ashbyhq.com/x/1/application",
+      lead_id: "ashby:x:1",
+    },
     { slug: "b" }, // an anonymous row, as every row was before the columns existed
   ])
   for (const s of ["a", "b"]) {
     claimAutoJob(db, s, { run_id: "r1" })
-    setAutoJobState(db, s, "deferred", { run_id: "r1", reason_kind: "unknown-field", reason_detail: "x" })
+    setAutoJobState(db, s, "deferred", {
+      run_id: "r1",
+      reason_kind: "unknown-field",
+      reason_detail: "x",
+    })
   }
   // A re-queue that says nothing about identity must not erase what is there.
   assert.equal(enqueueAutoJobs(db, [{ slug: "a" }]), 1)
   let row = readAutoQueue(db).find((r) => r.slug === "a")
   assert.equal(row.state, "queued")
-  assert.equal(row.apply_url, "https://jobs.ashbyhq.com/x/1/application", "COALESCE keeps the row's value")
+  assert.equal(
+    row.apply_url,
+    "https://jobs.ashbyhq.com/x/1/application",
+    "COALESCE keeps the row's value",
+  )
   assert.equal(row.lead_id, "ashby:x:1")
 
   // A re-queue that DOES know the identity fills a blank row in.
-  assert.equal(enqueueAutoJobs(db, [{ slug: "b", apply_url: "https://jobs.lever.co/y/2/apply", lead_id: "lever:y:2", company: "Y" }]), 1)
+  assert.equal(
+    enqueueAutoJobs(db, [
+      {
+        slug: "b",
+        apply_url: "https://jobs.lever.co/y/2/apply",
+        lead_id: "lever:y:2",
+        company: "Y",
+      },
+    ]),
+    1,
+  )
   row = readAutoQueue(db).find((r) => r.slug === "b")
   assert.equal(row.apply_url, "https://jobs.lever.co/y/2/apply")
   assert.equal(row.lead_id, "lever:y:2")
@@ -555,14 +636,25 @@ test("identity is backfilled onto a row already in the queue without touching it
   enqueueAutoJobs(db, [{ slug: "legacy" }])
   claimAutoJob(db, "legacy", { run_id: "r1" }) // held by a worker: the DO UPDATE branch must not fire
   assert.equal(
-    enqueueAutoJobs(db, [{ slug: "legacy", apply_url: "https://jobs.ashbyhq.com/z/3/application", lead_id: "ashby:z:3", title: "T" }]),
+    enqueueAutoJobs(db, [
+      {
+        slug: "legacy",
+        apply_url: "https://jobs.ashbyhq.com/z/3/application",
+        lead_id: "ashby:z:3",
+        title: "T",
+      },
+    ]),
     0,
     "a held row is neither added nor re-queued",
   )
   const row = readAutoQueue(db)[0]
   assert.equal(row.state, "claimed", "state untouched")
   assert.equal(row.attempt_no, 1, "attempt count untouched")
-  assert.equal(row.apply_url, "https://jobs.ashbyhq.com/z/3/application", "but the row now knows its URL")
+  assert.equal(
+    row.apply_url,
+    "https://jobs.ashbyhq.com/z/3/application",
+    "but the row now knows its URL",
+  )
   assert.equal(row.lead_id, "ashby:z:3")
   assert.equal(row.title, "T")
 })
@@ -579,11 +671,21 @@ test("an existing database without the identity columns is healed on open, and o
   raw.exec(`INSERT INTO auto_queue (slug, state) VALUES ('old', 'queued')`)
   raw.close()
   const db = s.open()
-  const cols = new Set(db.prepare("PRAGMA table_info(auto_queue)").all().map((c) => c.name))
-  for (const c of ["apply_url", "lead_id", "company", "title"]) assert.ok(cols.has(c), `${c} added`)
+  const cols = new Set(
+    db
+      .prepare("PRAGMA table_info(auto_queue)")
+      .all()
+      .map((c) => c.name),
+  )
+  for (const c of ["apply_url", "lead_id", "company", "title"])
+    assert.ok(cols.has(c), `${c} added`)
   const [row] = readResumableAutoJobs(db)
   assert.equal(row.slug, "old")
-  assert.equal(row.apply_url, null, "an old row is honestly blank, not invented")
+  assert.equal(
+    row.apply_url,
+    null,
+    "an old row is honestly blank, not invented",
+  )
 })
 
 function require_sqlite() {
@@ -725,7 +827,9 @@ test("a row written before the column ages from updated_at, as it always did", (
     now: new Date("2026-08-18T00:00:00.000Z"),
   })
   db.prepare("UPDATE auto_queue SET first_deferred_at = NULL").run()
-  const stale = readStaleDeferred(db, { now: new Date("2026-08-24T00:00:00.000Z") })
+  const stale = readStaleDeferred(db, {
+    now: new Date("2026-08-24T00:00:00.000Z"),
+  })
   assert.equal(stale.length, 1)
   assert.equal(stale[0].since, "2026-08-18T00:00:00.000Z")
 })

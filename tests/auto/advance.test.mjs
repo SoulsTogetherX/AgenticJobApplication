@@ -363,7 +363,10 @@ test("a click that produces NO signal at all spends the budget and reports the u
   const got = await advanceOnce(page, r.args({ settleMs: 60, pollMs: 10 }))
   assert.equal(got.advanced, true)
   assert.equal(got.url, APPLY_URL)
-  assert.ok(page.waits.length > 1, "it spent the budget rather than looking once")
+  assert.ok(
+    page.waits.length > 1,
+    "it spent the budget rather than looking once",
+  )
 })
 
 // --- a click that threw ------------------------------------------------------

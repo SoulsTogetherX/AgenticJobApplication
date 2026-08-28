@@ -26,7 +26,6 @@ import {
   DB_PATH,
 } from "../lib/db.mjs"
 
-
 /**
  * The cap arithmetic, answered from the ledgers rather than from a counter the
  * runner keeps in memory (which resets when the runner dies and forgets what it

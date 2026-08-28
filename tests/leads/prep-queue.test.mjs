@@ -494,9 +494,8 @@ test("CLI: a lead screening already REJECTED is left out of the queue and counte
   // the screens table, so leads screen.mjs had rejected still took prep slots
   // (three of the top twenty on 2026-08-17). The verdict read is the same one
   // the runner's trust gate reads — model first, mechanical fallback.
-  const { openDb, upsertLeads, recordScreens } = await import(
-    "../../scripts/lib/db.mjs"
-  )
+  const { openDb, upsertLeads, recordScreens } =
+    await import("../../scripts/lib/db.mjs")
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prep-queue-screened-"))
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
   const dbFile = path.join(dir, "leads.db")
@@ -532,7 +531,12 @@ test("CLI: a lead screening already REJECTED is left out of the queue and counte
   ])
   recordScreens(db, [
     { lead_id: "gh:pass", source: "mechanical", verdict: "pass" },
-    { lead_id: "gh:reject", source: "mechanical", verdict: "reject", reason: "stale_33d" },
+    {
+      lead_id: "gh:reject",
+      source: "mechanical",
+      verdict: "reject",
+      reason: "stale_33d",
+    },
     // Mechanical said reject, the model said pass: the model wins, as it does
     // at the gate.
     { lead_id: "gh:model-pass", source: "mechanical", verdict: "reject" },
@@ -579,10 +583,18 @@ test("CLI: a lead screening already REJECTED is left out of the queue and counte
   assert.match(terse.stdout, /queued=2 /)
   assert.match(terse.stdout, /screened_out=1/)
 
-  const back = spawnSync(process.execPath, args(["--include-rejected", "--json"]), {
-    cwd: ROOT,
-    encoding: "utf8",
-  })
+  const back = spawnSync(
+    process.execPath,
+    args(["--include-rejected", "--json"]),
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  )
   assert.equal(back.status, 0, back.stderr)
-  assert.equal(JSON.parse(back.stdout).length, 3, "--include-rejected restores it")
+  assert.equal(
+    JSON.parse(back.stdout).length,
+    3,
+    "--include-rejected restores it",
+  )
 })

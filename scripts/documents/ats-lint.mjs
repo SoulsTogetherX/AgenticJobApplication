@@ -39,7 +39,6 @@ import { positionals } from "../lib/args.mjs"
 // positional. `ats-lint.mjs --html f.html r.md` linted f.html AS the markdown.
 const VALUE_FLAGS = ["--html", "--pdf", "--plan"]
 
-
 function flag(args, name, fallback = null) {
   const i = args.indexOf(name)
   return i !== -1 && args[i + 1] !== undefined ? args[i + 1] : fallback

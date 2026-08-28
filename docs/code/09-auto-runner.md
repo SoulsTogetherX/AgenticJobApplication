@@ -1770,14 +1770,14 @@ runPool({ jobs, runOne, concurrency = 1, onResult = null, shouldStop = null, onS
 originCount(jobs) -> number
 ```
 
-| parameter     | contract (from the JSDoc)                                                                                                                                                                                                 |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `jobs`        | rows with at least `{slug, origin}`                                                                                                                                                                                       |
-| `runOne`      | `async (job) -> result`. "Must not throw for a per-job condition; a throw here aborts the pool, which is correct only for a global/run-scoped StopError (a company/board brake never reaches here — runJob converts it to a deferral)."                                                                                   |
-| `concurrency` | worker count. Must be an integer ≥ 1, or `TypeError`.                                                                                                                                                                     |
-| `onResult`    | called with each result as it lands, for progress output                                                                                                                                                                  |
-| `shouldStop`  | called before each job starts; truthy stops the pool from starting **new** work. "In-flight jobs are allowed to finish — killing them mid-fill would leave exactly the ambiguous half-states the ledger exists to avoid." |
-| `onSkip`      | called for every job left unstarted when the pool ends                                                                                                                                                                    |
+| parameter     | contract (from the JSDoc)                                                                                                                                                                                                               |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jobs`        | rows with at least `{slug, origin}`                                                                                                                                                                                                     |
+| `runOne`      | `async (job) -> result`. "Must not throw for a per-job condition; a throw here aborts the pool, which is correct only for a global/run-scoped StopError (a company/board brake never reaches here — runJob converts it to a deferral)." |
+| `concurrency` | worker count. Must be an integer ≥ 1, or `TypeError`.                                                                                                                                                                                   |
+| `onResult`    | called with each result as it lands, for progress output                                                                                                                                                                                |
+| `shouldStop`  | called before each job starts; truthy stops the pool from starting **new** work. "In-flight jobs are allowed to finish — killing them mid-fill would leave exactly the ambiguous half-states the ledger exists to avoid."               |
+| `onSkip`      | called for every job left unstarted when the pool ends                                                                                                                                                                                  |
 
 `max_in_flight` is **sampled, not assumed**:
 

@@ -897,7 +897,11 @@ test("the post-click page is re-read until it classifies, then confirmed", async
   })
   assert.equal(out.outcome, "confirmation", "the LATER page is what counts")
   assert.equal(out.confirmationUrl, APPLY_URL)
-  assert.equal(page.reads(), 3, "it read the form twice before the confirmation")
+  assert.equal(
+    page.reads(),
+    3,
+    "it read the form twice before the confirmation",
+  )
   assert.ok(page.waits.length >= 2, "it actually waited between reads")
   live.finish({ outcome: "ok" })
 })

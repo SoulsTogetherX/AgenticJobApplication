@@ -35,7 +35,6 @@ import { positionals } from "../lib/args.mjs"
 // positional. `keyword-plan.mjs --jobs-dir jobs acme` used the slug "jobs".
 const VALUE_FLAGS = ["--answers", "--jobs-dir", "--limits", "--profile"]
 
-
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",

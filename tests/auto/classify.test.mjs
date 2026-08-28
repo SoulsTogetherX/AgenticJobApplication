@@ -469,9 +469,8 @@ test("the challenge kinds are the ones job.mjs treats as unconfirmed", () => {
 // ---------------------------------------------------------------------------
 
 test("sightedHosts is exactly the hosts a capture-sourced CONFIRMATION rule names — the evidence list, not the allowlist", async () => {
-  const { sightedHosts, isHostSighted } = await import(
-    "../../scripts/auto/classify.mjs"
-  )
+  const { sightedHosts, isHostSighted } =
+    await import("../../scripts/auto/classify.mjs")
   const hosts = sightedHosts()
   // Derived from the same rules, so this can never disagree with SHIPPED.
   const expected = [
@@ -490,7 +489,10 @@ test("sightedHosts is exactly the hosts a capture-sourced CONFIRMATION rule name
   // Allowlisted on the user's file, but no captured page: NOT sighted. This is
   // the pair the run report named — a board can clear the trust gate and still
   // be blind here.
-  assert.equal(isHostSighted("https://jobs.lever.co/acme/1234abcd/apply"), false)
+  assert.equal(
+    isHostSighted("https://jobs.lever.co/acme/1234abcd/apply"),
+    false,
+  )
   assert.equal(isHostSighted("not a url"), false, "fails closed")
 })
 

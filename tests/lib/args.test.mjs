@@ -189,10 +189,10 @@ test("everything after -- is a positional, even if it looks like a flag", () => 
 
 test("order is preserved, so a two-positional command still works", () => {
   // render-pdf.mjs and verify-claims.mjs both take two.
-  assert.deepEqual(
-    positionals(["in.md", "out.pdf", "--letter"], ["--css"]),
-    ["in.md", "out.pdf"],
-  )
+  assert.deepEqual(positionals(["in.md", "out.pdf", "--letter"], ["--css"]), [
+    "in.md",
+    "out.pdf",
+  ])
 })
 
 test("no script finds its positional by scanning for the first non-flag token", () => {
@@ -217,7 +217,9 @@ test("no script finds its positional by scanning for the first non-flag token", 
           // Skip prose: several files legitimately QUOTE the old idiom while
           // explaining why it was removed.
           if (/^\s*(\/\/|\*)/.test(line)) continue
-          if (/\.find\(\s*\(\w+\)\s*=>\s*!\w+\.startsWith\("--"\)\s*\)/.test(line))
+          if (
+            /\.find\(\s*\(\w+\)\s*=>\s*!\w+\.startsWith\("--"\)\s*\)/.test(line)
+          )
             offenders.push(`${path.relative(ROOT, p)}: ${line.trim()}`)
         }
       }

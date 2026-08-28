@@ -293,7 +293,13 @@ test("an unrecognised file slot is never handed the resume by document order", (
   // The live Render/Ashby shape, field-for-field.
   const plan = planFor([
     { k: "f3", t: "file", l: "Name", req: true },
-    { k: "f10", t: "file", l: "Resume", sel: "#_systemfield_resume", req: true },
+    {
+      k: "f10",
+      t: "file",
+      l: "Resume",
+      sel: "#_systemfield_resume",
+      req: true,
+    },
     { k: "f11", t: "file", l: "Cover Letter", sel: "#cover" },
   ])
   const uploads = plan.items.filter((i) => i.how === "upload")

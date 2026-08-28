@@ -3,7 +3,10 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { matchApplications, summarize } from "../../scripts/applications/applications.mjs"
+import {
+  matchApplications,
+  summarize,
+} from "../../scripts/applications/applications.mjs"
 import {
   openDb,
   upsertApplications,

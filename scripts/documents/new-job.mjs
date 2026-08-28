@@ -37,8 +37,27 @@ const args = process.argv.slice(2)
 // be ignored. See scripts/lib/args.mjs.
 try {
   assertKnownFlags(args, {
-    known: ["--company", "--title", "--url", "--description", "--description-file", "--from-lead", "--leads", "--root", "--help"],
-    valueFlags: ["--company", "--title", "--url", "--description", "--description-file", "--from-lead", "--leads", "--root"],
+    known: [
+      "--company",
+      "--title",
+      "--url",
+      "--description",
+      "--description-file",
+      "--from-lead",
+      "--leads",
+      "--root",
+      "--help",
+    ],
+    valueFlags: [
+      "--company",
+      "--title",
+      "--url",
+      "--description",
+      "--description-file",
+      "--from-lead",
+      "--leads",
+      "--root",
+    ],
     script: "new-job.mjs",
     note: "this command writes jobs/<slug>/job.json and context.json",
   })

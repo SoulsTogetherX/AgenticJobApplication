@@ -43,7 +43,6 @@ import { positionals } from "../lib/args.mjs"
 // positional. `flake-rate.mjs --runs 20 t.test.mjs` ran the target "20".
 const VALUE_FLAGS = ["--runs", "--load", "--alongside"]
 
-
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",

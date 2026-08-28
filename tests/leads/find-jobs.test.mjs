@@ -556,7 +556,10 @@ test("summarize reports fetched, duplicates, gate-rejected and stored — so sto
     // isTerse() is already true — the same way a tool call sees it.
     summarize(
       [{ id: "gh:1", company: "A", title: "Dev", location: "Remote" }],
-      [{ id: "gh:2", reasons: ["title: not a match"] }, { id: "gh:3", reasons: ["stale: 40d"] }],
+      [
+        { id: "gh:2", reasons: ["title: not a match"] },
+        { id: "gh:3", reasons: ["stale: 40d"] },
+      ],
       { counts: { fetched: 12, duplicates: 9 } },
     )
   } finally {
@@ -581,5 +584,10 @@ test("summarize with no counts still adds up — fetched falls back to kept + re
   } finally {
     console.log = orig
   }
-  assert.ok(lines.some((l) => l === "fetched=1 duplicates=0 gate_rejected=1 stored=0 rejected=1"), lines.join(" | "))
+  assert.ok(
+    lines.some(
+      (l) => l === "fetched=1 duplicates=0 gate_rejected=1 stored=0 rejected=1",
+    ),
+    lines.join(" | "),
+  )
 })

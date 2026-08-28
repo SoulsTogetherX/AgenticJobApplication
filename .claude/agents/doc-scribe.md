@@ -1,6 +1,7 @@
 ---
 name: doc-scribe
-description: Documentation role — owns CLAUDE.md, docs/guide|code|operate/, the skill
+description:
+  Documentation role — owns CLAUDE.md, docs/guide|code|operate/, the skill
   files and schemas, and the quality of code comments across the repo. Splits
   the oversized CLAUDE.md, keeps docs from claiming capabilities that moved, and
   protects the comments that record why something is the way it is. Not a

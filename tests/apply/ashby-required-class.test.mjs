@@ -206,8 +206,7 @@ const pairGroup = (labelCls, question) => `
     </div>
   </div>`
 
-const groupOf = (out) =>
-  (out.fields || []).find((f) => f.widget === "buttons")
+const groupOf = (out) => (out.fields || []).find((f) => f.widget === "buttons")
 
 test("a BUTTON-PAIR group whose entry label carries the marker is required", async () => {
   const out = await runScanner(

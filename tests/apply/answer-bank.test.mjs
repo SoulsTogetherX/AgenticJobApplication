@@ -1628,9 +1628,21 @@ const TIME_PROFILE = {
   experience: [
     // The user's own accounting anchors at the first INDUSTRY role — the
     // internship counts (a-008 says "since June 2023"), teaching does not.
-    { company: "School", title: "Teacher Assistant", dates: "May 2019 - May 2023" },
-    { company: "SightCo", title: "QA / Software Development Intern", dates: "Jun 2023 - Aug 2023" },
-    { company: "Acme", title: "Full-Stack Developer", dates: "Jan 2024 - Present" },
+    {
+      company: "School",
+      title: "Teacher Assistant",
+      dates: "May 2019 - May 2023",
+    },
+    {
+      company: "SightCo",
+      title: "QA / Software Development Intern",
+      dates: "Jun 2023 - Aug 2023",
+    },
+    {
+      company: "Acme",
+      title: "Full-Stack Developer",
+      dates: "Jan 2024 - Present",
+    },
   ],
 }
 // A bank holding exactly the stale literals the pass must outrank.
@@ -1638,10 +1650,16 @@ const TIME_BANK = {
   answers: [
     {
       id: "a8",
-      question: "How many years of professional software development experience do you have?",
+      question:
+        "How many years of professional software development experience do you have?",
       answer: "Approximately 3 years (since June 2023)",
     },
-    { id: "a53", question: "When can you start a new role?", answer: "2026-08-18", source: "model" },
+    {
+      id: "a53",
+      question: "When can you start a new role?",
+      answer: "2026-08-18",
+      source: "model",
+    },
   ],
 }
 const NOW_2026 = new Date("2026-08-21T12:00:00Z")
@@ -1674,7 +1692,12 @@ test("TIME: the same question two years later answers from the same facts with a
         k: "f1",
         t: "combo",
         l: "How many years of professional software development experience do you have?",
-        opts: ["Less than 3 years", "3 to 5 years", "6 to 9 years", "10+ years"],
+        opts: [
+          "Less than 3 years",
+          "3 to 5 years",
+          "6 to 9 years",
+          "10+ years",
+        ],
       },
     ],
     { now: new Date("2029-09-01T12:00:00Z") },

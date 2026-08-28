@@ -98,8 +98,8 @@ import { safeText } from "./untrusted-text.mjs"
 import { capCheck } from "./caps.mjs"
 import { submitReadiness } from "../apply/fill-plan.mjs"
 import { normalizeAssentPolicy } from "../apply/assent-policy.mjs"
-import { isDisqualifying } from "../lib/untrusted.mjs"
-import { DB_PATH, openDb, findPriorApplication } from "../lib/db.mjs"
+import { isDisqualifying } from "#lib/untrusted.mjs"
+import { DB_PATH, openDb, findPriorApplication } from "#lib/db.mjs"
 
 /** A caller wired this wrong. Never a defer. */
 export class AuthorizationInputError extends TypeError {

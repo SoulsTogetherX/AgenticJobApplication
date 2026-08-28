@@ -27,7 +27,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { loadYamlFile, isTerse } from "../lib/lib.mjs"
+import { loadYamlFile, isTerse } from "#lib/lib.mjs"
 import { profileText } from "../profile/profile-gaps.mjs"
 import { rankLeads, rankingContext } from "./recommend.mjs"
 import { clusterLeads, coveredBy } from "./cluster.mjs"
@@ -35,8 +35,8 @@ import {
   readLeadStore,
   resolveLeadSource,
   latestScreenVerdicts,
-} from "../lib/db.mjs"
-import { readApplications } from "../lib/db.mjs"
+} from "#lib/db.mjs"
+import { readApplications } from "#lib/db.mjs"
 import { readLimits, normalizeAllowlist } from "../auto/trust.mjs"
 
 const ROOT = path.resolve(

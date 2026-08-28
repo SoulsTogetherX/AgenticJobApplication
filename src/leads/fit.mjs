@@ -33,7 +33,7 @@
 //   - every rejection is visible in gate-audit.mjs, so a mis-parse is findable
 //     rather than a job that silently disappeared
 
-import { extractTech } from "../lib/keywords.mjs"
+import { extractTech } from "#lib/keywords.mjs"
 
 // Section headings.
 //

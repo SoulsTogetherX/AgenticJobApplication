@@ -19,14 +19,14 @@
 //        node src/leads/screen.mjs record <lead-id> --verdict pass|caution|reject
 //          [--reason "..."] [--signals a,b] [--source model]
 import fs from "node:fs"
-import { assertKnownFlags } from "../lib/args.mjs"
+import { assertKnownFlags } from "#lib/args.mjs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { isTerse, loadYamlFile, yearsOfExperience } from "../lib/lib.mjs"
+import { isTerse, loadYamlFile, yearsOfExperience } from "#lib/lib.mjs"
 import { loadLimits } from "./find-jobs.mjs"
 import { evaluateStages, STAGE_IDS } from "./stages.mjs"
 import { buildHistory } from "./risk.mjs"
-import { extractTech } from "../lib/keywords.mjs"
+import { extractTech } from "#lib/keywords.mjs"
 import { profileText } from "../profile/profile-gaps.mjs"
 import {
   readLeadStore,
@@ -35,7 +35,7 @@ import {
   loadKeywordIndex,
   recordScreens,
   screenIndex,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

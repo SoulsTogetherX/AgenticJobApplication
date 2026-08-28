@@ -21,7 +21,7 @@ import {
   EXIT,
   MAX_FACT_NODES,
 } from "../../src/auto/preflight.mjs"
-import { loadYamlFile } from "../../src/lib/lib.mjs"
+import { loadYamlFile } from "#lib/lib.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")

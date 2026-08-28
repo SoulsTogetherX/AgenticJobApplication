@@ -21,7 +21,7 @@ import {
   recordBoardPause,
   upsertAutoRun,
   upsertApplications,
-} from "../../src/lib/db.mjs"
+} from "#lib/db.mjs"
 import {
   buildAutoStatus,
   percentile,

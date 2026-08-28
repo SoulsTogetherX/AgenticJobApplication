@@ -43,11 +43,7 @@
 //     for cookie-free boards, one page on the shared profile for boards that
 //     need a session). That choice belongs to the pool, which owns the browser.
 //     This file must not know which lane it is on.
-import {
-  claimAutoJob,
-  setAutoJobState,
-  AUTO_QUEUE_TERMINAL,
-} from "../lib/db.mjs"
+import { claimAutoJob, setAutoJobState, AUTO_QUEUE_TERMINAL } from "#lib/db.mjs"
 import {
   authorizeSubmit,
   planSha256,

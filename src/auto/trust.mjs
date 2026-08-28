@@ -52,9 +52,9 @@
 import fs from "node:fs"
 
 import { ADAPTERS, detectAts } from "../apply/ats/index.mjs"
-import { loadYamlFile } from "../lib/lib.mjs"
+import { loadYamlFile } from "#lib/lib.mjs"
 import { submitOrigin } from "./authorize.mjs"
-import { isDisqualifying } from "../lib/untrusted.mjs"
+import { isDisqualifying } from "#lib/untrusted.mjs"
 import { safeText } from "./untrusted-text.mjs"
 
 // The five checks, named. A closed list, for the same reason authorize.mjs

@@ -5,7 +5,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { screenJob, extractYearsRequired } from "../../src/leads/screen.mjs"
-import { yearsOfExperience, parseDateRange } from "../../src/lib/lib.mjs"
+import { yearsOfExperience, parseDateRange } from "#lib/lib.mjs"
 import {
   textSnippet,
   SNIPPET_MAX,

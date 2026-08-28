@@ -29,7 +29,7 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import yaml from "js-yaml"
-import { buildFactIndex } from "../../src/lib/lib.mjs"
+import { buildFactIndex } from "#lib/lib.mjs"
 import {
   assembleResume,
   formatSelectionDiff,

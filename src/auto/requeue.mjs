@@ -45,8 +45,8 @@
 // Exit codes: 0 ok, 1 nothing matched, 2 usage.
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { openDb, AUTO_REQUEUEABLE_KINDS } from "../lib/db.mjs"
-import { assertKnownFlags, positionals } from "../lib/args.mjs"
+import { openDb, AUTO_REQUEUEABLE_KINDS } from "#lib/db.mjs"
+import { assertKnownFlags, positionals } from "#lib/args.mjs"
 
 export const REQUEUE_FLAGS = ["--list", "--reason", "--db", "--json", "--help"]
 export const REQUEUE_VALUE_FLAGS = ["--reason", "--db"]

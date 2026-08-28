@@ -21,15 +21,15 @@
 //   node src/applications/update-application.mjs <slug> --status s [--followed-up]
 import { pathToFileURL } from "node:url"
 import path from "node:path"
-import { isTerse, dumpYaml } from "../lib/lib.mjs"
+import { isTerse, dumpYaml } from "#lib/lib.mjs"
 import {
   openDb,
   readApplications,
   deleteApplication,
   exportApplicationsYaml,
   APPLICATIONS_PATH,
-} from "../lib/db.mjs"
-import { positionals } from "../lib/args.mjs"
+} from "#lib/db.mjs"
+import { positionals } from "#lib/args.mjs"
 
 // The flags that take a VALUE. Used by positionals() so a value is never read
 // as the positional — `applications.mjs remove --company Acme my-slug` used to

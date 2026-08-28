@@ -69,8 +69,8 @@ import fsp from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { repoRoot } from "../lib/lib.mjs"
-import { acquire, lockPathFor } from "../lib/lock.mjs"
+import { repoRoot } from "#lib/lib.mjs"
+import { acquire, lockPathFor } from "#lib/lock.mjs"
 
 export const ROOT = repoRoot()
 export const MCP_PROFILE = path.join(ROOT, ".playwright-mcp", "profile")

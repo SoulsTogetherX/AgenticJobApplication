@@ -24,7 +24,7 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { newestInputMtime, factBaseInputs } from "./pending-questions.mjs"
-import { assertKnownFlags } from "../lib/args.mjs"
+import { assertKnownFlags } from "#lib/args.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

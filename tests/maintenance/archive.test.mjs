@@ -18,11 +18,7 @@ import {
   planPurge,
   CLOSED,
 } from "../../src/maintenance/archive.mjs"
-import {
-  openDb,
-  upsertApplications,
-  writeDocuments,
-} from "../../src/lib/db.mjs"
+import { openDb, upsertApplications, writeDocuments } from "#lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

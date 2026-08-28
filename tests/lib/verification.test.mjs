@@ -13,13 +13,13 @@ import {
   verificationIdentity,
   hasVerifiedResume,
   verifiedResumeUrls,
-} from "../../src/lib/verification.mjs"
+} from "#lib/verification.mjs"
 import {
   openDb,
   recordVerification,
   hasPassingVerification,
   readVerifications,
-} from "../../src/lib/db.mjs"
+} from "#lib/db.mjs"
 import { classify } from "../../src/apply/automatability.mjs"
 
 function ws(t) {

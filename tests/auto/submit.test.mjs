@@ -29,7 +29,7 @@ import {
 } from "../../src/auto/submit.mjs"
 import { authorizeSubmit, planSha256 } from "../../src/auto/authorize.mjs"
 import { startRun } from "../../src/auto/audit.mjs"
-import { openDb, recordVerification } from "../../src/lib/db.mjs"
+import { openDb, recordVerification } from "#lib/db.mjs"
 
 // ---------------------------------------------------------------------------
 // The rig

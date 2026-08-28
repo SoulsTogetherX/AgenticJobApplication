@@ -32,9 +32,9 @@ import {
   parseQueries,
   DEFAULT_SEARCH_QUERY,
 } from "./find-jobs.mjs"
-import { isTerse, mapPool } from "../lib/lib.mjs"
-import { openDb, resolveLeadSource, readBoardStats } from "../lib/db.mjs"
-import { assertKnownFlags } from "../lib/args.mjs"
+import { isTerse, mapPool } from "#lib/lib.mjs"
+import { openDb, resolveLeadSource, readBoardStats } from "#lib/db.mjs"
+import { assertKnownFlags } from "#lib/args.mjs"
 
 const DEFAULT_CONCURRENCY = 6
 

@@ -29,7 +29,7 @@ import os from "node:os"
 import path from "node:path"
 import { execFile } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { openDb, upsertLeads, readLeadStore } from "../../src/lib/db.mjs"
+import { openDb, upsertLeads, readLeadStore } from "#lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

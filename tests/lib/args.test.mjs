@@ -15,11 +15,7 @@ const ROOT = path.resolve(
   "..",
   "..",
 )
-import {
-  assertKnownFlags,
-  nearestFlag,
-  positionals,
-} from "../../src/lib/args.mjs"
+import { assertKnownFlags, nearestFlag, positionals } from "#lib/args.mjs"
 
 const CYCLE = {
   known: ["--top", "--limit", "--json", "--skip-search", "--skip-apply"],

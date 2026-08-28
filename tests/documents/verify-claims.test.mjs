@@ -342,9 +342,8 @@ test("verifying a document in a job workspace writes a durable passing row", asy
   assert.equal(report.recorded.slug, "acme-dev")
 
   const { openDb, readVerifications, hasPassingVerification } =
-    await import("../../src/lib/db.mjs")
-  const { factBaseSha256, sha256File } =
-    await import("../../src/lib/verification.mjs")
+    await import("#lib/db.mjs")
+  const { factBaseSha256, sha256File } = await import("#lib/verification.mjs")
   const db = openDb(w.db)
   try {
     const rows = readVerifications(db, "acme-dev")
@@ -378,9 +377,8 @@ test("a FAILING verification is recorded as a failure, never as evidence", async
   assert.equal(report.recorded.slug, "acme-dev")
 
   const { openDb, readVerifications, hasPassingVerification } =
-    await import("../../src/lib/db.mjs")
-  const { sha256File, factBaseSha256 } =
-    await import("../../src/lib/verification.mjs")
+    await import("#lib/db.mjs")
+  const { sha256File, factBaseSha256 } = await import("#lib/verification.mjs")
   const db = openDb(w.db)
   try {
     assert.equal(readVerifications(db, "acme-dev")[0].verdict, "fail")
@@ -427,7 +425,7 @@ test("re-verifying the same bytes updates the row rather than piling up rows", a
   const w = workspace(t)
   verifyIn(w, w.resume)
   verifyIn(w, w.resume)
-  const { openDb, readVerifications } = await import("../../src/lib/db.mjs")
+  const { openDb, readVerifications } = await import("#lib/db.mjs")
   const db = openDb(w.db)
   try {
     assert.equal(readVerifications(db, "acme-dev").length, 1)

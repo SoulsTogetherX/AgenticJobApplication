@@ -20,19 +20,15 @@
 // Exit codes: 0 clean or only-improvements, 1 when leads became newly rejected
 // (so a CI-ish caller notices), 2 usage/missing store.
 import fs from "node:fs"
-import { assertKnownFlags } from "../lib/args.mjs"
+import { assertKnownFlags } from "#lib/args.mjs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { isTerse, loadYamlFile, yearsOfExperience } from "../lib/lib.mjs"
+import { isTerse, loadYamlFile, yearsOfExperience } from "#lib/lib.mjs"
 import { loadLimits } from "./find-jobs.mjs"
-import {
-  readLeadStore,
-  resolveLeadSource,
-  loadKeywordIndex,
-} from "../lib/db.mjs"
+import { readLeadStore, resolveLeadSource, loadKeywordIndex } from "#lib/db.mjs"
 import { evaluateStages, STAGE_IDS, STAGE_LABELS } from "./stages.mjs"
 import { buildHistory } from "./risk.mjs"
-import { extractTech } from "../lib/keywords.mjs"
+import { extractTech } from "#lib/keywords.mjs"
 import { profileText } from "../profile/profile-gaps.mjs"
 
 const ROOT = path.resolve(

@@ -17,8 +17,8 @@ import {
   adjacentTo,
   checkWrittenForm,
   preferredForm,
-} from "../../src/lib/keywords.mjs"
-import { techTermsIn } from "../../src/lib/lib.mjs"
+} from "#lib/keywords.mjs"
+import { techTermsIn } from "#lib/lib.mjs"
 
 // Every literal the R6 watchlist carried before the two lexicons were merged.
 // Losing any one of these silently weakens the truthfulness gate, which is the

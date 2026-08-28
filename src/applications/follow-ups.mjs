@@ -13,8 +13,8 @@
 import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { loadYamlFile, isTerse } from "../lib/lib.mjs"
-import { readApplications } from "../lib/db.mjs"
+import { loadYamlFile, isTerse } from "#lib/lib.mjs"
+import { readApplications } from "#lib/db.mjs"
 
 export const MAX_FOLLOW_UPS = 2
 const OPEN_STATUSES = new Set(["applied", "followed_up", undefined, null, ""])

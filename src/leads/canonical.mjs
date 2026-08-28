@@ -40,7 +40,7 @@
 // fetch.
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { mapPool } from "../lib/lib.mjs"
+import { mapPool } from "#lib/lib.mjs"
 
 // --- what counts as an ATS URL ------------------------------------------------
 //
@@ -474,8 +474,8 @@ async function main() {
   const network = flag("--network")
   const limit = Number(value("--limit", "0")) || 0
 
-  const { openDb, resolveLeadSource } = await import("../lib/db.mjs")
-  const { isTerse } = await import("../lib/lib.mjs")
+  const { openDb, resolveLeadSource } = await import("#lib/db.mjs")
+  const { isTerse } = await import("#lib/lib.mjs")
 
   const src = resolveLeadSource()
   if (src.kind !== "db") throw new Error("no lead database to canonicalize")

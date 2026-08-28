@@ -30,7 +30,7 @@ import {
   recordVerification,
   readAutoQueue,
   readOrphanAttempts,
-} from "../../src/lib/db.mjs"
+} from "#lib/db.mjs"
 
 const DOC_SHA = "a".repeat(64)
 const PROFILE_SHA = "b".repeat(64)

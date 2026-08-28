@@ -90,7 +90,7 @@ import path from "node:path"
 import child_process from "node:child_process"
 import { performance } from "node:perf_hooks"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { assertKnownFlags } from "../lib/args.mjs"
+import { assertKnownFlags } from "#lib/args.mjs"
 
 import {
   ROOT,
@@ -116,7 +116,7 @@ import {
   setAutoJobState,
   recordAutoSubmission,
   readReasonCounts,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 import {
   classifyPlanDefers,
   toStateOpts,

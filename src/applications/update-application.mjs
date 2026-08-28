@@ -9,8 +9,8 @@
 //   node src/applications/update-application.mjs <slug-or-company> --followed-up [--date YYYY-MM-DD]
 //   (flags combine; --file overrides the store for tests)
 import fs from "node:fs"
-import { loadYamlFile, dumpYaml } from "../lib/lib.mjs"
-import { readApplications, writeApplication } from "../lib/db.mjs"
+import { loadYamlFile, dumpYaml } from "#lib/lib.mjs"
+import { readApplications, writeApplication } from "#lib/db.mjs"
 
 export const STATUSES = [
   "applied",

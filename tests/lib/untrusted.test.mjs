@@ -37,8 +37,8 @@ import {
   rescanSummary,
   maskValue,
   RESCAN_LIMITS,
-} from "../../src/lib/untrusted.mjs"
-import { textSnippet } from "../../src/lib/lib.mjs"
+} from "#lib/untrusted.mjs"
+import { textSnippet } from "#lib/lib.mjs"
 import {
   BYPASSES,
   PLAIN_CONTROL,

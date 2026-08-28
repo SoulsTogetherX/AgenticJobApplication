@@ -23,7 +23,7 @@ import {
   knownOptsFromEntry,
   CACHE_VERSION,
 } from "../../src/apply/field-cache.mjs"
-import { lockPathFor } from "../../src/lib/lock.mjs"
+import { lockPathFor } from "#lib/lock.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

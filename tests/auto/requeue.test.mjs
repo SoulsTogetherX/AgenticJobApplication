@@ -9,7 +9,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { openDb } from "../../src/lib/db.mjs"
+import { openDb } from "#lib/db.mjs"
 import {
   requeueSlug,
   listRequeueable,

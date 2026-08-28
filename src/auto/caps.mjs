@@ -24,7 +24,7 @@ import {
   countAutoSubmissions,
   companySubmissionBreakdown,
   DB_PATH,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 
 /**
  * The cap arithmetic, answered from the ledgers rather than from a counter the

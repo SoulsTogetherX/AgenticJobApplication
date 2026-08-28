@@ -25,7 +25,7 @@ import {
   upsertApplications,
   updateApplication,
   readApplications,
-} from "../../src/lib/db.mjs"
+} from "#lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

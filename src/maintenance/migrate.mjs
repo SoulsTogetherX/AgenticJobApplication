@@ -58,9 +58,9 @@
 import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { loadYamlFile } from "../lib/lib.mjs"
+import { loadYamlFile } from "#lib/lib.mjs"
 import { extractTech } from "../profile/profile-gaps.mjs"
-import { assertKnownFlags } from "../lib/args.mjs"
+import { assertKnownFlags } from "#lib/args.mjs"
 import {
   openDb,
   upsertLeads,
@@ -72,7 +72,7 @@ import {
   readStrandedAutoJobs,
   DB_PATH,
   APPLICATIONS_PATH,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 
 function flag(args, name, fallback = null) {
   const i = args.indexOf(name)

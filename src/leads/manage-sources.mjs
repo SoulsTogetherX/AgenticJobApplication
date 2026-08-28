@@ -14,7 +14,7 @@
 // docs/job-sources.yaml is edited line-by-line (entries are single-line flow
 // maps) so the file's comments survive every add/remove.
 import fs from "node:fs"
-import { positionals } from "../lib/args.mjs"
+import { positionals } from "#lib/args.mjs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import yaml from "js-yaml"
@@ -25,7 +25,7 @@ import {
   loadLimits,
   DEFAULT_SEARCH_QUERY,
 } from "./find-jobs.mjs"
-import { isTerse } from "../lib/lib.mjs"
+import { isTerse } from "#lib/lib.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

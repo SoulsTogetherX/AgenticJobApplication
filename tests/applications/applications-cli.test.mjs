@@ -12,8 +12,8 @@ import {
   upsertApplications,
   deleteApplication,
   exportApplicationsYaml,
-} from "../../src/lib/db.mjs"
-import { dumpYaml, loadYamlFile } from "../../src/lib/lib.mjs"
+} from "#lib/db.mjs"
+import { dumpYaml, loadYamlFile } from "#lib/lib.mjs"
 
 const APPS = [
   {

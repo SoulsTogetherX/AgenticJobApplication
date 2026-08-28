@@ -35,8 +35,8 @@ import {
   CLAIM,
 } from "../fixtures/hostile/bypasses.mjs"
 import { buildPlan } from "../../src/documents/keyword-plan.mjs"
-import { sanitizeUntrusted } from "../../src/lib/untrusted.mjs"
-import { textSnippet } from "../../src/lib/lib.mjs"
+import { sanitizeUntrusted } from "#lib/untrusted.mjs"
+import { textSnippet } from "#lib/lib.mjs"
 import { scoreRisk } from "../../src/leads/risk.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))

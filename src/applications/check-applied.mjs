@@ -8,8 +8,8 @@
 // Output: JSON { query, job_already_applied, matches: [{... days_ago}] }
 // Exit codes: 0 = ran fine (match or not), 2 = usage error.
 import fs from "node:fs"
-import { loadYamlFile } from "../lib/lib.mjs"
-import { readApplications } from "../lib/db.mjs"
+import { loadYamlFile } from "#lib/lib.mjs"
+import { readApplications } from "#lib/db.mjs"
 
 const args = process.argv.slice(2)
 function flag(name, dflt) {

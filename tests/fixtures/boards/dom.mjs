@@ -39,7 +39,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { decodeEntities } from "../../../src/lib/lib.mjs"
+import { decodeEntities } from "#lib/lib.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const SCANNER_PATH = path.resolve(

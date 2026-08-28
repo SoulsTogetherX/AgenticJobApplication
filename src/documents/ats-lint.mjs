@@ -30,10 +30,10 @@
 import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { isTerse } from "../lib/lib.mjs"
-import { techTermsIn } from "../lib/lib.mjs"
-import { checkWrittenForm } from "../lib/keywords.mjs"
-import { positionals } from "../lib/args.mjs"
+import { isTerse } from "#lib/lib.mjs"
+import { techTermsIn } from "#lib/lib.mjs"
+import { checkWrittenForm } from "#lib/keywords.mjs"
+import { positionals } from "#lib/args.mjs"
 
 // Flags that take a VALUE, so positionals() never reads one as the
 // positional. `ats-lint.mjs --html f.html r.md` linted f.html AS the markdown.

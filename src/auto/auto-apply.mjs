@@ -49,15 +49,15 @@ import {
   screenIndex,
   findPriorApplication,
   AUTO_QUEUE_TERMINAL,
-} from "../lib/db.mjs"
-import { loadYamlFile } from "../lib/lib.mjs"
-import { assertKnownFlags } from "../lib/args.mjs"
+} from "#lib/db.mjs"
+import { loadYamlFile } from "#lib/lib.mjs"
+import { assertKnownFlags } from "#lib/args.mjs"
 import {
   verifiedResumeUrls,
   verificationIdentity,
   factBaseSha256,
   JOBS_DIR as VERIFY_JOBS_DIR,
-} from "../lib/verification.mjs"
+} from "#lib/verification.mjs"
 import { boardKey } from "../apply/automatability.mjs"
 import { resolveLeadForTrust, allowlistProblems, readLimits } from "./trust.mjs"
 import { preflight, EXIT, DEFAULT_LIMITS } from "./preflight.mjs"

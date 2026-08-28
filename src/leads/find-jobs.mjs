@@ -24,12 +24,12 @@ import {
   decodeEntities,
   textSnippet,
   SNIPPET_MAX,
-} from "../lib/lib.mjs"
-import { untrustedSnippet } from "../lib/untrusted.mjs"
-import { positionals } from "../lib/args.mjs"
+} from "#lib/lib.mjs"
+import { untrustedSnippet } from "#lib/untrusted.mjs"
+import { positionals } from "#lib/args.mjs"
 import { enrichDescriptions } from "./enrich.mjs"
 import { canonicalizeLeads } from "./canonical.mjs"
-import { withLock, LEADS_LOCK, lockPathFor } from "../lib/lock.mjs"
+import { withLock, LEADS_LOCK, lockPathFor } from "#lib/lock.mjs"
 import {
   readLeadStore,
   writeLeadStore,
@@ -39,7 +39,7 @@ import {
   setLeadKeywords,
   readApplications,
   recordBoardStats,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 import { extractTech } from "../profile/profile-gaps.mjs"
 
 const ROOT = path.resolve(

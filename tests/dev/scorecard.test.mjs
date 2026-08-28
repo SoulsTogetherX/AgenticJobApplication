@@ -19,7 +19,7 @@ import {
   buildScorecard,
   appendLine,
 } from "../../src/dev/scorecard.mjs"
-import { openDb } from "../../src/lib/db.mjs"
+import { openDb } from "#lib/db.mjs"
 
 function tmpdir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "scorecard-"))

@@ -24,7 +24,7 @@
 // Like L2 this only ever rejects on unambiguous evidence. A ghost job costs an
 // application; a false reject costs a job. They are not symmetric.
 
-import { sanitizeUntrusted, isDisqualifying } from "../lib/untrusted.mjs"
+import { sanitizeUntrusted, isDisqualifying } from "#lib/untrusted.mjs"
 
 // Deliberately narrow. "Ongoing recruitment" and "we are growing fast" are NOT
 // here — plenty of real postings say them.

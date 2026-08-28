@@ -19,7 +19,7 @@ import {
   HOST_MIN_DELAY_MS,
   RETRY_AFTER_DEFAULT_MS,
   RETRY_AFTER_CAP_MS,
-} from "../../src/lib/lib.mjs"
+} from "#lib/lib.mjs"
 import { findBoard } from "../../src/leads/find-boards.mjs"
 
 // --- harness ---------------------------------------------------------------

@@ -28,19 +28,19 @@
 //   node src/dev/scorecard.mjs --json --no-record           # inspect only
 //   node src/dev/scorecard.mjs --db jobs/leads.db --out docs/scorecard.jsonl
 import fs from "node:fs"
-import { assertKnownFlags } from "../lib/args.mjs"
+import { assertKnownFlags } from "#lib/args.mjs"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { isTerse } from "../lib/lib.mjs"
+import { isTerse } from "#lib/lib.mjs"
 import {
   openDb,
   hasPassingVerification,
   readApplications,
   readJobWallTimes,
   readSubmitLatencies,
-} from "../lib/db.mjs"
-import { verifiedResumeUrls } from "../lib/verification.mjs"
+} from "#lib/db.mjs"
+import { verifiedResumeUrls } from "#lib/verification.mjs"
 import { loadSources } from "../leads/find-jobs.mjs"
 
 const ROOT = path.resolve(

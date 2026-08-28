@@ -21,7 +21,7 @@ import {
   claimAutoJob,
   setAutoJobState,
   recordAutoSubmission,
-} from "../../../src/lib/db.mjs"
+} from "#lib/db.mjs"
 import { startRun } from "../../../src/auto/audit.mjs"
 import { runCampaign } from "../../../src/auto/auto-apply.mjs"
 

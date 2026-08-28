@@ -25,7 +25,7 @@ import {
   NoSummaryFit,
 } from "../../src/documents/assemble-resume.mjs"
 import { buildPlan } from "../../src/documents/keyword-plan.mjs"
-import { buildFactIndex } from "../../src/lib/lib.mjs"
+import { buildFactIndex } from "#lib/lib.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")

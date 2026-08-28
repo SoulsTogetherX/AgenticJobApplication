@@ -18,7 +18,7 @@ import {
   MAX_PAGES,
 } from "../../src/auto/multipage.mjs"
 import { authorizeSubmit, planSha256 } from "../../src/auto/authorize.mjs"
-import { openDb } from "../../src/lib/db.mjs"
+import { openDb } from "#lib/db.mjs"
 
 const APPLY_URL = "https://boards.greenhouse.io/acme/jobs/1"
 

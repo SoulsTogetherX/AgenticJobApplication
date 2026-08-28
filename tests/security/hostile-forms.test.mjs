@@ -32,8 +32,8 @@ import {
   submitReadiness,
 } from "../../src/apply/fill-plan.mjs"
 import { normalizeQuestion } from "../../src/apply/answer-bank.mjs"
-import { answerClass, classifyAnswer } from "../../src/lib/untrusted.mjs"
-import { loadYamlFile } from "../../src/lib/lib.mjs"
+import { answerClass, classifyAnswer } from "#lib/untrusted.mjs"
+import { loadYamlFile } from "#lib/lib.mjs"
 import { questionsFromPlans } from "../../src/apply/pending-questions.mjs"
 import fillPage from "../../src/apply/fill-engine.mjs"
 import {

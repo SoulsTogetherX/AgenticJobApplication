@@ -18,13 +18,13 @@
 import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { isTerse, techTermsIn, titleTokens, jaccard } from "../lib/lib.mjs"
+import { isTerse, techTermsIn, titleTokens, jaccard } from "#lib/lib.mjs"
 import {
   openDb,
   readLeadStore,
   resolveLeadSource,
   keywordMap,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 
 // Same 50/50 split reuse-check.mjs scores workspaces with, for the same reason:
 // title alone groups a back-end role with a front-end one because both say

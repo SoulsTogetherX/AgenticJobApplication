@@ -44,7 +44,7 @@
 // src/lib/untrusted.mjs is w1-security's. This module IMPORTS it and adds
 // no patterns of its own — a second pattern list is a second thing to forget.
 
-import { sanitizeUntrusted } from "../lib/untrusted.mjs"
+import { sanitizeUntrusted } from "#lib/untrusted.mjs"
 
 /**
  * Keys whose values must survive byte-for-byte because something mechanical

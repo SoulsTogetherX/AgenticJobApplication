@@ -23,7 +23,7 @@ import {
   countAutoSubmissions,
   readAutoAssents,
   latestAutoRun,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 import { stopActive, readStop } from "./guard.mjs"
 import { reasonClass, newlyChallengedBoards } from "./taxonomy.mjs"
 import { sightedHosts, isHostSighted } from "./classify.mjs"

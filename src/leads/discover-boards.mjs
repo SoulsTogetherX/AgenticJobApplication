@@ -21,7 +21,7 @@ import fs from "node:fs"
 import { pathToFileURL } from "node:url"
 import path from "node:path"
 import yaml from "js-yaml"
-import { isTerse, mapPool } from "../lib/lib.mjs"
+import { isTerse, mapPool } from "#lib/lib.mjs"
 import {
   loadSources,
   loadLimits,

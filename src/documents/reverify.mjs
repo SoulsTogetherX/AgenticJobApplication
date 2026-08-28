@@ -43,13 +43,13 @@ import {
   JOBS_DIR,
   PROFILE_PATH,
   ANSWERS_PATH,
-} from "../lib/verification.mjs"
+} from "#lib/verification.mjs"
 import {
   recordVerification,
   readVerifications,
   orphanVerificationCandidates,
   deleteVerifications,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 
 // The documents a workspace can hold a verification for, in report order.
 const MODE_FILES = [
@@ -269,7 +269,7 @@ async function main(args = process.argv.slice(2)) {
   // 61-job sweep, recording a verification row for every stale document — a
   // flag passed to ask a question performed a write. It had no --help, no
   // usage, and no way to tell "no arguments" from "help wanted".
-  const { assertKnownFlags } = await import("../lib/args.mjs")
+  const { assertKnownFlags } = await import("#lib/args.mjs")
   if (args.includes("--help") || args.includes("-h")) {
     process.stdout.write(USAGE)
     return 0
@@ -289,7 +289,7 @@ async function main(args = process.argv.slice(2)) {
     const i = args.indexOf(name)
     return i !== -1 && args[i + 1] ? args[i + 1] : dflt
   }
-  const { openDb } = await import("../lib/db.mjs")
+  const { openDb } = await import("#lib/db.mjs")
   const db = openDb(flag("--db", undefined))
   let sweep
   try {

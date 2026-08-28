@@ -86,7 +86,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { loadYamlFile } from "../lib/lib.mjs"
+import { loadYamlFile } from "#lib/lib.mjs"
 import {
   findSensitiveValues,
   describeSensitive,
@@ -94,7 +94,7 @@ import {
   rescanAnswerBank,
   rescanSummary,
   SENSITIVE_LIMITS,
-} from "../lib/untrusted.mjs"
+} from "#lib/untrusted.mjs"
 import { stopActive, readStop, STOP_PATH, ROOT } from "./guard.mjs"
 
 export const PREFLIGHT_LIMITS =

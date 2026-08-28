@@ -71,7 +71,7 @@ import {
   readOrphanAttempts,
   readAttemptsForRun,
   DB_PATH,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 // The gate. audit.mjs may import it because capCheck moved to caps.mjs, so
 // authorize.mjs no longer imports this file and there is no cycle to dodge.
 // That is what lets beginSubmit demand the token UNCONDITIONALLY.

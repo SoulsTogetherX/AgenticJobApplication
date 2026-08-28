@@ -7,7 +7,7 @@ import { startRun, hashProfile, PROFILE_FILES } from "../../src/auto/audit.mjs"
 import { capCheck } from "../../src/auto/caps.mjs"
 import { authorizeSubmit, planSha256 } from "../../src/auto/authorize.mjs"
 import { DatabaseSync } from "node:sqlite"
-import { openDb, upsertApplications } from "../../src/lib/db.mjs"
+import { openDb, upsertApplications } from "#lib/db.mjs"
 import { StopError, readStop, scopedStopPath } from "../../src/auto/guard.mjs"
 
 function sandbox({ profile = "name: x\n", answers = "answers: []\n" } = {}) {

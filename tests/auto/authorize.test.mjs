@@ -20,7 +20,7 @@ import {
 } from "../../src/auto/authorize.mjs"
 import { StopError } from "../../src/auto/guard.mjs"
 import { submitReadiness } from "../../src/apply/fill-plan.mjs"
-import { openDb, upsertApplications } from "../../src/lib/db.mjs"
+import { openDb, upsertApplications } from "#lib/db.mjs"
 import { startRun } from "../../src/auto/audit.mjs"
 
 // --- fixtures ----------------------------------------------------------------

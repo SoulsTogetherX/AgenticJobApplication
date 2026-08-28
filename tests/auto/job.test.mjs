@@ -20,7 +20,7 @@ import {
   claimAutoJob,
   AUTO_DEFER_KINDS,
   AUTO_FAILURE_KINDS,
-} from "../../src/lib/db.mjs"
+} from "#lib/db.mjs"
 
 const SLUG = "acme-fullstack"
 const APPLY_URL = "http://127.0.0.1:4599/boards.greenhouse.io/e/jobs/1"
@@ -619,8 +619,7 @@ test("CHECK_TO_KIND covers every SUBMIT_CHECKS entry", async () => {
   // is what keeps the fallback from being how new checks are reported.
   const { CHECK_TO_KIND } = await import("../../src/auto/job.mjs")
   const { SUBMIT_CHECKS } = await import("../../src/auto/authorize.mjs")
-  const { AUTO_DEFER_KINDS, AUTO_FAILURE_KINDS } =
-    await import("../../src/lib/db.mjs")
+  const { AUTO_DEFER_KINDS, AUTO_FAILURE_KINDS } = await import("#lib/db.mjs")
 
   const unmapped = SUBMIT_CHECKS.filter((c) => !CHECK_TO_KIND.has(c))
   assert.deepEqual(

@@ -70,7 +70,7 @@ import {
 } from "./authorize.mjs"
 import { submitReadiness } from "../apply/fill-plan.mjs"
 import { safeText } from "./untrusted-text.mjs"
-import { openDb, hasPassingVerification, DB_PATH } from "../lib/db.mjs"
+import { openDb, hasPassingVerification, DB_PATH } from "#lib/db.mjs"
 
 /** The eleven, named, in §4.10's numbering. A report says which one refused
  *  without parsing prose, and a twelfth has to be added HERE. */

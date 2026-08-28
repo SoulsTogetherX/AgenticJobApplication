@@ -16,8 +16,8 @@ import {
   DENSITY_CAP,
   TITLE_MAX,
 } from "../../src/documents/keyword-plan.mjs"
-import { evidenceText, techTermsIn } from "../../src/lib/lib.mjs"
-import { extractTech } from "../../src/lib/keywords.mjs"
+import { evidenceText, techTermsIn } from "#lib/lib.mjs"
+import { extractTech } from "#lib/keywords.mjs"
 
 const PROFILE_BLOB =
   "Skills: React, Node.js, TypeScript, PostgreSQL, AWS, Docker, Git. " +

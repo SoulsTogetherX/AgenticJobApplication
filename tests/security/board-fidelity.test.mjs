@@ -20,7 +20,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { start } from "../fixtures/boards/server.mjs"
-import { decodeEntities } from "../../src/lib/lib.mjs"
+import { decodeEntities } from "#lib/lib.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SCANS = path.resolve(HERE, "..", "fixtures", "boards", "scans")

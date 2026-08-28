@@ -21,7 +21,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { loadYamlFile, isTerse } from "../lib/lib.mjs"
+import { loadYamlFile, isTerse } from "#lib/lib.mjs"
 import { extractTech, profileText } from "../profile/profile-gaps.mjs"
 import {
   readLeadStore,
@@ -29,7 +29,7 @@ import {
   openDb,
   keywordMap,
   findPriorApplication,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 import { matchTitleKeyword, loadLimits } from "./find-jobs.mjs"
 import { readLimits, normalizeAllowlist } from "../auto/trust.mjs"
 import {

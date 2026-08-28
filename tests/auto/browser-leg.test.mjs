@@ -34,7 +34,7 @@ import { start } from "../fixtures/boards/server.mjs"
 import { launchBrowser } from "../../src/apply/browser.mjs"
 import { runCampaign, makeOpenPage } from "../../src/auto/auto-apply.mjs"
 import { makeStages } from "../../src/auto/stages.mjs"
-import { openDb, recordVerification, readAutoQueue } from "../../src/lib/db.mjs"
+import { openDb, recordVerification, readAutoQueue } from "#lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

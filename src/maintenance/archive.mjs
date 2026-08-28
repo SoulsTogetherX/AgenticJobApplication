@@ -31,7 +31,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { isTerse } from "../lib/lib.mjs"
+import { isTerse } from "#lib/lib.mjs"
 import {
   openDb,
   readApplications,
@@ -41,7 +41,7 @@ import {
   deleteDocuments,
   rowToLead,
   DB_PATH,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 import { loadLimits } from "../leads/find-jobs.mjs"
 
 const ROOT = path.resolve(

@@ -21,7 +21,7 @@ import {
   CYCLE_VALUE_FLAGS,
   STDERR_TAIL_LINES,
 } from "../../src/auto/cycle.mjs"
-import { assertKnownFlags } from "../../src/lib/args.mjs"
+import { assertKnownFlags } from "#lib/args.mjs"
 import { EXIT_NO_FIT } from "../../src/documents/assemble-resume.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))

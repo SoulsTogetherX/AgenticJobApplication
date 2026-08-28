@@ -194,7 +194,7 @@ test("the graph's only dynamic import is the local verification store", () => {
   // load something the static assertion above never saw, so it has to be a
   // deliberate edit to this line rather than something that slips through.
   assert.deepEqual(dynamic.map((e) => `${e.from} -> ${e.spec}`).sort(), [
-    "src/documents/verify-claims.mjs -> ../lib/db.mjs",
+    "src/documents/verify-claims.mjs -> #lib/db.mjs",
     "src/lib/db.mjs -> node:sqlite",
   ])
 })

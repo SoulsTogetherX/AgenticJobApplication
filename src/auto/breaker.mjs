@@ -59,7 +59,7 @@
 // So a transient kind is not eligible to count toward a signature until its
 // bounded job-level retry has been spent. `isTransient` is that list, and it is
 // deliberately short: a kind that is merely INCONVENIENT is not transient.
-import { recordBoardPause, clearBoardPause } from "../lib/db.mjs"
+import { recordBoardPause, clearBoardPause } from "#lib/db.mjs"
 import { safeText } from "./untrusted-text.mjs"
 
 /** Kinds that cluster in time and deserve a retry before they mean anything. */

@@ -30,7 +30,7 @@
 // (the caller falls back to reading the page).
 import fs from "node:fs"
 import path from "node:path"
-import { assertKnownFlags } from "../lib/args.mjs"
+import { assertKnownFlags } from "#lib/args.mjs"
 
 const args = process.argv.slice(2)
 // STRICT. this command writes jobs/<slug>/job.json and context.json, so an unrecognised flag must not
@@ -155,12 +155,12 @@ let findings = []
 // posting text at all) should not pay to load a 900-line pattern module.
 let untrusted = null
 const loadUntrusted = async () =>
-  (untrusted ??= await import("../lib/untrusted.mjs"))
+  (untrusted ??= await import("#lib/untrusted.mjs"))
 
 if (fromLead) {
   // Imported lazily: opening the lead store pulls in node:sqlite, and the
   // plain scaffold path has no business paying for that.
-  const { readLeadStore } = await import("../lib/db.mjs")
+  const { readLeadStore } = await import("#lib/db.mjs")
   const lead = findLead(readLeadStore(leadsFile).leads ?? [], fromLead)
   if (!lead) {
     console.error(

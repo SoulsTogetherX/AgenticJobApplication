@@ -25,7 +25,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { loadYamlFile, isTerse, parseDateRange } from "../lib/lib.mjs"
+import { loadYamlFile, isTerse, parseDateRange } from "#lib/lib.mjs"
 // TYPED INTENTS (autonomy plan v2 item 2.1). The three ladder tiers that used
 // to live in THIS file — the CONCEPTS bucket, the concept-constrained fuzzy
 // pass, and the polarityMismatch guard bolted on after it — are gone, replaced

@@ -21,7 +21,7 @@ import {
   AUTO_DEFER_KINDS,
   AUTO_REQUEUEABLE_KINDS,
   readStaleDeferred,
-} from "../../src/lib/db.mjs"
+} from "#lib/db.mjs"
 
 // One temp store per test, with the handles tracked. Closing before removing
 // matters on Windows: an open SQLite handle keeps a lock on the file, and

@@ -42,7 +42,7 @@ import { loadDisclosureLimits } from "../apply/disclosure.mjs"
 import { loadAssentPolicy } from "../apply/assent-policy.mjs"
 import { detectAts } from "../apply/ats/index.mjs"
 import { classify as classifyPage } from "./classify.mjs"
-import { loadYamlFile } from "../lib/lib.mjs"
+import { loadYamlFile } from "#lib/lib.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

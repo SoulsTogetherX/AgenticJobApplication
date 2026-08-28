@@ -24,12 +24,12 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { loadYamlFile, isTerse, evidenceText } from "../lib/lib.mjs"
-import { extractTech, atsFormsFor, SKILL_BY_NAME } from "../lib/keywords.mjs"
+import { loadYamlFile, isTerse, evidenceText } from "#lib/lib.mjs"
+import { extractTech, atsFormsFor, SKILL_BY_NAME } from "#lib/keywords.mjs"
 import { splitRequirements } from "../leads/fit.mjs"
-import { sanitizeUntrusted } from "../lib/untrusted.mjs"
+import { sanitizeUntrusted } from "#lib/untrusted.mjs"
 import { profileText } from "../profile/profile-gaps.mjs"
-import { positionals } from "../lib/args.mjs"
+import { positionals } from "#lib/args.mjs"
 
 // Flags that take a VALUE, so positionals() never reads one as the
 // positional. `keyword-plan.mjs --jobs-dir jobs acme` used the slug "jobs".

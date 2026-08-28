@@ -30,7 +30,7 @@ import {
   AUTO_CHALLENGE_KINDS,
   autoReasonClass,
   assertReasonKind,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 import { safeText } from "./untrusted-text.mjs"
 
 export {

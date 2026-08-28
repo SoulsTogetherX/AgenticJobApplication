@@ -38,7 +38,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import yaml from "js-yaml"
-import { fetchJson, fetchText, isTerse } from "../lib/lib.mjs"
+import { fetchJson, fetchText, isTerse } from "#lib/lib.mjs"
 import { loadSources } from "./find-jobs.mjs"
 
 const ROOT = path.resolve(

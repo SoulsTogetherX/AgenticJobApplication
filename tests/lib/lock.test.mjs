@@ -19,11 +19,15 @@ import {
   LEADS_LOCK,
   DEFAULT_STALE_MS,
   DEFAULT_TIMEOUT_MS,
-} from "../../src/lib/lock.mjs"
+} from "#lib/lock.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
+// A FILESYSTEM path, not an import specifier — workers spawned from temp
+// dirs import lock.mjs by this absolute URL because "#lib/*" resolves only
+// under the package root. Segment form on purpose: a string sweep rewriting
+// "../../src/lib/..." specifiers must not touch it (one did, 2026-08-27).
 const LOCK_MJS = pathToFileURL(
-  path.resolve(HERE, "../../src/lib/lock.mjs"),
+  path.resolve(HERE, "..", "..", "src", "lib", "lock.mjs"),
 ).href
 
 function tmpdir() {

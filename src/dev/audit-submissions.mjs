@@ -32,8 +32,8 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { openDb } from "../lib/db.mjs"
-import { positionals } from "../lib/args.mjs"
+import { openDb } from "#lib/db.mjs"
+import { positionals } from "#lib/args.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

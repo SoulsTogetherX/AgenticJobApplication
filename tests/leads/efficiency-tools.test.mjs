@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { outputMode, isTerse } from "../../src/lib/lib.mjs"
+import { outputMode, isTerse } from "#lib/lib.mjs"
 import {
   scoreLead,
   titleScore,

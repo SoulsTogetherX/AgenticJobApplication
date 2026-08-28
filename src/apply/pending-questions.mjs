@@ -25,7 +25,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { isTerse } from "../lib/lib.mjs"
+import { isTerse } from "#lib/lib.mjs"
 import { detectAts } from "./ats/index.mjs"
 import { loadCache } from "./field-cache.mjs"
 import {

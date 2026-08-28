@@ -56,9 +56,9 @@ import {
   extractMonthYears,
   techTermsIn,
   evidenceText,
-} from "../lib/lib.mjs"
-import { canonicalSurface } from "../lib/keywords.mjs"
-import { verificationIdentity, JOBS_DIR } from "../lib/verification.mjs"
+} from "#lib/lib.mjs"
+import { canonicalSurface } from "#lib/keywords.mjs"
+import { verificationIdentity, JOBS_DIR } from "#lib/verification.mjs"
 
 // A line may legitimately carry MORE THAN ONE annotation. Writers combine ids
 // into one tag (`<!-- fact:a,b -->`) but nothing requires it, and two separate
@@ -419,7 +419,7 @@ export async function main(args = process.argv.slice(2)) {
     : verificationIdentity(file, { jobsDir, profilePath, answersPath })
   if (identity) {
     try {
-      const { openDb, recordVerification } = await import("../lib/db.mjs")
+      const { openDb, recordVerification } = await import("#lib/db.mjs")
       const db = openDb(dbFlag ?? undefined)
       try {
         recordVerification(db, {

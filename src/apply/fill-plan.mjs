@@ -68,8 +68,8 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { isTerse, loadYamlFile } from "../lib/lib.mjs"
-import { positionals, assertKnownFlags } from "../lib/args.mjs"
+import { isTerse, loadYamlFile } from "#lib/lib.mjs"
+import { positionals, assertKnownFlags } from "#lib/args.mjs"
 import { detectAts } from "./ats/index.mjs"
 import { resolveFieldsFromFiles, normalizeQuestion } from "./answer-bank.mjs"
 // Read-only reuse of scan-engine.mjs's own "is this control safe to click"
@@ -107,7 +107,7 @@ import {
   describeFindings,
   answerClass,
   describeClass,
-} from "../lib/untrusted.mjs"
+} from "#lib/untrusted.mjs"
 // Items 2.2/2.3 — how much of the fact base ONE form pulls. See
 // disclosure.mjs's header for both thresholds and the measurements behind
 // them; the two consumers are the `long-free-text` defer in the per-field loop

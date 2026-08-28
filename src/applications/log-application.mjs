@@ -10,8 +10,8 @@
 //        [--url <url>] [--date YYYY-MM-DD] [--notes "..."] [--file <yaml>]
 // --file forces the legacy YAML-only path, which is what the tests use.
 import fs from "node:fs"
-import { loadYamlFile, dumpYaml } from "../lib/lib.mjs"
-import { readApplications, writeApplication } from "../lib/db.mjs"
+import { loadYamlFile, dumpYaml } from "#lib/lib.mjs"
+import { readApplications, writeApplication } from "#lib/db.mjs"
 
 const args = process.argv.slice(2)
 function flag(name, dflt) {

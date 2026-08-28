@@ -17,7 +17,7 @@ import {
   fetchJson,
   fetchText,
   FETCH_TIMEOUT_MS,
-} from "../../src/lib/lib.mjs"
+} from "#lib/lib.mjs"
 
 // fixtures/ stays at the tests/ root, shared by every group.
 const FIX = path.join(

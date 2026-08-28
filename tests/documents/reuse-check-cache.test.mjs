@@ -27,11 +27,7 @@ import {
   makeSha256,
   CACHE_MIN_WORKSPACES,
 } from "../../src/documents/reuse-check.mjs"
-import {
-  openDb,
-  readWorkspaceStacks,
-  upsertWorkspaceStack,
-} from "../../src/lib/db.mjs"
+import { openDb, readWorkspaceStacks, upsertWorkspaceStack } from "#lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

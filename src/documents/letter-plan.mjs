@@ -32,14 +32,14 @@
 import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { isTerse } from "../lib/lib.mjs"
+import { isTerse } from "#lib/lib.mjs"
 import { clusterLeads } from "../leads/cluster.mjs"
 import {
   openDb,
   readLeadStore,
   resolveLeadSource,
   keywordMap,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 
 // ---------------------------------------------------------------------------
 // The cost model. Every number here is DECLARED, with where it comes from.

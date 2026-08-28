@@ -31,7 +31,7 @@ import {
   readAutoQueue,
   readOrphanAttempts,
   RECONCILED_NOT_SENT,
-} from "../../src/lib/db.mjs"
+} from "#lib/db.mjs"
 import { readStop, scopedStopPath } from "../../src/auto/guard.mjs"
 
 function sandbox() {

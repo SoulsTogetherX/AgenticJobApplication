@@ -64,7 +64,7 @@ import {
   acknowledgeAutoSubmission,
   setAutoJobState,
   RECONCILED_NOT_SENT,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 import { classify } from "./classify.mjs"
 import { safeText } from "./untrusted-text.mjs"
 import { raiseStop, JOBS_DIR, STOP_PATH } from "./guard.mjs"

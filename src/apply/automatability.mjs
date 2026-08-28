@@ -62,7 +62,7 @@ import {
   looksLikeAgreementProse,
 } from "./fill-plan.mjs"
 import { longFreeTextReason, DEFAULT_LIMITS } from "./disclosure.mjs"
-import { isTerse } from "../lib/lib.mjs"
+import { isTerse } from "#lib/lib.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -591,13 +591,13 @@ async function main() {
     { scoreFit, isEvaluable },
     { verifiedResumeUrls },
   ] = await Promise.all([
-    import("../lib/db.mjs"),
+    import("#lib/db.mjs"),
     import("../leads/stages.mjs"),
     import("../leads/fit.mjs"),
-    import("../lib/verification.mjs"),
+    import("#lib/verification.mjs"),
   ])
-  const { loadYamlFile } = await import("../lib/lib.mjs")
-  const { extractTech } = await import("../lib/keywords.mjs")
+  const { loadYamlFile } = await import("#lib/lib.mjs")
+  const { extractTech } = await import("#lib/keywords.mjs")
 
   const limits = loadYamlFile(
     path.join(ROOT, "docs", "application-limits.yaml"),

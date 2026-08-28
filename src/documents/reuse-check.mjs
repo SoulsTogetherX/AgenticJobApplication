@@ -38,13 +38,13 @@
 // `--cache on` forces it (the tests need the cached path to be reachable at any
 // size), `--cache off` forbids it.
 import fs from "node:fs"
-import { positionals } from "../lib/args.mjs"
+import { positionals } from "#lib/args.mjs"
 
 // Flags that take a VALUE, so one is never read as the slug.
 const REUSE_VALUE_FLAGS = ["--cache", "--db", "--dir", "--threshold", "--top"]
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { techTermsIn, isTerse, titleTokens, jaccard } from "../lib/lib.mjs"
+import { techTermsIn, isTerse, titleTokens, jaccard } from "#lib/lib.mjs"
 
 // Where the win is unambiguous, not where the two costs cross. They cross
 // somewhere around 60; at 60 the end-to-end runs were a dead heat, and a knob
@@ -293,7 +293,7 @@ async function withCache({
   const computed = []
   try {
     const [{ openDb, readWorkspaceStacks }, { createHash }] = await Promise.all(
-      [import("../lib/db.mjs"), import("node:crypto")],
+      [import("#lib/db.mjs"), import("node:crypto")],
     )
     hash = makeSha256(createHash)
     db = openDb(dbFlag ?? undefined)
@@ -315,7 +315,7 @@ async function withCache({
   })
   if (db) {
     try {
-      const { upsertWorkspaceStack } = await import("../lib/db.mjs")
+      const { upsertWorkspaceStack } = await import("#lib/db.mjs")
       for (const w of computed) upsertWorkspaceStack(db, w)
       if (result.self) upsertWorkspaceStack(db, result.self)
     } catch (e) {

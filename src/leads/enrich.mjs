@@ -24,8 +24,8 @@
 
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { fetchJson, fetchText, mapPool, decodeEntities } from "../lib/lib.mjs"
-import { sanitizeHtmlSnippet } from "../lib/untrusted.mjs"
+import { fetchJson, fetchText, mapPool, decodeEntities } from "#lib/lib.mjs"
+import { sanitizeHtmlSnippet } from "#lib/untrusted.mjs"
 
 // A detail payload with no derivable URL or no matching markup is "nothing to
 // enrich", not "clean text found" — both are `{ text: null, ... }`, but this
@@ -214,9 +214,9 @@ async function main() {
   const args = process.argv.slice(2)
   const dry = !args.includes("--apply")
   const { openDb, resolveLeadSource, setLeadKeywords } =
-    await import("../lib/db.mjs")
+    await import("#lib/db.mjs")
   const { extractTech } = await import("../profile/profile-gaps.mjs")
-  const { isTerse } = await import("../lib/lib.mjs")
+  const { isTerse } = await import("#lib/lib.mjs")
 
   const src = resolveLeadSource()
   if (src.kind !== "db") throw new Error("no lead database to enrich")

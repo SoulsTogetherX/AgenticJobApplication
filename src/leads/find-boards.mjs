@@ -32,7 +32,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import yaml from "js-yaml"
-import { fetchJson, isTerse, mapPool } from "../lib/lib.mjs"
+import { fetchJson, isTerse, mapPool } from "#lib/lib.mjs"
 import { loadSources } from "./find-jobs.mjs"
 
 const ROOT = path.resolve(

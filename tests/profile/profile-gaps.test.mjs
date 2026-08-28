@@ -11,7 +11,7 @@ import {
   computeGaps,
   jobWeight,
 } from "../../src/profile/profile-gaps.mjs"
-import { loadYamlFile } from "../../src/lib/lib.mjs"
+import { loadYamlFile } from "#lib/lib.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 

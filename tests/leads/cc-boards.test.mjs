@@ -20,7 +20,7 @@ import {
   saveState,
   enumerateHost,
 } from "../../src/leads/cc-boards.mjs"
-import { setPolitenessClock, resetHostGates } from "../../src/lib/lib.mjs"
+import { setPolitenessClock, resetHostGates } from "#lib/lib.mjs"
 
 // --- pure: slug extraction -------------------------------------------------
 

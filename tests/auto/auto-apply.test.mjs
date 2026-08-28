@@ -20,7 +20,7 @@ import {
   recordScreens,
   upsertApplications,
   DB_PATH,
-} from "../../src/lib/db.mjs"
+} from "#lib/db.mjs"
 import { detectAts } from "../../src/apply/ats/index.mjs"
 
 // --- the refusal ------------------------------------------------------------

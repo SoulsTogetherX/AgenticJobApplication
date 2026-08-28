@@ -55,9 +55,9 @@ import {
   buildFactIndex,
   evidenceText,
   isTerse,
-} from "../lib/lib.mjs"
-import { extractTech } from "../lib/keywords.mjs"
-import { positionals } from "../lib/args.mjs"
+} from "#lib/lib.mjs"
+import { extractTech } from "#lib/keywords.mjs"
+import { positionals } from "#lib/args.mjs"
 import { buildPlan } from "./keyword-plan.mjs"
 import { profileText } from "../profile/profile-gaps.mjs"
 import { loadFactContext, verifyDocument } from "./verify-claims.mjs"

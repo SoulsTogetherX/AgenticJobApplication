@@ -16,7 +16,7 @@
 // in profile/answers.yaml and go through save-answer.mjs.
 import fs from "node:fs"
 import crypto from "node:crypto"
-import { withLock, lockPathFor } from "../lib/lock.mjs"
+import { withLock, lockPathFor } from "#lib/lock.mjs"
 
 // Bumped 2 -> 3: a checkbox/radio group whose COMPLETE visible label exceeds
 // 120 chars and now earns the scan-page.js vouch gets a new, longer `f.l` —

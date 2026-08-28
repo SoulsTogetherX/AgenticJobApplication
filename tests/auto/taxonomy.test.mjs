@@ -26,7 +26,7 @@ import {
   AUTO_DEFER_KINDS,
   AUTO_FAILURE_KINDS,
   AUTO_CHALLENGE_KINDS,
-} from "../../src/lib/db.mjs"
+} from "#lib/db.mjs"
 import {
   STAGES,
   DEFER_PRIORITY,

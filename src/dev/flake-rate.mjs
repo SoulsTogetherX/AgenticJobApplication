@@ -37,7 +37,7 @@
 import { spawn } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { positionals } from "../lib/args.mjs"
+import { positionals } from "#lib/args.mjs"
 
 // Flags that take a VALUE, so positionals() never reads one as the
 // positional. `flake-rate.mjs --runs 20 t.test.mjs` ran the target "20".

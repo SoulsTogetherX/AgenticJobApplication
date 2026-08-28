@@ -494,8 +494,7 @@ test("CLI: a lead screening already REJECTED is left out of the queue and counte
   // the screens table, so leads screen.mjs had rejected still took prep slots
   // (three of the top twenty on 2026-08-17). The verdict read is the same one
   // the runner's trust gate reads — model first, mechanical fallback.
-  const { openDb, upsertLeads, recordScreens } =
-    await import("../../src/lib/db.mjs")
+  const { openDb, upsertLeads, recordScreens } = await import("#lib/db.mjs")
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prep-queue-screened-"))
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
   const dbFile = path.join(dir, "leads.db")

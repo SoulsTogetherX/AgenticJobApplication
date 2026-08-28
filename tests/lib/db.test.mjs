@@ -601,3 +601,66 @@ test("two concurrent writers both keep their patch", async (t) => {
   assert.equal(got.from_b, 24, "worker B's last patch survived")
   assert.equal(got.company, "Race Co", "and neither dropped the base record")
 })
+
+// ---------------------------------------------------------------------------
+// Source-shape pins for the three db gotchas CLAUDE.md routes here. These are
+// the "looks wrong, is load-bearing" class: each was an incident, and each is
+// invisible to a behavioural test on a healthy database.
+// ---------------------------------------------------------------------------
+
+const DB_SOURCE = fs.readFileSync(
+  path.join(ROOT, "src", "lib", "db.mjs"),
+  "utf8",
+)
+
+test("openDb sets busy_timeout BEFORE journal_mode = WAL", () => {
+  // The wait must exist before the mode switch: under parallel test workers,
+  // connections died on `PRAGMA journal_mode = WAL` itself when the timeout
+  // came second, because the switch is a write that can hit SQLITE_BUSY.
+  // Match the executable statements, not the comment above them, which
+  // mentions journal_mode first while explaining exactly this ordering.
+  const busyAt = DB_SOURCE.indexOf('db.exec("PRAGMA busy_timeout')
+  const walAt = DB_SOURCE.indexOf('db.exec("PRAGMA journal_mode')
+  assert.ok(busyAt !== -1, "busy_timeout pragma missing from db.mjs")
+  assert.ok(walAt !== -1, "journal_mode pragma missing from db.mjs")
+  assert.ok(
+    busyAt < walAt,
+    "busy_timeout must be set before journal_mode = WAL — reordering removes " +
+      "the wait from the mode switch itself and parallel workers start dying " +
+      "on open (see the comment above the pragmas in db.mjs)",
+  )
+})
+
+test("every non-INTEGER primary key column in SCHEMA is NOT NULL", () => {
+  // SQLite permits NULLs in a non-INTEGER PRIMARY KEY's columns, silently
+  // un-enforcing the key. Incident: auto_submissions.mode was nullable, so
+  // (slug, mode) stopped being unique in exactly the way that let a dry run
+  // eat the live claim. The pin is structural: parse SCHEMA's composite PKs
+  // and demand NOT NULL on every named column.
+  const tables = [
+    ...DB_SOURCE.matchAll(/CREATE TABLE[^(]+\(([\s\S]*?)\n\s*\)/g),
+  ]
+  assert.ok(
+    tables.length >= 5,
+    `SCHEMA parse looks broken: ${tables.length} tables`,
+  )
+  const offenders = []
+  for (const [, body] of tables) {
+    const pk = body.match(/PRIMARY KEY\s*\(([^)]+)\)/i)
+    if (!pk) continue
+    for (const col of pk[1].split(",").map((c) => c.trim())) {
+      const line = body.split("\n").find((l) =>
+        l
+          .trim()
+          .toLowerCase()
+          .startsWith(col.toLowerCase() + " "),
+      )
+      if (line && !/NOT NULL/i.test(line)) offenders.push(col)
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `composite-PK columns missing NOT NULL (the key is not enforced without it): ${offenders.join(", ")}`,
+  )
+})

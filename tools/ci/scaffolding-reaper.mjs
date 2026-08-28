@@ -2,11 +2,11 @@
 // The scaffolding reaper: fails the build when a development-only artifact
 // outlives the phase it promised to die in.
 //
-// docs/team-roster.md ("Skills and scaffolding") and docs/autonomy-plan.md
-// both say `ci-engineer` **fails the build** when a scaffolding artifact
-// outlives its phase. Until 2026-07-31 that was a comment in ci.yml and
-// nothing else — a documented capability that did not exist, which is on the
-// protocol's slacking-signatures list. This is the capability.
+// docs/team-roster.md ("Skills and scaffolding") says `ci-engineer` **fails
+// the build** when a scaffolding artifact outlives its phase (so did the
+// autonomy plan doc, deleted 2026-08-06). Until 2026-07-31 that was a comment
+// in ci.yml and nothing else — a documented capability that did not exist,
+// which is on the protocol's slacking-signatures list. This is the capability.
 //
 // The declaration, written by whoever owns the artifact:
 //
@@ -23,11 +23,11 @@
 //   - `.mjs` / `.js` / `.cjs`: the contiguous `//` comment block at the very
 //     top, before any code.
 // Anything further down is prose ABOUT the convention, not a declaration.
-// That distinction is load-bearing here: docs/team-roster.md,
-// docs/autonomy-plan.md and .claude/agents/*.md all contain the literal text
-// `scaffolding: true` inside fenced examples. A reaper that grepped the whole
-// file would fail the build on its own documentation, get muted within a day,
-// and protect nothing.
+// That distinction is load-bearing here: docs/team-roster.md and
+// .claude/agents/*.md contain the literal text `scaffolding: true` inside
+// fenced examples (so did the deleted autonomy plan doc). A reaper that
+// grepped the whole file would fail the build on its own documentation, get
+// muted within a day, and protect nothing.
 //
 // WHAT FAILS THE BUILD:
 //   1. an artifact whose `remove_after` phase is already PAST (the point);
@@ -104,7 +104,7 @@ function parseArgs(argv) {
 // The leading YAML frontmatter, or null. Must open on the FIRST line: a `---`
 // further down is a horizontal rule or a document separator, not frontmatter.
 export function frontmatterBlock(text) {
-  const norm = text.replace(/^﻿/, "")
+  const norm = text.replace(/^\uFEFF/, "")
   if (!/^---[ \t]*\r?\n/.test(norm)) return null
   const end = norm.indexOf("\n---", 3)
   if (end === -1) return null
@@ -115,7 +115,7 @@ export function frontmatterBlock(text) {
 // the first line that is not a comment and not blank, so a `scaffolding: true`
 // in a comment halfway down the file is never a declaration.
 export function leadingCommentBlock(text) {
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/)
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/)
   const out = []
   for (const line of lines) {
     const t = line.trim()

@@ -1,0 +1,119 @@
+// markdownlint-cli2 configuration — gate #17 of the 2026-08-27 conventions
+// plan. Run by tests/quality/markdown.test.mjs and by the `lint` CI job.
+//
+// THE CORPUS IS DEFINED HERE, ONCE. Both callers invoke the tool with no
+// arguments so the test and CI cannot drift apart about what is linted;
+// markdown.test.mjs asserts these globs verbatim.
+//
+// docs/plans/** is excluded because a plan is true as of its date. Rewriting
+// an archive so a linter goes green falsifies a record.
+//
+// src/, tools/ and scripts/ markdown are IN. The brief for this gate named
+// only docs/ and the root, which was right when it was written — then P4
+// landed twelve per-domain README.md files under src/, tools/ci/ and
+// scripts/, and they would have sat outside every markdown check while
+// looking covered. Adding them cost nothing: measured 2026-08-27, all twelve
+// pass the tuned rule set with zero issues, taking the corpus from 35 files
+// to 47.
+//
+// ---------------------------------------------------------------------------
+// TUNING RECORD (measured 2026-08-27 over 34 documents, defaults, 6,106 hits)
+// ---------------------------------------------------------------------------
+// The rule was: disable MD013/MD033/MD041 per the plan, plus any rule firing
+// more than 50 times — a rule that fires 4,956 times is not finding defects,
+// it is describing a house style this repo does not have. Everything else
+// stays on and its violations were FIXED, not disabled.
+//
+//   MD013 line-length            4956  disabled by the plan. Prettier owns
+//                                      wrapping; two tools with opinions
+//                                      about line width start a churn war.
+//   MD040 fenced-code-language    409  >50. Many fences here hold TAP output,
+//                                      log excerpts and shell transcripts
+//                                      that have no language tag to give.
+//   MD024 no-duplicate-heading    186  >50. The code chapters repeat section
+//                                      names ("What it does", "Gotchas") per
+//                                      module on purpose — that repetition is
+//                                      the navigation.
+//   MD028 no-blanks-blockquote    160  >50. Multi-paragraph blockquotes are
+//                                      how the incident write-ups quote a
+//                                      source and then comment on it.
+//   MD036 no-emphasis-as-heading  132  >50. Bold lead-ins inside a section
+//                                      are used as emphasis, not as headings,
+//                                      and promoting them would wreck the
+//                                      heading tree this file keeps checking.
+//   MD010 no-hard-tabs             89  >50. Tabs appear inside fenced blocks
+//                                      that reproduce real output verbatim.
+//   MD025 single-title             61  >50. Several documents legitimately
+//                                      restart at H1 per major part.
+//   MD033 no-inline-html           12  disabled by the plan (<!-- fact:ID -->
+//                                      style markers and <br> in tables).
+//   MD041 first-line-heading        0  disabled by the plan; fires nowhere
+//                                      today, kept off so a front-matter
+//                                      document does not become a failure.
+//
+// TWO MORE ARE OFF, AND NOT FOR NOISE — THEY LOSE TO PRETTIER.
+// Prettier is the formatter of record here (CLAUDE.md hard rule 8: a
+// PostToolUse hook runs it on every edited document, and you do not fight its
+// formatting). Where the two tools disagree about the same bytes, the loop is
+// infinite and the gate is unfixable, so the disagreement is settled here
+// once, in prettier's favour, rather than by whoever ran a tool last:
+//   MD030 list-marker-space   prettier emits `1.  item` (two spaces) for
+//                             ordered lists; markdownlint --fix rewrites it to
+//                             one, and prettier puts it back. Measured as a
+//                             ping-pong on docs/code/00-file-index.md.
+//   MD049 emphasis-style      prettier ALTERNATES delimiters for nested
+//                             emphasis — `_"... *without* ..."_` — which is
+//                             correct markdown and which MD049 cannot express,
+//                             since it wants one delimiter everywhere.
+//   MD060 table-column-style  both tools align table pipes and they disagree
+//                             about the display width of angle-bracket text.
+//                             Measured on docs/operate/01-commands.md, a row
+//                             holding `jobs/<slug>/`: prettier --check calls
+//                             the file clean, MD060 wants the pipe one column
+//                             over. MD033 is off, so `<slug>` is prose here,
+//                             not HTML — and prettier is the tool that
+//                             actually rewrites the file.
+//
+// TWO FILES ARE OUT OF THE CORPUS, for the same reason docs-links.test.mjs
+// exempts them: docs/measurements.md and docs/roster-log.md are dated
+// archives. Editing an archive so a linter goes green falsifies a record.
+//
+// STILL ON, and this is the half that makes the gate worth running:
+// MD001 heading-increment, MD029 ol-prefix, MD031 blanks-around-fences,
+// MD038 no-space-in-code, MD056 table-column-count, MD051 link-fragments,
+// MD014 commands-show-output, MD026, and every other default.
+//
+// They found 101 defects on the first run and every one was FIXED, not
+// disabled. Two were worth the whole exercise:
+//   * MD051 caught `[Part 2](#part-2--scriptsleadsenrichmjs)` — an anchor
+//     still pointing at the pre-re-layout heading. A link the sweep missed.
+//   * MD056 caught six table rows holding an unescaped `|` inside a code span
+//     (regexes like `/(?:^|\s)--file/`). The renderer reads that pipe as a
+//     cell separator and DROPS the rest of the row, so the documented regex
+//     was being displayed truncated. Now escaped.
+{
+  "globs": [
+    "docs/**/*.md",
+    "*.md",
+    "src/**/*.md",
+    "tools/**/*.md",
+    "scripts/**/*.md",
+    "!docs/plans/**",
+    "!docs/measurements.md",
+    "!docs/roster-log.md",
+  ],
+  "config": {
+    "MD013": false,
+    "MD033": false,
+    "MD041": false,
+    "MD040": false,
+    "MD024": false,
+    "MD028": false,
+    "MD036": false,
+    "MD010": false,
+    "MD025": false,
+    "MD030": false,
+    "MD049": false,
+    "MD060": false,
+  },
+}

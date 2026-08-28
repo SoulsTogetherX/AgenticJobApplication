@@ -34,7 +34,7 @@ process.stdin.on("data", (d) => (raw += d))
 process.stdin.on("end", () => {
   let input = {}
   try {
-    input = JSON.parse(raw.replace(/^﻿/, ""))
+    input = JSON.parse(raw.replace(/^\uFEFF/, ""))
   } catch {
     return
   }

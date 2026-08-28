@@ -92,6 +92,58 @@ jobs:
           --require-ran "nonce CSP is ENFORCED, not merely sent"
 
   # ---------------------------------------------------------------------
+  # The enforcement layer (P3 of the 2026-08-27 conventions plan): ESLint 10,
+  # prettier and markdownlint. Every one of these ALSO runs as a counted
+  # node:test under tests/quality/ inside the matrix below, so this job is not
+  # the only thing standing between a violation and a merge — it exists
+  # because its verdict should be readable without opening a 2,800-test log,
+  # and because it is ~40s while the matrix is ~4 minutes.
+  #
+  # ubuntu-only and node 22: none of the three tools' verdicts depend on the
+  # platform, and the same checks run on Windows inside the matrix. Making
+  # this a fifth matrix leg would quadruple the cost for no extra evidence.
+  #
+  # `npm ci`, not `npm install`: the lockfile decides the version of every
+  # linter, or the gate's verdict drifts with the registry.
+  #
+  # No `continue-on-error` and no `|| true` on any step. A lint job that
+  # cannot fail is a status badge, not a gate.
+  # ---------------------------------------------------------------------
+  lint:
+    name: Lint, format and markdown
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --fund=false
+
+      # --pass-on-unpruned-suppressions (inside the npm script): FIXING a
+      # suppressed violation must never redden the build. Pruning the baseline
+      # is a deliberate maintenance act somebody commits, never a side effect
+      # of a good change. A NEW violation is still reported — suppressions are
+      # counted per file per rule, not blanket-disabled.
+      - name: ESLint (eslint.config.mjs + eslint-suppressions.json)
+        run: npm run lint
+
+      # Prettier is the formatter of record (CLAUDE.md hard rule 8). Where it
+      # and markdownlint disagree about the same bytes, prettier wins and the
+      # conflicting markdownlint rule is off with a reason in
+      # .markdownlint-cli2.jsonc.
+      - name: Prettier --check over the whole repo
+        run: npm run format:check
+
+      # Corpus and rule set both come from .markdownlint-cli2.jsonc, so the
+      # tool is invoked with no arguments — the test in tests/quality asserts
+      # those globs verbatim, which is what stops this job and that test from
+      # drifting apart about what is linted.
+      - name: markdownlint-cli2 over docs + root markdown
+        run: npm run lint:md
+
+  # ---------------------------------------------------------------------
   # The whole suite, on both platforms. Windows is the primary platform (the
   # user's machine) and PDF rendering shells out to a local Edge/Chrome, so a
   # Linux-only pipeline would prove very little about the shipped path.
@@ -237,19 +289,24 @@ jobs:
   ci-gate:
     name: ci-gate
     if: always()
-    needs: [security-gate, test, scaffolding, perf-gate]
+    needs: [security-gate, lint, test, scaffolding, perf-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require the security gate, the matrix, the reaper and the perf gate
+      - name: Require the security gate, lint, the matrix, the reaper and the perf gate
         run: |
           echo "security-gate: ${{ needs.security-gate.result }}"
+          echo "lint:          ${{ needs.lint.result }}"
           echo "test matrix:   ${{ needs.test.result }}"
           echo "scaffolding:   ${{ needs.scaffolding.result }}"
           echo "perf-gate:     ${{ needs.perf-gate.result }}"
           fail=0
           if [ "${{ needs.security-gate.result }}" != "success" ]; then
             echo "::error::Phase 1 security gate did not pass"
+            fail=1
+          fi
+          if [ "${{ needs.lint.result }}" != "success" ]; then
+            echo "::error::the lint / format / markdown gate did not pass"
             fail=1
           fi
           if [ "${{ needs.test.result }}" != "success" ]; then

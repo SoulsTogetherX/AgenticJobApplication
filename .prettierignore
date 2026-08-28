@@ -35,3 +35,11 @@ tests/fixtures/hostile/
 # war with the scripts that rewrite them.
 tests/fixtures/post-submit/corpus.json
 docs/candidates/
+
+# Same rule, newest instance: eslint writes this file itself, on every
+# `--suppress-all` and every `--prune-suppressions`, in ITS formatting. Running
+# prettier over it means the next regeneration reverts the formatting and the
+# format gate goes red on a file nobody edited. It is a machine-maintained
+# ledger of frozen violations, not source. Its CONTENTS are asserted by
+# tests/quality/lint.test.mjs, which is the check that actually matters here.
+eslint-suppressions.json

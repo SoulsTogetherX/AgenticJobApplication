@@ -16,7 +16,7 @@ import {
   acrossRuns,
   toBaseline,
   BASELINE_PATH,
-} from "../../.github/workflows/perf-gate.mjs"
+} from "../../tools/ci/perf-gate.mjs"
 
 const run = (columns, extra = {}) => ({
   concurrency_observed: 8,

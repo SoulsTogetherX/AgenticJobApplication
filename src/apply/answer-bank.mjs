@@ -9,8 +9,8 @@
 //     no subprocess spawn — this is what fill-plan.mjs and pending-questions.mjs
 //     use. It also sidesteps the ~32,767-char argv ceiling Windows imposes on a
 //     spawned command line, which a probed 200-option country list can blow.
-//   node scripts/scan.json | node scripts/apply/answer-bank.mjs   # CLI, fields on stdin
-//   node scripts/apply/answer-bank.mjs --fields '<json array>'
+//   node src/scan.json | node src/apply/answer-bank.mjs   # CLI, fields on stdin
+//   node src/apply/answer-bank.mjs --fields '<json array>'
 //   ... [--json] [--profile profile/profile.yaml] [--answers profile/answers.yaml]
 //
 // Input: the `fields` array from .claude/skills/apply-job/scan-page.js, i.e.
@@ -2208,7 +2208,7 @@ export function createResolver(profile = {}, answersDoc = {}, { now } = {}) {
 // (fill-plan.mjs's resolveFields, pending-questions.mjs, and
 // automatability.mjs's batched classify) build their options object from a
 // CLI flag helper that returns `null` when the flag is absent, so every
-// documented no-flag invocation — `node scripts/apply/fill-plan.mjs <slug>` —
+// documented no-flag invocation — `node src/apply/fill-plan.mjs <slug>` —
 // passed `profileFile: null`. `fs.existsSync(null)` does not throw on Node 24;
 // it returns false and emits DEP0187. So both files "did not exist", both
 // loaded as `{}`, and the resolver ran against an EMPTY FACT BASE, resolving

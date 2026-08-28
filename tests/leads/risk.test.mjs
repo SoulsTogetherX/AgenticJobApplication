@@ -7,8 +7,8 @@ import {
   bodyFingerprint,
   repostKey,
   RISK_DEFAULTS,
-} from "../../scripts/leads/risk.mjs"
-import { dedupeLeads } from "../../scripts/leads/find-jobs.mjs"
+} from "../../src/leads/risk.mjs"
+import { dedupeLeads } from "../../src/leads/find-jobs.mjs"
 
 const lead = (over = {}) => ({
   id: "greenhouse:acme:1",

@@ -28,7 +28,7 @@ import {
   benchBrowserFill,
   collectIncomplete,
   fillCompleteness,
-} from "../../scripts/dev/bench-apply.mjs"
+} from "../../src/dev/bench-apply.mjs"
 import { start } from "../fixtures/boards/server.mjs"
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..")

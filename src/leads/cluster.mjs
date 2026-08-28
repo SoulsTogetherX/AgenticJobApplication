@@ -11,7 +11,7 @@
 // Deterministic similarity only. Like reuse-check.mjs this RECOMMENDS — the
 // user approves reusing one tailored resume across a cluster.
 //
-// Usage: node scripts/leads/cluster.mjs [--status new|all] [--threshold 0.6]
+// Usage: node src/leads/cluster.mjs [--status new|all] [--threshold 0.6]
 //        [--min-size 2] [--leads <path>] [--json]
 //
 // Exit codes: 0 = ran fine, 2 = usage / missing store.

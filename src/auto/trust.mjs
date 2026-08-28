@@ -32,7 +32,7 @@
 // WHY THIS DOES NOT CALL detectAts()
 // ===========================================================================
 //
-// `detectAts` (scripts/apply/ats/index.mjs) matches its adapter regexes against
+// `detectAts` (src/apply/ats/index.mjs) matches its adapter regexes against
 // the WHOLE URL STRING, deliberately — the fake-board fixture depends on it and
 // its own header records the finding. For picking a fill strategy that is
 // fail-safe: the wrong adapter defers more fields. For a TRUST decision it is

@@ -10,12 +10,12 @@ import {
   addEntryToText,
   removeEntryFromText,
   searchQuery,
-} from "../../scripts/leads/manage-sources.mjs"
+} from "../../src/leads/manage-sources.mjs"
 import {
   loadEnv,
   normalizeAdzunaJob,
   DEFAULT_SEARCH_QUERY,
-} from "../../scripts/leads/find-jobs.mjs"
+} from "../../src/leads/find-jobs.mjs"
 
 const BOARDS = [
   { type: "greenhouse", slug: "anthropic", company: "Anthropic" },

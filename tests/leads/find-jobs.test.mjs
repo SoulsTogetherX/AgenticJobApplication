@@ -14,7 +14,7 @@ import {
   workdayLocationFromPath,
   fetchBoard,
   DEFAULT_SEARCH_QUERY,
-} from "../../scripts/leads/find-jobs.mjs"
+} from "../../src/leads/find-jobs.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -536,7 +536,7 @@ test("no hardcoded default query in this file disagrees with DEFAULT_SEARCH_QUER
   // just the two that actually existed. "software engineer" as a default-
   // parameter or fallback literal must not reappear anywhere in this module.
   const src = fs.readFileSync(
-    path.join(ROOT, "scripts", "leads", "find-jobs.mjs"),
+    path.join(ROOT, "src", "leads", "find-jobs.mjs"),
     "utf8",
   )
   assert.doesNotMatch(src, /=\s*"software engineer"/)
@@ -547,7 +547,7 @@ test("no hardcoded default query in this file disagrees with DEFAULT_SEARCH_QUER
 // ---------------------------------------------------------------------------
 
 test("summarize reports fetched, duplicates, gate-rejected and stored — so stored=0 on a healthy sweep is legible", async () => {
-  const { summarize } = await import("../../scripts/leads/find-jobs.mjs")
+  const { summarize } = await import("../../src/leads/find-jobs.mjs")
   const lines = []
   const orig = console.log
   console.log = (s) => lines.push(String(s))
@@ -575,7 +575,7 @@ test("summarize reports fetched, duplicates, gate-rejected and stored — so sto
 })
 
 test("summarize with no counts still adds up — fetched falls back to kept + rejected, duplicates to 0", async () => {
-  const { summarize } = await import("../../scripts/leads/find-jobs.mjs")
+  const { summarize } = await import("../../src/leads/find-jobs.mjs")
   const lines = []
   const orig = console.log
   console.log = (s) => lines.push(String(s))

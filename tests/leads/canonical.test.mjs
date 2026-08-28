@@ -15,7 +15,7 @@ import {
   resolveViaNetwork,
   canonicalizeLead,
   canonicalizeLeads,
-} from "../../scripts/leads/canonical.mjs"
+} from "../../src/leads/canonical.mjs"
 
 // --- what counts as an ATS posting --------------------------------------------
 

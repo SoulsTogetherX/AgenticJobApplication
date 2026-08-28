@@ -4,7 +4,7 @@
 // THE INCIDENT, AND WHY THIS IS A SECURITY TEST
 // ===========================================================================
 //
-// Measured 2026-08-24, auditing every CLI entry point under scripts/: 32 of 38
+// Measured 2026-08-24, auditing every CLI entry point under src/: 32 of 38
 // silently ignored an unrecognised flag, and 11 of those performed a mutating
 // side effect while doing so. The one that started it was
 // `reverify.mjs --help`, which ignored the flag and ran a 61-job sweep writing
@@ -48,22 +48,22 @@ const ROOT = path.resolve(
 // by any check at all, while `--dry-run` typed as `--dryrun` is the mistake a
 // person actually makes, and it is the one that used to reach the write.
 const DANGEROUS = [
-  ["scripts/auto/cycle.mjs", "--skip-aply", "--skip-apply"],
-  ["scripts/auto/auto-apply.mjs", "--enqeue", "--enqueue"],
-  ["scripts/auto/auto-apply.mjs", "--fixtur", "--fixture"],
-  ["scripts/maintenance/migrate.mjs", "--dryrun", "--dry-run"],
-  ["scripts/documents/reverify.mjs", "--prune-orphan", "--prune-orphans"],
-  ["scripts/apply/rebuild-plans.mjs", "--dryrun", "--dry-run"],
-  ["scripts/leads/gate-audit.mjs", "--no-sav", "--no-save"],
-  ["scripts/dev/scorecard.mjs", "--no-recrd", "--no-record"],
-  ["scripts/leads/screen.mjs", "--no-recrd", "--no-record"],
-  ["scripts/auto/requeue.mjs", "--lst", "--list"],
+  ["src/auto/cycle.mjs", "--skip-aply", "--skip-apply"],
+  ["src/auto/auto-apply.mjs", "--enqeue", "--enqueue"],
+  ["src/auto/auto-apply.mjs", "--fixtur", "--fixture"],
+  ["src/maintenance/migrate.mjs", "--dryrun", "--dry-run"],
+  ["src/documents/reverify.mjs", "--prune-orphan", "--prune-orphans"],
+  ["src/apply/rebuild-plans.mjs", "--dryrun", "--dry-run"],
+  ["src/leads/gate-audit.mjs", "--no-sav", "--no-save"],
+  ["src/dev/scorecard.mjs", "--no-recrd", "--no-record"],
+  ["src/leads/screen.mjs", "--no-recrd", "--no-record"],
+  ["src/auto/requeue.mjs", "--lst", "--list"],
   // The rest of the audit's ranked list, closed 2026-08-24.
-  ["scripts/documents/render-pdf.mjs", "--lettr", "--letter"],
-  ["scripts/documents/new-job.mjs", "--compnay", "--company"],
-  ["scripts/leads/board-yield.mjs", "--liv", "--live"],
-  ["scripts/dev/bench-runner.mjs", "--allow-dirt", "--allow-dirty"],
-  ["scripts/apply/fill-plan.mjs", "--jsonn", "--json"],
+  ["src/documents/render-pdf.mjs", "--lettr", "--letter"],
+  ["src/documents/new-job.mjs", "--compnay", "--company"],
+  ["src/leads/board-yield.mjs", "--liv", "--live"],
+  ["src/dev/bench-runner.mjs", "--allow-dirt", "--allow-dirty"],
+  ["src/apply/fill-plan.mjs", "--jsonn", "--json"],
 ]
 
 function run(script, args, env = {}) {
@@ -122,7 +122,7 @@ test("THE 7:00 TASK: a mistyped --skip-apply cannot start the applier", () => {
   // wrong character used to mean the prepare-only cycle submitted applications
   // unattended, with nothing in logs/cycle.log saying so.
   for (const typo of ["--skip-aply", "--skipapply", "--skip_apply"]) {
-    const r = run("scripts/auto/cycle.mjs", [typo])
+    const r = run("src/auto/cycle.mjs", [typo])
     assert.equal(r.status, 2, `cycle.mjs ${typo} must refuse, not run`)
     assert.doesNotMatch(
       `${r.stdout}`,
@@ -137,7 +137,7 @@ test("the cycle states its mode, so the log says whether it could submit", () =>
   // the only way to tell them apart afterwards was to notice the ABSENCE of an
   // apply stage. Checked on the source because running a real cycle here would
   // sweep live boards.
-  const src = fs.readFileSync(path.join(ROOT, "scripts/auto/cycle.mjs"), "utf8")
+  const src = fs.readFileSync(path.join(ROOT, "src/auto/cycle.mjs"), "utf8")
   assert.match(src, /mode: willApply \? "prepare\+apply" : "prepare-only"/)
   assert.match(src, /process\.stdout\.write\(`mode: \$\{out\.mode\}\\n`\)/)
 })
@@ -150,7 +150,7 @@ test("migrate.mjs does not migrate when imported", () => {
     "probe.mjs",
   )
   const url = new URL(
-    `file://${path.join(ROOT, "scripts/maintenance/migrate.mjs").replace(/\\/g, "/")}`,
+    `file://${path.join(ROOT, "src/maintenance/migrate.mjs").replace(/\\/g, "/")}`,
   ).href
   fs.writeFileSync(
     probe,

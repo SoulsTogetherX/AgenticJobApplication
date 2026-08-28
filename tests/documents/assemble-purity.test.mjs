@@ -43,7 +43,7 @@ const ROOT = path.resolve(
   "..",
   "..",
 )
-const ENTRY = path.join(ROOT, "scripts", "documents", "assemble-resume.mjs")
+const ENTRY = path.join(ROOT, "src", "documents", "assemble-resume.mjs")
 const FIX = path.join(ROOT, "tests", "documents", "assemble")
 
 // Everything a document assembler has no business reaching for. `node:sqlite`
@@ -94,7 +94,24 @@ function specifiersIn(src) {
   return out
 }
 
-/** Walk the graph from `entry`, following relative specifiers only. */
+// package.json's subpath-imports map ("#lib/*" and any later alias). The
+// walker must FOLLOW aliased edges, not skip them: a purity check that goes
+// blind on an alias is the same bug as one that swallows everything.
+const PKG_IMPORTS =
+  JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"))
+    .imports ?? {}
+
+function resolveSubpath(spec) {
+  for (const [pattern, target] of Object.entries(PKG_IMPORTS)) {
+    if (!pattern.endsWith("/*")) continue
+    const prefix = pattern.slice(0, -1)
+    if (!spec.startsWith(prefix)) continue
+    return path.join(ROOT, target.slice(0, -1), spec.slice(prefix.length))
+  }
+  return null
+}
+
+/** Walk the graph from `entry`, following relative and #-aliased specifiers. */
 function importGraph(entry) {
   const seen = new Set()
   const edges = []
@@ -114,6 +131,9 @@ function importGraph(entry) {
       if (spec.startsWith(".")) {
         const target = path.resolve(path.dirname(file), spec)
         if (fs.existsSync(target)) stack.push(target)
+      } else if (spec.startsWith("#")) {
+        const target = resolveSubpath(spec)
+        if (target && fs.existsSync(target)) stack.push(target)
       }
     }
   }
@@ -131,8 +151,23 @@ test("the assembler's import graph reaches nothing that can run or call out", ()
     `forbidden imports: ${bad.map((e) => `${e.from} -> ${e.spec}`).join(", ")}`,
   )
 
+  // A "#" specifier must resolve through package.json "imports" to a real
+  // file the walk then followed — an unresolvable alias would otherwise
+  // vanish from this gate exactly like an undeclared package.
+  const aliased = edges.filter((e) => e.spec.startsWith("#"))
+  for (const e of aliased) {
+    const target = resolveSubpath(e.spec)
+    assert.ok(
+      target && fs.existsSync(target),
+      `${e.from} imports "${e.spec}" which package.json "imports" does not resolve to a file`,
+    )
+  }
+
   const bare = edges.filter(
-    (e) => !e.spec.startsWith(".") && !e.spec.startsWith("node:"),
+    (e) =>
+      !e.spec.startsWith(".") &&
+      !e.spec.startsWith("node:") &&
+      !e.spec.startsWith("#"),
   )
   for (const e of bare) {
     assert.ok(
@@ -159,8 +194,8 @@ test("the graph's only dynamic import is the local verification store", () => {
   // load something the static assertion above never saw, so it has to be a
   // deliberate edit to this line rather than something that slips through.
   assert.deepEqual(dynamic.map((e) => `${e.from} -> ${e.spec}`).sort(), [
-    "scripts/documents/verify-claims.mjs -> ../lib/db.mjs",
-    "scripts/lib/db.mjs -> node:sqlite",
+    "src/documents/verify-claims.mjs -> ../lib/db.mjs",
+    "src/lib/db.mjs -> node:sqlite",
   ])
 })
 
@@ -203,8 +238,7 @@ test("loading the assembler's whole graph resolves child_process zero times", as
   resetCpCalls()
   await import(pathToFileURL(ENTRY).href)
   await import(
-    pathToFileURL(path.join(ROOT, "scripts", "documents", "keyword-plan.mjs"))
-      .href
+    pathToFileURL(path.join(ROOT, "src", "documents", "keyword-plan.mjs")).href
   )
   assert.deepEqual(
     cpCalls(),
@@ -216,8 +250,7 @@ test("loading the assembler's whole graph resolves child_process zero times", as
 test("a full assembly spawns nothing and fetches nothing", async () => {
   const { assembleResume } = await import(pathToFileURL(ENTRY).href)
   const { buildPlan } = await import(
-    pathToFileURL(path.join(ROOT, "scripts", "documents", "keyword-plan.mjs"))
-      .href
+    pathToFileURL(path.join(ROOT, "src", "documents", "keyword-plan.mjs")).href
   )
   resetCpCalls()
   const realFetch = globalThis.fetch

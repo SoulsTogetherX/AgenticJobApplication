@@ -41,7 +41,7 @@
 // claim reaching a document is rule 1 + verify-claims R6. This one narrows the
 // blast radius of the report; it does not make the report trusted input.
 //
-// scripts/lib/untrusted.mjs is w1-security's. This module IMPORTS it and adds
+// src/lib/untrusted.mjs is w1-security's. This module IMPORTS it and adds
 // no patterns of its own — a second pattern list is a second thing to forget.
 
 import { sanitizeUntrusted } from "../lib/untrusted.mjs"

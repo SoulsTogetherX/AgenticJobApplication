@@ -28,13 +28,13 @@ import {
   capturedKinds,
   CLASSIFICATIONS,
   CHALLENGE_KINDS,
-} from "../../scripts/auto/classify.mjs"
+} from "../../src/auto/classify.mjs"
 import { POST_SUBMIT_KINDS } from "../fixtures/boards/server.mjs"
 import {
   readManifest,
   CORPUS_DIR,
   CORPUS_MANIFEST,
-} from "../../scripts/apply/capture-post-submit.mjs"
+} from "../../src/apply/capture-post-submit.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PAGES = path.resolve(
@@ -130,7 +130,7 @@ test("REAL captured pages, one per kind (§4.10's actual requirement)", (t) => {
       `no captured post-submit page for: ${missing.join(", ")} — W2 is GATED ` +
         `on this and it is not a code gap. The only lawful source is an ` +
         `attended apply: run apply-job, and after the submit click ` +
-        `scripts/apply/capture-post-submit.mjs stages a redacted candidate for ` +
+        `src/apply/capture-post-submit.mjs stages a redacted candidate for ` +
         `review. Until then every real board classifies as \`unclassified\`, ` +
         `which hard-STOPs — the safe direction, and the honest one.`,
     )
@@ -470,7 +470,7 @@ test("the challenge kinds are the ones job.mjs treats as unconfirmed", () => {
 
 test("sightedHosts is exactly the hosts a capture-sourced CONFIRMATION rule names — the evidence list, not the allowlist", async () => {
   const { sightedHosts, isHostSighted } =
-    await import("../../scripts/auto/classify.mjs")
+    await import("../../src/auto/classify.mjs")
   const hosts = sightedHosts()
   // Derived from the same rules, so this can never disagree with SHIPPED.
   const expected = [
@@ -497,7 +497,7 @@ test("sightedHosts is exactly the hosts a capture-sourced CONFIRMATION rule name
 })
 
 test("a loopback url is sighted iff a fixture-sourced confirmation rule ships — the harness reads the same evidence as the gate", async () => {
-  const { isHostSighted } = await import("../../scripts/auto/classify.mjs")
+  const { isHostSighted } = await import("../../src/auto/classify.mjs")
   const fixtureConfirmation = shippedRules().some(
     (r) => r.evidence.source === "fixture" && r.kind === "confirmation",
   )

@@ -26,10 +26,10 @@ import {
   findSubmitControl,
   isProvablyBeforeClick,
   SUBMIT_PRECONDITIONS,
-} from "../../scripts/auto/submit.mjs"
-import { authorizeSubmit, planSha256 } from "../../scripts/auto/authorize.mjs"
-import { startRun } from "../../scripts/auto/audit.mjs"
-import { openDb, recordVerification } from "../../scripts/lib/db.mjs"
+} from "../../src/auto/submit.mjs"
+import { authorizeSubmit, planSha256 } from "../../src/auto/authorize.mjs"
+import { startRun } from "../../src/auto/audit.mjs"
+import { openDb, recordVerification } from "../../src/lib/db.mjs"
 
 // ---------------------------------------------------------------------------
 // The rig
@@ -776,7 +776,7 @@ test("the refusal type carries WHICH precondition, for an actionable reason", as
 // durable: no row, no token spend, so the caller can re-scan and retry.
 
 test("a dead submit stamp refuses BEFORE the attempt row, and the token survives", async (t) => {
-  const { SubmitStampLost } = await import("../../scripts/auto/submit.mjs")
+  const { SubmitStampLost } = await import("../../src/auto/submit.mjs")
   const r = rig(t, { mode: "live", limits: { ...LIMITS, dry_run: false } })
 
   const dead = fakePage({ stampAttached: false })

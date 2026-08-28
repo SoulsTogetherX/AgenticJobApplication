@@ -6,14 +6,14 @@ import path from "node:path"
 import {
   matchApplications,
   summarize,
-} from "../../scripts/applications/applications.mjs"
+} from "../../src/applications/applications.mjs"
 import {
   openDb,
   upsertApplications,
   deleteApplication,
   exportApplicationsYaml,
-} from "../../scripts/lib/db.mjs"
-import { dumpYaml, loadYamlFile } from "../../scripts/lib/lib.mjs"
+} from "../../src/lib/db.mjs"
+import { dumpYaml, loadYamlFile } from "../../src/lib/lib.mjs"
 
 const APPS = [
   {

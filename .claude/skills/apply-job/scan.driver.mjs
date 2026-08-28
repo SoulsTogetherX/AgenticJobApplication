@@ -27,7 +27,7 @@ async (page) => {
   // A board that defines that global supplies the entire scan — every label,
   // selector and flag — because the next line is what decides whether the real
   // scanner is installed at all. It cannot be fixed here the way
-  // scripts/apply/scan-engine.mjs fixes it (call the scanner through a local
+  // src/apply/scan-engine.mjs fixes it (call the scanner through a local
   // binding), because that needs the scanner's TEXT and this vm has no fs: see
   // the header. So it is recorded, and every vouch is stripped below.
   const preOwned = await page.evaluate(
@@ -60,7 +60,7 @@ async (page) => {
   }
 
   // THE PAGE MAY RE-RENDER ITSELF UNDER THE SCAN — mirrored from
-  // scripts/apply/scan-engine.mjs, which carries the measurement. In short:
+  // src/apply/scan-engine.mjs, which carries the measurement. In short:
   // Greenhouse's embed form (a Remix app) replaces its whole document root
   // ~200ms after `load`, with or without a scanner on the page, so every
   // data-aj stamp the structure scan wrote is on a node that no longer exists
@@ -106,12 +106,12 @@ async (page) => {
   //
   // This driver cannot be told WHICH dropdowns to skip: browser_run_code_unsafe
   // takes a filename and passes no arguments, and this vm has no fs to read a
-  // hint file with. scripts/apply/scan-engine.mjs — the ordinary-module twin
+  // hint file with. src/apply/scan-engine.mjs — the ordinary-module twin
   // used by the local runner — takes { knownOpts, skipProbe } and probes only
   // what is genuinely unknown. Keep the two in step on everything that does
   // NOT need a parameter, which is every wait below.
   //
-  // WHAT THE PROBE IS ALLOWED TO CLICK. Mirrored from scripts/apply/
+  // WHAT THE PROBE IS ALLOWED TO CLICK. Mirrored from src/apply/
   // scan-engine.mjs's probeRefusal(), which is the canonical copy and carries
   // the full reasoning; this vm has no module loader so it cannot import it,
   // and tests/apply/fill-page.test.mjs pins the two character-for-character.
@@ -181,7 +181,7 @@ async (page) => {
   }
 
   // THE ELEMENT WE STAMPED IS NOT ALWAYS THE ELEMENT THAT CARRIES THE ARIA —
-  // mirrored from scripts/apply/scan-engine.mjs, which carries the full
+  // mirrored from src/apply/scan-engine.mjs, which carries the full
   // reasoning. In short, measured on Coinbase's Greenhouse form 2026-08-07:
   // react-select stamps the `.select__control` shell, which has no aria at all,
   // while `aria-controls`/`aria-expanded` live on the inner `input.select__input`.
@@ -260,7 +260,7 @@ async (page) => {
         .waitFor({ state: menuId ? "visible" : "attached", timeout: 300 })
         .catch(() => {})
       // THE BOX IS NOT ALWAYS WHAT OPENS THE MENU — mirrored from
-      // scripts/apply/scan-engine.mjs, which carries the full reasoning. In
+      // src/apply/scan-engine.mjs, which carries the full reasoning. In
       // short, measured on Ashby 2026-08-04: the menu opens from a chevron
       // BUTTON beside the combobox, not from the box, so every Ashby dropdown
       // probed as zero options and deferred to a human for no reason. The
@@ -423,7 +423,7 @@ async (page) => {
               ),
             ])
         // AN EMPTY-STATE MESSAGE IS NOT AN OPTION — mirrored from
-        // scripts/apply/scan-engine.mjs, which carries the reasoning. Measured
+        // src/apply/scan-engine.mjs, which carries the reasoning. Measured
         // on Ashby 2026-08-04: an async typeahead opened with no query renders
         // a "No results" box and declares no [role=option], so the leaf
         // fallback read the decoration and returned it as the option list.
@@ -543,7 +543,7 @@ async (page) => {
   //   browser_evaluate { function: "() => window.__ajLastScan", filename }
   // where a getter on that global can return anything at all.
   //
-  // scripts/apply/scan-engine.mjs — the ordinary-module twin — closes both
+  // src/apply/scan-engine.mjs — the ordinary-module twin — closes both
   // (local binding in, in-process object out) and is the path Phase 3's
   // unattended runner uses. Here the user is on the submit button anyway, so
   // the cost of stripping is one tick in the browser. Done PLAYWRIGHT-SIDE.

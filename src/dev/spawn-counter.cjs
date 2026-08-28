@@ -25,7 +25,7 @@
 // IT MUST FOLLOW THE WORK INTO CHILD PROCESSES, and that is not optional.
 //
 // Measured: with the preload in the parent only, a model call added to
-// `scripts/apply/fill-plan.mjs` — which the plan leg SHELLS OUT to, once per
+// `src/apply/fill-plan.mjs` — which the plan leg SHELLS OUT to, once per
 // application — was counted as ZERO. The parent never sees the child's
 // requests. The gate stayed green through the exact mutation the plan names as
 // its falsifiable check.
@@ -42,7 +42,7 @@ const path = require("node:path")
 const fs = require("node:fs")
 
 const ROOT = path.resolve(__dirname, "..", "..")
-const SCRIPTS_DIR = path.join(ROOT, "scripts")
+const SCRIPTS_DIR = path.join(ROOT, "src")
 
 // Loopback in every form a request can carry it. The fixture is loopback, and
 // counting it as outbound would report a model turn per application.
@@ -60,7 +60,7 @@ const counters = {
 }
 globalThis.__ajCounters = counters
 
-// A spawn of THIS repo's own node running a file under scripts/ is a
+// A spawn of THIS repo's own node running a file under src/ is a
 // deterministic local script — the thing the plan wants more of, not a model
 // turn. Everything else is foreign: another interpreter, a CLI, anything at
 // all outside the tree.

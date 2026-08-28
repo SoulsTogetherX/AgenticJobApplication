@@ -3,10 +3,7 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import {
-  matchOption,
-  createResolver,
-} from "../../scripts/apply/answer-bank.mjs"
+import { matchOption, createResolver } from "../../src/apply/answer-bank.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -19,7 +16,7 @@ function run(fields, extra = []) {
   return spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "apply", "answer-bank.mjs"),
+      path.join(ROOT, "src", "apply", "answer-bank.mjs"),
       "--fields",
       JSON.stringify(fields),
       "--profile",
@@ -1466,7 +1463,7 @@ test("BOUNDARY: a named company the user DID work at still defers", () => {
 test("usage errors: no input and malformed JSON", () => {
   const noInput = spawnSync(
     process.execPath,
-    [path.join(ROOT, "scripts", "apply", "answer-bank.mjs"), "--fields", "   "],
+    [path.join(ROOT, "src", "apply", "answer-bank.mjs"), "--fields", "   "],
     { cwd: ROOT, encoding: "utf8" },
   )
   assert.equal(noInput.status, 2)
@@ -1474,7 +1471,7 @@ test("usage errors: no input and malformed JSON", () => {
   const bad = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "apply", "answer-bank.mjs"),
+      path.join(ROOT, "src", "apply", "answer-bank.mjs"),
       "--fields",
       "{not json",
     ],

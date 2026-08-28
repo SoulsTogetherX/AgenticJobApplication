@@ -5,8 +5,8 @@
 // never deletes them.
 //
 // Usage:
-//   node scripts/applications/update-application.mjs <slug-or-company> --status <status>
-//   node scripts/applications/update-application.mjs <slug-or-company> --followed-up [--date YYYY-MM-DD]
+//   node src/applications/update-application.mjs <slug-or-company> --status <status>
+//   node src/applications/update-application.mjs <slug-or-company> --followed-up [--date YYYY-MM-DD]
 //   (flags combine; --file overrides the store for tests)
 import fs from "node:fs"
 import { loadYamlFile, dumpYaml } from "../lib/lib.mjs"

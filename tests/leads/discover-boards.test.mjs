@@ -4,7 +4,7 @@ import {
   postsBelowSenior,
   evaluateCandidate,
   POOLS,
-} from "../../scripts/leads/discover-boards.mjs"
+} from "../../src/leads/discover-boards.mjs"
 
 const NOW = new Date("2026-07-29T12:00:00Z")
 

@@ -13,7 +13,7 @@ import {
   TRUST_CHECKS,
   ADAPTER_IDS,
   resolveLeadForTrust,
-} from "../../scripts/auto/trust.mjs"
+} from "../../src/auto/trust.mjs"
 
 const LIMITS = {
   auto_apply: {

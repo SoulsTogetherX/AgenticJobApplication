@@ -9,13 +9,13 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { openDb } from "../../scripts/lib/db.mjs"
+import { openDb } from "../../src/lib/db.mjs"
 import {
   requeueSlug,
   listRequeueable,
   hasLiveSubmission,
   REQUEUE_REFUSED,
-} from "../../scripts/auto/requeue.mjs"
+} from "../../src/auto/requeue.mjs"
 
 function tempDb(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "requeue-"))

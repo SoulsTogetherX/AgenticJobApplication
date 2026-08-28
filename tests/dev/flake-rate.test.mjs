@@ -9,13 +9,13 @@
 // the specific failure it was chosen to avoid: the normal approximation
 // reports [0, 0] at zero observed failures, i.e. certainty from an absence.
 //
-// NOTE ON LOCATION: tests/ mirrors scripts/ one-for-one, so scripts/dev/ maps
+// NOTE ON LOCATION: tests/ mirrors src/ one-for-one, so src/dev/ maps
 // here. `tests/dev/` was not in qa-breaker's declared file set — it is
 // declared in the return report for the manager to assign, rather than left as
 // an untested tool.
 import test from "node:test"
 import assert from "node:assert/strict"
-import { runsToRuleOut, wilson } from "../../scripts/dev/flake-rate.mjs"
+import { runsToRuleOut, wilson } from "../../src/dev/flake-rate.mjs"
 
 test("wilson never claims certainty from zero failures", () => {
   const r = wilson(0, 20)

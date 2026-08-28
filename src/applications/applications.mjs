@@ -3,22 +3,22 @@
 //
 // The `applications` table in jobs/leads.db is the source of truth;
 // profile/applications.yaml is a generated export kept for readability and
-// recovery. See scripts/lib/db.mjs.
+// recovery. See src/lib/db.mjs.
 //
 // GUARDRAIL (CLAUDE.md rule 2 still applies, only the storage moved): an
 // application is recorded ONLY after the user confirms they submitted it, and
 // `remove` exists to correct mistakes — never to quietly rewrite history.
 //
 // Usage:
-//   node scripts/applications/applications.mjs list [--status s] [--company X] [--json]
-//   node scripts/applications/applications.mjs find "<company|title|slug>" [--json]
-//   node scripts/applications/applications.mjs stats [--json]
-//   node scripts/applications/applications.mjs remove <slug> --confirm
-//   node scripts/applications/applications.mjs export
+//   node src/applications/applications.mjs list [--status s] [--company X] [--json]
+//   node src/applications/applications.mjs find "<company|title|slug>" [--json]
+//   node src/applications/applications.mjs stats [--json]
+//   node src/applications/applications.mjs remove <slug> --confirm
+//   node src/applications/applications.mjs export
 //
 // Creating and updating entries stay where they were:
-//   node scripts/applications/log-application.mjs <slug> --company X --title Y
-//   node scripts/applications/update-application.mjs <slug> --status s [--followed-up]
+//   node src/applications/log-application.mjs <slug> --company X --title Y
+//   node src/applications/update-application.mjs <slug> --status s [--followed-up]
 import { pathToFileURL } from "node:url"
 import path from "node:path"
 import { isTerse, dumpYaml } from "../lib/lib.mjs"

@@ -9,7 +9,7 @@ sentence properly — not as a slogan but as a mechanism — the rest of the des
 stops looking paranoid and starts looking obvious. Why does every resume bullet
 carry a `<!-- fact:ID -->` comment? Why is there a separate program whose only
 job is to fail your resume? Why does a hook refuse the model's file edits
-instead of `CLAUDE.md` asking it nicely? Why does `scripts/` contain no AI at
+instead of `CLAUDE.md` asking it nicely? Why does `src/` contain no AI at
 all?
 
 This document answers all of those from the ground up. It assumes you have never
@@ -176,7 +176,7 @@ enough to be safe, and it is a lie that will be sent to an employer on a
 document signed with the owner's name. If it reaches an interview, the owner is
 the one who has to answer for it.
 
-`scripts/lib/untrusted.mjs` opens with this exact scenario stated as the threat:
+`src/lib/untrusted.mjs` opens with this exact scenario stated as the threat:
 
 > a posting that can make a tailoring agent write "10 years of Kubernetes" onto
 > a resume has made the user lie on a job application under their own name.
@@ -201,7 +201,7 @@ predicting from. It competes for influence against everything else in that
 stream — the job posting, the conversation so far, the file contents that got
 read along the way. It shifts probabilities. It does not create a barrier.
 
-Compare with what `scripts/documents/verify-claims.mjs` does. It reads the
+Compare with what `src/documents/verify-claims.mjs` does. It reads the
 finished document, extracts every technology term, compares each one against a
 corpus built from the fact base, and exits `1` if any term is unaccounted for.
 Same document in, same answer out, every time, forever. There is no wording that
@@ -330,7 +330,7 @@ This is the tidiest example of token discipline turning into code, and you have
 already met it in [`./02-computer-basics.md`](./02-computer-basics.md) §4.
 
 Every script here checks whether its output is going to a terminal with a human
-in front of it, or into a pipe. `outputMode` in `scripts/lib/lib.mjs` carries
+in front of it, or into a pipe. `outputMode` in `src/lib/lib.mjs` carries
 the reasoning in the comment above it:
 
 ```js
@@ -339,7 +339,7 @@ the reasoning in the comment above it:
 // far fewer tokens. --verbose / --quiet override the detection.
 ```
 
-The consequence is that an agent running `node scripts/status.mjs` gets a dozen
+The consequence is that an agent running `node src/status.mjs` gets a dozen
 dense lines instead of a page of sentences, and `CLAUDE.md` adds the corollary
 that catches people out: agents are told **"never pass `--verbose` from a tool
 call."** The flag exists so a human can force prose when output is being piped.
@@ -381,7 +381,7 @@ scanner code lives in the page rather than in the conversation.
 ## 3.1 What non-determinism means here
 
 A **deterministic** program produces the same output for the same input, every
-time. `node scripts/documents/verify-claims.mjs resume <file>` on unchanged bytes
+time. `node src/documents/verify-claims.mjs resume <file>` on unchanged bytes
 gives an identical report today, tomorrow, and next year.
 
 A model does not work that way. Producing text involves sampling from a
@@ -407,12 +407,12 @@ model's own diligence.
 
 | Concern                                    | The model's role | The actual control                                      |
 | ------------------------------------------ | ---------------- | ------------------------------------------------------- |
-| Resume contains only true claims           | writes the draft | `scripts/documents/verify-claims.mjs` (exit 1 = fail)   |
+| Resume contains only true claims           | writes the draft | `src/documents/verify-claims.mjs` (exit 1 = fail)       |
 | Nothing enters the fact base unapproved    | asks the user    | `scripts/profile/save-answer.mjs` + two hooks           |
 | The agent never edits `profile/`           | told not to      | `.claude/hooks/protect-profile.js` denies the tool call |
-| The agent never commits to `main`          | told not to      | `scripts/hooks/guard-bash.mjs` denies the command       |
+| The agent never commits to `main`          | told not to      | `src/hooks/guard-bash.mjs` denies the command           |
 | Only two files may contain a browser click | told which       | `tests/auto/click-surface.test.mjs`                     |
-| A green test run really ran tests          | n/a              | `.github/workflows/test-gate.mjs` count floor           |
+| A green test run really ran tests          | n/a              | `tools/ci/test-gate.mjs` count floor                    |
 
 The click-surface test states the principle better than I can, in its own header:
 
@@ -506,7 +506,7 @@ its numbers present in that fact?" is a lookup.
 
 ## 4.3 Layer 3 — a program fails the document
 
-`scripts/documents/verify-claims.mjs` is described in its own first line as "the
+`src/documents/verify-claims.mjs` is described in its own first line as "the
 core guardrail". It checks seven rules:
 
 | Rule | What it checks                                                     | Mode   |
@@ -545,7 +545,7 @@ profile. First the document:
 Then the check:
 
 ```bash
-node scripts/documents/verify-claims.mjs resume demo-resume.md \
+node src/documents/verify-claims.mjs resume demo-resume.md \
   --profile tests/fixtures/profile.yaml --no-record
 ```
 
@@ -571,8 +571,8 @@ The exit code is `1`, so hard rule 4 — verification must pass before any
 document is rendered — is enforceable by shell plumbing:
 
 ```bash
-node scripts/documents/verify-claims.mjs resume jobs/acme-dev/resume.md && \
-node scripts/documents/render-pdf.mjs jobs/acme-dev/resume.md
+node src/documents/verify-claims.mjs resume jobs/acme-dev/resume.md && \
+node src/documents/render-pdf.mjs jobs/acme-dev/resume.md
 ```
 
 `&&` runs the second command only if the first succeeded. A hallucinated resume
@@ -595,7 +595,7 @@ With the raw file as corpus, R6 accepted "Azure" and "Spring" — technologies t
 owner does not have, and in Spring's case explicitly did **not** select. The
 employer's own question text was vouching for claims.
 
-So `evidenceText()` in `scripts/lib/lib.mjs` builds the corpus with a rule:
+So `evidenceText()` in `src/lib/lib.mjs` builds the corpus with a rule:
 **an answer always counts; a question counts only when the answer is an
 unambiguous yes**, and even then only the clause that was actually asked. The
 comment in that file walks through the hole this closed:
@@ -631,7 +631,7 @@ counts for numbers and dates and **never** for technology.
 saying "Postgres" and a resume saying "PostgreSQL" was a violation — while
 `docs/tailoring-rules.md` instructs the writer to use "PostgreSQL not Postgres".
 The gate and the documentation were fighting each other. `canonicalSurface()` in
-`scripts/lib/keywords.mjs` now folds a hand-enumerated list of sibling spellings
+`src/lib/keywords.mjs` now folds a hand-enumerated list of sibling spellings
 on both sides of the comparison. The comment is careful about why it folds
 `surface` and never `aliases`:
 
@@ -646,7 +646,7 @@ Three things this layer does **not** do. None is a defect; all are worth knowing
 because over-trusting a gate is its own failure mode.
 
 **It checks categories of claim, not all claims.** R3 covers numbers, R5 covers
-dates, R6 covers technologies from the lexicon in `scripts/lib/keywords.mjs`. A
+dates, R6 covers technologies from the lexicon in `src/lib/keywords.mjs`. A
 bullet that cites a real fact id but describes something the fact does not say
 passes. Verified:
 
@@ -699,7 +699,7 @@ is simpler than it sounds.
    arguments each takes.
 2. When the model wants to use one, it produces a structured request instead of
    ordinary prose — for example, "call the `Bash` tool with
-   `command: "node scripts/status.mjs"`".
+   `command: "node src/status.mjs"`".
 3. **The harness** — not the model — executes it.
 4. The result is appended to the conversation as text, and the model is called
    again with the transcript now including it.
@@ -713,7 +713,7 @@ That gap is where every hook in §5.6 lives.
 Part 2 — it costs tokens on the turn it arrives and on every turn after. That is
 why these scripts print terse records to agents.
 
-Here is a real result, from `node scripts/status.mjs` run through a pipe:
+Here is a real result, from `node src/status.mjs` run through a pipe:
 
 ```
 leads total=178 dismissed=116 recommended=2 applied=9 new=51
@@ -829,8 +829,8 @@ For this repository it also does four project-specific things:
   "allow": [
     "Bash(npm test*)",
     "Bash(npm install*)",
-    "Bash(node scripts/*)",
-    "Bash(node scripts/**)",
+    "Bash(node src/*)",
+    "Bash(node src/**)",
     "Bash(node --test*)"
   ],
   "deny": []
@@ -995,13 +995,13 @@ The wiring is `.claude/settings.json`:
       "matcher": "Edit|Write|NotebookEdit",
       "hooks": [
         { "type": "command", "command": "node .claude/hooks/protect-profile.js" },
-        { "type": "command", "command": "node scripts/hooks/guard-files.mjs" }
+        { "type": "command", "command": "node src/hooks/guard-files.mjs" }
       ]
     },
     {
       "matcher": "Bash|PowerShell",
       "hooks": [
-        { "type": "command", "command": "node scripts/hooks/guard-bash.mjs" },
+        { "type": "command", "command": "node src/hooks/guard-bash.mjs" },
         { "type": "command", "command": "node .claude/hooks/guard-profile-shell.mjs" }
       ]
     }
@@ -1010,7 +1010,7 @@ The wiring is `.claude/settings.json`:
     {
       "matcher": "Edit|Write|NotebookEdit",
       "hooks": [
-        { "type": "command", "command": "node scripts/hooks/prettify.mjs", "statusMessage": "Running prettier" }
+        { "type": "command", "command": "node src/hooks/prettify.mjs", "statusMessage": "Running prettier" }
       ]
     }
   ]
@@ -1071,9 +1071,9 @@ The four hooks in this repository:
 | --------------------------------------- | ----------- | ------------- | -------------------------------------------------------------------------------- |
 | `.claude/hooks/protect-profile.js`      | PreToolUse  | the user      | agent Edit/Write to `profile/*.yaml`, `.claude/hooks/`, `.claude/settings*.json` |
 | `.claude/hooks/guard-profile-shell.mjs` | PreToolUse  | the user      | the same targets reached by a **shell command** instead of the Edit tool         |
-| `scripts/hooks/guard-files.mjs`         | PreToolUse  | `ci-engineer` | any write outside the project directory (temp dir and two Claude dirs excepted)  |
-| `scripts/hooks/guard-bash.mjs`          | PreToolUse  | `ci-engineer` | leaving the `dev` branch; state-changing git off `dev`; pushing to `main`        |
-| `scripts/hooks/prettify.mjs`            | PostToolUse | `ci-engineer` | nothing — it formats every file the agent edits                                  |
+| `src/hooks/guard-files.mjs`             | PreToolUse  | `ci-engineer` | any write outside the project directory (temp dir and two Claude dirs excepted)  |
+| `src/hooks/guard-bash.mjs`              | PreToolUse  | `ci-engineer` | leaving the `dev` branch; state-changing git off `dev`; pushing to `main`        |
+| `src/hooks/prettify.mjs`                | PostToolUse | `ci-engineer` | nothing — it formats every file the agent edits                                  |
 
 ### Why `settings.json` is protected, and why the split of ownership
 
@@ -1083,7 +1083,7 @@ states, and it is not obvious:
 > it WIRES every hook. Disabling a guard never required editing a guard —
 > deleting one line here does it without touching a protected file at all.
 
-The ownership split follows from that. `scripts/hooks/*` is the `ci-engineer`
+The ownership split follows from that. `src/hooks/*` is the `ci-engineer`
 agent's and is agent-editable. `.claude/hooks/*` and `.claude/settings*.json` are
 **the user's alone**. The accepted cost is written into the file: adding a
 permission or wiring a new hook now needs the owner, by hand.
@@ -1146,10 +1146,10 @@ And two live defects:
 > `GIT_PROG` pattern, and the hook returns no decision at all. Verified directly:
 >
 > ```bash
-> echo '{"tool_input":{"command":"git checkout main"}, ...}' | node scripts/hooks/guard-bash.mjs
+> echo '{"tool_input":{"command":"git checkout main"}, ...}' | node src/hooks/guard-bash.mjs
 > # -> {"permissionDecision":"deny", ...}
 >
-> echo '{"tool_input":{"command":"bash -c \"git checkout main\""}, ...}' | node scripts/hooks/guard-bash.mjs
+> echo '{"tool_input":{"command":"bash -c \"git checkout main\""}, ...}' | node src/hooks/guard-bash.mjs
 > # -> (no output — allowed)
 > ```
 >
@@ -1215,7 +1215,7 @@ Line up the requirements for a good injection vector:
 | Little scrutiny                          | Nobody reads a job posting's HTML source. Hidden text stays hidden.                     |
 | Volume                                   | This pipeline is built for unlimited application volume — many postings, little review. |
 
-The header of `scripts/lib/untrusted.mjs` records that this is not hypothetical
+The header of `src/lib/untrusted.mjs` records that this is not hypothetical
 in the other direction:
 
 > Greenhouse found hidden prompt injections in ~1% of the 300M resumes it
@@ -1286,9 +1286,9 @@ DOM, invisible to any human who looks at the posting.
 
 ### Step 1 — ingest
 
-`scripts/leads/find-jobs.mjs` fetches the posting and stores it as a lead. It does
+`src/leads/find-jobs.mjs` fetches the posting and stores it as a lead. It does
 not call the plain text extractor; it calls `untrustedSnippet()` from
-`scripts/lib/untrusted.mjs`, which runs three passes in a strictly ordered
+`src/lib/untrusted.mjs`, which runs three passes in a strictly ordered
 sequence:
 
 1. **`scrubMarkup` on the raw HTML** — while `display:none` is still visible as
@@ -1353,10 +1353,10 @@ payload, without ever reproducing it.
 
 ### Step 3 — screening
 
-`scripts/leads/screen.mjs` calls `evaluateStages()` in
-`scripts/leads/stages.mjs`, which runs the lead through four stages —
+`src/leads/screen.mjs` calls `evaluateStages()` in
+`src/leads/stages.mjs`, which runs the lead through four stages —
 `STAGE_IDS` is `["l0", "l1", "l2", "l3"]`, and `l3` is described in that file as
-"scam/ghost risk". Stage L3 calls `scoreRisk()` in `scripts/leads/risk.mjs`,
+"scam/ghost risk". Stage L3 calls `scoreRisk()` in `src/leads/risk.mjs`,
 which scans for injection findings and splits them:
 
 - The eight **instruction-shaped** kinds — listed in `DISQUALIFYING_KINDS` and
@@ -1385,7 +1385,7 @@ The eight disqualifying kinds:
 
 ### Step 4 — planning the tailored document
 
-If the lead survives, `scripts/documents/keyword-plan.mjs` builds the plan that
+If the lead survives, `src/documents/keyword-plan.mjs` builds the plan that
 tells the tailoring step which keywords to place. Run on the injected posting:
 
 ```js
@@ -1437,16 +1437,16 @@ R6 is the control.
 
 ## 6.5 The defences, as a table
 
-| Layer                    | Mechanism                                                           | Where                                           |
-| ------------------------ | ------------------------------------------------------------------- | ----------------------------------------------- |
-| Carrier removal (markup) | hidden elements, comments, fake chat tags, alt/title text stripped  | `scrubMarkup` in `scripts/lib/untrusted.mjs`    |
-| Carrier removal (text)   | invisible characters, homoglyphs, base64 payloads, leetspeak view   | `scrubText` in the same file                    |
-| Instruction redaction    | nine patterns, matched span replaced with a marker                  | `INJECTION_PATTERNS`                            |
-| Finding without payload  | kind + count + fingerprint + shape, never the text                  | `makeFinding`                                   |
-| Screening rejection      | eight instruction-shaped kinds reject the lead                      | `isDisqualifying` + `scoreRisk`                 |
-| Keyword-plan exclusion   | unbacked terms never enter `must_use`; `blocked` carries the reason | `scripts/documents/keyword-plan.mjs`            |
-| **The guarantee**        | **unbacked tech term fails the document, exit 1**                   | **R6 in `scripts/documents/verify-claims.mjs`** |
-| Value-side boundary      | the answer bank never holds a government or financial identifier    | `findSensitiveValues`, save-answer exit 4       |
+| Layer                    | Mechanism                                                           | Where                                       |
+| ------------------------ | ------------------------------------------------------------------- | ------------------------------------------- |
+| Carrier removal (markup) | hidden elements, comments, fake chat tags, alt/title text stripped  | `scrubMarkup` in `src/lib/untrusted.mjs`    |
+| Carrier removal (text)   | invisible characters, homoglyphs, base64 payloads, leetspeak view   | `scrubText` in the same file                |
+| Instruction redaction    | nine patterns, matched span replaced with a marker                  | `INJECTION_PATTERNS`                        |
+| Finding without payload  | kind + count + fingerprint + shape, never the text                  | `makeFinding`                               |
+| Screening rejection      | eight instruction-shaped kinds reject the lead                      | `isDisqualifying` + `scoreRisk`             |
+| Keyword-plan exclusion   | unbacked terms never enter `must_use`; `blocked` carries the reason | `src/documents/keyword-plan.mjs`            |
+| **The guarantee**        | **unbacked tech term fails the document, exit 1**                   | **R6 in `src/documents/verify-claims.mjs`** |
+| Value-side boundary      | the answer bank never holds a government or financial identifier    | `findSensitiveValues`, save-answer exit 4   |
 
 That last row points the other way and is worth a sentence, because it is the
 same architectural idea. A hostile form can label a control "Phone number" while
@@ -1466,7 +1466,7 @@ careful where it types one" — must never hold one. That is why
 This is the part most security documentation omits, and this repository refuses
 to.
 
-`scripts/lib/untrusted.mjs` has a section header reading
+`src/lib/untrusted.mjs` has a section header reading
 **"READ THIS BEFORE YOU TRUST ANYTHING BELOW"**, followed by:
 
 > THE PATTERN LIST IS NOT THE GUARANTEE. It is a filter with known, permanent
@@ -1589,7 +1589,7 @@ Shrinking the corpus would improve the score. That is now a test failure.
 > does not fire.
 
 > **Known defect (2026-08-05 audit) — double-encoded markup survives ingest.**
-> `textSnippet` in `scripts/lib/lib.mjs` decodes HTML entities a second time
+> `textSnippet` in `src/lib/lib.mjs` decodes HTML entities a second time
 > _after_ stripping tags, so entities that decode **into** markup are never
 > stripped; and `scrubMarkup` runs before `textSnippet`, so the carrier is still
 > `&amp;lt;div…` when the hidden-HTML detector looks. Measured: a plain
@@ -1638,18 +1638,18 @@ jobs, and the cost of a miss is already covered by R6.
 
 ## 7.1 The line the repository is organised around
 
-Open `scripts/`. There are 88 programs there. **Not one of them contains an AI
+Open `src/`. There are 88 programs there. **Not one of them contains an AI
 call.** No API key, no model name, no prompt, no network call to any inference
-service. Verified: a case-insensitive search across `scripts/` for `anthropic`,
+service. Verified: a case-insensitive search across `src/` for `anthropic`,
 `openai`, `completions`, `langchain`, `gpt-`, `claude-` and `embedding` returns
 only a keyword lexicon that happens to list AI products as _technologies to match
 in job postings_, and two company names in the job-board list.
 
-That is the architecture in one sentence: **everything under `scripts/` is
+That is the architecture in one sentence: **everything under `src/` is
 deterministic; everything under `.claude/skills/` and `.claude/agents/` is
 instructions for something that thinks.**
 
-| Under `scripts/` (deterministic)                        | The model's job                         |
+| Under `src/` (deterministic)                            | The model's job                         |
 | ------------------------------------------------------- | --------------------------------------- |
 | Fetching and parsing job boards                         | Judging a posting a script has flagged  |
 | Screening for ghost-job / scam / limits signals         | Rephrasing facts into tailored prose    |
@@ -1726,7 +1726,7 @@ scans.
 > asserting that "nothing opens a browser unattended — `auto-apply.mjs` does not
 > launch Chromium", and that the owner's limits file has neither
 > `auto_apply.enabled: true` nor a `board_allowlist`. **All of that is now
-> false.** `scripts/auto/auto-apply.mjs` imports and calls `launchBrowser()` (which
+> false.** `src/auto/auto-apply.mjs` imports and calls `launchBrowser()` (which
 > calls `chromium.launch()`) and `makeStages()`, and `docs/application-limits.yaml`
 > reads `enabled: true` with `dry_run: false` and four allowlisted ATS domains —
 > so `const mode = auto?.dry_run === false ? "live" : "dry_run"` resolves to
@@ -1741,7 +1741,7 @@ scans.
 The general lesson generalises past this repository: **documentation about
 capability decays faster than anything else you will write.** Where it matters,
 assert it with a test — the way `tests/auto/click-surface.test.mjs` asserts that
-exactly two files under `scripts/auto/` contain a click, rather than a sentence
+exactly two files under `src/auto/` contain a click, rather than a sentence
 claiming it.
 
 ---
@@ -1817,7 +1817,7 @@ result rather than from you.
 - **[`../code/12-harness-and-ci.md`](../code/12-harness-and-ci.md)** — the hooks,
   `.claude/settings.json`, the test gate, and the CI pipeline as code.
 - **[`../code/01-lib-foundation.md`](../code/01-lib-foundation.md)** —
-  `scripts/lib/untrusted.mjs` and `scripts/lib/lib.mjs` line by line, including
+  `src/lib/untrusted.mjs` and `src/lib/lib.mjs` line by line, including
   every carrier the sanitiser removes.
 - **[`../code/03-leads-screening.md`](../code/03-leads-screening.md)** — the L1/L2/L3
   screening stages and where `isDisqualifying` binds.

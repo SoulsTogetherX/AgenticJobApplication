@@ -59,9 +59,9 @@ give the surrounding picture.
 | file                                       | lines | one-line purpose                                                                                                                                           |
 | ------------------------------------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `.claude/skills/apply-job/scan-page.js`    | 2329  | The scanner itself. Runs **inside** the web page, walks the DOM, returns a description of the form.                                                        |
-| `scripts/apply/scan-engine.mjs`            | 768   | Installs the scanner, runs it, opens (probes) every custom dropdown. The version used by the local runner and the tests.                                   |
+| `src/apply/scan-engine.mjs`                | 768   | Installs the scanner, runs it, opens (probes) every custom dropdown. The version used by the local runner and the tests.                                   |
 | `.claude/skills/apply-job/scan.driver.mjs` | 440   | The same job in one MCP tool call, for the attended path the `apply-job` skill uses. A near-twin of the engine with fewer powers.                          |
-| `scripts/apply/browser.mjs`                | 206   | Plumbing: launch a browser, hand out a page, decide where a browser is allowed to point, and turn the fill engine's text into something a sandbox can run. |
+| `src/apply/browser.mjs`                    | 206   | Plumbing: launch a browser, hand out a page, decide where a browser is allowed to point, and turn the fill engine's text into something a sandbox can run. |
 
 ---
 
@@ -244,8 +244,8 @@ THE ATTENDED PATH (what the apply-job skill does today)
 
 THE LOCAL-RUNNER / TEST PATH
 
-  scripts/auto/stages.mjs ─┐
-  scripts/dev/bench-apply  ├─▶ scan-engine.mjs   (an ordinary Node module)
+  src/auto/stages.mjs ─┐
+  src/dev/bench-apply  ├─▶ scan-engine.mjs   (an ordinary Node module)
   tests/apply/*.test.mjs  ─┘        │  installs, runs, probes, keeps the vouch
                                     ▼
                              scan-page.js        (PAGE-side, same file)
@@ -253,7 +253,7 @@ THE LOCAL-RUNNER / TEST PATH
                                     ▼
                        { scan, vouchedLabels }   (stays in this process)
 
-  scripts/apply/browser.mjs supplies the browser to that path
+  src/apply/browser.mjs supplies the browser to that path
   and re-exports scanPage / fillPage for convenience.
 ```
 
@@ -396,7 +396,7 @@ mcp__playwright__browser_run_code_unsafe
 browser_evaluate  () => window.__ajScan(false)
 
 # 3. local runner / tests — an ordinary import of the engine that installs it
-import scanPage from "scripts/apply/scan-engine.mjs"
+import scanPage from "src/apply/scan-engine.mjs"
 const { scan, vouchedLabels } = await scanPage(page)
 ```
 
@@ -408,7 +408,7 @@ Its only parameter is `PROBE`, which defaults to `true`. **Both engine paths pas
 > block near the end, with its `MAX_PROBE = 15` cap and its `sleep(200)` /
 > `sleep(80)` pauses — **never runs in production**. It is reachable only by
 > pasting the function into `browser_evaluate` with no argument, which the
-> header documents as a manual fallback. `scripts/dev/bench-apply.mjs` records
+> header documents as a manual fallback. `src/dev/bench-apply.mjs` records
 > this explicitly as an unmeasured quantity. It is not dead code exactly — the
 > fallback path is real — but do not reason about scan timings from it.
 
@@ -963,17 +963,17 @@ it, conventionally to `jobs/<slug>/scan-p1.json`.
 **Depends on:** nothing. No imports, by construction. Only the browser's own DOM
 APIs.
 
-**Depended on by:** `scripts/apply/scan-engine.mjs` (reads its text),
+**Depended on by:** `src/apply/scan-engine.mjs` (reads its text),
 `.claude/skills/apply-job/scan.driver.mjs` (loads it by path),
-`scripts/apply/fill-plan.mjs` (embeds its text in the generated bootstrap, via
-`readScannerSource()`), `scripts/apply/answer-bank.mjs` (consumes the `fields`
-array), `scripts/apply/field-cache.mjs` (keys on `l`, caches `opts`),
-`scripts/auto/advance.mjs` (relies on `roleOf`'s meaning of `next`), and the scan
+`src/apply/fill-plan.mjs` (embeds its text in the generated bootstrap, via
+`readScannerSource()`), `src/apply/answer-bank.mjs` (consumes the `fields`
+array), `src/apply/field-cache.mjs` (keys on `l`, caches `opts`),
+`src/auto/advance.mjs` (relies on `roleOf`'s meaning of `next`), and the scan
 fixtures in `tests/fixtures/boards/scans/*.scan.json`.
 
 ---
 
-## Part D — `scripts/apply/scan-engine.mjs`
+## Part D — `src/apply/scan-engine.mjs`
 
 ### D.1 What it is and why it exists
 
@@ -1010,13 +1010,13 @@ const { scan, vouchedLabels } = await scanPage(page, {
 
 Real callers today:
 
-| caller                        | how                                                                                                                                                                 |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/auto/stages.mjs`     | `scanPage(page, { ...(scannerSrc === undefined ? {} : { scannerSrc }), url })`                                                                                      |
-| `scripts/apply/fill-plan.mjs` | imports `probeRefusal` only, to filter its "worth probing" list                                                                                                     |
-| `scripts/apply/browser.mjs`   | re-exports `scanPage`, `SCANNER_PATH`, `readScannerSource`                                                                                                          |
-| `scripts/dev/bench-apply.mjs` | the benchmark harness                                                                                                                                               |
-| tests                         | `fill-page`, `edge-cases`, `oracle-orc`, `ashby-combo-probe`, `greenhouse-portal-combo`, and `tests/security/rce-round-trip.test.mjs` (which imports `untrustScan`) |
+| caller                    | how                                                                                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/auto/stages.mjs`     | `scanPage(page, { ...(scannerSrc === undefined ? {} : { scannerSrc }), url })`                                                                                      |
+| `src/apply/fill-plan.mjs` | imports `probeRefusal` only, to filter its "worth probing" list                                                                                                     |
+| `src/apply/browser.mjs`   | re-exports `scanPage`, `SCANNER_PATH`, `readScannerSource`                                                                                                          |
+| `src/dev/bench-apply.mjs` | the benchmark harness                                                                                                                                               |
+| tests                     | `fill-page`, `edge-cases`, `oracle-orc`, `ashby-combo-probe`, `greenhouse-portal-combo`, and `tests/security/rce-round-trip.test.mjs` (which imports `untrustScan`) |
 
 ### D.3 Everything it exposes
 
@@ -1571,7 +1571,7 @@ different reasons:
 | local binding available | `"the vouch is carried out of band and is not in this file"` |
 | fell back to the global | `"the scanner was called through window.__ajScan"`           |
 
-`scripts/auto/stages.mjs` then keeps the array in a `WeakMap` keyed on the scan
+`src/auto/stages.mjs` then keeps the array in a `WeakMap` keyed on the scan
 object (`vouchOf`), precisely so it never travels _inside_ the scan again: the
 planner gets a vouch only for a scan this process actually produced, and a scan
 loaded from anywhere else has no entry and therefore no vouch.
@@ -1644,9 +1644,9 @@ The file states its own honest limit, which is worth carrying forward exactly:
 
 **Imports:** `node:fs`, `node:path`, `node:url`. Nothing else.
 
-**Depended on by:** `scripts/auto/stages.mjs`, `scripts/apply/browser.mjs`
-(re-export), `scripts/apply/fill-plan.mjs` (`probeRefusal` only),
-`scripts/dev/bench-apply.mjs`, and five test files.
+**Depended on by:** `src/auto/stages.mjs`, `src/apply/browser.mjs`
+(re-export), `src/apply/fill-plan.mjs` (`probeRefusal` only),
+`src/dev/bench-apply.mjs`, and five test files.
 
 ---
 
@@ -1726,7 +1726,7 @@ taking `page`.
 
 > This driver cannot be told WHICH dropdowns to skip: `browser_run_code_unsafe`
 > takes a filename and passes no arguments, and this vm has no fs to read a hint
-> file with. `scripts/apply/scan-engine.mjs` — the ordinary-module twin used by
+> file with. `src/apply/scan-engine.mjs` — the ordinary-module twin used by
 > the local runner — takes `{ knownOpts, skipProbe }` and probes only what is
 > genuinely unknown. Keep the two in step on everything that does NOT need a
 > parameter, which is every wait below.
@@ -1791,12 +1791,12 @@ one click, and it is the correct trade.
 server's `page`. No imports — it cannot have any.
 
 **Depended on by:** `.claude/skills/apply-job/SKILL.md` (step A of the apply
-flow), `scripts/dev/bench-apply.mjs` (counts it as a protocol step),
+flow), `src/dev/bench-apply.mjs` (counts it as a protocol step),
 `tests/apply/fill-page.test.mjs` (pins its mirrored guard and ceilings).
 
 ---
 
-## Part F — `scripts/apply/browser.mjs`
+## Part F — `src/apply/browser.mjs`
 
 ### F.1 What it is and why it exists
 
@@ -1811,11 +1811,11 @@ real employer's board by editing one argument.
 
 Its header sets out the two ways the engines reach a `page`:
 
-> 1. The **LOCAL RUNNER** (`scripts/auto/*`, tests against the fake board under
+> 1. The **LOCAL RUNNER** (`src/auto/*`, tests against the fake board under
 >    `tests/fixtures/boards/`). Ordinary Node, ordinary `import` — `launchBrowser()`
 >    here, then `fillPage(page, plan)` / `scanPage(page)`. No MCP, no model.
 > 2. The **MCP path** (`browser_run_code_unsafe { filename }`), whose vm has no
->    working `import` and no `fs`. `scripts/apply/fill-plan.mjs` reads the engine
+>    working `import` and no `fs`. `src/apply/fill-plan.mjs` reads the engine
 >    text off OUR OWN DISK with `engineSandboxSource()` below and embeds it in the
 >    generated `jobs/<slug>/fill-plan.js`, which `eval`s that one string.
 
@@ -1840,8 +1840,8 @@ try {
 }
 ```
 
-Real importers: `scripts/apply/fill-plan.mjs` (`embedLiteral`,
-`engineSandboxSource`, `readScannerSource`), `scripts/auto/auto-apply.mjs`
+Real importers: `src/apply/fill-plan.mjs` (`embedLiteral`,
+`engineSandboxSource`, `readScannerSource`), `src/auto/auto-apply.mjs`
 (`launchBrowser`), and six test files.
 
 ### F.3 Everything it exposes
@@ -1861,7 +1861,7 @@ export async function withBrowser(opts, fn)
 
 | symbol                                    | in                          | out                                                                                                   |
 | ----------------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `ENGINE_PATH`                             | —                           | absolute path to `scripts/apply/fill-engine.mjs`, built from `import.meta.url`                        |
+| `ENGINE_PATH`                             | —                           | absolute path to `src/apply/fill-engine.mjs`, built from `import.meta.url`                            |
 | `readEngineSource(file)`                  | a path                      | the file's UTF-8 text                                                                                 |
 | `embedLiteral(value)`                     | any JSON-serialisable value | a **JavaScript source literal** string                                                                |
 | `engineSandboxSource(src)`                | the engine's text           | a string whose `eval` result **is** the `fillPage` function; throws if the engine breaks its contract |
@@ -1994,7 +1994,7 @@ and then the browser, each inside its own `try/catch`.
 
 ### F.5 What it reads and writes
 
-**Reads:** `scripts/apply/fill-engine.mjs` and (via the re-exported
+**Reads:** `src/apply/fill-engine.mjs` and (via the re-exported
 `readScannerSource`) `.claude/skills/apply-job/scan-page.js`, both as text; three
 environment variables. **Writes:** nothing to disk. It creates browser processes
 and, with `userDataDir`, a Chromium profile directory owned by the caller.
@@ -2011,7 +2011,7 @@ and, with `userDataDir`, a Chromium profile directory owned by the caller.
 4. **Do not add a submit helper here.** The absence of a click verb in both
    engines is a structural safety property, not a rule someone remembers to
    follow: it is _a thing the engines cannot express_. The only clicks in
-   `scripts/auto/` live in `submit.mjs` and `advance.mjs`, and
+   `src/auto/` live in `submit.mjs` and `advance.mjs`, and
    `tests/auto/click-surface.test.mjs` keeps it at exactly those two.
 5. **`playwright-core`, never `playwright`.**
 
@@ -2027,7 +2027,7 @@ and, with `userDataDir`, a Chromium profile directory owned by the caller.
 **Imports:** `node:fs`, `node:path`, `node:url`, `./fill-engine.mjs`,
 `./scan-engine.mjs`, and `playwright-core` lazily.
 
-**Depended on by:** `scripts/apply/fill-plan.mjs`, `scripts/auto/auto-apply.mjs`,
+**Depended on by:** `src/apply/fill-plan.mjs`, `src/auto/auto-apply.mjs`,
 and six test files.
 
 ---

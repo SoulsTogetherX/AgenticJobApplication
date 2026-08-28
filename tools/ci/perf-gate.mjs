@@ -5,9 +5,9 @@
 // a committed baseline, and fails the build on a regression.
 //
 // Usage:
-//   node .github/workflows/perf-gate.mjs                 # check against the baseline
-//   node .github/workflows/perf-gate.mjs --update        # write a new baseline
-//   node .github/workflows/perf-gate.mjs --json
+//   node tools/ci/perf-gate.mjs                 # check against the baseline
+//   node tools/ci/perf-gate.mjs --update        # write a new baseline
+//   node tools/ci/perf-gate.mjs --json
 //
 // ===========================================================================
 // WHY EACH RULE IS THE STRENGTH IT IS
@@ -58,7 +58,7 @@ const ROOT = path.resolve(
   "..",
   "..",
 )
-const RUNNER = path.join(ROOT, "scripts", "dev", "bench-runner.mjs")
+const RUNNER = path.join(ROOT, "src", "dev", "bench-runner.mjs")
 export const BASELINE_PATH = path.join(ROOT, "docs", "perf-baseline.json")
 
 // The gate's own command. Fixed here rather than passed in, because a gate
@@ -242,7 +242,7 @@ export function toBaseline(result, provenance) {
   for (const rule of RULES) columns[rule.key] = acrossRuns(result.per_run, rule)
   return {
     taken_at: new Date().toISOString(),
-    command: `node scripts/dev/bench-runner.mjs ${GATE_ARGS.join(" ")}`,
+    command: `node src/dev/bench-runner.mjs ${GATE_ARGS.join(" ")}`,
     runs: result.runs,
     statistic: Object.fromEntries(RULES.map((r) => [r.key, r.statistic])),
     columns,

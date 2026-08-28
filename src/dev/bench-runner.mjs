@@ -7,9 +7,9 @@
 // written against.
 //
 // Usage:
-//   node scripts/dev/bench-runner.mjs --apps 50 --concurrency 8 --board greenhouse --runs 3 --json
-//   node scripts/dev/bench-runner.mjs --apps 8 --concurrency 4          # a quick look
-//   node scripts/dev/bench-runner.mjs --apps 50 --concurrency 8 --ledger
+//   node src/dev/bench-runner.mjs --apps 50 --concurrency 8 --board greenhouse --runs 3 --json
+//   node src/dev/bench-runner.mjs --apps 8 --concurrency 4          # a quick look
+//   node src/dev/bench-runner.mjs --apps 50 --concurrency 8 --ledger
 //
 // ===========================================================================
 // WHAT THIS HARNESS IS, AND THE ONE THING IT IS NOT
@@ -31,7 +31,7 @@
 // row exactly as the real path would and stops there.
 //
 // DONE 2026-08-03 (Phase 5 W3): the pool is no longer this file's. It calls the
-// shipped `runPool` from scripts/auto/pool.mjs, which carries the ORIGIN
+// shipped `runPool` from src/auto/pool.mjs, which carries the ORIGIN
 // exclusion key the old local loop did not — so `max_in_flight` is now a number
 // a production run can actually reach rather than an upper bound on a
 // scheduler that never shipped. The per-job driver is still `oneJob` below, and
@@ -65,7 +65,7 @@
 // THE PLAN'S WORDING FOR model_turns IS TOO BROAD AND THIS FILE NARROWS IT.
 // 4.7 says "process spawns plus outbound HTTP to any non-loopback host". Taken
 // literally that is red on every run by construction, because benchPlan shells
-// out to `node scripts/apply/fill-plan.mjs` once per application — a
+// out to `node src/apply/fill-plan.mjs` once per application — a
 // deterministic local script, and the very thing the plan wants us to use MORE
 // of. A gate that fires on the sanctioned behaviour gets an override line
 // within a week, which is the exact failure mode the plan reasons about
@@ -77,7 +77,7 @@
 //                           nine columns in its own right and it is where a
 //                           regression in process count shows up.
 //   model_turns             counts a spawn only when it is NOT this repo's own
-//                           node running a file under scripts/ — plus every
+//                           node running a file under src/ — plus every
 //                           non-loopback request.
 //
 // A real model call cannot hide from that. Either it is an HTTPS request to a
@@ -171,7 +171,7 @@ export function readCounters() {
  * Read the rows every CHILD process wrote on its way out.
  *
  * THE PARENT'S OWN COUNTERS ARE NOT ENOUGH, and this was measured rather than
- * assumed. The plan leg shells out to `scripts/apply/fill-plan.mjs` once per
+ * assumed. The plan leg shells out to `src/apply/fill-plan.mjs` once per
  * application, so a model call added THERE — the fill path, precisely what the
  * plan's falsifiable check names — happens in a process the parent cannot see.
  * With parent-only counting that mutation was scored 0 and the hard gate stayed
@@ -669,7 +669,7 @@ function summarise(x) {
           )
         : U(
             "the spawn-counter preload was not installed; run this file as a CLI " +
-              "(it re-execs itself with --require scripts/dev/spawn-counter.cjs) " +
+              "(it re-execs itself with --require src/dev/spawn-counter.cjs) " +
               "or pass that flag yourself",
           ),
 
@@ -911,7 +911,7 @@ async function main() {
 /**
  * Re-exec with the counter preload.
  *
- * The CI gate's command is fixed by the plan — `node scripts/dev/bench-runner.mjs
+ * The CI gate's command is fixed by the plan — `node src/dev/bench-runner.mjs
  * --apps 50 ...` with no extra flags — and the counters only work as a
  * `--require` preload. So the command installs it for itself rather than
  * relying on anybody remembering. stdio is inherited, so output and exit code
@@ -935,7 +935,7 @@ function reexecWithCounters() {
 export function ledgerEntry(agg, prov, args) {
   const r = agg.per_run[0]
   const cmd =
-    `node scripts/dev/bench-runner.mjs --apps ${args.apps} --concurrency ${args.concurrency} ` +
+    `node src/dev/bench-runner.mjs --apps ${args.apps} --concurrency ${args.concurrency} ` +
     `--board ${args.boardName} --runs ${args.runs} --json`
   const rows = Object.entries(r.columns).map(([k, c]) => {
     const v =

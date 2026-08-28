@@ -17,19 +17,19 @@ import {
   resolveDays,
   planPurge,
   CLOSED,
-} from "../../scripts/maintenance/archive.mjs"
+} from "../../src/maintenance/archive.mjs"
 import {
   openDb,
   upsertApplications,
   writeDocuments,
-} from "../../scripts/lib/db.mjs"
+} from "../../src/lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
 )
-const CLI = path.join(ROOT, "scripts", "maintenance", "archive.mjs")
+const CLI = path.join(ROOT, "src", "maintenance", "archive.mjs")
 
 // A workspace with one of everything: text, JSON, a binary PDF, an
 // intermediate, and a file with CRLF and non-ASCII bytes to catch any

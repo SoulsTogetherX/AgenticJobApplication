@@ -7,14 +7,14 @@ description: Check whether a specific job or company has already been applied to
 ---
 
 Application-history skill. The log lives in `profile/applications.yaml`
-(user-editable; the agent writes it ONLY through `scripts/applications/log-application.mjs`).
+(user-editable; the agent writes it ONLY through `src/applications/log-application.mjs`).
 
 ## Checking history
 
 1. Run the check for both the company and (if known) the job slug:
    ```bash
-   node scripts/applications/check-applied.mjs "<company>"
-   node scripts/applications/check-applied.mjs "<job-slug>"
+   node src/applications/check-applied.mjs "<company>"
+   node src/applications/check-applied.mjs "<job-slug>"
    ```
 2. Interpret the JSON:
    - `job_already_applied: true` → this exact job was applied to. Report the
@@ -30,7 +30,7 @@ Application-history skill. The log lives in `profile/applications.yaml`
 Only after the user confirms an application was actually submitted:
 
 ```bash
-node scripts/applications/log-application.mjs <slug> --company "<Company>" --title "<Title>" [--url <posting url>] [--date YYYY-MM-DD]
+node src/applications/log-application.mjs <slug> --company "<Company>" --title "<Title>" [--url <posting url>] [--date YYYY-MM-DD]
 ```
 
 - Date defaults to today; pass `--date` if the user says they applied earlier.

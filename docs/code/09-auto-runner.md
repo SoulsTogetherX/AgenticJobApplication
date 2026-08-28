@@ -1,7 +1,7 @@
 # The unattended runner: applying without you watching
 
 Everything else in this repository is a helper that you — or an AI agent talking
-to you — start by hand. `scripts/auto/` is the part designed to run when nobody
+to you — start by hand. `src/auto/` is the part designed to run when nobody
 is at the keyboard: a scheduled task that picks jobs out of the store, opens a
 real Chromium browser, fills a real employer's application form, and clicks
 Submit. It is the only place in the tree where something irreversible can happen
@@ -45,17 +45,17 @@ You do not need to have read the others, but these help:
 
 **The files covered here**
 
-| file                          | lines | one-line purpose                                                      |
-| ----------------------------- | ----: | --------------------------------------------------------------------- |
-| `scripts/auto/auto-apply.mjs` |   756 | the runner's command-line entry point: args, selection, browser, pool |
-| `scripts/auto/job.mjs`        |   568 | the per-job state machine — one application, start to finish          |
-| `scripts/auto/cycle.mjs`      |   486 | one whole cycle: find → screen → reverify → prep → tailor → apply     |
-| `scripts/auto/stages.mjs`     |   189 | the four injected browser stages (`scan`, `plan`, `fill`, `classify`) |
-| `scripts/auto/pool.mjs`       |   185 | the worker pool, partitioned by origin                                |
-| `scripts/auto/caps.mjs`       |   114 | the blast-radius arithmetic (per-run / per-day / per-company caps)    |
-| `scripts/auto/advance.mjs`    |   263 | `advanceOnce()` — clicks a `next` control, never a submit             |
-| `scripts/auto/multipage.mjs`  |   285 | `walkPages()` — resolve a multi-page form one page at a time          |
-| `scripts/auto/submit.mjs`     |   532 | `submitOnce()` — the one submit click and its eleven preconditions    |
+| file                      | lines | one-line purpose                                                      |
+| ------------------------- | ----: | --------------------------------------------------------------------- |
+| `src/auto/auto-apply.mjs` |   756 | the runner's command-line entry point: args, selection, browser, pool |
+| `src/auto/job.mjs`        |   568 | the per-job state machine — one application, start to finish          |
+| `src/auto/cycle.mjs`      |   486 | one whole cycle: find → screen → reverify → prep → tailor → apply     |
+| `src/auto/stages.mjs`     |   189 | the four injected browser stages (`scan`, `plan`, `fill`, `classify`) |
+| `src/auto/pool.mjs`       |   185 | the worker pool, partitioned by origin                                |
+| `src/auto/caps.mjs`       |   114 | the blast-radius arithmetic (per-run / per-day / per-company caps)    |
+| `src/auto/advance.mjs`    |   263 | `advanceOnce()` — clicks a `next` control, never a submit             |
+| `src/auto/multipage.mjs`  |   285 | `walkPages()` — resolve a multi-page form one page at a time          |
+| `src/auto/submit.mjs`     |   532 | `submitOnce()` — the one submit click and its eleven preconditions    |
 
 ---
 
@@ -100,7 +100,7 @@ Note the polarity: the value has to be _literally the boolean `false`_ to get
 
 The runner also genuinely opens a browser now. `auto-apply.mjs`'s `main()` calls
 `launchBrowser({ userDataDir, headless, localOnly })`, and
-`scripts/apply/browser.mjs` calls `chromium.launch(...)` inside it. It also
+`src/apply/browser.mjs` calls `chromium.launch(...)` inside it. It also
 builds real page-handling stages with `makeStages({ jobsDir })` rather than
 waiting for a test harness to inject fakes.
 
@@ -133,7 +133,7 @@ So the honest summary is:
 
 There is a second thing standing between the runner and a real submission even
 if every field resolved cleanly. The post-click page classifier
-(`scripts/auto/classify.mjs`) is built, but every one of its rules was written
+(`src/auto/classify.mjs`) is built, but every one of its rules was written
 against a locally-served fixture page rather than a real board, and a
 fixture-sourced rule is only permitted to fire on a loopback address (`localhost`
 / `127.x.x.x`). On a real Greenhouse, Lever or Ashby confirmation page it
@@ -153,7 +153,7 @@ cost me this week?" with a database `GROUP BY` instead of a text search.
 
 ### 1. The nine queue states
 
-Defined in `scripts/lib/db.mjs` as `AUTO_QUEUE_STATES`:
+Defined in `src/lib/db.mjs` as `AUTO_QUEUE_STATES`:
 
 ```
 queued, claimed, planned, authorized, attempted,
@@ -197,7 +197,7 @@ system broke.** They are counted separately for exactly that reason.
 
 ### 3. The seven stages
 
-`scripts/auto/taxonomy.mjs` exports `STAGES`:
+`src/auto/taxonomy.mjs` exports `STAGES`:
 
 ```
 queue, claim, plan, authorize, attempt, post-submit, reconcile
@@ -304,12 +304,12 @@ the value the losing worker hands back to the pool so the pool can move on.
 
 ---
 
-## `scripts/auto/auto-apply.mjs` — the entry point
+## `src/auto/auto-apply.mjs` — the entry point
 
 ### 1. What it is and why it exists
 
 This is the command you (or a scheduler) run. Without it every other module in
-`scripts/auto/` is a library with nobody calling it. Its job is narrow: parse
+`src/auto/` is a library with nobody calling it. Its job is narrow: parse
 arguments, read your limits file, refuse early if something is wrong, work out
 which jobs are eligible, open a browser, hand the queue to the pool, close down,
 and print the run record.
@@ -330,16 +330,16 @@ adding a decision here, add it to the module that owns that decision instead.
 
 ```bash
 # work up to 10 queued jobs, one at a time (the normal invocation)
-node scripts/auto/auto-apply.mjs --limit 10 --concurrency 1
+node src/auto/auto-apply.mjs --limit 10 --concurrency 1
 
 # just fill the queue and stop — writes auto_queue rows, opens no browser
-node scripts/auto/auto-apply.mjs --enqueue --limit 25
+node src/auto/auto-apply.mjs --enqueue --limit 25
 
 # machine-readable output (one JSON object on stdout)
-node scripts/auto/auto-apply.mjs --json
+node src/auto/auto-apply.mjs --json
 
 # loopback fixture mode, against a throwaway database
-node scripts/auto/auto-apply.mjs --fixture --db /tmp/leads.db --limits /tmp/limits.yaml
+node src/auto/auto-apply.mjs --fixture --db /tmp/leads.db --limits /tmp/limits.yaml
 ```
 
 `--help` prints the usage block and exits 0. Real output, captured 2026-08-05:
@@ -694,18 +694,18 @@ The `auto_queue` columns are: `slug TEXT PRIMARY KEY`, `run_id`, `board_key`,
 **Imports:** `node:fs`, `node:path`, `node:url`; `../lib/db.mjs`;
 `../lib/lib.mjs`; `../lib/verification.mjs`; `../apply/automatability.mjs`
 (`boardKey`); `../apply/ats/index.mjs` (`detectAts`); `../apply/browser.mjs`
-(`launchBrowser`); and from within `scripts/auto/`: `authorize.mjs`
+(`launchBrowser`); and from within `src/auto/`: `authorize.mjs`
 (`submitOrigin`), `trust.mjs`, `preflight.mjs`, `audit.mjs`, `pool.mjs`,
 `job.mjs`, `breaker.mjs`, `guard.mjs`, `untrusted-text.mjs`, `stages.mjs`.
 
-**Depended on by:** `scripts/auto/cycle.mjs` (which spawns it as a child
+**Depended on by:** `src/auto/cycle.mjs` (which spawns it as a child
 process), and the tests `tests/auto/auto-apply.test.mjs`,
 `tests/auto/browser-leg.test.mjs`, `tests/auto/concurrency.test.mjs`,
 `tests/fixtures/auto/kill-at.mjs`.
 
 ---
 
-## `scripts/auto/job.mjs` — the per-job state machine
+## `src/auto/job.mjs` — the per-job state machine
 
 ### 1. What it is and why it exists
 
@@ -1005,11 +1005,11 @@ a `GROUP BY`.
 `./multipage.mjs`; `./advance.mjs` (`AdvanceAmbiguous`); `./taxonomy.mjs`;
 `./untrusted-text.mjs`; `./guard.mjs`.
 
-**Depended on by:** `scripts/auto/auto-apply.mjs` and `tests/auto/job.test.mjs`.
+**Depended on by:** `src/auto/auto-apply.mjs` and `tests/auto/job.test.mjs`.
 
 ---
 
-## `scripts/auto/multipage.mjs` — walking a form page by page
+## `src/auto/multipage.mjs` — walking a form page by page
 
 ### 1. What it is and why it exists
 
@@ -1163,16 +1163,16 @@ the caps ledgers).
 
 **Imports:** `./advance.mjs` (`advanceOnce`, `findNextControl`,
 `AdvanceRefused`) and `./untrusted-text.mjs` (`safeText`).
-**Depended on by:** `scripts/auto/job.mjs`, `tests/auto/multipage.test.mjs`.
+**Depended on by:** `src/auto/job.mjs`, `tests/auto/multipage.test.mjs`.
 
 ---
 
-## `scripts/auto/advance.mjs` — the navigate verb
+## `src/auto/advance.mjs` — the navigate verb
 
 ### 1. What it is and why it exists
 
 `advanceOnce()` clicks exactly one kind of thing: a control whose **scanned role
-is `next`**. It is the second and last file under `scripts/auto/` permitted to
+is `next`**. It is the second and last file under `src/auto/` permitted to
 contain a click, and its own header frames its existence as a cost rather than a
 feature:
 
@@ -1338,7 +1338,7 @@ scan, and it drives the Playwright page.
 
 **Imports:** `./authorize.mjs` (`consumeSubmitToken` — unused, `assertTokenMatches`,
 `isSubmitToken`, `submitOrigin`, `TokenError`) and `./untrusted-text.mjs`.
-**Depended on by:** `scripts/auto/multipage.mjs`, `scripts/auto/job.mjs`,
+**Depended on by:** `src/auto/multipage.mjs`, `src/auto/job.mjs`,
 `tests/auto/advance.test.mjs`, `tests/auto/click-surface.test.mjs`.
 
 ---
@@ -1347,7 +1347,7 @@ scan, and it drives the Playwright page.
 
 Before the submit itself, the invariant that holds the whole subsystem together.
 
-**`.click(` appears under `scripts/auto/` in exactly two files:**
+**`.click(` appears under `src/auto/` in exactly two files:**
 
 | file          | what it may click                                      |
 | ------------- | ------------------------------------------------------ |
@@ -1357,7 +1357,7 @@ Before the submit itself, the invariant that holds the whole subsystem together.
 `tests/auto/click-surface.test.mjs` (116 lines) is what keeps it that way. It
 makes three assertions:
 
-1. No `.mjs` file under `scripts/auto/` other than those two contains `.click(`.
+1. No `.mjs` file under `src/auto/` other than those two contains `.click(`.
    Line comments are stripped before matching, so prose _about_ clicking does not
    fail the suite — and every file in that directory discusses clicking at length,
    on purpose.
@@ -1384,7 +1384,7 @@ not.
 
 ---
 
-## `scripts/auto/submit.mjs` — the one submit click
+## `src/auto/submit.mjs` — the one submit click
 
 ### 1. What it is and why it exists
 
@@ -1691,12 +1691,12 @@ short-lived database connection.
 `isSubmitToken`, `submitOrigin`, `TokenError`); `../apply/fill-plan.mjs`
 (`submitReadiness`); `./untrusted-text.mjs`; `../lib/db.mjs` (`openDb`,
 `hasPassingVerification`, `DB_PATH`).
-**Depended on by:** `scripts/auto/job.mjs`, `tests/auto/submit.test.mjs`,
+**Depended on by:** `src/auto/job.mjs`, `tests/auto/submit.test.mjs`,
 `tests/auto/click-surface.test.mjs`.
 
 ---
 
-## `scripts/auto/pool.mjs` — the origin-keyed worker pool
+## `src/auto/pool.mjs` — the origin-keyed worker pool
 
 ### 1. What it is and why it exists
 
@@ -1758,7 +1758,7 @@ application volume:
 ### 3. How you use it
 
 Library. Called from `runCampaign` in `auto-apply.mjs`, and from
-`scripts/dev/bench-runner.mjs`. Tests: `tests/auto/pool.test.mjs`,
+`src/dev/bench-runner.mjs`. Tests: `tests/auto/pool.test.mjs`,
 `tests/auto/concurrency.test.mjs`.
 
 ### 4. Everything it exposes
@@ -1822,7 +1822,7 @@ const NO_ORIGIN = "\u0000no-origin"
 > unchanged; only its spelling is.
 
 (A **NUL byte** is the character with numeric value zero. Two of them had actually
-reached `scripts/` before this was found, which made ripgrep skip those two files
+reached `src/` before this was found, which made ripgrep skip those two files
 entirely during a codebase-wide search. `tests/security/source-bytes.test.mjs` is
 now the standing check.)
 
@@ -1901,12 +1901,12 @@ trust decision, no cap arithmetic, and NO CLICK."
 ### 8. Dependencies
 
 **Imports:** `./untrusted-text.mjs` only.
-**Depended on by:** `scripts/auto/auto-apply.mjs`, `scripts/dev/bench-runner.mjs`,
+**Depended on by:** `src/auto/auto-apply.mjs`, `src/dev/bench-runner.mjs`,
 `tests/auto/pool.test.mjs`, `tests/auto/concurrency.test.mjs`.
 
 ---
 
-## `scripts/auto/caps.mjs` — the blast-radius arithmetic
+## `src/auto/caps.mjs` — the blast-radius arithmetic
 
 ### 1. What it is and why it exists
 
@@ -2041,11 +2041,11 @@ per_company_max_per_week reached for Acme (5/5): 2 auto-submitted,
 
 **Imports:** `../lib/db.mjs` (`openDb`, `countAutoSubmissions`,
 `companySubmissionBreakdown`, `DB_PATH`).
-**Depended on by:** `scripts/auto/authorize.mjs`, `tests/auto/audit.test.mjs`.
+**Depended on by:** `src/auto/authorize.mjs`, `tests/auto/audit.test.mjs`.
 
 ---
 
-## `scripts/auto/stages.mjs` — the browser leg
+## `src/auto/stages.mjs` — the browser leg
 
 ### 1. What it is and why it exists
 
@@ -2077,7 +2077,7 @@ from a different caller.
 Library. Called once by `auto-apply.mjs` — `const stages = makeStages({ jobsDir })`
 — and by `tests/auto/browser-leg.test.mjs`.
 
-> **Naming trap.** `scripts/leads/stages.mjs` is a completely different file
+> **Naming trap.** `src/leads/stages.mjs` is a completely different file
 > (screening stages, imported by `screen.mjs` and `gate-audit.mjs`). Do not
 > confuse the two.
 
@@ -2205,12 +2205,12 @@ submit reachable at all."
 **Imports:** `node:fs`, `node:path`, `node:url`; `../apply/scan-engine.mjs`;
 `../apply/fill-engine.mjs`; `../apply/fill-plan.mjs`; `../apply/disclosure.mjs`;
 `../apply/ats/index.mjs`; `./classify.mjs`; `../lib/lib.mjs`.
-**Depended on by:** `scripts/auto/auto-apply.mjs`,
+**Depended on by:** `src/auto/auto-apply.mjs`,
 `tests/auto/browser-leg.test.mjs`.
 
 ---
 
-## `scripts/auto/cycle.mjs` — one whole cycle
+## `src/auto/cycle.mjs` — one whole cycle
 
 ### 1. What it is and why it exists
 
@@ -2240,7 +2240,7 @@ and it is not the runner:
 ### 2. How you run it
 
 ```bash
-node scripts/auto/cycle.mjs [--top N] [--limit N] [--json]
+node src/auto/cycle.mjs [--top N] [--limit N] [--json]
      [--skip-search] [--skip-apply] [--jobs-dir jobs] [--any-board]
 ```
 
@@ -2311,7 +2311,7 @@ overwrite the first's tailored resume after it had been verified."
 3. Always: run `screen.mjs --skip-screened` (10-minute timeout) — "Screening is
    where hard rule 0 is enforced, and the runner refuses an unscreened lead
    outright, so this is not optional housekeeping."
-4. **The re-verification sweep** (`scripts/documents/reverify.mjs`, in-process,
+4. **The re-verification sweep** (`src/documents/reverify.mjs`, in-process,
    before anything consults eligibility). Every job whose newest recorded
    verification carries a `profile_sha256` other than the current
    `factBaseSha256()` gets verify-claims re-RUN through the normal recording
@@ -2355,7 +2355,7 @@ overwrite the first's tailored resume after it had been verified."
 7. For each surviving lead, pick a slug and call `prepareDocuments`.
 8. Count the successes into `prepared`.
 9. Unless `--skip-apply`: spawn
-   `node scripts/auto/auto-apply.mjs --limit N --json` (30-minute timeout) and
+   `node src/auto/auto-apply.mjs --limit N --json` (30-minute timeout) and
    parse the last line of its stdout into `out.run`.
 
 `prepareDocuments` runs five or six child processes and **stops at the first
@@ -2442,7 +2442,7 @@ Step 6 carries its own measured incident:
 **Imports:** `node:fs`, `node:path`, `node:child_process` (`spawnSync`),
 `node:url`; `../lib/db.mjs` (`openDb`, `rowToLead`, `screenIndex`); `./trust.mjs`
 (`trustBoard`, `readLimits`).
-**Depended on by:** nothing in `scripts/` or `tests/` imports it. It is a leaf
+**Depended on by:** nothing in `src/` or `tests/` imports it. It is a leaf
 entry point intended for a scheduler.
 
 ---

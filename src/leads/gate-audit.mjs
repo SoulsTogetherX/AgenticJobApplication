@@ -14,7 +14,7 @@
 // full, with the stage and reason that killed them, every time.
 //
 // Usage:
-//   node scripts/leads/gate-audit.mjs [--json] [--status all|new|...]
+//   node src/leads/gate-audit.mjs [--json] [--status all|new|...]
 //        [--baseline <file>] [--save] [--no-save] [--leads <path>]
 //
 // Exit codes: 0 clean or only-improvements, 1 when leads became newly rejected

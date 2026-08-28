@@ -20,7 +20,7 @@ it is the contract; violations of it are bugs.
    applications (see the check-applied skill):
 
    ```bash
-   node scripts/applications/check-applied.mjs "<Company>"
+   node src/applications/check-applied.mjs "<Company>"
    ```
 
    If this job or company was already applied to, report what/when and get the
@@ -30,7 +30,7 @@ it is the contract; violations of it are bugs.
    kebab-case). If `jobs/<slug>/` doesn't exist:
 
    ```bash
-   node scripts/documents/new-job.mjs <slug> --company "<Company>" --title "<Title>" [--url <url>]
+   node src/documents/new-job.mjs <slug> --company "<Company>" --title "<Title>" [--url <url>]
    ```
 
    Then fill `jobs/<slug>/job.json` `description` with the verbatim posting text
@@ -49,7 +49,7 @@ it is the contract; violations of it are bugs.
    importantly, what you may not):
 
    ```bash
-   node scripts/documents/keyword-plan.mjs <slug>
+   node src/documents/keyword-plan.mjs <slug>
    ```
 
    Writes `jobs/<slug>/keywords.json`. Follow §8 of the rules: place every
@@ -73,7 +73,7 @@ it is the contract; violations of it are bugs.
 8. **Verify** (must pass before showing the draft as final):
 
    ```bash
-   node scripts/documents/verify-claims.mjs resume jobs/<slug>/resume.md --job jobs/<slug>/job.json
+   node src/documents/verify-claims.mjs resume jobs/<slug>/resume.md --job jobs/<slug>/job.json
    ```
 
    Fix violations by correcting the draft — never by weakening the verifier.
@@ -89,6 +89,6 @@ it is the contract; violations of it are bugs.
 
 10. **Render**:
     ```bash
-    node scripts/documents/render-pdf.mjs jobs/<slug>/resume.md "jobs/<slug>/<Full Name> Resume - <Company>.pdf"
+    node src/documents/render-pdf.mjs jobs/<slug>/resume.md "jobs/<slug>/<Full Name> Resume - <Company>.pdf"
     ```
     Confirm the PDF opens/exists, set `status: "rendered"`, and tell the user the path.

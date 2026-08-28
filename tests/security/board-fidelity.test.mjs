@@ -20,7 +20,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { start } from "../fixtures/boards/server.mjs"
-import { decodeEntities } from "../../scripts/lib/lib.mjs"
+import { decodeEntities } from "../../src/lib/lib.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SCANS = path.resolve(HERE, "..", "fixtures", "boards", "scans")
@@ -366,8 +366,8 @@ test("Lever's sponsorship question reaches the user as the question, not as the 
   // asserted here: the resolver answers from the bank, the plan carries the
   // question, and the fixture's own annotation says so.
   const { resolveFields, buildPlan } =
-    await import("../../scripts/apply/fill-plan.mjs")
-  const { detectAts } = await import("../../scripts/apply/ats/index.mjs")
+    await import("../../src/apply/fill-plan.mjs")
+  const { detectAts } = await import("../../src/apply/ats/index.mjs")
 
   const s = scan("lever-step1")
   const url =

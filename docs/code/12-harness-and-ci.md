@@ -19,7 +19,7 @@ something nobody looked at.
 
 - What a hook is, why it is enforcement an AI cannot argue with, and exactly
   what each of the five hooks denies and lets through.
-- Why `scripts/hooks/*` may be edited by an agent while `.claude/hooks/*` and
+- Why `src/hooks/*` may be edited by an agent while `.claude/hooks/*` and
   `.claude/settings.json` may not — and why `settings.json` in particular is
   sealed.
 - Why `npm test` is not `node --test`, what the `testGate` floors in
@@ -48,26 +48,26 @@ You do not need any of these to follow this document, but they help:
 
 **The files covered here**
 
-| file                                       | lines | one-line purpose                                                             |
-| ------------------------------------------ | ----- | ---------------------------------------------------------------------------- |
-| `.claude/hooks/protect-profile.js`         | 55    | denies Edit/Write to the fact base and to the guardrail machinery            |
-| `.claude/hooks/guard-profile-shell.mjs`    | 239   | denies the same targets when reached through a shell command instead         |
-| `scripts/hooks/guard-bash.mjs`             | 608   | denies any git command that leaves, or acts outside, the `dev` branch        |
-| `scripts/hooks/guard-files.mjs`            | 60    | denies any write whose path lands outside the project directory              |
-| `scripts/hooks/prettify.mjs`               | 71    | runs prettier on every file the agent edits (never blocks)                   |
-| `.claude/settings.json`                    | 54    | wires all five hooks and holds the permission allowlist                      |
-| `package.json`                             | 59    | npm manifest, the `testGate` floors, and the phase list the reaper reads     |
-| `.github/workflows/test-gate.mjs`          | 505   | runs the suite and asserts the run _proves_ tests executed                   |
-| `.github/workflows/ci.yml`                 | 267   | the GitHub Actions pipeline: five jobs, one required check                   |
-| `.github/workflows/scaffolding-reaper.mjs` | 592   | fails the build when temporary dev-only code outlives its declared phase     |
-| `.github/workflows/perf-gate.mjs`          | 345   | fails the build on a measured performance or model-usage regression          |
-| `.github/workflows/report-browsers.mjs`    | 41    | prints which browser this machine has, so a skipped PDF test is attributable |
-| `.gitignore`                               | 61    | keeps personal data and cookies out of git — and keeps test inputs in        |
-| `.gitattributes`                           | 5     | forces LF line endings in every working tree, on every platform              |
-| `.prettierrc`                              | 3     | one setting: no semicolons                                                   |
-| `.prettierignore`                          | 16    | five housekeeping entries plus three that are contracts                      |
-| `.mcp.json`                                | 17    | declares the Playwright browser server and its persistent profile            |
-| `.env.example`                             | 12    | the committed template for the never-committed `.env`                        |
+| file                                    | lines | one-line purpose                                                             |
+| --------------------------------------- | ----- | ---------------------------------------------------------------------------- |
+| `.claude/hooks/protect-profile.js`      | 55    | denies Edit/Write to the fact base and to the guardrail machinery            |
+| `.claude/hooks/guard-profile-shell.mjs` | 239   | denies the same targets when reached through a shell command instead         |
+| `src/hooks/guard-bash.mjs`              | 608   | denies any git command that leaves, or acts outside, the `dev` branch        |
+| `src/hooks/guard-files.mjs`             | 60    | denies any write whose path lands outside the project directory              |
+| `src/hooks/prettify.mjs`                | 71    | runs prettier on every file the agent edits (never blocks)                   |
+| `.claude/settings.json`                 | 54    | wires all five hooks and holds the permission allowlist                      |
+| `package.json`                          | 59    | npm manifest, the `testGate` floors, and the phase list the reaper reads     |
+| `tools/ci/test-gate.mjs`                | 505   | runs the suite and asserts the run _proves_ tests executed                   |
+| `.github/workflows/ci.yml`              | 267   | the GitHub Actions pipeline: five jobs, one required check                   |
+| `tools/ci/scaffolding-reaper.mjs`       | 592   | fails the build when temporary dev-only code outlives its declared phase     |
+| `tools/ci/perf-gate.mjs`                | 345   | fails the build on a measured performance or model-usage regression          |
+| `tools/ci/report-browsers.mjs`          | 41    | prints which browser this machine has, so a skipped PDF test is attributable |
+| `.gitignore`                            | 61    | keeps personal data and cookies out of git — and keeps test inputs in        |
+| `.gitattributes`                        | 5     | forces LF line endings in every working tree, on every platform              |
+| `.prettierrc`                           | 3     | one setting: no semicolons                                                   |
+| `.prettierignore`                       | 16    | five housekeeping entries plus three that are contracts                      |
+| `.mcp.json`                             | 17    | declares the Playwright browser server and its persistent profile            |
+| `.env.example`                          | 12    | the committed template for the never-committed `.env`                        |
 
 ---
 
@@ -84,7 +84,7 @@ The mechanics are deliberately simple, and they are the same for all five hooks
 in this repository:
 
 1. Claude Code starts the hook as an ordinary operating-system process, exactly
-   as if you had typed `node scripts/hooks/guard-bash.mjs` at a terminal.
+   as if you had typed `node src/hooks/guard-bash.mjs` at a terminal.
 2. It writes a small blob of **JSON** (a plain-text data format: `{"key":
 "value"}`) into the hook's **standard input** — the same channel you would
    feed with `cat file.txt | some-program`. The blob describes the tool call
@@ -146,14 +146,10 @@ const payload = JSON.stringify({
   cwd: ROOT,
   tool_input: { command: "git checkout main" },
 })
-const res = spawnSync(
-  process.execPath,
-  [ROOT + "/scripts/hooks/guard-bash.mjs"],
-  {
-    input: payload,
-    encoding: "utf8",
-  },
-)
+const res = spawnSync(process.execPath, [ROOT + "/src/hooks/guard-bash.mjs"], {
+  input: payload,
+  encoding: "utf8",
+})
 console.log(res.stdout.trim() || "(nothing printed = allowed)")
 ```
 
@@ -234,7 +230,7 @@ Three things are going on.
   _escape_ spelling of that character. `guard-profile-shell.mjs` explains why it
   is written that way: _"the literal is invisible in a diff and does not reliably
   survive being copied through a chat window, which is how this file now reaches
-  the user for hand-application."_ (The two `scripts/hooks/` files still use the
+  the user for hand-application."_ (The two `src/hooks/` files still use the
   literal character. Same behaviour, worse readability.)
 - **`catch { return }` means fail OPEN.** If the payload does not parse, the hook
   says nothing and the call proceeds. `guard-profile-shell.mjs` states the
@@ -253,7 +249,7 @@ Three things are going on.
 The five hooks do not have one owner. This is the most important governance fact
 in the repository, and it is stated in `CLAUDE.md`:
 
-> The guardrails have two owners. `scripts/hooks/*` is `ci-engineer`'s and
+> The guardrails have two owners. `src/hooks/*` is `ci-engineer`'s and
 > **agent-editable**; `.claude/hooks/*` and `.claude/settings*.json` are **the
 > user's alone**, sealed on the Edit/Write _and_ shell paths since `e19e87e` —
 > `settings.json` included, because it **wires** every hook.
@@ -262,9 +258,9 @@ Concretely:
 
 | path                                                                           | an agent may edit it? | sealed on Edit/Write by | sealed on shell by        |
 | ------------------------------------------------------------------------------ | --------------------- | ----------------------- | ------------------------- |
-| `scripts/hooks/guard-bash.mjs`                                                 | **yes**               | —                       | —                         |
-| `scripts/hooks/guard-files.mjs`                                                | **yes**               | —                       | —                         |
-| `scripts/hooks/prettify.mjs`                                                   | **yes**               | —                       | —                         |
+| `src/hooks/guard-bash.mjs`                                                     | **yes**               | —                       | —                         |
+| `src/hooks/guard-files.mjs`                                                    | **yes**               | —                       | —                         |
+| `src/hooks/prettify.mjs`                                                       | **yes**               | —                       | —                         |
 | `.claude/hooks/**` (any file, existing or new)                                 | no                    | `protect-profile.js`    | `guard-profile-shell.mjs` |
 | `.claude/settings.json`, `.claude/settings.local.json`                         | no                    | `protect-profile.js`    | `guard-profile-shell.mjs` |
 | `profile/profile.yaml`, `answers.yaml`, `applications.yaml`, `profile/source/` | no                    | `protect-profile.js`    | `guard-profile-shell.mjs` |
@@ -292,7 +288,7 @@ The other half of the seal was found by _probing_ rather than by reading.
 `guard-profile-shell.mjs` records it:
 
 > ```
-> // This file was moved from scripts/hooks/ into .claude/hooks/ so that
+> // This file was moved from src/hooks/ into .claude/hooks/ so that
 > // protect-profile.js would deny agent Edit/Write to it. That move was real but
 > // PARTIAL, and the gap was found by probing rather than by reading: the manager
 > // ran `"probe" | Out-File .claude/hooks/__probe.txt` and it SUCCEEDED. The
@@ -372,7 +368,7 @@ OUT : {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"
 Three more real results from the same probe:
 
 ```
-FILE: C:/proj/scripts/leads/screen.mjs        OUT: (nothing printed = allowed)
+FILE: C:/proj/src/leads/screen.mjs        OUT: (nothing printed = allowed)
 FILE: C:/proj/.claude/hooks/evil-new-hook.js  OUT: denied
 FILE: C:/proj/profile-notes.md                OUT: (nothing printed = allowed)
 ```
@@ -477,7 +473,7 @@ No exports and no flags. Its interface is two sections of matching rules.
 scripts that are allowed to write `profile/`:
 
 ```js
-;/\bnode(?:\.exe)?\b[^|;&]*\bscripts\/profile\/(?:save-answer|apply-profile)\.mjs/i
+;/\bnode(?:\.exe)?\b[^|;&]*\bsrc\/profile\/(?:save-answer|apply-profile)\.mjs/i
 ```
 
 then it must carry at least one of these three flags, or it is denied:
@@ -628,7 +624,7 @@ that it is inside the directory `protect-profile.js` defends.
 
 ---
 
-## 1.6 `scripts/hooks/guard-bash.mjs`
+## 1.6 `src/hooks/guard-bash.mjs`
 
 ### What it is and why it exists
 
@@ -880,7 +876,7 @@ unresolvable `-C`.
 
 ---
 
-## 1.7 `scripts/hooks/guard-files.mjs`
+## 1.7 `src/hooks/guard-files.mjs`
 
 ### What it is and why it exists
 
@@ -933,7 +929,7 @@ edits its own files.`
 Real probe output:
 
 ```
-FILE: C:/…/AgenticJobApplication/scripts/leads/screen.mjs   OUT : allowed
+FILE: C:/…/AgenticJobApplication/src/leads/screen.mjs   OUT : allowed
 FILE: C:/Users/<you>/Documents/other-repo/x.mjs             OUT : denied
 FILE: D:/somewhere/x.mjs                                    OUT : denied
 ```
@@ -959,7 +955,7 @@ list, after `protect-profile.js`. Tested by `tests/hooks/guard-hooks.test.mjs`.
 
 ---
 
-## 1.8 `scripts/hooks/prettify.mjs`
+## 1.8 `src/hooks/prettify.mjs`
 
 ### What it is and why it exists
 
@@ -1083,8 +1079,8 @@ hooks at all"_. One stray comma silently disarms every guard in this document.
     "allow": [
       "Bash(npm test*)",
       "Bash(npm install*)",
-      "Bash(node scripts/*)",
-      "Bash(node scripts/**)",
+      "Bash(node src/*)",
+      "Bash(node src/**)",
       "Bash(node --test*)"
     ],
     "deny": []
@@ -1098,13 +1094,13 @@ hooks at all"_. One stray comma silently disarms every guard in this document.
             "type": "command",
             "command": "node .claude/hooks/protect-profile.js"
           },
-          { "type": "command", "command": "node scripts/hooks/guard-files.mjs" }
+          { "type": "command", "command": "node src/hooks/guard-files.mjs" }
         ]
       },
       {
         "matcher": "Bash|PowerShell",
         "hooks": [
-          { "type": "command", "command": "node scripts/hooks/guard-bash.mjs" },
+          { "type": "command", "command": "node src/hooks/guard-bash.mjs" },
           {
             "type": "command",
             "command": "node .claude/hooks/guard-profile-shell.mjs"
@@ -1118,7 +1114,7 @@ hooks at all"_. One stray comma silently disarms every guard in this document.
         "hooks": [
           {
             "type": "command",
-            "command": "node scripts/hooks/prettify.mjs",
+            "command": "node src/hooks/prettify.mjs",
             "statusMessage": "Running prettier"
           }
         ]
@@ -1149,7 +1145,7 @@ by the same protection patterns as `settings.json`.
 - it parses as JSON;
 - there are at least four command hooks;
 - **every hook command names a file that exists on disk**. Its header explains
-  why: when `guard-profile-shell.mjs` moved from `scripts/hooks/` to
+  why: when `guard-profile-shell.mjs` moved from `src/hooks/` to
   `.claude/hooks/` and this file was repointed by hand, a missed edit would have
   meant _"the guard is simply GONE: Claude Code cannot run a file that is not
   there, and nothing else in the suite reads settings.json… A guardrail that
@@ -1157,7 +1153,7 @@ by the same protection patterns as `settings.json`.
 - `Edit` is covered by `protect-profile.js`;
 - **both `Bash` and `PowerShell`** are covered by `guard-profile-shell.mjs` —
   _"This project uses both shell tools; guarding one is guarding none"_;
-- the shell guard is wired from `.claude/hooks/`, not `scripts/hooks/` —
+- the shell guard is wired from `.claude/hooks/`, not `src/hooks/` —
   _"it must be the copy agents cannot rewrite"_;
 - `Bash` is also covered by `guard-bash.mjs`.
 
@@ -1174,7 +1170,7 @@ by the same protection patterns as `settings.json`.
 ## 1.10 One edit, end to end
 
 Put together, here is what happens when the agent edits
-`scripts/leads/screen.mjs`.
+`src/leads/screen.mjs`.
 
 1. Claude Code matches the `Edit` tool against the first `PreToolUse` entry and
    runs **two** hooks in order.
@@ -1184,7 +1180,7 @@ Put together, here is what happens when the agent edits
    {
      "tool_name": "Edit",
      "cwd": "C:\\...\\AgenticJobApplication",
-     "tool_input": { "file_path": "C:\\...\\scripts\\leads\\screen.mjs" }
+     "tool_input": { "file_path": "C:\\...\\src\\leads\\screen.mjs" }
    }
    ```
 
@@ -1192,7 +1188,7 @@ Put together, here is what happens when the agent edits
    prints nothing → allow.
 
 3. `guard-files.mjs` resolves the path against the session root, computes
-   `rel = scripts\leads\screen.mjs`, sees it neither starts with `..` nor is
+   `rel = src\leads\screen.mjs`, sees it neither starts with `..` nor is
    absolute → allow.
 4. The edit happens.
 5. `PostToolUse` runs `prettify.mjs`, which spawns prettier with `--write` and
@@ -1256,12 +1252,12 @@ The scripts:
 
 | script            | command                                                     | meaning                                                                      |
 | ----------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `test`            | `node .github/workflows/test-gate.mjs full`                 | **the** gate. Not a bare `node --test`.                                      |
+| `test`            | `node tools/ci/test-gate.mjs full`                          | **the** gate. Not a bare `node --test`.                                      |
 | `test:raw`        | `node --test`                                               | a bare runner with no floor and no assertions — a diagnostic, never evidence |
-| `test:security`   | `node .github/workflows/test-gate.mjs security`             | the Phase 1 security gate                                                    |
-| `reap`            | `node .github/workflows/scaffolding-reaper.mjs`             | fails if a dev-only artifact outlived its phase                              |
+| `test:security`   | `node tools/ci/test-gate.mjs security`                      | the Phase 1 security gate                                                    |
+| `reap`            | `node tools/ci/scaffolding-reaper.mjs`                      | fails if a dev-only artifact outlived its phase                              |
 | `browser:install` | `node node_modules/playwright-core/cli.js install chromium` | downloads the exact Chromium build `playwright-core` pins                    |
-| `verify`          | `node scripts/documents/verify-claims.mjs`                  | the truthfulness checker (hard rule 4)                                       |
+| `verify`          | `node src/documents/verify-claims.mjs`                      | the truthfulness checker (hard rule 4)                                       |
 
 Two of those carry history worth keeping.
 
@@ -1280,7 +1276,7 @@ A directory reorganisation on 2026-07-29 moved `verify-claims.mjs` and the scrip
 kept pointing at the old path, so `npm run verify` did nothing at all for two
 days. `tests/hooks/test-gate.test.mjs` now asserts every script names a file that
 exists, and asserts specifically that `verify` names
-`scripts/documents/verify-claims.mjs`.
+`src/documents/verify-claims.mjs`.
 
 ### The `measured` field — a changelog inside a JSON string
 
@@ -1347,7 +1343,7 @@ Other things not to change:
 
 ---
 
-## 2.2 `.github/workflows/test-gate.mjs`
+## 2.2 `tools/ci/test-gate.mjs`
 
 ### What it is and why it exists
 
@@ -1386,7 +1382,7 @@ the files. Same behaviour on every Node version, and the file list becomes
 reportable evidence.
 
 One more note explains why the file lives in a workflows directory rather than in
-`scripts/`:
+`src/`:
 
 > `// GitHub Actions only loads *.yml/*.yaml from this directory and ignores`
 > `// everything else, so a .mjs here is inert to Actions.`
@@ -1394,10 +1390,10 @@ One more note explains why the file lives in a workflows directory rather than i
 ### How you run it
 
 ```bash
-npm test                       # = node .github/workflows/test-gate.mjs full
+npm test                       # = node tools/ci/test-gate.mjs full
 npm run test:security          # = ... test-gate.mjs security
-node .github/workflows/test-gate.mjs --floor 10 --path tests/lib --quiet
-node .github/workflows/test-gate.mjs security -- --require-ran "nonce CSP is ENFORCED"
+node tools/ci/test-gate.mjs --floor 10 --path tests/lib --quiet
+node tools/ci/test-gate.mjs security -- --require-ran "nonce CSP is ENFORCED"
 ```
 
 ### Everything it exposes
@@ -1741,7 +1737,7 @@ All three exist today in `tests/security/browser-vouch.test.mjs`, and
 **2. `test`** — the matrix: `os: [ubuntu-latest, windows-latest]` ×
 `node: [20, 22]`, so four legs, `fail-fast: false` (one red leg does not cancel
 the others), 20-minute timeout. Steps: checkout → set up Node → `npm ci` →
-`node .github/workflows/report-browsers.mjs` → `npm test`.
+`node tools/ci/report-browsers.mjs` → `npm test`.
 
 Why Windows is in the matrix: _"Windows is the primary platform (the user's
 machine) and PDF rendering shells out to a local Edge/Chrome, so a Linux-only
@@ -1758,7 +1754,7 @@ recurring one: _"a checker with nothing to check must be distinguishable from a
 broken one. The `--self-test` step is how."_
 
 **4. `perf-gate`** — Ubuntu only, Node 22, 20 minutes. `npm ci`, then
-`node .github/workflows/perf-gate.mjs` with `PR_BODY` piped in from
+`node tools/ci/perf-gate.mjs` with `PR_BODY` piped in from
 `github.event.pull_request.body`. Ubuntu only _"because the numbers are compared
 against a baseline, and a baseline is only meaningful against one platform. The
 matrix proves the code runs everywhere; this proves it did not get slower."_
@@ -1812,7 +1808,7 @@ coverage that does not exist."_
 
 ---
 
-## 3.2 `.github/workflows/report-browsers.mjs`
+## 3.2 `tools/ci/report-browsers.mjs`
 
 ### What it is and why it exists
 
@@ -1836,7 +1832,7 @@ And why it is a file rather than an inline one-liner in the YAML:
 ### How you run it, and what it prints
 
 ```bash
-node .github/workflows/report-browsers.mjs
+node tools/ci/report-browsers.mjs
 ```
 
 Real output from the development machine:
@@ -1861,14 +1857,14 @@ drops the environment variable when it is unset.
 ### Traps
 
 > **Known duplication (2026-08-05).** The candidate list is byte-identical to the
-> one inside `findBrowser()` in `scripts/documents/render-pdf.mjs`, and nothing
+> one inside `findBrowser()` in `src/documents/render-pdf.mjs`, and nothing
 > enforces that they stay in sync. The file says so — _"Keep the candidate list
-> in sync with findBrowser() in scripts/documents/render-pdf.mjs"_ — but a
+> in sync with findBrowser() in src/documents/render-pdf.mjs"_ — but a
 > comment is not a check.
 
 ---
 
-## 3.3 `.github/workflows/scaffolding-reaper.mjs`
+## 3.3 `tools/ci/scaffolding-reaper.mjs`
 
 ### What it is and why it exists
 
@@ -1937,9 +1933,9 @@ own small masterclass of a comment:
 
 ```bash
 npm run reap                                           # the real check
-node .github/workflows/scaffolding-reaper.mjs --json   # machine-readable
-node .github/workflows/scaffolding-reaper.mjs --self-test
-node .github/workflows/scaffolding-reaper.mjs --root ./some/tree --phase phase-2
+node tools/ci/scaffolding-reaper.mjs --json   # machine-readable
+node tools/ci/scaffolding-reaper.mjs --self-test
+node tools/ci/scaffolding-reaper.mjs --root ./some/tree --phase phase-2
 ```
 
 | flag           | meaning                                                                          |
@@ -2089,7 +2085,7 @@ Depended on by `npm run reap`, the CI `scaffolding` job, and
 
 ---
 
-## 3.4 `.github/workflows/perf-gate.mjs`
+## 3.4 `tools/ci/perf-gate.mjs`
 
 ### What it is and why it exists
 
@@ -2107,10 +2103,10 @@ rule 6 exists to prevent.
 ### How you run it
 
 ```bash
-node .github/workflows/perf-gate.mjs                 # check against the baseline
-node .github/workflows/perf-gate.mjs --update        # write a new baseline
-node .github/workflows/perf-gate.mjs --json
-node .github/workflows/perf-gate.mjs --allow-dirty   # passed through to the harness
+node tools/ci/perf-gate.mjs                 # check against the baseline
+node tools/ci/perf-gate.mjs --update        # write a new baseline
+node tools/ci/perf-gate.mjs --json
+node tools/ci/perf-gate.mjs --allow-dirty   # passed through to the harness
 ```
 
 Argument handling is `argv.includes(...)`, not a parser. **Exit:**
@@ -2222,7 +2218,7 @@ the real tree."_
 
 ### What it reads and writes
 
-Shells out to `scripts/dev/bench-runner.mjs` (documented in
+Shells out to `src/dev/bench-runner.mjs` (documented in
 [`15-benchmarks.md`](15-benchmarks.md)). Reads and, under `--update`, writes
 `docs/perf-baseline.json`. Reads `PR_BODY`, falling back to reading the pull
 request body out of the file named by `GITHUB_EVENT_PATH`.

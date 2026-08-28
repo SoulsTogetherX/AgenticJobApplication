@@ -21,12 +21,12 @@ import {
   loadDisclosureLimits,
   longFreeTextReason,
   buildDisclosure,
-} from "../../scripts/apply/disclosure.mjs"
+} from "../../src/apply/disclosure.mjs"
 import {
   buildPlan,
   readiness,
   submitReadiness,
-} from "../../scripts/apply/fill-plan.mjs"
+} from "../../src/apply/fill-plan.mjs"
 
 const ADAPTER = {
   id: "generic",

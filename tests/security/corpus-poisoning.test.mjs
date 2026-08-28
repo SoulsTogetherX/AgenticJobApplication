@@ -59,7 +59,7 @@ function verify(resumeText, { job, answers } = {}) {
     if (answers) args.push("--answers", answers)
     const res = spawnSync(
       process.execPath,
-      [path.join(ROOT, "scripts/documents/verify-claims.mjs"), ...args],
+      [path.join(ROOT, "src/documents/verify-claims.mjs"), ...args],
       { cwd: ROOT, encoding: "utf8" },
     )
     let report = null

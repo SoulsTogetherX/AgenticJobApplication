@@ -6,7 +6,7 @@
 // decides whether a company is findable at all.
 import test from "node:test"
 import assert from "node:assert/strict"
-import { slugsFor, PROBES } from "../../scripts/leads/find-boards.mjs"
+import { slugsFor, PROBES } from "../../src/leads/find-boards.mjs"
 
 test("a one-word company yields its own name", () => {
   assert.ok(slugsFor("Vercel").includes("vercel"))

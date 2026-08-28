@@ -19,8 +19,8 @@ import {
   priceCluster,
   pricePlan,
   letterPlan,
-} from "../../scripts/documents/letter-plan.mjs"
-import { clusterLeads } from "../../scripts/leads/cluster.mjs"
+} from "../../src/documents/letter-plan.mjs"
+import { clusterLeads } from "../../src/leads/cluster.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -148,7 +148,7 @@ test("the model's every term is declared with a basis", () => {
 function cli(args) {
   return spawnSync(
     process.execPath,
-    [path.join(ROOT, "scripts", "documents", "letter-plan.mjs"), ...args],
+    [path.join(ROOT, "src", "documents", "letter-plan.mjs"), ...args],
     { cwd: ROOT, encoding: "utf8" },
   )
 }

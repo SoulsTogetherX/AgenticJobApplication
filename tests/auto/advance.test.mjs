@@ -19,9 +19,9 @@ import {
   findNextControl,
   AdvanceRefused,
   AdvanceAmbiguous,
-} from "../../scripts/auto/advance.mjs"
-import { authorizeSubmit, planSha256 } from "../../scripts/auto/authorize.mjs"
-import { openDb } from "../../scripts/lib/db.mjs"
+} from "../../src/auto/advance.mjs"
+import { authorizeSubmit, planSha256 } from "../../src/auto/authorize.mjs"
+import { openDb } from "../../src/lib/db.mjs"
 
 const APPLY_URL = "https://boards.greenhouse.io/acme/jobs/1"
 const SLUG = "acme-fullstack"

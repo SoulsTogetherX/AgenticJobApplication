@@ -58,7 +58,7 @@ import {
   resolveIntent,
   isPlaceholderSubject,
   PLACEHOLDER_VOCABULARY,
-} from "../../scripts/apply/intents.mjs"
+} from "../../src/apply/intents.mjs"
 
 const paramOf = (q) => typeQuestion(q)?.param ?? null
 

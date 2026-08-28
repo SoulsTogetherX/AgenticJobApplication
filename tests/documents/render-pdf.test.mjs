@@ -16,7 +16,7 @@ const FIX = path.join(ROOT, "tests", "fixtures")
 function run(argsArr) {
   return spawnSync(
     process.execPath,
-    [path.join(ROOT, "scripts", "documents", "render-pdf.mjs"), ...argsArr],
+    [path.join(ROOT, "src", "documents", "render-pdf.mjs"), ...argsArr],
     { cwd: ROOT, encoding: "utf8", timeout: 90_000 },
   )
 }

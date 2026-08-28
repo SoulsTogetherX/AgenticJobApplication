@@ -19,7 +19,7 @@
 //             the gap findable and falsifiable, not to hold the build hostage.
 //
 // THE `FINDING (<owner>):` PREFIX IS LOAD-BEARING, not decoration. It is what
-// .github/workflows/test-gate.mjs's OWNED_RE — /^FINDING \(([^)]+)\)/, anchored
+// tools/ci/test-gate.mjs's OWNED_RE — /^FINDING \(([^)]+)\)/, anchored
 // at the start of the test name — matches to route a red into the "known,
 // owned" bucket instead of "UNEXPECTED — nobody owns these". These tests used
 // to be named `E8 BREAKS [w2-engine]: ...`; square brackets do not match, and
@@ -29,7 +29,7 @@
 // make a red run green — but a mis-bucketed red is a red nobody reads.
 //
 // NO BROWSER RUNS HERE. The project has no Playwright (see
-// scripts/apply/browser.mjs), so cases that need a live DOM — react-select
+// src/apply/browser.mjs), so cases that need a live DOM — react-select
 // opening, shadow roots, a real remount — are exercised either against the
 // engine with an instrumented page, or as a STRUCTURAL assertion about the
 // source. Where neither works, the case is named in this file's final test as
@@ -52,20 +52,20 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import fillPage from "../../scripts/apply/fill-engine.mjs"
-import scanPage from "../../scripts/apply/scan-engine.mjs"
-import { matchOption } from "../../scripts/apply/answer-bank.mjs"
-import { recordCache, fingerprint } from "../../scripts/apply/field-cache.mjs"
+import fillPage from "../../src/apply/fill-engine.mjs"
+import scanPage from "../../src/apply/scan-engine.mjs"
+import { matchOption } from "../../src/apply/answer-bank.mjs"
+import { recordCache, fingerprint } from "../../src/apply/field-cache.mjs"
 import {
   resolveFields,
   resolveScanPath,
   buildPlan,
   readiness,
   submitReadiness,
-} from "../../scripts/apply/fill-plan.mjs"
-import greenhouse from "../../scripts/apply/ats/greenhouse.mjs"
-import { instrumentedPage, unwrapScan } from "../../scripts/dev/bench-apply.mjs"
-import { launchBrowser } from "../../scripts/apply/browser.mjs"
+} from "../../src/apply/fill-plan.mjs"
+import greenhouse from "../../src/apply/ats/greenhouse.mjs"
+import { instrumentedPage, unwrapScan } from "../../src/dev/bench-apply.mjs"
+import { launchBrowser } from "../../src/apply/browser.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -120,7 +120,7 @@ test("E1 HANDLED [w2-engine]: the over-cap cut still happens but is now RECORDED
   // scan-engine.mjs against an instrumented page and reads the flag off the
   // returned scan; this one exists only to prove the OTHER scanner — the one
   // that runs on a live board — was not left behind by a half-fix.
-  const engine = src("scripts/apply/scan-engine.mjs")
+  const engine = src("src/apply/scan-engine.mjs")
   const scanner = src(".claude/skills/apply-job/scan-page.js")
 
   assert.match(
@@ -453,10 +453,7 @@ test("FINDING (w2-engine): E5 BREAKS — detecting a shadow root is not filling 
   // scanner is excluded from this sweep on purpose — it now legitimately
   // mentions shadowRoot for the DETECTION above, which is exactly why the two
   // halves are separate tests.
-  for (const f of [
-    "scripts/apply/scan-engine.mjs",
-    "scripts/apply/fill-engine.mjs",
-  ]) {
+  for (const f of ["src/apply/scan-engine.mjs", "src/apply/fill-engine.mjs"]) {
     const text = src(f)
     assert.equal(
       /shadowRoot|attachShadow|::part\(|:host\b/.test(text),
@@ -468,7 +465,7 @@ test("FINDING (w2-engine): E5 BREAKS — detecting a shadow root is not filling 
 })
 
 test("FINDING (w2-engine): E5 BREAKS — the engine has no frameLocator, so an iframe form is unfillable", () => {
-  const engine = src("scripts/apply/fill-engine.mjs")
+  const engine = src("src/apply/fill-engine.mjs")
   assert.equal(
     /frameLocator|page\.frames\(|contentFrame/.test(engine),
     false,
@@ -509,7 +506,7 @@ test("FINDING (w2-engine): E5 BREAKS — the engine has no frameLocator, so an i
 // produce it — the browser is the only thing that can decide this case.
 //
 // CANARIED: with the `res.revealed.push(...)` block deleted in a sandbox copy
-// of scripts/apply/, this test fails on the `["If yes, when?"]` assertion.
+// of src/apply/, this test fails on the `["If yes, when?"]` assertion.
 const E6_FORM = `<!doctype html><form>
 <label for="q1">Have you worked here before?</label>
 <input type="checkbox" id="q1" name="q1">
@@ -579,7 +576,7 @@ test("FINDING (w2-engine): E6 RESIDUAL — a required file input revealed by the
   // Pin the reason, so a later reader does not read the absence as an
   // oversight and 'fix' it by dropping the skip without solving readability.
   assert.match(
-    src("scripts/apply/fill-engine.mjs"),
+    src("src/apply/fill-engine.mjs"),
     /const SKIP_TYPE = \{[^}]*file: 1/s,
   )
 })
@@ -709,7 +706,7 @@ test("E7 HANDLED [w3-resolution]: the page-shape guard returns BEFORE the field 
   // behavioural sibling is the whole block above: the stop lives in the
   // planner, which runs before anything touches the page. Kept so a future
   // "fix" that moves the branch into the engine has to say so.
-  const signalLines = src("scripts/apply/fill-engine.mjs")
+  const signalLines = src("src/apply/fill-engine.mjs")
     .split(/\r?\n/)
     .filter((l) => /\bsignals\b/.test(l) && !/^\s*\/\//.test(l))
   assert.ok(signalLines.length > 0, "the engine does carry signals")

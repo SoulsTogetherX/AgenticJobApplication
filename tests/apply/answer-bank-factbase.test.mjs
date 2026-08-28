@@ -7,7 +7,7 @@
 //
 // A destructuring default fires only on `undefined`. All three callers build
 // their options from a CLI flag helper that returns `null` when the flag is
-// absent, so the documented invocation `node scripts/apply/fill-plan.mjs
+// absent, so the documented invocation `node src/apply/fill-plan.mjs
 // <slug>` passed `profileFile: null`. `fs.existsSync(null)` does not throw on
 // Node 24 — it returns false and emits DEP0187 — so both files "did not
 // exist", both loaded as `{}`, and the resolver ran against an EMPTY FACT
@@ -31,8 +31,8 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { resolveFieldsFromFiles } from "../../scripts/apply/answer-bank.mjs"
-import { resolveFields } from "../../scripts/apply/fill-plan.mjs"
+import { resolveFieldsFromFiles } from "../../src/apply/answer-bank.mjs"
+import { resolveFields } from "../../src/apply/fill-plan.mjs"
 
 const FIELDS = [
   { k: "f1", t: "text", sel: "#f1", l: "Email" },

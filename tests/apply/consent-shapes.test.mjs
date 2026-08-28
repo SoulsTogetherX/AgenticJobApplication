@@ -22,7 +22,7 @@ import {
   buildPlan,
   CONSENT_AFFIRM,
   CONSENT_NEGATION,
-} from "../../scripts/apply/fill-plan.mjs"
+} from "../../src/apply/fill-plan.mjs"
 
 const ADAPTER = { id: "generic", comboStrategies: [], fileFields: [] }
 const URL = "http://127.0.0.1:1/x"

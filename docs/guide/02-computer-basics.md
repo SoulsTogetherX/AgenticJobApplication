@@ -60,7 +60,7 @@ looks like this:
 
 | Name            | What it is                                                                 |
 | --------------- | -------------------------------------------------------------------------- |
-| `scripts/`      | 88 small programs — the pipeline itself                                    |
+| `src/`          | 88 small programs — the pipeline itself                                    |
 | `tests/`        | 123 test files that check those programs                                   |
 | `docs/`         | documentation, including this file                                         |
 | `jobs/`         | one folder per job you are pursuing, plus the database `jobs/leads.db`     |
@@ -77,7 +77,7 @@ A **path** is the address of a file: the list of folders you walk through to
 reach it, joined by a separator.
 
 ```
-C:\Users\xalva\Documents\Projects\VibeCoded\AgenticJobApplication\scripts\lib\db.mjs
+C:\Users\xalva\Documents\Projects\VibeCoded\AgenticJobApplication\src\lib\db.mjs
 ```
 
 That address says: on drive `C:`, inside `Users`, inside `xalva`, … inside
@@ -93,8 +93,8 @@ A **relative path** starts from wherever you happen to be standing — your
 "current working directory" — and means nothing without that context.
 
 ```
-scripts/lib/db.mjs          relative: "from here, go into scripts, then lib"
-./scripts/lib/db.mjs        the same thing; "./" means "right here"
+src/lib/db.mjs          relative: "from here, go into scripts, then lib"
+./src/lib/db.mjs        the same thing; "./" means "right here"
 ../guide/01-what-this-is.md relative: ".." means "up one folder"
 ```
 
@@ -102,10 +102,10 @@ The distinction matters constantly in this project, in both directions:
 
 - **Relative paths are what you type.** Every command in this repository is
   written to be run from the repository's own top folder, so
-  `node scripts/status.mjs` works and you never type the `C:\Users\...` part.
+  `node src/status.mjs` works and you never type the `C:\Users\...` part.
 - **Absolute paths are what the code computes.** A program cannot assume you ran
   it from the right folder, so scripts work out their own absolute location
-  instead of trusting yours. In `scripts/lib/db.mjs`, the constant `ROOT` is
+  instead of trusting yours. In `src/lib/db.mjs`, the constant `ROOT` is
   built from the module's own file location, and `DB_PATH` is then built from
   `ROOT`. The result is that `jobs/leads.db` is found correctly no matter which
   folder you were standing in when you started the program.
@@ -142,7 +142,7 @@ because:
 Where the two conventions genuinely collide, the code converts explicitly. Two
 real examples:
 
-In `scripts/documents/render-pdf.mjs`, a Windows file path has to become a
+In `src/documents/render-pdf.mjs`, a Windows file path has to become a
 `file://` URL so a browser can open it and print it to PDF. URLs cannot contain
 backslashes, so the path is rewritten:
 
@@ -210,7 +210,7 @@ A command is not one thing. It is a program name followed by a list of words
 handed to that program:
 
 ```bash
-node scripts/status.mjs --json
+node src/status.mjs --json
 └─┬─┘ └──────┬─────────┘ └─┬──┘
   │          │             └── an argument (a flag)
   │          └──────────────── an argument (a positional argument)
@@ -223,7 +223,7 @@ first argument as "the JavaScript file to execute" and hands the rest to that
 file.
 
 Inside the script, that list arrives as `process.argv`. That is why nearly every
-program in `scripts/` starts with a line like:
+program in `src/` starts with a line like:
 
 ```js
 const args = process.argv.slice(2)
@@ -238,7 +238,7 @@ you typed after the filename.
 There are two kinds of argument, distinguished only by convention:
 
 - A **positional argument** means something because of _where_ it sits. In
-  `node scripts/applications/check-applied.mjs "Umbrella Corporation"`, the
+  `node src/applications/check-applied.mjs "Umbrella Corporation"`, the
   quoted company name is positional — the program knows it is the search query
   because it is the first thing after the script name.
 - A **flag** (also called an option or a switch) means something because of its
@@ -253,8 +253,8 @@ Flags come in two spellings:
 
 This project's own scripts use **long flags almost exclusively**. The only short
 flag any of them defines is `-h` as an alias for `--help`, in
-`scripts/apply/auth-sync.mjs`, `scripts/auto/preflight.mjs` and
-`scripts/dev/bench-apply.mjs`. You will still meet short flags constantly in
+`src/apply/auth-sync.mjs`, `src/auto/preflight.mjs` and
+`src/dev/bench-apply.mjs`. You will still meet short flags constantly in
 _other_ tools you run alongside this project — `ls -la`, `git log --oneline -3`,
 `head -n 40`.
 
@@ -267,7 +267,7 @@ Flags also split into two behaviours:
 
 That second kind carries a real hazard, and this project's parsers are written
 with it in mind. If you write `--top` and forget the number, a naive parser
-reads the _next flag_ as the value. In `.github/workflows/test-gate.mjs` you can
+reads the _next flag_ as the value. In `tools/ci/test-gate.mjs` you can
 see the pattern used throughout the repo:
 
 ```js
@@ -284,7 +284,7 @@ further down that the floor is a finite number greater than zero.
 The shell splits your command line on spaces. So this:
 
 ```bash
-node scripts/applications/check-applied.mjs Umbrella Corporation
+node src/applications/check-applied.mjs Umbrella Corporation
 ```
 
 hands the program **two** arguments, `Umbrella` and `Corporation`, and the
@@ -292,7 +292,7 @@ program only looks at the first. To pass a single argument that contains a
 space, wrap it in quotes:
 
 ```bash
-node scripts/applications/check-applied.mjs "Umbrella Corporation"
+node src/applications/check-applied.mjs "Umbrella Corporation"
 ```
 
 Quoting is also what protects **glob patterns**. A glob is a wildcard filename
@@ -316,26 +316,26 @@ that implements it. They are all run from the repository's top folder.
 
 ```bash
 # The whole-pipeline digest — one command that answers "where do things stand?"
-node scripts/status.mjs
-node scripts/status.mjs --json --days 14
+node src/status.mjs
+node src/status.mjs --json --days 14
 
 # Sweep the job boards listed in docs/job-sources.yaml
-node scripts/leads/find-jobs.mjs search --source all --query "full stack"
+node src/leads/find-jobs.mjs search --source all --query "full stack"
 
 # Rank stored leads
-node scripts/leads/recommend.mjs --top 5 --status new
+node src/leads/recommend.mjs --top 5 --status new
 
 # Screen leads for ghost-job / scam / bad-workplace signals
-node scripts/leads/screen.mjs --status new --json
+node src/leads/screen.mjs --status new --json
 
 # Has this company already been applied to?
-node scripts/applications/check-applied.mjs "Umbrella Corporation"
+node src/applications/check-applied.mjs "Umbrella Corporation"
 
 # Check that a tailored resume contains nothing the fact base cannot back
-node scripts/documents/verify-claims.mjs resume jobs/<slug>/resume.md
+node src/documents/verify-claims.mjs resume jobs/<slug>/resume.md
 
 # Re-audit the lead gate after ANY change to the filters
-node scripts/leads/gate-audit.mjs --json
+node src/leads/gate-audit.mjs --json
 ```
 
 Notice the recurring shapes. `--json` asks for machine-readable output. A
@@ -368,7 +368,7 @@ the rest of the number space is free for describing failures.
 You can see the exit code of the last command you ran:
 
 ```bash
-node scripts/applications/check-applied.mjs
+node src/applications/check-applied.mjs
 echo "exit=$?"       # in Bash
 ```
 
@@ -382,7 +382,7 @@ exit=2
 Now give it a query:
 
 ```bash
-node scripts/applications/check-applied.mjs "Umbrella Corporation"
+node src/applications/check-applied.mjs "Umbrella Corporation"
 echo "exit=$?"
 ```
 
@@ -423,7 +423,7 @@ Exit `4` has no override, by design. A caller cannot argue with it. That is the
 value of an exit code as a contract: the refusal is a number, not a sentence a
 model might talk itself past.
 
-`scripts/leads/gate-audit.mjs` uses the same idea differently — `0` for "clean or
+`src/leads/gate-audit.mjs` uses the same idea differently — `0` for "clean or
 only improvements", `1` for "leads became newly rejected", `2` for usage. A
 caller can then react to `1` automatically, without parsing any prose.
 
@@ -432,7 +432,7 @@ caller can then react to `1` automatically, without parsing any prose.
 In a shell, `&&` means "run the next command only if the previous one succeeded":
 
 ```bash
-node scripts/documents/verify-claims.mjs resume jobs/acme-dev/resume.md && node scripts/documents/render-pdf.mjs jobs/acme-dev/resume.md
+node src/documents/verify-claims.mjs resume jobs/acme-dev/resume.md && node src/documents/render-pdf.mjs jobs/acme-dev/resume.md
 ```
 
 If verification fails, the PDF is never rendered. That is exit-code plumbing
@@ -456,7 +456,7 @@ check is "did the runner exit 0?" reports success when:
 - someone changed a glob and it silently matched nothing.
 
 There is a second, sharper edge specific to the Node version you are on. From
-the comment in `.github/workflows/test-gate.mjs`:
+the comment in `tools/ci/test-gate.mjs`:
 
 > `node --test <directory>` is NOT portable across the Node versions this repo
 > runs on. Node 20/22 recurse into a directory argument; Node 24 treats it as a
@@ -473,9 +473,9 @@ So `npm test` in this project does **not** call the test runner directly. Look a
 
 ```json
 "scripts": {
-  "test": "node .github/workflows/test-gate.mjs full",
+  "test": "node tools/ci/test-gate.mjs full",
   "test:raw": "node --test",
-  "test:security": "node .github/workflows/test-gate.mjs security"
+  "test:security": "node tools/ci/test-gate.mjs security"
 }
 ```
 
@@ -522,12 +522,12 @@ Both stdout and stderr appear in your terminal window, mixed together, which is
 why the split is easy to miss. They become distinguishable the moment you
 redirect one of them.
 
-In `scripts/applications/check-applied.mjs`, the JSON answer is printed with
+In `src/applications/check-applied.mjs`, the JSON answer is printed with
 `console.log` (stdout) and the usage message with `console.error` (stderr). Throw
 away stdout and the usage message still appears:
 
 ```bash
-node scripts/applications/check-applied.mjs > /dev/null
+node src/applications/check-applied.mjs > /dev/null
 ```
 
 ```
@@ -540,7 +540,7 @@ redirects stderr, because stderr is stream number 2.
 
 The rule this project follows, and the reason it matters: **the answer goes to
 stdout; everything else goes to stderr.** That way a caller can capture the
-answer cleanly without warnings contaminating it. `scripts/lib/db.mjs` goes
+answer cleanly without warnings contaminating it. `src/lib/db.mjs` goes
 further and suppresses one specific Node warning entirely, with its reason
 written down:
 
@@ -555,7 +555,7 @@ A **pipe**, written `|`, connects one program's stdout to the next program's
 stdin. The two run at the same time, with text flowing between them.
 
 ```bash
-node scripts/status.mjs | head -5
+node src/status.mjs | head -5
 ```
 
 `status.mjs` writes lines; `head -5` reads them and prints only the first five.
@@ -574,7 +574,7 @@ The name is a fossil from "teletypewriter". Node exposes a single boolean:
 `process.stdout.isTTY`. It is `true` when output is going to a terminal and
 `false` when output is being piped or redirected somewhere else.
 
-This project uses that boolean deliberately. From `scripts/lib/lib.mjs`:
+This project uses that boolean deliberately. From `src/lib/lib.mjs`:
 
 ```js
 // Output mode. A human at a terminal gets readable prose; an agent (whose
@@ -587,7 +587,7 @@ export function outputMode(argv = process.argv) {
 }
 ```
 
-The consequence is concrete. When an AI agent runs `node scripts/status.mjs`, its
+The consequence is concrete. When an AI agent runs `node src/status.mjs`, its
 stdout is a pipe, so `isTTY` is `false`, so the terse branch runs and the output
 looks like this — real output from your store:
 
@@ -606,7 +606,7 @@ auto paused none
 ```
 
 Run the same command yourself in a terminal and `isTTY` is `true`, so
-`scripts/status.mjs` takes its other branch and prints sentences —
+`src/status.mjs` takes its other branch and prints sentences —
 `Leads: 178 (...)`, `Follow-ups due: 0`, and a line per follow-up that is
 actually due.
 
@@ -618,9 +618,9 @@ strange: agents are told _"never pass `--verbose` from a tool call."_ The flag
 exists so **you** can force prose when a script is being piped; it is not there
 for the agent to undo its own thrift.
 
-Three files use the detection today: `scripts/lib/lib.mjs` (the shared helper
+Three files use the detection today: `src/lib/lib.mjs` (the shared helper
 that everything else imports), `scripts/profile/save-answer.mjs`, and
-`scripts/apply/capture-post-submit.mjs`.
+`src/apply/capture-post-submit.mjs`.
 
 ---
 
@@ -668,7 +668,7 @@ requires every tailored resume bullet to carry one:
 - Built and deployed a customer portal using React and Node.js. <!-- fact:exp-acme-b1 -->
 ```
 
-`scripts/documents/verify-claims.mjs` reads those comments and checks that every
+`src/documents/verify-claims.mjs` reads those comments and checks that every
 cited fact id actually exists in your profile. The reader sees a resume bullet;
 the verifier sees a citation.
 
@@ -738,7 +738,7 @@ boards:
   - { type: ashby, slug: openai, company: OpenAI }
 ```
 
-`scripts/leads/manage-sources.mjs` edits that file **line by line** rather than
+`src/leads/manage-sources.mjs` edits that file **line by line** rather than
 parsing and re-writing it, because a full parse-and-reserialise round trip would
 throw away every comment. Comments are data to a human. This is also why
 `docs/job-sources.yaml` is listed in `.prettierignore` — the formatter would
@@ -804,7 +804,7 @@ one complete JSON object **per line**, with no wrapping array:
 
 The advantage is that new records are **appended** — the file is never rewritten,
 so two writers cannot destroy each other's work, and a crash mid-write costs you
-at most the last line. `scripts/auto/audit.mjs` writes the run record to
+at most the last line. `src/auto/audit.mjs` writes the run record to
 `jobs/.auto/runs/<runid>.jsonl` and the header states its purpose plainly: it is
 append-only text, and it is the surviving copy.
 
@@ -825,7 +825,7 @@ quoting, quotes inside values need escaping, there is no way to express nesting,
 and there is no type information — `false` and `2026-07-14` are both just text.
 
 > **Verified (2026-08-05 audit).** This repository does not read or write CSV
-> anywhere. A search across `scripts/`, `tests/` and `.github/` for `csv` in any
+> anywhere. A search across `src/`, `tests/` and `.github/` for `csv` in any
 > case returns nothing. Structured data here is JSON, YAML, JSONL, or rows in
 > SQLite.
 
@@ -851,10 +851,10 @@ single line changing.
 
 This project uses two:
 
-| Variable                           | Read by                            | Purpose                                        |
-| ---------------------------------- | ---------------------------------- | ---------------------------------------------- |
-| `PDF_BROWSER`                      | `scripts/documents/render-pdf.mjs` | path to Edge/Chrome, overriding auto-discovery |
-| `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` | `scripts/leads/find-jobs.mjs`      | credentials for the Adzuna job-search API      |
+| Variable                           | Read by                        | Purpose                                        |
+| ---------------------------------- | ------------------------------ | ---------------------------------------------- |
+| `PDF_BROWSER`                      | `src/documents/render-pdf.mjs` | path to Edge/Chrome, overriding auto-discovery |
+| `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` | `src/leads/find-jobs.mjs`      | credentials for the Adzuna job-search API      |
 
 If no browser can be found, `render-pdf.mjs` says exactly that: _"No Edge/Chrome
 found. Set PDF_BROWSER to a browser executable path."_ Good error messages tell
@@ -883,7 +883,7 @@ ADZUNA_APP_KEY=your_app_key_here
 You copy it to `.env` and fill in the real values. `.env.example` is committed to
 Git so anyone knows which keys are needed; `.env` is never committed.
 
-The reader is a small function, `loadEnv` in `scripts/leads/find-jobs.mjs` — no
+The reader is a small function, `loadEnv` in `src/leads/find-jobs.mjs` — no
 third-party library. It handles `#` comments, optional quotes, and one rule worth
 noticing:
 
@@ -934,11 +934,11 @@ writing files, opening network connections, starting other programs, reading
 command-line arguments.
 
 That is the whole idea, and it is why this project is written in it. Every file
-under `scripts/` is a Node program. You run one by typing `node` followed by the
+under `src/` is a Node program. You run one by typing `node` followed by the
 file:
 
 ```bash
-node scripts/status.mjs
+node src/status.mjs
 ```
 
 Your machine currently runs **Node v24.13.1**.
@@ -990,12 +990,12 @@ downloads third-party code, and it runs named commands.
 
 ```json
 "scripts": {
-  "test": "node .github/workflows/test-gate.mjs full",
+  "test": "node tools/ci/test-gate.mjs full",
   "test:raw": "node --test",
-  "test:security": "node .github/workflows/test-gate.mjs security",
-  "reap": "node .github/workflows/scaffolding-reaper.mjs",
+  "test:security": "node tools/ci/test-gate.mjs security",
+  "reap": "node tools/ci/scaffolding-reaper.mjs",
   "browser:install": "node node_modules/playwright-core/cli.js install chromium",
-  "verify": "node scripts/documents/verify-claims.mjs"
+  "verify": "node src/documents/verify-claims.mjs"
 }
 ```
 
@@ -1076,7 +1076,7 @@ Hard rule 7 of `CLAUDE.md`:
 `main` is the stable line. `dev` is where work happens. You decide when and how
 `dev` merges into `main` — that decision is not the agent's to make.
 
-And this rule is not merely written down. `scripts/hooks/guard-bash.mjs` is a
+And this rule is not merely written down. `src/hooks/guard-bash.mjs` is a
 **hook**: a program the agent's harness runs _before_ any shell command, which
 can refuse it. It denies switching to another branch, denies state-changing git
 commands unless the repository is already on `dev`, and always denies pushing to
@@ -1193,7 +1193,7 @@ You already know where this project's is:
 jobs/leads.db          (about 1.3 MB today)
 ```
 
-The reasoning is recorded at the top of `scripts/lib/db.mjs`:
+The reasoning is recorded at the top of `src/lib/db.mjs`:
 
 > this is a single-user CLI on a Windows laptop. Mongo and MySQL both need a
 > server daemon running before any script can do anything — if it is not up, the
@@ -1266,7 +1266,7 @@ on-disk source, exporting the YAML is not a backup. Copy `leads.db` itself.
 
 One practical note: while a program has the database open you may see two sidecar
 files appear beside it, `leads.db-wal` and `leads.db-shm`. Those are SQLite's
-write-ahead log and shared-memory index; `openDb` in `scripts/lib/db.mjs` turns
+write-ahead log and shared-memory index; `openDb` in `src/lib/db.mjs` turns
 that mode on deliberately, so several scripts can read while one writes. They
 disappear when the last connection closes. Do not delete them by hand while
 anything is running.
@@ -1347,6 +1347,6 @@ Three warnings that belong here even in a short section:
 - **[../operate/03-troubleshooting.md](../operate/03-troubleshooting.md)** — what
   to do when a command fails.
 - **[../code/00-file-index.md](../code/00-file-index.md)** — a map of every file
-  in `scripts/`, when you are ready to read code.
+  in `src/`, when you are ready to read code.
 - **[../code/06-apply-scanning.md](../code/06-apply-scanning.md)** — the deep
   version of §10: how a live application form is read.

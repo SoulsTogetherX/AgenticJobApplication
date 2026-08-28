@@ -5,16 +5,16 @@ import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { outputMode, isTerse } from "../../scripts/lib/lib.mjs"
+import { outputMode, isTerse } from "../../src/lib/lib.mjs"
 import {
   scoreLead,
   titleScore,
   freshnessScore,
   rankLeads,
-} from "../../scripts/leads/recommend.mjs"
-import { screenJob, extractYearsRequired } from "../../scripts/leads/screen.mjs"
-import { buildStatus } from "../../scripts/status.mjs"
-import { extractTech } from "../../scripts/profile/profile-gaps.mjs"
+} from "../../src/leads/recommend.mjs"
+import { screenJob, extractYearsRequired } from "../../src/leads/screen.mjs"
+import { buildStatus } from "../../src/status.mjs"
+import { extractTech } from "../../src/profile/profile-gaps.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -37,7 +37,7 @@ test("outputMode: flags win, otherwise TTY decides", () => {
 test("scripts emit compact output when stdout is not a TTY", () => {
   const res = spawnSync(
     process.execPath,
-    [path.join(ROOT, "scripts", "status.mjs")],
+    [path.join(ROOT, "src", "status.mjs")],
     {
       encoding: "utf8",
     },
@@ -332,7 +332,7 @@ test("recommend and screen CLIs run against a temp lead store", () => {
       spawnSync(
         process.execPath,
         [
-          path.join(ROOT, "scripts", script),
+          path.join(ROOT, "src", script),
           "--leads",
           leadsPath,
           "--jobs-dir",

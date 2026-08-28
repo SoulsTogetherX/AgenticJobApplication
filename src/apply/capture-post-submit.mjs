@@ -5,7 +5,7 @@
 // WHY THIS EXISTS, AND WHY IT IS THE ONLY LAWFUL SOURCE
 // ===========================================================================
 //
-// `scripts/auto/classify.mjs` types the post-click page. §4.10 requires its
+// `src/auto/classify.mjs` types the post-click page. §4.10 requires its
 // corpus to be REAL confirmation, identity-verification, bot-challenge,
 // email-code, error and not-a-confirmation pages, and §4.6 forbids the guess
 // that would otherwise fill the gap: somebody writing "a confirmation says
@@ -472,7 +472,7 @@ async function main(argv) {
       console.log(`staged ${rec.id} (${rec.bytes} bytes, redacted)`)
       for (const f of rec.redactions) console.log(`  ${f.count}x ${f.kind}`)
       console.log(
-        `\nRead it before promoting:\n  node scripts/apply/capture-post-submit.mjs review ${rec.id}`,
+        `\nRead it before promoting:\n  node src/apply/capture-post-submit.mjs review ${rec.id}`,
       )
     }
     return

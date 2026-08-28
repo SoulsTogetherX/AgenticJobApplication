@@ -5,7 +5,7 @@
 //
 // It is ALSO shipped as a string to the Playwright MCP vm (which has no working
 // `import`), so a second block of tests reconstitutes it exactly the way
-// scripts/apply/fill-plan.mjs's generated bootstrap does — from our own disk,
+// src/apply/fill-plan.mjs's generated bootstrap does — from our own disk,
 // never from the page — and proves a hostile page cannot substitute itself.
 //
 // Not covered here: real browser behaviour. The project has no Playwright
@@ -18,12 +18,12 @@ import fs from "node:fs"
 import path from "node:path"
 import vm from "node:vm"
 import { fileURLToPath } from "node:url"
-import fillPage from "../../scripts/apply/fill-engine.mjs"
+import fillPage from "../../src/apply/fill-engine.mjs"
 import scanPage, {
   SCANNER_PATH,
   probeRefusal,
   scannerExpression,
-} from "../../scripts/apply/scan-engine.mjs"
+} from "../../src/apply/scan-engine.mjs"
 import {
   ENGINE_PATH,
   assertAllowedTarget,
@@ -31,20 +31,20 @@ import {
   engineSandboxSource,
   isLocalUrl,
   launchBrowser,
-} from "../../scripts/apply/browser.mjs"
+} from "../../src/apply/browser.mjs"
 // Shape F's false-positive arm needs the REAL scanner run over the REAL served
 // board HTML, and dom.mjs is the harness that does exactly that without a
 // browser. Read-only use of a fixture owned by qa-adversary.
 import { parseHtml, runScanner } from "../fixtures/boards/dom.mjs"
-import { buildPlan, engineCanOperate } from "../../scripts/apply/fill-plan.mjs"
-import greenhouseAdapter from "../../scripts/apply/ats/greenhouse.mjs"
+import { buildPlan, engineCanOperate } from "../../src/apply/fill-plan.mjs"
+import greenhouseAdapter from "../../src/apply/ats/greenhouse.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
 )
-const ENGINE = path.join(ROOT, "scripts", "apply", "fill-engine.mjs")
+const ENGINE = path.join(ROOT, "src", "apply", "fill-engine.mjs")
 const SRC = fs.readFileSync(ENGINE, "utf8")
 const SCANNER_TEXT = fs.readFileSync(SCANNER_PATH, "utf8")
 
@@ -2762,7 +2762,7 @@ test("the probe click is never forced", async () => {
     [
       "scan-engine.mjs",
       fs.readFileSync(
-        path.join(ROOT, "scripts", "apply", "scan-engine.mjs"),
+        path.join(ROOT, "src", "apply", "scan-engine.mjs"),
         "utf8",
       ),
     ],
@@ -2782,7 +2782,7 @@ test("all three copies of the probe guard are identical", () => {
   // scanner's own probe loop (page context). Copies drift — the flat sleeps
   // already proved that — so the drift is made loud here.
   const engine = fs.readFileSync(
-    path.join(ROOT, "scripts", "apply", "scan-engine.mjs"),
+    path.join(ROOT, "src", "apply", "scan-engine.mjs"),
     "utf8",
   )
   const scanner = fs.readFileSync(SCANNER_PATH, "utf8")
@@ -2806,7 +2806,7 @@ test("all three copies of the probe guard are identical", () => {
 
 test("the scan driver and the scan engine agree on their ceilings", () => {
   const engine = fs.readFileSync(
-    path.join(ROOT, "scripts", "apply", "scan-engine.mjs"),
+    path.join(ROOT, "src", "apply", "scan-engine.mjs"),
     "utf8",
   )
   for (const ceiling of [

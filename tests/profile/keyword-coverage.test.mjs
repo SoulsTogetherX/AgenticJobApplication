@@ -12,7 +12,7 @@ import {
   coverage,
   saveCommand,
   gatherDemand,
-} from "../../scripts/profile/keyword-coverage.mjs"
+} from "../../src/profile/keyword-coverage.mjs"
 
 const demandOf = (o) => new Map(Object.entries(o))
 

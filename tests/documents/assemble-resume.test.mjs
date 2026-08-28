@@ -29,15 +29,15 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import yaml from "js-yaml"
-import { buildFactIndex } from "../../scripts/lib/lib.mjs"
+import { buildFactIndex } from "../../src/lib/lib.mjs"
 import {
   assembleResume,
   formatSelectionDiff,
   rephraseAudit,
   annotatedLines,
   DEFAULT_BUDGET,
-} from "../../scripts/documents/assemble-resume.mjs"
-import { buildPlan } from "../../scripts/documents/keyword-plan.mjs"
+} from "../../src/documents/assemble-resume.mjs"
+import { buildPlan } from "../../src/documents/keyword-plan.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -152,7 +152,7 @@ function verifyCli(file, extra = []) {
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "documents", "verify-claims.mjs"),
+      path.join(ROOT, "src", "documents", "verify-claims.mjs"),
       "resume",
       file,
       "--profile",
@@ -459,7 +459,7 @@ function cli(args) {
   return spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "documents", "assemble-resume.mjs"),
+      path.join(ROOT, "src", "documents", "assemble-resume.mjs"),
       ...args,
       "--profile",
       PROFILE,
@@ -579,7 +579,7 @@ test("an unapproved fact base is refused, not tailored against", (t) => {
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "documents", "assemble-resume.mjs"),
+      path.join(ROOT, "src", "documents", "assemble-resume.mjs"),
       "graphql-api",
       "--jobs-dir",
       dir,

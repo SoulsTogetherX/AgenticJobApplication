@@ -12,7 +12,7 @@
 // and that is then the number a gate enforces forever.
 import test from "node:test"
 import assert from "node:assert/strict"
-import { runPool, originCount } from "../../scripts/auto/pool.mjs"
+import { runPool, originCount } from "../../src/auto/pool.mjs"
 
 const jobs = (specs) =>
   specs.map(([slug, origin]) => ({ slug, origin, board_key: `b:${slug}` }))

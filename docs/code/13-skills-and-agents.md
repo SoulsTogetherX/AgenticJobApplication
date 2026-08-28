@@ -7,7 +7,7 @@ skills** — folders of instructions written in English that an AI model reads a
 follows — and the **seven subagent definitions** that decide which model does
 which job and what tools it is allowed to touch.
 
-This is where the model actually reasons. Everything under `scripts/` is
+This is where the model actually reasons. Everything under `src/` is
 deterministic: the same input produces the same output, forever. Everything
 under `.claude/skills/` and `.claude/agents/` is the opposite — it is a set of
 instructions handed to something that thinks, and the answer varies. That
@@ -210,7 +210,7 @@ on every subsequent turn.
 > is genuinely operational; a good deal restates material that is either already
 > loaded (the `Hard boundaries` section re-derives `CLAUDE.md` rule 6) or lives
 > in code comments (the `D+E` section re-derives reasoning that
-> `scripts/apply/fill-plan.mjs`'s own comments carry). The `Cost expectations`
+> `src/apply/fill-plan.mjs`'s own comments carry). The `Cost expectations`
 > section is a measurement log. The `doc-scribe` agent was briefed to shrink this
 > file toward _"run this, read the last line"_ when it was ~330 lines; it is 518
 > lines now.
@@ -272,7 +272,7 @@ code, or a missing capability. Compare:
 | "verify-claims must pass before rendering"                 | prose in three skills                                   | persuasion                  |
 | "the fill engine cannot click a button"                    | the engine has no click verb — the capability is absent | mechanical                  |
 | "read the `uploads` list, never the plan, for attachments" | prose in `apply-job`                                    | persuasion                  |
-| "never commit on `main`"                                   | `scripts/hooks/guard-bash.mjs` denies the command       | mechanical                  |
+| "never commit on `main`"                                   | `src/hooks/guard-bash.mjs` denies the command           | mechanical                  |
 
 Skills are where the persuasion lives. That is not a flaw — a lot of real work
 cannot be reduced to a script — but it explains why this repository keeps
@@ -322,7 +322,7 @@ Then four flows.
 **Flow 1, the default sweep**, is one command:
 
 ```bash
-node scripts/leads/find-jobs.mjs search --source all --query "full stack"
+node src/leads/find-jobs.mjs search --source all --query "full stack"
 ```
 
 That covers every board in `docs/job-sources.yaml`, Hacker News job posts, and
@@ -337,7 +337,7 @@ Otherwise capture the page, extract postings, normalise each one to
 file, and hand it to:
 
 ```bash
-node scripts/leads/find-jobs.mjs import <file>
+node src/leads/find-jobs.mjs import <file>
 ```
 
 so the same limits and de-duplication apply. The skill is firm that the store is
@@ -371,7 +371,7 @@ comments, keep the ones matching the limits, import them the same way.
 order: rank deterministically first, never read the lead store by hand.
 
 ```bash
-node scripts/leads/recommend.mjs --top 10
+node src/leads/recommend.mjs --top 10
 ```
 
 scores every lead on tech overlap, role-title fit, freshness, salary signal and
@@ -381,7 +381,7 @@ the model explains why a top hit fits and flags a misleading score. Finally it
 marks what was surfaced:
 
 ```bash
-node scripts/leads/find-jobs.mjs mark <id> --status recommended
+node src/leads/find-jobs.mjs mark <id> --status recommended
 ```
 
 > **`[JUDGEMENT]` J5.** Explaining fit and spotting a misleading score. This one
@@ -394,13 +394,13 @@ node scripts/leads/find-jobs.mjs mark <id> --status recommended
 
 **Scripts this skill calls**
 
-| command                                              | what it does                                  |
-| ---------------------------------------------------- | --------------------------------------------- |
-| `scripts/leads/find-jobs.mjs search --source all`    | the whole sweep, every configured board       |
-| `scripts/leads/find-jobs.mjs import <file>`          | ingest a hand-captured JSON array of postings |
-| `scripts/leads/find-jobs.mjs mark <id> --status ...` | set a lead's status                           |
-| `scripts/leads/recommend.mjs --top N`                | rank the store                                |
-| `scripts/maintenance/migrate.mjs --export <file>`    | point-in-time snapshot, when one is wanted    |
+| command                                          | what it does                                  |
+| ------------------------------------------------ | --------------------------------------------- |
+| `src/leads/find-jobs.mjs search --source all`    | the whole sweep, every configured board       |
+| `src/leads/find-jobs.mjs import <file>`          | ingest a hand-captured JSON array of postings |
+| `src/leads/find-jobs.mjs mark <id> --status ...` | set a lead's status                           |
+| `src/leads/recommend.mjs --top N`                | rank the store                                |
+| `src/maintenance/migrate.mjs --export <file>`    | point-in-time snapshot, when one is wanted    |
 
 **Defects in this skill**
 
@@ -409,7 +409,7 @@ node scripts/leads/find-jobs.mjs mark <id> --status recommended
 
 > **Known defect (2026-08-05 audit).** Flow 2 routes a one-off board fetch
 > through the model even though `fetchBoard(board, query)` in
-> `scripts/leads/find-jobs.mjs` already does it deterministically. Verified:
+> `src/leads/find-jobs.mjs` already does it deterministically. Verified:
 > `BOARD_FETCHERS` in that file registers **13** board types — `greenhouse`,
 > `lever`, `ashby`, `smartrecruiters`, `workable`, `recruitee`, `workday`,
 > `oracle_cloud`, `jobvite`, `successfactors`, `jobicy`, `remotive`,
@@ -481,7 +481,7 @@ model to do it by hand, in order:
 The second half is deterministic:
 
 ```bash
-node scripts/leads/manage-sources.mjs add --type <ats> --slug <slug> --company "Name"
+node src/leads/manage-sources.mjs add --type <ats> --slug <slug> --company "Name"
 ```
 
 which prescreens and de-duplicates. Workday needs `--host`, `--tenant` and
@@ -495,17 +495,17 @@ broke.
 
 **Scripts this skill calls**
 
-| command                                                        | what it does                   |
-| -------------------------------------------------------------- | ------------------------------ |
-| `scripts/leads/manage-sources.mjs add --type --slug --company` | prescreen, dedupe, append      |
-| `scripts/leads/manage-sources.mjs remove "<company\|slug>"`    | remove an entry                |
-| `scripts/leads/manage-sources.mjs verify`                      | live-check every tracked board |
+| command                                                    | what it does                   |
+| ---------------------------------------------------------- | ------------------------------ |
+| `src/leads/manage-sources.mjs add --type --slug --company` | prescreen, dedupe, append      |
+| `src/leads/manage-sources.mjs remove "<company\|slug>"`    | remove an entry                |
+| `src/leads/manage-sources.mjs verify`                      | live-check every tracked board |
 
 **Defects in this skill**
 
 > **Known defect (2026-08-05 audit).** The six URLs the skill tells the model to
 > probe by hand are the **same six** hard-coded in `PROBES` in
-> `scripts/leads/find-boards.mjs`. Verified by reading that array: greenhouse,
+> `src/leads/find-boards.mjs`. Verified by reading that array: greenhouse,
 > lever, ashby, smartrecruiters, workable, recruitee, with the identical URL
 > shapes. `find-boards.mjs` does the probing concurrently (`--concurrency 6`) and
 > generates several slug variants per name rather than the skill's single one —
@@ -513,12 +513,12 @@ broke.
 > and emits `acmewidgets`, `acme-widgets`, `acme` and an initialism. Verified:
 > `grep -rl find-boards .claude/` returns **nothing** — no skill and no agent
 > mentions it. Pointing step 1 at
-> `node scripts/leads/find-boards.mjs --names "<Company>" --append` removes six
+> `node src/leads/find-boards.mjs --names "<Company>" --append` removes six
 > or more model-driven web calls per company and makes the result reproducible.
 >
 > Two further scripts in the same area are also unmentioned anywhere in
-> `.claude/`: `scripts/leads/discover-boards.mjs`, which decides whether a
-> candidate board is worth sweeping, and `scripts/leads/board-yield.mjs`, which
+> `.claude/`: `src/leads/discover-boards.mjs`, which decides whether a
+> candidate board is worth sweeping, and `src/leads/board-yield.mjs`, which
 > scores boards already tracked. `find-boards.mjs`'s own header records the
 > honest negative that makes this worth having: probing 16 companies "found
 > Vercel, Figma and Notion in 4.2 seconds and found NOTHING for Konami Gaming,
@@ -558,7 +558,7 @@ apply time puts that on the critical path with the user watching a blank screen.
 So targets are picked mechanically, in advance:
 
 ```bash
-node scripts/leads/prep-queue.mjs --top 5 --cluster --json
+node src/leads/prep-queue.mjs --top 5 --cluster --json
 ```
 
 `prep-queue.mjs` returns only leads that rank well, have not been applied to,
@@ -571,7 +571,7 @@ row carries a `reason` that tells the subagent where to start:
 | `no_resume`       | workspace exists; go straight to Stage B                  |
 | `resume_<status>` | a draft exists but never passed verify-claims — finish it |
 
-`--cluster` calls `scripts/leads/cluster.mjs`, which groups near-duplicate
+`--cluster` calls `src/leads/cluster.mjs`, which groups near-duplicate
 postings so "four React/Node full-stack roles cost ONE tailoring run, not four."
 Each queued row lists what it `covers`, and the covered siblings are not queued.
 
@@ -611,7 +611,7 @@ browsing logs in the reply."
 prices it: "it is free (~125 ms for the whole store)."
 
 ```bash
-node scripts/leads/screen.mjs --status new --skip-screened
+node src/leads/screen.mjs --status new --skip-screened
 ```
 
 It flags scam wording, stale/repost age, culture-red-flag clusters, thin
@@ -650,7 +650,7 @@ The verdict is then written down — "every time, whatever it is", because that 
 what makes `--skip-screened` work next run:
 
 ```bash
-node scripts/leads/screen.mjs record <lead-id> --verdict pass|caution|reject \
+node src/leads/screen.mjs record <lead-id> --verdict pass|caution|reject \
   --reason "<why, one line>" --signals "evergreen,no_salary"
 ```
 
@@ -679,7 +679,7 @@ form-filling happens back in the main session, one job at a time, via
 ask once, for the whole batch, because `profile/answers.yaml` is global.
 
 ```bash
-node scripts/apply/pending-questions.mjs
+node src/apply/pending-questions.mjs
 ```
 
 merges what every prepped workspace still cannot answer, drops consent boxes
@@ -690,24 +690,24 @@ N-1 avoidable interruptions with the user waiting at a form."
 
 **Scripts this skill calls**
 
-| command                                          | what it does                                |
-| ------------------------------------------------ | ------------------------------------------- |
-| `scripts/leads/prep-queue.mjs --top N --cluster` | pick what is worth tailoring, grouped       |
-| `scripts/leads/find-jobs.mjs list --status ...`  | the default input set                       |
-| `scripts/leads/screen.mjs --skip-screened`       | the free mechanical screen                  |
-| `scripts/leads/screen.mjs record <id> --verdict` | cache one model verdict                     |
-| `scripts/leads/find-jobs.mjs mark <id> --status` | dismiss a rejected lead                     |
-| `scripts/documents/new-job.mjs`                  | scaffold `jobs/<slug>/`                     |
-| `scripts/documents/verify-claims.mjs`            | the truthfulness gate                       |
-| `scripts/apply/pending-questions.mjs`            | one batched question list for the whole run |
-| `scripts/profile/save-answer.mjs`                | bank each answer                            |
+| command                                      | what it does                                |
+| -------------------------------------------- | ------------------------------------------- |
+| `src/leads/prep-queue.mjs --top N --cluster` | pick what is worth tailoring, grouped       |
+| `src/leads/find-jobs.mjs list --status ...`  | the default input set                       |
+| `src/leads/screen.mjs --skip-screened`       | the free mechanical screen                  |
+| `src/leads/screen.mjs record <id> --verdict` | cache one model verdict                     |
+| `src/leads/find-jobs.mjs mark <id> --status` | dismiss a rejected lead                     |
+| `src/documents/new-job.mjs`                  | scaffold `jobs/<slug>/`                     |
+| `src/documents/verify-claims.mjs`            | the truthfulness gate                       |
+| `src/apply/pending-questions.mjs`            | one batched question list for the whole run |
+| `scripts/profile/save-answer.mjs`            | bank each answer                            |
 
 **Defects in this skill**
 
 > **Known defect (2026-08-05 audit).** Stage A asks the model to re-derive
 > signals `screen.mjs` computed seconds earlier. Verified: `SCAM_PATTERNS` and
-> `CULTURE_PATTERNS` are named constants in `scripts/leads/screen.mjs`, and
-> `EVERGREEN` is one in `scripts/leads/risk.mjs`. The culture-cluster rule the
+> `CULTURE_PATTERNS` are named constants in `src/leads/screen.mjs`, and
+> `EVERGREEN` is one in `src/leads/risk.mjs`. The culture-cluster rule the
 > skill spells out in prose — "fast-paced" + "wear many hats" + "like a family" —
 > is literally `const culture = CULTURE_PATTERNS.filter(...)` followed by
 > `if (culture.length >= 3)` in `screen.mjs`. Missing salary is already a flag;
@@ -734,15 +734,15 @@ N-1 avoidable interruptions with the user waiting at a form."
 > The decision is therefore either guessed or made from the posting text alone.
 > It is answerable deterministically: `jobs/.field-cache.json` already records,
 > per board fingerprint, whether a cover-letter file slot exists, and
-> `scripts/apply/automatability.mjs` already reasons from that cache with "no
+> `src/apply/automatability.mjs` already reasons from that cache with "no
 > browser, no network, no model."
 
 > **Known defect (2026-08-05 audit).** The skill and `job-worker` both assert the
 > submit hand-off that `CLAUDE.md` rule 6 removed. `pipeline-jobs` says "there is
-> no runner on that path yet: `scripts/auto/` holds guards and an audit record,
+> no runner on that path yet: `src/auto/` holds guards and an audit record,
 > nothing that opens a browser", and Stage C says form-filling happens "with the
 > user watching the browser and clicking Submit". Verified against the tree
-> today: `scripts/auto/` holds **22** files including `submit.mjs` and
+> today: `src/auto/` holds **22** files including `submit.mjs` and
 > `advance.mjs` — the two that contain a click — plus `classify.mjs`,
 > `reconcile.mjs`, `pool.mjs`, `multipage.mjs` and `breaker.mjs`. And
 > `docs/application-limits.yaml` currently reads `auto_apply.enabled: true`,
@@ -753,7 +753,7 @@ N-1 avoidable interruptions with the user waiting at a form."
 > paragraph as stale in the same direction.)
 
 > **Known defect (2026-08-05 audit).** Cover letters are planned per job although
-> `scripts/documents/letter-plan.mjs` plans them per cluster. That script exists
+> `src/documents/letter-plan.mjs` plans them per cluster. That script exists
 > precisely to turn `cluster.mjs`'s groups into a letter work list with one
 > anchor per cluster and the rest marked as reusing it. Verified:
 > `grep -rl letter-plan .claude/` returns nothing.
@@ -788,7 +788,7 @@ first line points at the real contract: "Follow @docs/tailoring-rules.md exactly
 **2. Application history.** Before creating anything:
 
 ```bash
-node scripts/applications/check-applied.mjs "<Company>"
+node src/applications/check-applied.mjs "<Company>"
 ```
 
 If this job or company was already applied to, report what and when, and get the
@@ -817,7 +817,7 @@ them.
 **5. Keyword plan.** Before drafting:
 
 ```bash
-node scripts/documents/keyword-plan.mjs <slug>
+node src/documents/keyword-plan.mjs <slug>
 ```
 
 This writes `jobs/<slug>/keywords.json`. The skill then states the rules from §8
@@ -841,7 +841,7 @@ in chat, then to `save-answer.mjs`.
 **8. Verify** — and this one must pass before the draft is shown as final:
 
 ```bash
-node scripts/documents/verify-claims.mjs resume jobs/<slug>/resume.md --job jobs/<slug>/job.json
+node src/documents/verify-claims.mjs resume jobs/<slug>/resume.md --job jobs/<slug>/job.json
 ```
 
 "Fix violations by correcting the draft — never by weakening the verifier." The
@@ -863,24 +863,24 @@ recording an answer. Wait for approval.
 **10. Render.**
 
 ```bash
-node scripts/documents/render-pdf.mjs jobs/<slug>/resume.md "jobs/<slug>/<Full Name> Resume - <Company>.pdf"
+node src/documents/render-pdf.mjs jobs/<slug>/resume.md "jobs/<slug>/<Full Name> Resume - <Company>.pdf"
 ```
 
 **Scripts this skill calls**
 
-| command                                  | what it does                     |
-| ---------------------------------------- | -------------------------------- |
-| `scripts/applications/check-applied.mjs` | duplicate check                  |
-| `scripts/documents/new-job.mjs`          | scaffold the workspace           |
-| `scripts/documents/keyword-plan.mjs`     | what to place and what is banned |
-| `scripts/profile/save-answer.mjs`        | bank an answer the user gave     |
-| `scripts/documents/verify-claims.mjs`    | the truthfulness gate            |
-| `scripts/documents/render-pdf.mjs`       | markdown to PDF                  |
+| command                              | what it does                     |
+| ------------------------------------ | -------------------------------- |
+| `src/applications/check-applied.mjs` | duplicate check                  |
+| `src/documents/new-job.mjs`          | scaffold the workspace           |
+| `src/documents/keyword-plan.mjs`     | what to place and what is banned |
+| `scripts/profile/save-answer.mjs`    | bank an answer the user gave     |
+| `src/documents/verify-claims.mjs`    | the truthfulness gate            |
+| `src/documents/render-pdf.mjs`       | markdown to PDF                  |
 
 **Defects in this skill**
 
 > **Known defect (2026-08-05 audit), high impact.** Step 6 tells the model to
-> draft the resume from nothing, while `scripts/documents/assemble-resume.mjs`
+> draft the resume from nothing, while `src/documents/assemble-resume.mjs`
 > (777 lines) exists and does it deterministically. Verified by reading that
 > file's header: _"Deterministic resume assembly — the tailoring step with the
 > model removed... It emits each selected fact's text VERBATIM, byte for byte,
@@ -909,7 +909,7 @@ verify-claims R6 will reject it"`, and the `save-answer` command that would
 
 > **Known defect (2026-08-05 audit).** Every `context.json` status transition the
 > skills describe is a model file-edit with no script behind it. Verified:
-> `grep -rn "context.json" scripts/` finds three hits in `new-job.mjs` (the
+> `grep -rn "context.json" src/` finds three hits in `new-job.mjs` (the
 > scaffold write), one read-only hit in `prep-queue.mjs`, and one validator in
 > `lib.mjs` — **no writer anywhere else**. So `resume.status` moving
 > pending → verified → approved → rendered is done by hand, in five different
@@ -917,7 +917,7 @@ verify-claims R6 will reject it"`, and the `save-answer` command that would
 > (`job-status.mjs <slug> --resume verified --facts-used a,b`) would remove those
 > turns and make the state machine enforceable.
 
-> **Known defect (2026-08-05 audit).** `scripts/documents/ats-lint.mjs` is never
+> **Known defect (2026-08-05 audit).** `src/documents/ats-lint.mjs` is never
 > run by any skill. Verified: `grep -rl ats-lint .claude/` returns nothing. That
 > script exists because two specific failures already happened — Chrome's CSS
 > `::marker` bullets emit no text, so a whole role extracted as one line; and
@@ -980,7 +980,7 @@ as claims." One page maximum.
 **7. Verify** (must pass):
 
 ```bash
-node scripts/documents/verify-claims.mjs cover-letter jobs/<slug>/cover-letter.md --job jobs/<slug>/job.json
+node src/documents/verify-claims.mjs cover-letter jobs/<slug>/cover-letter.md --job jobs/<slug>/job.json
 ```
 
 "Fix violations in the draft, never in the verifier."
@@ -992,13 +992,13 @@ aligns with the resume.
 
 **Scripts this skill calls**
 
-| command                                            | what it does           |
-| -------------------------------------------------- | ---------------------- |
-| `scripts/applications/check-applied.mjs`           | duplicate check        |
-| `scripts/documents/new-job.mjs`                    | scaffold the workspace |
-| `scripts/profile/save-answer.mjs`                  | bank an answer         |
-| `scripts/documents/verify-claims.mjs cover-letter` | truthfulness gate      |
-| `scripts/documents/render-pdf.mjs ... --letter`    | render                 |
+| command                                        | what it does           |
+| ---------------------------------------------- | ---------------------- |
+| `src/applications/check-applied.mjs`           | duplicate check        |
+| `src/documents/new-job.mjs`                    | scaffold the workspace |
+| `scripts/profile/save-answer.mjs`              | bank an answer         |
+| `src/documents/verify-claims.mjs cover-letter` | truthfulness gate      |
+| `src/documents/render-pdf.mjs ... --letter`    | render                 |
 
 **Defects in this skill**
 
@@ -1094,8 +1094,8 @@ merge, one gate. It is a good template for what the others could look like.
 **The flow.** Two commands and an interpretation table.
 
 ```bash
-node scripts/applications/check-applied.mjs "<company>"
-node scripts/applications/check-applied.mjs "<job-slug>"
+node src/applications/check-applied.mjs "<company>"
+node src/applications/check-applied.mjs "<job-slug>"
 ```
 
 Then:
@@ -1114,7 +1114,7 @@ Then:
 Recording an application is one command, and only after the user confirms:
 
 ```bash
-node scripts/applications/log-application.mjs <slug> --company "<Company>" --title "<Title>" [--url <posting url>] [--date YYYY-MM-DD]
+node src/applications/log-application.mjs <slug> --company "<Company>" --title "<Title>" [--url <posting url>] [--date YYYY-MM-DD]
 ```
 
 The skill's last line is the guardrail: "Never mark a job applied on your own
@@ -1178,7 +1178,7 @@ Check preconditions (Playwright tools available, `meta.approved_by_user: true`),
 then build the workspace **from the lead store first**:
 
 ```bash
-node scripts/documents/new-job.mjs <slug> --from-lead "<posting url>"
+node src/documents/new-job.mjs <slug> --from-lead "<posting url>"
 ```
 
 The argument the skill makes here is worth repeating because it generalises:
@@ -1216,7 +1216,7 @@ may not do; anything else is `generic` — same mechanism, more deferred fields,
 and "This is the ONLY path where you reason about individual fields, and even
 then only about the deferred ones."
 
-The Workday hand-off is genuinely mechanical, not prose. `scripts/apply/ats/index.mjs`
+The Workday hand-off is genuinely mechanical, not prose. `src/apply/ats/index.mjs`
 declares `ADAPTERS = [greenhouse, lever, ashby]` and a separate `HANDOFF` array
 whose single entry matches Workday hostnames with the reason _"Workday requires
 creating an account to apply — the agent cannot do that."_ Its comment records a
@@ -1269,7 +1269,7 @@ filled through the parent frame.
 `jobs/<slug>/scan-p<N>.json`, then:
 
 ```bash
-node scripts/apply/fill-plan.mjs <slug>
+node src/apply/fill-plan.mjs <slug>
 ```
 
 This runs `answer-bank.mjs` internally — "profile + answer bank only, never a
@@ -1287,7 +1287,7 @@ decisions, each gated on what it actually reads:
   attachments beyond the resume, or the posting explicitly asks.
 - **PDFs?** Only if the scan has a `t: "file"` field. A form with no file input
   needs no render at all — "that saves ~6s and a browser launch."
-- **Reuse?** `node scripts/documents/reuse-check.mjs <slug>` — a `verdict=REUSE`
+- **Reuse?** `node src/documents/reuse-check.mjs <slug>` — a `verdict=REUSE`
   means an existing tailored resume is close enough. Offer it with the score;
   the user decides. "Never reuse silently."
 
@@ -1408,7 +1408,7 @@ hand-off."
 capture the post-submit page:
 
 ```bash
-node scripts/apply/capture-post-submit.mjs stage --url "<url>" --html-file <temp> --board <greenhouse|lever|ashby> --slug <slug>
+node src/apply/capture-post-submit.mjs stage --url "<url>" --html-file <temp> --board <greenhouse|lever|ashby> --slug <slug>
 ```
 
 The skill explains why this step exists at all, and it is the clearest statement
@@ -1425,30 +1425,30 @@ never pick the `--kind`."
 **Cost expectations.** Four browser calls per page on a recognised ATS — scan,
 write the scan to disk, fill-and-verify, click to advance — with page 1 costing
 5 because it also pays the navigate. Measured, not guessed:
-`node scripts/dev/bench-apply.mjs --board greenhouse --json` returned 5 for
+`node src/dev/bench-apply.mjs --board greenhouse --json` returned 5 for
 Greenhouse page 1 on 2026-07-31. The baseline before any of this existed was
 "~30 browser calls and roughly 8 minutes for a single Greenhouse form."
 
 **Scripts this skill calls**
 
-| command                                       | what it does                                |
-| --------------------------------------------- | ------------------------------------------- |
-| `scripts/documents/new-job.mjs --from-lead`   | workspace from the lead store, no page read |
-| `scripts/applications/check-applied.mjs`      | duplicate check                             |
-| `scripts/apply/fill-plan.mjs <slug>`          | resolve every field; emit the bootstrap     |
-| `scripts/documents/reuse-check.mjs <slug>`    | is an existing resume close enough?         |
-| `scripts/apply/pending-questions.mjs`         | batch every prepped job's open questions    |
-| `scripts/profile/save-answer.mjs`             | bank answers and approved picks             |
-| `scripts/documents/render-pdf.mjs`            | render, only if the form needs files        |
-| `scripts/applications/log-application.mjs`    | record the submitted application            |
-| `scripts/apply/capture-post-submit.mjs stage` | stage a post-submit page for the corpus     |
+| command                                   | what it does                                |
+| ----------------------------------------- | ------------------------------------------- |
+| `src/documents/new-job.mjs --from-lead`   | workspace from the lead store, no page read |
+| `src/applications/check-applied.mjs`      | duplicate check                             |
+| `src/apply/fill-plan.mjs <slug>`          | resolve every field; emit the bootstrap     |
+| `src/documents/reuse-check.mjs <slug>`    | is an existing resume close enough?         |
+| `src/apply/pending-questions.mjs`         | batch every prepped job's open questions    |
+| `scripts/profile/save-answer.mjs`         | bank answers and approved picks             |
+| `src/documents/render-pdf.mjs`            | render, only if the form needs files        |
+| `src/applications/log-application.mjs`    | record the submitted application            |
+| `src/apply/capture-post-submit.mjs stage` | stage a post-submit page for the corpus     |
 
 **Further defects in this skill**
 
 > **Known defect (2026-08-05 audit), high impact.** The attended path never calls
 > `adapter.applicationUrl()`. Verified: that method exists on all three adapters
-> (`scripts/apply/ats/greenhouse.mjs`, `lever.mjs`, `ashby.mjs`) and its **only**
-> call site in the repository is `scripts/auto/auto-apply.mjs` — the unattended
+> (`src/apply/ats/greenhouse.mjs`, `lever.mjs`, `ashby.mjs`) and its **only**
+> call site in the repository is `src/auto/auto-apply.mjs` — the unattended
 > runner. It encodes where the real form lives, and it was added after two
 > measured failures on real leads: `ashby.mjs`'s comment records "the ad carries
 > no fields at all, so a runner handed the posting scans it, finds nothing to
@@ -1506,7 +1506,7 @@ Greenhouse page 1 on 2026-07-31. The baseline before any of this existed was
 
 > **Known defect (2026-08-05 audit).** Step 4's requirements extraction is
 > largely redundant. `splitRequirements(text)` already exists in
-> `scripts/leads/fit.mjs`, returns `{required, preferred, general}`, and is
+> `src/leads/fit.mjs`, returns `{required, preferred, general}`, and is
 > already imported by `keyword-plan.mjs` and `keyword-coverage.mjs`. Separately,
 > every reader of `job.requirements` joins it straight back onto
 > `job.description`, so when the description is present the extracted array adds
@@ -1542,9 +1542,9 @@ are recorded only from what the user reported — "Never guess from silence."
 **Reading:**
 
 ```bash
-node scripts/applications/applications.mjs list [--status <s>] [--company "X"] [--json]
-node scripts/applications/applications.mjs find "<company|title|slug>" [--json]
-node scripts/applications/applications.mjs stats [--json]
+node src/applications/applications.mjs list [--status <s>] [--company "X"] [--json]
+node src/applications/applications.mjs find "<company|title|slug>" [--json]
+node src/applications/applications.mjs stats [--json]
 ```
 
 **Writing** keeps separate scripts because they carry the confirmation rules:
@@ -1587,7 +1587,7 @@ scripts. Run the script and reason about its output — never read
 **The flow.**
 
 ```bash
-node scripts/applications/follow-ups.mjs [--days N]
+node src/applications/follow-ups.mjs [--days N]
 ```
 
 The cadence is deterministic and lives in the script: first follow-up 10 days
@@ -1607,7 +1607,7 @@ Then: show the draft. **The user sends it themselves** — "the agent never send
 anything." Only after the user says they sent it:
 
 ```bash
-node scripts/applications/update-application.mjs <slug> --followed-up
+node src/applications/update-application.mjs <slug> --followed-up
 ```
 
 Recording a response is one command with `--status rejected|interviewing|offer|withdrawn`.
@@ -1634,7 +1634,7 @@ where rejected jobs' requirements count double.
 **The flow.** One command:
 
 ```bash
-node scripts/profile/profile-gaps.mjs --json
+node src/profile/profile-gaps.mjs --json
 ```
 
 It scans every captured job workspace and stored lead, extracts tech terms,
@@ -1664,7 +1664,7 @@ recommendations, and one line on what is already well covered "so the user knows
 their strengths are landing on paper."
 
 > **Known defect (2026-08-05 audit).** J2's first branch is exactly what
-> `scripts/profile/keyword-coverage.mjs` computes, and no skill calls it.
+> `src/profile/keyword-coverage.mjs` computes, and no skill calls it.
 > Verified: `grep -rl keyword-coverage .claude/` matches only
 > `.claude/hooks/guard-profile-shell.mjs` — never a skill. That script's header
 > describes three buckets — "covered / ask / gap" — where `ask` means "demanded,
@@ -1712,7 +1712,7 @@ the actual file before being repeated here.
 
 | #   | where                   | what the model does now                                                                  | what already exists                                                                                                                                                              | rule effect                                                                |
 | --- | ----------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| 1   | `tailor-resume` step 6  | drafts `resume.md` from nothing                                                          | `scripts/documents/assemble-resume.mjs` emits each selected fact's text verbatim with its `<!-- fact:ID -->` annotation                                                          | **strengthens rule 1**                                                     |
+| 1   | `tailor-resume` step 6  | drafts `resume.md` from nothing                                                          | `src/documents/assemble-resume.mjs` emits each selected fact's text verbatim with its `<!-- fact:ID -->` annotation                                                              | **strengthens rule 1**                                                     |
 | 2   | `tailor-resume` step 9  | describes what it emphasized, dropped, rephrased                                         | `formatSelectionDiff()` in the same file builds that message from fact ids                                                                                                       | **strengthens rule 5** — the summary becomes checkable                     |
 | 3   | `tailor-resume` step 4  | fills `context.analysis` (5 fields)                                                      | `keyword-plan.mjs` emits `must_use`, `blocked`, `coverage.required_terms`; `assemble-resume.mjs` emits `selection.included[].id` and `selection.dropped`                         | neutral — 4 of 5 fields; `tone` stays a judgement                          |
 | 4   | `pipeline-jobs` Stage A | re-derives evergreen wording, culture cluster, scam patterns, missing salary, relocation | `EVERGREEN` in `risk.mjs`; `SCAM_PATTERNS` and `CULTURE_PATTERNS` in `screen.mjs`; the no-salary flag; relocation patterns in `find-jobs.mjs` — all already emitted as `signals` | neutral                                                                    |
@@ -1721,7 +1721,7 @@ the actual file before being repeated here.
 | 7   | `find-jobs` flow 4      | reads HN Who-is-hiring comments by hand                                                  | nothing — `find-jobs.mjs` queries only `tags=job`; an `hn_whoishiring` board type would need writing                                                                             | neutral                                                                    |
 | 8   | `manage-sources` step 1 | hand-probes six ATS APIs with guessed slugs                                              | `find-boards.mjs`'s `PROBES` array is the same six endpoints, run concurrently, with four slug variants per name                                                                 | neutral                                                                    |
 | 9   | `profile-gaps` step 2   | sorts gaps into "have it / don't have it" by eye                                         | `keyword-coverage.mjs` computes exactly that as its `ask` bucket, ranked by required demand                                                                                      | neutral                                                                    |
-| 10  | five skills             | edit `context.json` statuses by hand                                                     | nothing — `new-job.mjs` is the only writer in all of `scripts/`                                                                                                                  | neutral; a `job-status.mjs` would also make illegal transitions rejectable |
+| 10  | five skills             | edit `context.json` statuses by hand                                                     | nothing — `new-job.mjs` is the only writer in all of `src/`                                                                                                                      | neutral; a `job-status.mjs` would also make illegal transitions rejectable |
 | 11  | `pipeline-jobs`         | decides cover letters per job                                                            | `letter-plan.mjs` plans them per reuse cluster and prices the result                                                                                                             | neutral                                                                    |
 | 12  | `tailor-resume` step 10 | confirms "the PDF opens/exists"                                                          | `ats-lint.mjs` checks whether an ATS can actually read the text layer                                                                                                            | **improves outcomes** — catches a regression the eye cannot see            |
 
@@ -1838,7 +1838,7 @@ to it is one of exactly three things:
    — `apply-job` calls it "the only thing here that compounds: the defer list
    shrinks as you apply."
 2. **Write an adapter** that knows the board's shape, so a field that looked
-   unrecognisable becomes recognisable. That is `scripts/apply/ats/`.
+   unrecognisable becomes recognisable. That is `src/apply/ats/`.
 3. **Probe the live form** for its real option list, so a dropdown the planner
    could not read becomes readable.
 
@@ -1926,7 +1926,7 @@ Because the rule is prose, the design does not rely on it alone. Three
 capabilities are simply absent, so the failure cannot happen even if an
 instruction were followed badly:
 
-- **The fill engine has no click verb.** `scripts/apply/browser.mjs`'s header
+- **The fill engine has no click verb.** `src/apply/browser.mjs`'s header
   states it: "nothing in this file clicks a button, and neither engine has a
   verb" for it. A plan therefore cannot submit anything, so an injected plan
   cannot either. Advancing and submitting are separate, explicit calls the agent
@@ -1936,7 +1936,7 @@ instruction were followed badly:
   choose what runs — inject the engine, read a global back, evaluate it — was
   identified as the hole and removed.
 - **The click surface is two files, and a test holds it there.** Verified today:
-  `.click(` appears under `scripts/auto/` in exactly `submit.mjs` and
+  `.click(` appears under `src/auto/` in exactly `submit.mjs` and
   `advance.mjs` (a third match, in `guard.mjs`, is inside a comment describing
   the invariant). `tests/auto/click-surface.test.mjs` is what keeps it at two.
 
@@ -2063,20 +2063,20 @@ user for approval, so it must stand alone`".
 
 ## 5.4 `implementer` — product code and its tests
 
-**Role.** Build and fix product code anywhere under `scripts/`, and write the
+**Role.** Build and fix product code anywhere under `src/`, and write the
 tests for its own changes. "**One bounded change per dispatch** — the brief names
 it. Finish it completely, test it, and stop."
 
 **Model.** Opus. **Tools.** Bash, Read, Write, Edit, Glob, Grep, SendMessage.
 
-**What it owns.** All of `scripts/**` plus `tests/<domain>/<file>.test.mjs` for
+**What it owns.** All of `src/**` plus `tests/<domain>/<file>.test.mjs` for
 the code it changes. The self-testing is deliberate and the brief explains why:
 "The previous roster split code and tests across owners, and every change then
 cost a round trip through the manager. You do not wait for anyone to test your
 work."
 
-**What is explicitly not its.** `scripts/hooks/*`, `package.json`, `.github/*`
-(ci-engineer); `tests/security/*`, `tests/fixtures/*`, `scripts/dev/bench-*.mjs`
+**What is explicitly not its.** `src/hooks/*`, `package.json`, `.github/*`
+(ci-engineer); `tests/security/*`, `tests/fixtures/*`, `src/dev/bench-*.mjs`
 (qa); `CLAUDE.md`, `docs/*`, `.claude/skills/*` (doc-scribe); `.claude/hooks/*`
 and `.claude/settings*.json` ("**the user's alone — sealed, never touch**");
 `profile/*` and `docs/application-limits.yaml` ("**the user's — propose, never
@@ -2105,7 +2105,7 @@ that prove their change works; you write the ones that prove it does not."
 **Model.** Opus. **Tools.** Same as implementer.
 
 **What it owns.** `tests/security/*`, `tests/fixtures/*` (hostile job ads, fake
-ATS boards, malformed scans), `scripts/dev/bench-*.mjs`, `tests/dev/*`. It may
+ATS boards, malformed scans), `src/dev/bench-*.mjs`, `tests/dev/*`. It may
 read anything, but "when an attack proves a defect in product code, the repro and
 the failing test are yours; **the fix is the implementer's** — report it, do not
 patch it."
@@ -2189,7 +2189,7 @@ something, and to make the plan's gates mechanical instead of remembered."
 
 **Model.** Opus. **Tools.** Bash, Read, Write, Edit, Glob, Grep, SendMessage.
 
-**What it owns.** `.github/workflows/*`, `package.json`, `scripts/hooks/*`,
+**What it owns.** `.github/workflows/*`, `package.json`, `src/hooks/*`,
 `.gitignore`, `.prettierignore`, `tests/hooks/*` — and, on paper,
 `.claude/settings.json` and `.claude/settings.local.json`.
 
@@ -2217,7 +2217,7 @@ outcome you want."
 > permission denial. (b) Its "What is broken right now" section asserts four
 > things that are all verifiably fixed, including that `npm run verify` points at
 > a moved path (`package.json` now has
-> `"verify": "node scripts/documents/verify-claims.mjs"`) and that `ci.yml` has
+> `"verify": "node src/documents/verify-claims.mjs"`) and that `ci.yml` has
 > no `workflow_dispatch` (it does). (c) It quotes a test count of 639 against a
 > `testGate` floor of 2208.
 
@@ -2226,7 +2226,7 @@ outcome you want."
 > `remove_after` phase — that no skill and no agent actually declares. Verified:
 > `grep -rn "scaffolding\|remove_after" .claude/skills .claude/agents` matches
 > only the two briefs that describe the contract, never a real frontmatter block.
-> `.github/workflows/scaffolding-reaper.mjs` exists and `npm run reap` runs it,
+> `tools/ci/scaffolding-reaper.mjs` exists and `npm run reap` runs it,
 > so the check runs and is currently vacuous.
 
 ## 5.8 `doc-scribe` — what the project says about itself
@@ -2283,13 +2283,13 @@ pointing at something you never opened."
 ## 5.9 `build-manager` — assignment, integration, commits
 
 **Role.** "You assign work, integrate it, and commit it. **You write no product
-code.** If you find yourself editing `scripts/` or `tests/`, you are doing a
+code.** If you find yourself editing `src/` or `tests/`, you are doing a
 worker's job — assign it instead."
 
 **Model.** Opus. **Tools.** The full set plus `Agent` and the task tools — the
 only agent that can start other agents.
 
-**What it owns.** Nothing under `scripts/`, `tests/` or `.claude/skills/`. It
+**What it owns.** Nothing under `src/`, `tests/` or `.claude/skills/`. It
 owns the process: `docs/team-roster.md`, the git history, and the decision to
 ship.
 

@@ -48,8 +48,8 @@
 // over fixture trees.
 //
 // Usage:
-//   node .github/workflows/scaffolding-reaper.mjs [--root <dir>] [--phase <p>] [--json]
-//   node .github/workflows/scaffolding-reaper.mjs --self-test
+//   node tools/ci/scaffolding-reaper.mjs [--root <dir>] [--phase <p>] [--json]
+//   node tools/ci/scaffolding-reaper.mjs --self-test
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"

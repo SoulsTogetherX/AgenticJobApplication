@@ -1,6 +1,6 @@
 // advanceOnce() — the navigate verb (§4.2c). Phase 5 W3.
 //
-// THE SECOND AND LAST FILE UNDER scripts/auto/ PERMITTED TO CONTAIN A CLICK,
+// THE SECOND AND LAST FILE UNDER src/auto/ PERMITTED TO CONTAIN A CLICK,
 // and it may click exactly one thing: a control whose SCANNED ROLE IS `next`.
 // tests/auto/click-surface.test.mjs asserts both halves — that no third file
 // grows a click, and that this one refuses a `submit` control.

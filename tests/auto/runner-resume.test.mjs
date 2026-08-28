@@ -29,7 +29,7 @@ import {
   AUTO_QUEUE_STATES,
   AUTO_QUEUE_RESUMABLE,
   AUTO_QUEUE_TERMINAL,
-} from "../../scripts/lib/db.mjs"
+} from "../../src/lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

@@ -57,10 +57,10 @@
 // THE ONLY BOARD THIS EVER TOUCHES is tests/fixtures/boards/server.mjs, which
 // binds loopback and refuses anything else. Never a live employer.
 //
-//   node scripts/dev/bench-apply.mjs --board greenhouse
-//   node scripts/dev/bench-apply.mjs --board greenhouse --runs 7 --json
-//   node scripts/dev/bench-apply.mjs --shape combo14 --profile worst
-//   node scripts/dev/bench-apply.mjs --ledger          # paste-ready entry
+//   node src/dev/bench-apply.mjs --board greenhouse
+//   node src/dev/bench-apply.mjs --board greenhouse --runs 7 --json
+//   node src/dev/bench-apply.mjs --shape combo14 --profile worst
+//   node src/dev/bench-apply.mjs --ledger          # paste-ready entry
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -134,7 +134,7 @@ export const PROTOCOL = [
     id: "fill-plan",
     browser: false,
     turn: true,
-    cite: "SKILL.md:142 node scripts/apply/fill-plan.mjs <slug>",
+    cite: "SKILL.md:142 node src/apply/fill-plan.mjs <slug>",
     when: () => true,
   },
   {
@@ -148,14 +148,14 @@ export const PROTOCOL = [
     id: "reuse-check",
     browser: false,
     turn: true,
-    cite: "SKILL.md:177 node scripts/documents/reuse-check.mjs <slug>",
+    cite: "SKILL.md:177 node src/documents/reuse-check.mjs <slug>",
     when: (c) => !c.ready,
   },
   {
     id: "pending-questions",
     browser: false,
     turn: true,
-    cite: "SKILL.md:196 node scripts/apply/pending-questions.mjs",
+    cite: "SKILL.md:196 node src/apply/pending-questions.mjs",
     when: (c) => !c.ready && c.unknownDefers > 0,
   },
   {
@@ -1161,7 +1161,7 @@ export function benchPlan({
   // Attachment slots defer with "no rendered resume" unless a file exists, so
   // a bench that wants the upload path measured has to provide one. These are
   // placeholder bytes in a temp dir, never a real document.
-  const args = ["scripts/apply/fill-plan.mjs", slug, "--json"]
+  const args = ["src/apply/fill-plan.mjs", slug, "--json"]
   args.push("--jobs-dir", jobsDir)
   args.push("--url", url)
   args.push("--profile", FIXTURE_PROFILE)
@@ -1249,7 +1249,7 @@ export function gateBreakdown(plan) {
 // it is a smaller number — the fill stopped early, so every leg after the stop
 // contributed nothing and `wall_ms` looks good for the worst possible reason.
 //
-// The specific miss: `node scripts/dev/bench-apply.mjs --board greenhouse`
+// The specific miss: `node src/dev/bench-apply.mjs --board greenhouse`
 // printed `fill: ok=2 failed=1 deferred=3` and exited 0, for eleven days. The
 // one failure was the page guard aborting the whole fill, and the harness
 // reported the truncated wall time as the baseline anyway.
@@ -2558,17 +2558,17 @@ function printBrowser(b) {
 export const MEASURED_FILES = [
   ".claude/skills/apply-job/scan-page.js",
   ".claude/skills/apply-job/scan.driver.mjs",
-  "scripts/apply/scan-engine.mjs",
-  "scripts/apply/fill-engine.mjs",
-  "scripts/apply/fill-plan.mjs",
+  "src/apply/scan-engine.mjs",
+  "src/apply/fill-engine.mjs",
+  "src/apply/fill-plan.mjs",
   // Added for baseline B1. fill-plan.mjs is the whole plan leg's wall time on
   // paper, but it SHELLS OUT and the two modules it spends that time in were
   // not hashed: answer-bank.mjs resolves every field and field-cache.mjs
   // decides whether a dropdown has to be re-probed. A plan_ms that moved
   // because one of those changed would have been unattributable, which is the
   // exact failure the file_sha1 mechanism exists to prevent.
-  "scripts/apply/answer-bank.mjs",
-  "scripts/apply/field-cache.mjs",
+  "src/apply/answer-bank.mjs",
+  "src/apply/field-cache.mjs",
 ]
 
 export async function provenance() {
@@ -2695,7 +2695,7 @@ export function ledgerEntry(sum, prov, browserRun = null, fillRun = null) {
       : ""
   const browserOk = browserRun?.ran && !browserRun.legs?.scan?.error
   const lines = [
-    `- harness:  node scripts/dev/bench-apply.mjs --board ${sum.board}` +
+    `- harness:  node src/dev/bench-apply.mjs --board ${sum.board}` +
       (sum.shape ? ` --shape ${sum.shape}` : "") +
       ` --profile ${sum.profile} --runs ${sum.runs}` +
       (browserRun ? " --browser" : ""),

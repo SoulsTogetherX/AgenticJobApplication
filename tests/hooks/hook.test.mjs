@@ -47,7 +47,7 @@ test("hook denies edits to every protected path (forward and back slashes)", () 
 test("hook allows normal workspace files", () => {
   const allowed = [
     "C:/repo/AgenticJobApplication/jobs/acme/resume.md",
-    "C:/repo/AgenticJobApplication/scripts/lib.mjs",
+    "C:/repo/AgenticJobApplication/src/lib.mjs",
     "C:/repo/AgenticJobApplication/profile-notes.md", // similar name, not protected
     "C:/repo/AgenticJobApplication/docs/tailoring-rules.md",
   ]

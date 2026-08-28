@@ -1,4 +1,4 @@
-// Tests for scripts/auto/preflight.mjs.
+// Tests for src/auto/preflight.mjs.
 //
 // The load-bearing ones are not the refusals — they are the NON-refusals. A
 // guard that refuses an honest answer gets bypassed, and a bypassed guard
@@ -20,13 +20,13 @@ import {
   scanProfileFacts,
   EXIT,
   MAX_FACT_NODES,
-} from "../../scripts/auto/preflight.mjs"
-import { loadYamlFile } from "../../scripts/lib/lib.mjs"
+} from "../../src/auto/preflight.mjs"
+import { loadYamlFile } from "../../src/lib/lib.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")
 const FIXTURES = path.join(ROOT, "tests", "fixtures")
-const SCRIPT = path.join(ROOT, "scripts", "auto", "preflight.mjs")
+const SCRIPT = path.join(ROOT, "src", "auto", "preflight.mjs")
 
 // A STOP path that cannot exist, so no test depends on the real jobs/.auto.
 const NO_STOP = path.join(os.tmpdir(), "aj-preflight-no-such-stop-file")

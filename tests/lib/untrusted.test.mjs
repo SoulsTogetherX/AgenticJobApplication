@@ -37,8 +37,8 @@ import {
   rescanSummary,
   maskValue,
   RESCAN_LIMITS,
-} from "../../scripts/lib/untrusted.mjs"
-import { textSnippet } from "../../scripts/lib/lib.mjs"
+} from "../../src/lib/untrusted.mjs"
+import { textSnippet } from "../../src/lib/lib.mjs"
 import {
   BYPASSES,
   PLAIN_CONTROL,
@@ -574,7 +574,7 @@ test("the plain-ASCII control is caught, so the corpus measures carriers", () =>
 // deterministic step before posting text reaches one.
 
 test("keyword-plan neither proposes an injected skill nor re-emits the attack", async () => {
-  const { buildPlan } = await import("../../scripts/documents/keyword-plan.mjs")
+  const { buildPlan } = await import("../../src/documents/keyword-plan.mjs")
   const profileBlob = "Skills: React, Node.js, TypeScript, PostgreSQL, Docker."
 
   const plan = buildPlan({
@@ -615,7 +615,7 @@ test("keyword-plan neither proposes an injected skill nor re-emits the attack", 
 })
 
 test("keyword-plan still reads an honest posting unchanged", async () => {
-  const { buildPlan } = await import("../../scripts/documents/keyword-plan.mjs")
+  const { buildPlan } = await import("../../src/documents/keyword-plan.mjs")
   const plan = buildPlan({
     job: {
       slug: "honest",

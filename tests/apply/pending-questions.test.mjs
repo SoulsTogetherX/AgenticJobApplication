@@ -13,15 +13,15 @@ import {
   questionsFromPlans,
   questionsFromPredicted,
   predictedFields,
-} from "../../scripts/apply/pending-questions.mjs"
-import { recordCache } from "../../scripts/apply/field-cache.mjs"
+} from "../../src/apply/pending-questions.mjs"
+import { recordCache } from "../../src/apply/field-cache.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
 )
-const SCRIPT = path.join(ROOT, "scripts", "apply", "pending-questions.mjs")
+const SCRIPT = path.join(ROOT, "src", "apply", "pending-questions.mjs")
 const FIXTURES = path.join(ROOT, "tests", "fixtures")
 
 const plan = (slug, defer) => ({ slug, plan: { ats: "greenhouse", defer } })

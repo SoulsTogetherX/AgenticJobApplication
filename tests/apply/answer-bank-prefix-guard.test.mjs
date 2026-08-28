@@ -12,7 +12,7 @@ import assert from "node:assert/strict"
 import {
   matchOption,
   resolveFieldsFromFiles,
-} from "../../scripts/apply/answer-bank.mjs"
+} from "../../src/apply/answer-bank.mjs"
 
 const FIXTURES = "tests/fixtures"
 

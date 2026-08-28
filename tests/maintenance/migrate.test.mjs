@@ -20,7 +20,7 @@ import {
   readAutoQueue,
   writeDocuments,
   listDocuments,
-} from "../../scripts/lib/db.mjs"
+} from "../../src/lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -61,7 +61,7 @@ function sandbox(t) {
       return spawnSync(
         process.execPath,
         [
-          path.join(ROOT, "scripts", "maintenance", "migrate.mjs"),
+          path.join(ROOT, "src", "maintenance", "migrate.mjs"),
           "--db",
           dbFile,
           "--applications",

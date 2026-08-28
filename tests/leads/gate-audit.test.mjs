@@ -4,8 +4,8 @@
 // worst failure mode is a job the user never sees.
 import test from "node:test"
 import assert from "node:assert/strict"
-import { diffAudit, summarize } from "../../scripts/leads/gate-audit.mjs"
-import { evaluateStages, STAGE_IDS } from "../../scripts/leads/stages.mjs"
+import { diffAudit, summarize } from "../../src/leads/gate-audit.mjs"
+import { evaluateStages, STAGE_IDS } from "../../src/leads/stages.mjs"
 
 const row = (id, ok, stage = null, extra = {}) => ({
   id,

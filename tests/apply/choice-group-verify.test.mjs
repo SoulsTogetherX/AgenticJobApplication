@@ -18,8 +18,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import fillPage from "../../scripts/apply/fill-engine.mjs"
-import { launchBrowser } from "../../scripts/apply/browser.mjs"
+import fillPage from "../../src/apply/fill-engine.mjs"
+import { launchBrowser } from "../../src/apply/browser.mjs"
 
 const NO_BROWSER = await (async () => {
   try {

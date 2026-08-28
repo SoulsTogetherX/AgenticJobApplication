@@ -18,7 +18,7 @@
 // `blocked` is the posting's other terms, listed precisely so they stay out;
 // verify-claims R6 enforces that independently, and this explains it.
 //
-// Usage: node scripts/documents/keyword-plan.mjs <slug> [--json] [--jobs-dir <d>]
+// Usage: node src/documents/keyword-plan.mjs <slug> [--json] [--jobs-dir <d>]
 //        [--profile <p>] [--answers <a>]
 // Writes jobs/<slug>/keywords.json. Prints must_use/blocked counts.
 import fs from "node:fs"

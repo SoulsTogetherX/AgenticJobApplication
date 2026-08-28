@@ -31,7 +31,7 @@ duplicates, so a broken or repeated entry can never waste a daily run.
 2. **Add via the script** (it prescreens and dedupes — never edit the YAML
    for the user by hand):
    ```bash
-   node scripts/leads/manage-sources.mjs add --type <ats> --slug <slug> --company "Name"
+   node src/leads/manage-sources.mjs add --type <ats> --slug <slug> --company "Name"
    ```
    Workday: `--host <tenant>.wdN.myworkdayjobs.com --tenant <tenant> --site <Site>`.
 3. Report the prescreen result (how many postings visible). A "duplicate"
@@ -40,11 +40,11 @@ duplicates, so a broken or repeated entry can never waste a daily run.
 ## Removing ("stop tracking Reddit")
 
 ```bash
-node scripts/leads/manage-sources.mjs remove "<company or slug>"
+node src/leads/manage-sources.mjs remove "<company or slug>"
 ```
 
 ## Maintenance
 
-`node scripts/leads/manage-sources.mjs verify` live-checks every tracked board and
+`node src/leads/manage-sources.mjs verify` live-checks every tracked board and
 prints ok/BROKEN per line (exit 1 if any broke) — run it when the daily sweep
 reports source failures, and offer to remove boards that stay broken.

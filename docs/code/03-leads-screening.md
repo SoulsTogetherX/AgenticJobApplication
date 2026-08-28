@@ -48,17 +48,17 @@ answer questions this document assumes:
 
 **The files covered here**
 
-| File                           | Lines | One-line purpose                                                                                        |
-| ------------------------------ | ----- | ------------------------------------------------------------------------------------------------------- |
-| `scripts/leads/screen.mjs`     | 517   | The command you run. Drives all four stages over the store, adds its own pattern pass, caches verdicts. |
-| `scripts/leads/fit.mjs`        | 327   | Stage **L2** — "can this profile actually do this job?" Library only, no command line.                  |
-| `scripts/leads/risk.mjs`       | 242   | Stage **L3** — "is this job real?" Scam, ghost, repost and prompt-injection signals.                    |
-| `scripts/leads/gate-audit.mjs` | 240   | The safety net. Re-runs every stage over every lead and reports what a change newly killed.             |
-| `scripts/leads/canonical.mjs`  | 527   | Resolves a lead's URL to the real applicant-tracking-system posting behind it.                          |
-| `scripts/leads/cluster.mjs`    | 195   | Groups near-duplicate postings so one tailored resume can cover several.                                |
+| File                       | Lines | One-line purpose                                                                                        |
+| -------------------------- | ----- | ------------------------------------------------------------------------------------------------------- |
+| `src/leads/screen.mjs`     | 517   | The command you run. Drives all four stages over the store, adds its own pattern pass, caches verdicts. |
+| `src/leads/fit.mjs`        | 327   | Stage **L2** — "can this profile actually do this job?" Library only, no command line.                  |
+| `src/leads/risk.mjs`       | 242   | Stage **L3** — "is this job real?" Scam, ghost, repost and prompt-injection signals.                    |
+| `src/leads/gate-audit.mjs` | 240   | The safety net. Re-runs every stage over every lead and reports what a change newly killed.             |
+| `src/leads/canonical.mjs`  | 527   | Resolves a lead's URL to the real applicant-tracking-system posting behind it.                          |
+| `src/leads/cluster.mjs`    | 195   | Groups near-duplicate postings so one tailored resume can cover several.                                |
 
 One file that is not on that list appears constantly below, because nothing here
-makes sense without it: **`scripts/leads/stages.mjs`** (109 lines) is the tiny
+makes sense without it: **`src/leads/stages.mjs`** (109 lines) is the tiny
 orchestrator that knows the order the stages run in. It is documented in the
 next section as context.
 
@@ -124,7 +124,7 @@ assistant rejects.
 
 ### The four stages
 
-Quoted from the header of `scripts/leads/stages.mjs`:
+Quoted from the header of `src/leads/stages.mjs`:
 
 ```
 //   L0 title  board list payload only (title, location, date, salary).
@@ -142,12 +142,12 @@ description often costs a separate network request per posting. Running the free
 check first means the expensive one is only ever paid for postings that survived
 it.
 
-| Stage | Label (`STAGE_LABELS`) | Lives in                                     | Documented in                                                  |
-| ----- | ---------------------- | -------------------------------------------- | -------------------------------------------------------------- |
-| `l0`  | `title/location/date`  | `find-jobs.mjs` → `passesLimits()`           | [`02-leads-finding.md`](02-leads-finding.md), summarised below |
-| `l1`  | `body disqualifiers`   | `find-jobs.mjs` → `bodyDisqualifiers()`      | [`02-leads-finding.md`](02-leads-finding.md), summarised below |
-| `l2`  | `profile fit`          | **`scripts/leads/fit.mjs`** → `scoreFit()`   | **Part 4 below**                                               |
-| `l3`  | `scam/ghost risk`      | **`scripts/leads/risk.mjs`** → `scoreRisk()` | **Part 5 below**                                               |
+| Stage | Label (`STAGE_LABELS`) | Lives in                                 | Documented in                                                  |
+| ----- | ---------------------- | ---------------------------------------- | -------------------------------------------------------------- |
+| `l0`  | `title/location/date`  | `find-jobs.mjs` → `passesLimits()`       | [`02-leads-finding.md`](02-leads-finding.md), summarised below |
+| `l1`  | `body disqualifiers`   | `find-jobs.mjs` → `bodyDisqualifiers()`  | [`02-leads-finding.md`](02-leads-finding.md), summarised below |
+| `l2`  | `profile fit`          | **`src/leads/fit.mjs`** → `scoreFit()`   | **Part 4 below**                                               |
+| `l3`  | `scam/ghost risk`      | **`src/leads/risk.mjs`** → `scoreRisk()` | **Part 5 below**                                               |
 
 There is also a fifth pass, `screenJob()` in `screen.mjs`, that is **not** one of
 the stages. It is a flat pattern sweep laid over the top of the funnel. Part 3
@@ -209,7 +209,7 @@ A reason string that **already contains a colon anywhere** is left untouched.
 That is why `fit.mjs` writes its own prefix (`"l2: stack mismatch — ..."`), and
 why `risk.mjs`'s injection reason keeps its raw machine-readable form
 `"injection_attempt:override_instructions"` rather than becoming
-`"l3: injection_attempt..."`. Code elsewhere (`scripts/auto/auto-apply.mjs`)
+`"l3: injection_attempt..."`. Code elsewhere (`src/auto/auto-apply.mjs`)
 parses that raw form.
 
 > **Trap.** Adding or removing a colon from a reason string silently changes
@@ -288,7 +288,7 @@ and flags `body_not_technical`, `employment:<kind>`, `onsite_conflict`.
 
 ---
 
-## Part 3 — `scripts/leads/screen.mjs`
+## Part 3 — `src/leads/screen.mjs`
 
 ### 3.1 What it is and why it exists
 
@@ -327,7 +327,7 @@ From the header:
 Two verbs. The screening verb:
 
 ```bash
-node scripts/leads/screen.mjs --status new --skip-screened
+node src/leads/screen.mjs --status new --skip-screened
 ```
 
 Real output from the live store (this is the **terse** form, which appears
@@ -356,7 +356,7 @@ The recording verb, used after a model has read a live posting and formed a
 judgment:
 
 ```bash
-node scripts/leads/screen.mjs record greenhouse:acme:99 \
+node src/leads/screen.mjs record greenhouse:acme:99 \
   --verdict reject --reason "job is a staffing-agency repost" --signals ghost,agency
 ```
 
@@ -857,14 +857,14 @@ Current real contents of that table:
 `openDb`, `keywordMap`, `recordScreens`, `screenIndex` from `../lib/db.mjs`.
 
 **Depended on by:** the `pipeline-jobs` skill (Stage A, and the `record` verb);
-`scripts/auto/cycle.mjs`, which runs it as a subprocess with `--skip-screened`;
+`src/auto/cycle.mjs`, which runs it as a subprocess with `--skip-screened`;
 and the tests `tests/leads/screen-blockers.test.mjs`,
 `tests/leads/screen-cache.test.mjs`, `tests/leads/screen-stages.test.mjs`,
 `tests/leads/efficiency-tools.test.mjs`.
 
 ---
 
-## Part 4 — `scripts/leads/fit.mjs` (stage L2)
+## Part 4 — `src/leads/fit.mjs` (stage L2)
 
 ### 4.1 What it is and why it exists
 
@@ -907,16 +907,16 @@ reject stops being defensible.
 
 **This is a library. It has no command line.** It is used by:
 
-- `scripts/leads/stages.mjs`, which registers `scoreFit` as stage `l2`.
-- `scripts/apply/automatability.mjs`, which imports it dynamically for
+- `src/leads/stages.mjs`, which registers `scoreFit` as stage `l2`.
+- `src/apply/automatability.mjs`, which imports it dynamically for
   `isEvaluable` and calls `scoreFit` separately to order the auto-apply queue.
-- `scripts/documents/keyword-plan.mjs` and
-  `scripts/profile/keyword-coverage.mjs`, which import **`splitRequirements`** —
+- `src/documents/keyword-plan.mjs` and
+  `src/profile/keyword-coverage.mjs`, which import **`splitRequirements`** —
   the required/preferred split is reused by the document-tailoring side.
 - `tests/leads/fit.test.mjs`, `tests/auto/automatability.test.mjs`.
 
 To see it in isolation, run one stage against the store:
-`node scripts/leads/screen.mjs --stage l2 --no-record`.
+`node src/leads/screen.mjs --stage l2 --no-record`.
 
 > **Note on the auto-apply path.** `automatability.mjs` runs
 > `evaluateStages(lead, ctx, ["l0", "l1", "l3"])` — it **skips L2 on purpose**.
@@ -1109,7 +1109,7 @@ phrases, which happens over the whole body rather than one bucket.
    unstructured posting would always look like it required nothing."
 4. `requiredTech = extractTech(requiredText)` — a `Set` of canonical skill names,
    produced by testing all **131** entries of the shared technology lexicon in
-   `scripts/lib/keywords.mjs` against the text.
+   `src/lib/keywords.mjs` against the text.
 5. `preferredTech` = technologies from the preferred section that are **not**
    required. Extracted and reported but deliberately kept out of the score:
 
@@ -1282,13 +1282,13 @@ Nothing. It touches no file and no database. It takes a plain job object and a
 ### 4.11 What it depends on, and what depends on it
 
 Imports `extractTech` from `../lib/keywords.mjs` and nothing else. Imported by
-`scripts/leads/stages.mjs`, `scripts/apply/automatability.mjs`,
-`scripts/documents/keyword-plan.mjs`, `scripts/profile/keyword-coverage.mjs`, and
+`src/leads/stages.mjs`, `src/apply/automatability.mjs`,
+`src/documents/keyword-plan.mjs`, `src/profile/keyword-coverage.mjs`, and
 the tests `tests/leads/fit.test.mjs`, `tests/auto/automatability.test.mjs`.
 
 ---
 
-## Part 5 — `scripts/leads/risk.mjs` (stage L3)
+## Part 5 — `src/leads/risk.mjs` (stage L3)
 
 ### 5.1 What it is and why it exists
 
@@ -1445,7 +1445,7 @@ signal `boilerplate_only` and the flag `vague_scope`. **It never rejects.**
 #### Injection kinds — from `untrusted.mjs`, not from a list here
 
 The injection scan calls `sanitizeUntrusted(text)` and then splits the findings
-using `isDisqualifying`, which lives in `scripts/lib/untrusted.mjs`. The eight
+using `isDisqualifying`, which lives in `src/lib/untrusted.mjs`. The eight
 **instruction-shaped** kinds that reject:
 
 ```
@@ -1460,7 +1460,7 @@ and the five **carrier** kinds that only ever flag:
 hidden_html   hidden_attr_text   invisible_characters   homoglyph_text   encoded_blob
 ```
 
-The header is the clearest statement anywhere in `scripts/` of what the
+The header is the clearest statement anywhere in `src/` of what the
 "a posting is data" rule costs when it is inconvenient:
 
 > `// A posting carrying instructions aimed at an AI is telling you something about`
@@ -1594,7 +1594,7 @@ if (!scan.clean) {
 ```
 
 Note the reason string contains a colon, so `evaluateStages` leaves it
-**unprefixed**, and `scripts/auto/auto-apply.mjs` parses that exact shape.
+**unprefixed**, and `src/auto/auto-apply.mjs` parses that exact shape.
 
 **5. Boilerplate ratio**, as described above.
 
@@ -1632,14 +1632,14 @@ destroyed:
 ### 5.8 What it depends on, and what depends on it
 
 Imports `sanitizeUntrusted` and `isDisqualifying` from `../lib/untrusted.mjs`.
-Imported by `scripts/leads/stages.mjs`, `scripts/leads/screen.mjs`
-(`buildHistory`), `scripts/leads/gate-audit.mjs` (`buildHistory`), and the tests
+Imported by `src/leads/stages.mjs`, `src/leads/screen.mjs`
+(`buildHistory`), `src/leads/gate-audit.mjs` (`buildHistory`), and the tests
 `tests/leads/risk.test.mjs`, `tests/leads/screen-stages.test.mjs`,
 `tests/security/bypass-corpus.test.mjs`.
 
 ---
 
-## Part 6 — `scripts/leads/gate-audit.mjs`, the safety net
+## Part 6 — `src/leads/gate-audit.mjs`, the safety net
 
 ### 6.1 What it is and why it exists
 
@@ -1671,14 +1671,14 @@ those nine jobs by name and exits with a failure code.
 - editing `fit.mjs`'s `STRONG`, `WEAK`, `SENIOR_SCOPE` or `FIT_DEFAULTS`;
 - editing `risk.mjs`'s `EVERGREEN`, `BOILERPLATE`, `SUBSTANCE` or
   `RISK_DEFAULTS`;
-- editing the technology lexicon in `scripts/lib/keywords.mjs` — it moves L2's
+- editing the technology lexicon in `src/lib/keywords.mjs` — it moves L2's
   denominators;
 - editing `untrusted.mjs`'s injection patterns — it moves L3.
 
 ### 6.2 How you run it
 
 ```bash
-node scripts/leads/gate-audit.mjs
+node src/leads/gate-audit.mjs
 ```
 
 Real output from the live store, in terse form:
@@ -1790,7 +1790,7 @@ Suppose you add the word `"guest"` to `NON_SOFTWARE_BODY` in `find-jobs.mjs`,
 intending to catch casino guest-services postings. You then run:
 
 ```bash
-node scripts/leads/gate-audit.mjs
+node src/leads/gate-audit.mjs
 ```
 
 and the output says nine leads are newly rejected, all at `l1`, all with
@@ -1901,7 +1901,7 @@ build-manager agent's instructions.
 
 ---
 
-## Part 7 — `scripts/leads/canonical.mjs`
+## Part 7 — `src/leads/canonical.mjs`
 
 ### 7.1 What it is and why it exists: the URL you have is not the URL you apply at
 
@@ -2188,7 +2188,7 @@ are **dropped** here — only the reason string survives.
 ### 7.8 The command line
 
 ```bash
-node scripts/leads/canonical.mjs [--apply] [--network] [--limit N] [--json]
+node src/leads/canonical.mjs [--apply] [--network] [--limit N] [--json]
 ```
 
 > `// Backfill for leads already in the store ... DRY BY DEFAULT and OFFLINE BY`
@@ -2284,13 +2284,13 @@ Imports `node:path`, `node:url`, and `mapPool` from `../lib/lib.mjs`. The comman
 line half lazily imports `../lib/db.mjs` and `../lib/lib.mjs` with `await
 import()`, so the library half loads without touching SQLite at all.
 
-Imported by `scripts/leads/find-jobs.mjs` and `tests/leads/canonical.test.mjs`.
-The `apply_url` field it writes is read by the trust gate in `scripts/auto/` and
-by `scripts/auto/auto-apply.mjs`.
+Imported by `src/leads/find-jobs.mjs` and `tests/leads/canonical.test.mjs`.
+The `apply_url` field it writes is read by the trust gate in `src/auto/` and
+by `src/auto/auto-apply.mjs`.
 
 ---
 
-## Part 8 — `scripts/leads/cluster.mjs`
+## Part 8 — `src/leads/cluster.mjs`
 
 ### 8.1 What it is and why it exists
 
@@ -2310,7 +2310,7 @@ invocations into 1. And, importantly:
 ### 8.2 How you run it
 
 ```bash
-node scripts/leads/cluster.mjs --status new --threshold 0.6 --min-size 2
+node src/leads/cluster.mjs --status new --threshold 0.6 --min-size 2
 ```
 
 | Flag                | Default | Meaning                                        |
@@ -2500,9 +2500,9 @@ Imports `node:fs`, `node:path`, `node:url`; `isTerse`, `techTermsIn`,
 `titleTokens`, `jaccard` from `../lib/lib.mjs`; `openDb`, `readLeadStore`,
 `resolveLeadSource`, `keywordMap` from `../lib/db.mjs`.
 
-Imported by `scripts/leads/prep-queue.mjs` (which uses `clusterLeads` and
+Imported by `src/leads/prep-queue.mjs` (which uses `clusterLeads` and
 `coveredBy` — "A covered lead never earns its own tailoring"),
-`scripts/documents/letter-plan.mjs`, and the tests `tests/leads/cluster.test.mjs`,
+`src/documents/letter-plan.mjs`, and the tests `tests/leads/cluster.test.mjs`,
 `tests/documents/letter-plan.test.mjs`. Also referenced by the `pipeline-jobs`
 skill.
 

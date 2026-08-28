@@ -14,7 +14,7 @@ import {
   assertLoopback,
   ASHBY_NONCE,
 } from "../fixtures/boards/server.mjs"
-import { detectAts } from "../../scripts/apply/ats/index.mjs"
+import { detectAts } from "../../src/apply/ats/index.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")

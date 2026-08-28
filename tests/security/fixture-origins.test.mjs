@@ -13,7 +13,7 @@
 // exactly ONE origin. Under an origin-scoped exclusion rule the runner would
 // serialise all 50 jobs, and
 //
-//     node scripts/dev/bench-runner.mjs --apps 50 --concurrency 8 ...
+//     node src/dev/bench-runner.mjs --apps 50 --concurrency 8 ...
 //
 // would report N=1 throughput under the label N=8 — which is the same defect
 // Phase 0.10 was written to remove, one layer down, and the same class of error
@@ -53,8 +53,8 @@ import {
   DEFAULT_LATENCY,
   ASHBY_REMOUNT_MS,
 } from "../fixtures/boards/server.mjs"
-import { fixtureScanPath } from "../../scripts/dev/bench-apply.mjs"
-import { detectAts } from "../../scripts/apply/ats/index.mjs"
+import { fixtureScanPath } from "../../src/dev/bench-apply.mjs"
+import { detectAts } from "../../src/apply/ats/index.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PAGES = path.resolve(HERE, "..", "fixtures", "boards", "pages")

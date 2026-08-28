@@ -12,7 +12,7 @@
 //
 // If letter throughput is the bottleneck, SCALE THE CLUSTERING, not the
 // quality: one letter per cluster of near-identical postings, not one per job.
-// That is what this script plans. `scripts/leads/cluster.mjs` already groups
+// That is what this script plans. `src/leads/cluster.mjs` already groups
 // leads by 0.5*title + 0.5*stack similarity; this turns those clusters into a
 // letter work list — one ANCHOR per cluster, the rest marked as reusing it —
 // and prices the result.
@@ -24,7 +24,7 @@
 // method alongside the number so nobody quotes the total without the basis.
 //
 // Usage:
-//   node scripts/documents/letter-plan.mjs [--status new|all] [--threshold 0.6]
+//   node src/documents/letter-plan.mjs [--status new|all] [--threshold 0.6]
 //     [--leads <path>] [--json] [--price-only] [--in <tok>] [--out <tok>]
 //     [--in-rate <usd/Mtok>] [--out-rate <usd/Mtok>] [--revisions <n>]
 //

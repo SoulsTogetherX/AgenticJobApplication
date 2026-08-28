@@ -2,10 +2,10 @@
 // auto-apply.mjs — the runner's entry point (§4.1). Phase 5 W1.
 //
 // Usage:
-//   node scripts/auto/auto-apply.mjs --limit 10 --concurrency 1
-//   node scripts/auto/auto-apply.mjs --fixture --db <tmp>/leads.db --limits <tmp>/limits.yaml
-//   node scripts/auto/auto-apply.mjs --enqueue --limit 25      # fill the queue and stop
-//   node scripts/auto/auto-apply.mjs --json
+//   node src/auto/auto-apply.mjs --limit 10 --concurrency 1
+//   node src/auto/auto-apply.mjs --fixture --db <tmp>/leads.db --limits <tmp>/limits.yaml
+//   node src/auto/auto-apply.mjs --enqueue --limit 25      # fill the queue and stop
+//   node src/auto/auto-apply.mjs --json
 //
 // ===========================================================================
 // WHAT THIS FILE IS, AND WHAT IT IS NOT ALLOWED TO BE
@@ -361,7 +361,7 @@ export function selectEligible({
         slug,
         reason:
           "resume.pdf is not rendered for this workspace — run " +
-          "scripts/documents/render-pdf.mjs on its resume.md first",
+          "src/documents/render-pdf.mjs on its resume.md first",
       })
       continue
     }
@@ -948,7 +948,7 @@ async function main(argv) {
         `auto-apply: ${out.stuck.length} selected job(s) sit in a terminal ` +
           `state and cannot re-enter the queue: ` +
           `${out.stuck.map((r) => `${r.slug}(${r.state})`).join(" ")}\n` +
-          `  Inspect with: node scripts/auto/requeue.mjs --list\n`,
+          `  Inspect with: node src/auto/requeue.mjs --list\n`,
       )
     return EXIT.OK
   }

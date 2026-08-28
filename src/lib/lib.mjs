@@ -461,7 +461,7 @@ export function yearsOfExperience(profile, now = new Date()) {
 // Dictionary of tech terms the verifier watches for. Includes both terms the
 // user knows AND common terms they do NOT — so invented experience is caught.
 //
-// The list itself moved to scripts/lib/keywords.mjs (2026-07-29), which is now
+// The list itself moved to src/lib/keywords.mjs (2026-07-29), which is now
 // the single source for every "what technology is named here?" question. It was
 // duplicated: this list drove verify-claims R6 while a SEPARATE regex lexicon in
 // profile-gaps.mjs drove lead_keywords, and the two had already drifted — this

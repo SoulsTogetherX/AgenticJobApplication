@@ -21,7 +21,7 @@ import {
   reconcileAll,
   PROBES,
   VERDICTS,
-} from "../../scripts/auto/reconcile.mjs"
+} from "../../src/auto/reconcile.mjs"
 import {
   openDb,
   recordAutoSubmission,
@@ -31,8 +31,8 @@ import {
   readAutoQueue,
   readOrphanAttempts,
   RECONCILED_NOT_SENT,
-} from "../../scripts/lib/db.mjs"
-import { readStop, scopedStopPath } from "../../scripts/auto/guard.mjs"
+} from "../../src/lib/db.mjs"
+import { readStop, scopedStopPath } from "../../src/auto/guard.mjs"
 
 function sandbox() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aj-reconcile-"))
@@ -409,7 +409,7 @@ test("reconcile.mjs contains no click", () => {
   // reconciler that could click could re-submit the very application it was
   // sent to ask about.
   const src = fs.readFileSync(
-    new URL("../../scripts/auto/reconcile.mjs", import.meta.url),
+    new URL("../../src/auto/reconcile.mjs", import.meta.url),
     "utf8",
   )
   assert.equal(/\.click\s*\(/.test(src), false)

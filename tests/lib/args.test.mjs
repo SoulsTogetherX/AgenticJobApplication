@@ -1,4 +1,4 @@
-// Strict flag validation — scripts/lib/args.mjs.
+// Strict flag validation — src/lib/args.mjs.
 //
 // The cases that matter are the two fail-open typos measured 2026-08-24:
 // `--skip-aply` (cycle submits instead of preparing) and `--enqeue`
@@ -19,7 +19,7 @@ import {
   assertKnownFlags,
   nearestFlag,
   positionals,
-} from "../../scripts/lib/args.mjs"
+} from "../../src/lib/args.mjs"
 
 const CYCLE = {
   known: ["--top", "--limit", "--json", "--skip-search", "--skip-apply"],
@@ -205,7 +205,7 @@ test("no script finds its positional by scanning for the first non-flag token", 
   // Asserted over the source because the defect is a shape, not a behaviour of
   // any one command: a new script copying the old idiom would reintroduce it
   // silently, and there is no runtime moment at which that is detectable.
-  const dir = path.join(ROOT, "scripts")
+  const dir = path.join(ROOT, "src")
   const offenders = []
   const walk = (d) => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {

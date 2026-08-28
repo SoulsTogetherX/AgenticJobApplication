@@ -18,7 +18,7 @@ import {
   verifyDocument,
   addressingFor,
   coverageFor,
-} from "../../scripts/documents/verify-claims.mjs"
+} from "../../src/documents/verify-claims.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

@@ -4,13 +4,13 @@
 // wasted a browser session each before anyone noticed they were unwinnable.
 import test from "node:test"
 import assert from "node:assert/strict"
-import { screenJob, extractYearsRequired } from "../../scripts/leads/screen.mjs"
-import { yearsOfExperience, parseDateRange } from "../../scripts/lib/lib.mjs"
+import { screenJob, extractYearsRequired } from "../../src/leads/screen.mjs"
+import { yearsOfExperience, parseDateRange } from "../../src/lib/lib.mjs"
 import {
   textSnippet,
   SNIPPET_MAX,
   backfillDescriptions,
-} from "../../scripts/leads/find-jobs.mjs"
+} from "../../src/leads/find-jobs.mjs"
 
 const NOW = new Date("2026-07-27T00:00:00Z")
 

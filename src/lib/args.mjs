@@ -4,7 +4,7 @@
 // WHY THIS EXISTS
 // ===========================================================================
 //
-// Measured 2026-08-24, auditing every CLI entry point under scripts/: 32 of 38
+// Measured 2026-08-24, auditing every CLI entry point under src/: 32 of 38
 // silently IGNORE an unrecognised flag, and 11 of those perform a mutating side
 // effect while doing so. The incident that started the audit was
 // `reverify.mjs --help`, which ignored the flag and ran a 61-job reverification

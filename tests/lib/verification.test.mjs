@@ -13,14 +13,14 @@ import {
   verificationIdentity,
   hasVerifiedResume,
   verifiedResumeUrls,
-} from "../../scripts/lib/verification.mjs"
+} from "../../src/lib/verification.mjs"
 import {
   openDb,
   recordVerification,
   hasPassingVerification,
   readVerifications,
-} from "../../scripts/lib/db.mjs"
-import { classify } from "../../scripts/apply/automatability.mjs"
+} from "../../src/lib/db.mjs"
+import { classify } from "../../src/apply/automatability.mjs"
 
 function ws(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aj-verify-"))

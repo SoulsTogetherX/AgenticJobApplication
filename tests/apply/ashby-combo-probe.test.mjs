@@ -31,8 +31,8 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import scanPage from "../../scripts/apply/scan-engine.mjs"
-import { launchBrowser } from "../../scripts/apply/browser.mjs"
+import scanPage from "../../src/apply/scan-engine.mjs"
+import { launchBrowser } from "../../src/apply/browser.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

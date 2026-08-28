@@ -28,9 +28,9 @@
 // of the target at once and reports the rate per load level, which is what
 // turns "flaky on my machine" into "fails above N concurrent writers".
 //
-//   node scripts/dev/flake-rate.mjs tests/lib/db.test.mjs --runs 20
-//   node scripts/dev/flake-rate.mjs tests/lib/db.test.mjs --runs 12 --load 4
-//   node scripts/dev/flake-rate.mjs tests/documents/render-pdf.test.mjs --runs 6 --json
+//   node src/dev/flake-rate.mjs tests/lib/db.test.mjs --runs 20
+//   node src/dev/flake-rate.mjs tests/lib/db.test.mjs --runs 12 --load 4
+//   node src/dev/flake-rate.mjs tests/documents/render-pdf.test.mjs --runs 6 --json
 //
 // It runs tests and nothing else: no network, no browser of its own, no writes
 // outside the temp directories the tests themselves make.
@@ -213,7 +213,7 @@ export async function measureFlakeRate(target, opts = {}) {
 
 const USAGE = `flake-rate.mjs — measure how often a test actually fails
 
-  node scripts/dev/flake-rate.mjs <test file or dir> [--runs N] [--load N] [--json]
+  node src/dev/flake-rate.mjs <test file or dir> [--runs N] [--load N] [--json]
 
   --runs N   batches to run (default 10)
   --load N   copies of the target to run CONCURRENTLY per batch (default 1).

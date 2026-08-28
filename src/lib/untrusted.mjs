@@ -84,7 +84,7 @@ export const REDACTION = "[redacted: instruction-like text removed]"
 // user's OWN data going OUT into a third party's form. It shares this file
 // because both are the same architectural idea — a boundary that refuses
 // rather than a downstream reader that has to be clever — and because both the
-// save-answer write boundary and the (unbuilt) scripts/auto preflight need it.
+// save-answer write boundary and the (unbuilt) src/auto preflight need it.
 // It is NOT part of the injection defence and does not read the pattern list.
 
 // ---------------------------------------------------------------------------

@@ -24,9 +24,9 @@
 // even that). No LLM, no network, no browser.
 //
 // Usage:
-//   node scripts/dev/scorecard.mjs --note "baseline"            # snapshot + append
-//   node scripts/dev/scorecard.mjs --json --no-record           # inspect only
-//   node scripts/dev/scorecard.mjs --db jobs/leads.db --out docs/scorecard.jsonl
+//   node src/dev/scorecard.mjs --note "baseline"            # snapshot + append
+//   node src/dev/scorecard.mjs --json --no-record           # inspect only
+//   node src/dev/scorecard.mjs --db jobs/leads.db --out docs/scorecard.jsonl
 import fs from "node:fs"
 import { assertKnownFlags } from "../lib/args.mjs"
 import path from "node:path"
@@ -215,9 +215,9 @@ export function collectInputs({
     warn("git sha", e)
   }
 
-  const auto = spawnJson(["scripts/apply/automatability.mjs", "--json"])
-  const pending = spawnJson(["scripts/apply/pending-questions.mjs", "--json"])
-  const followUps = spawnJson(["scripts/applications/follow-ups.mjs", "--json"])
+  const auto = spawnJson(["src/apply/automatability.mjs", "--json"])
+  const pending = spawnJson(["src/apply/pending-questions.mjs", "--json"])
+  const followUps = spawnJson(["src/applications/follow-ups.mjs", "--json"])
   if (!auto) warn("automatability", new Error("spawn returned no JSON"))
   if (!pending) warn("pending-questions", new Error("spawn returned no JSON"))
   if (!followUps) warn("follow-ups", new Error("spawn returned no JSON"))

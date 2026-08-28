@@ -36,9 +36,9 @@ import {
   buildPlan,
   resolveFields,
   readiness,
-} from "../../scripts/apply/fill-plan.mjs"
-import { detectAts } from "../../scripts/apply/ats/index.mjs"
-import fillPage from "../../scripts/apply/fill-engine.mjs"
+} from "../../src/apply/fill-plan.mjs"
+import { detectAts } from "../../src/apply/ats/index.mjs"
+import fillPage from "../../src/apply/fill-engine.mjs"
 import { start } from "../fixtures/boards/server.mjs"
 import { runScanner } from "../fixtures/boards/dom.mjs"
 import { recordingPage } from "./engine-double.mjs"

@@ -44,14 +44,14 @@ order:
 
 **The files covered here**
 
-| File                                | Lines | One-line purpose                                                                      |
-| ----------------------------------- | ----- | ------------------------------------------------------------------------------------- |
-| `scripts/leads/recommend.mjs`       | 291   | Scores every stored lead against your profile and prints the top N in score order.    |
-| `scripts/leads/prep-queue.mjs`      | 263   | Picks which highly-ranked leads should get a resume tailored _before_ you sit down.   |
-| `scripts/leads/find-boards.mjs`     | 275   | Turns company **names** into `{type, slug}` board candidates by probing six ATS APIs. |
-| `scripts/leads/board-yield.mjs`     | 202   | Measures how many of each tracked board's live postings you could actually take.      |
-| `scripts/leads/discover-boards.mjs` | 185   | Yield-gates candidate boards and proposes only the ones that clear the bar.           |
-| `scripts/leads/manage-sources.mjs`  | 282   | The only program that edits `docs/job-sources.yaml` — add, remove, verify, list.      |
+| File                            | Lines | One-line purpose                                                                      |
+| ------------------------------- | ----- | ------------------------------------------------------------------------------------- |
+| `src/leads/recommend.mjs`       | 291   | Scores every stored lead against your profile and prints the top N in score order.    |
+| `src/leads/prep-queue.mjs`      | 263   | Picks which highly-ranked leads should get a resume tailored _before_ you sit down.   |
+| `src/leads/find-boards.mjs`     | 275   | Turns company **names** into `{type, slug}` board candidates by probing six ATS APIs. |
+| `src/leads/board-yield.mjs`     | 202   | Measures how many of each tracked board's live postings you could actually take.      |
+| `src/leads/discover-boards.mjs` | 185   | Yield-gates candidate boards and proposes only the ones that clear the bar.           |
+| `src/leads/manage-sources.mjs`  | 282   | The only program that edits `docs/job-sources.yaml` — add, remove, verify, list.      |
 
 ---
 
@@ -116,7 +116,7 @@ exactly the same spirit as `docs/application-limits.yaml`.
 
 ---
 
-## 1. `scripts/leads/recommend.mjs` — the ranking formula
+## 1. `src/leads/recommend.mjs` — the ranking formula
 
 ### 1.1 What it is and why it exists
 
@@ -152,14 +152,14 @@ a resume tailored for it.**
 ### 1.2 How you run it
 
 ```bash
-node scripts/leads/recommend.mjs --top 10
-node scripts/leads/recommend.mjs --status all --json
+node src/leads/recommend.mjs --top 10
+node src/leads/recommend.mjs --status all --json
 ```
 
 Here is a real run against the live store, three leads deep:
 
 ```console
-$ node scripts/leads/recommend.mjs --top 3
+$ node src/leads/recommend.mjs --top 3
 26|jobicy:148197|Lingraphica|Software Engineer - Unity|match:AI/LLM integration,AWS,Agile,Git,Node.js,PostgreSQL,Python,React,React Native|gap:C#,CI/CD,Data modeling,Firebase,Jira,Machine Learning,REST APIs,Vercel|https://jobicy.com/jobs/148197-software-engineer-unity
 22|adzuna:5828399177|Shyra tech LLC|Full Stack .NET Developer|match:Git,JavaScript,React,Testing,TypeScript|gap:Angular,Azure,C#,CI/CD,HTML/CSS,Microservices,REST APIs,SQL,Security|https://www.adzuna.com/land/ad/5828399177?...
 20|adzuna:5828111802|Analytics Solutions|Full stack Engineer- W2|match:AI/LLM integration,Node.js,React,Testing|gap:CI/CD,Microservices|https://www.adzuna.com/land/ad/5828111802?...
@@ -168,7 +168,7 @@ ranked=3 of=51
 
 That compact, pipe-separated shape is **terse mode**. Every script in this
 domain picks one of three output shapes the same way, via `isTerse()` in
-`scripts/lib/lib.mjs`:
+`src/lib/lib.mjs`:
 
 | Mode     | Selected when                                       | Shape                                                          |
 | -------- | --------------------------------------------------- | -------------------------------------------------------------- |
@@ -192,7 +192,7 @@ The same run in a terminal prints three lines per lead instead:
 Top 3 of 51 lead(s) with status "new".
 ```
 
-**As a library.** `scripts/leads/prep-queue.mjs` does
+**As a library.** `src/leads/prep-queue.mjs` does
 `import { rankLeads } from "./recommend.mjs"`. That is possible because of the
 guard at the bottom of the file:
 
@@ -287,8 +287,8 @@ Three pieces feed this:
   string anywhere in `profile/profile.yaml` flattened into one newline-joined
   blob by `profileText()`. That function recursively walks the YAML structure
   and collects every string it finds; it lives in
-  `scripts/profile/profile-gaps.mjs`.
-- **`extractTech`** — in `scripts/lib/keywords.mjs`. It walks a curated table of
+  `src/profile/profile-gaps.mjs`.
+- **`extractTech`** — in `src/lib/keywords.mjs`. It walks a curated table of
   `{ name, re }` pairs — a canonical skill name and a loose **regular
   expression** (a compact pattern language for describing text to search for;
   `\d{4}` means "four digits in a row") that matches how that skill shows up in
@@ -382,7 +382,7 @@ five-group list produces a 10/8/6/4/2 spread with no numbers you have to invent.
 > `manage-sources.mjs` looks for (§6.3).
 
 The word matching is done by `matchTitleKeyword`, imported from
-`scripts/leads/find-jobs.mjs`:
+`src/leads/find-jobs.mjs`:
 
 ```js
 export function matchTitleKeyword(title, keywords) {
@@ -502,8 +502,8 @@ relocation."_
 **Flags that exist but carry no ranking penalty.** `passesLimits` also produces
 `title_watch:<keyword>` and `title_loose`; the body gate adds
 `body_not_technical`, `employment:<kind>` and `onsite_conflict`;
-`scripts/leads/fit.mjs` adds `fit_unknown`, `lexicon_blind`, `posting_thin`,
-`fit_weak`, `senior_scope`; `scripts/leads/risk.mjs` adds `repost`,
+`src/leads/fit.mjs` adds `fit_unknown`, `lexicon_blind`, `posting_thin`,
+`fit_weak`, `senior_scope`; `src/leads/risk.mjs` adds `repost`,
 `duplicate_body`, `evergreen`, `injection_attempt`, `vague_scope`. None of them
 change a score. `title_watch:` could not match this table even if you added it,
 because the flag string embeds the matched keyword (`title_watch:qa`) and a
@@ -773,7 +773,7 @@ a legacy fallback for an unmigrated repo and for test fixtures.
 
 **(e) It never marks anything.** Ranking does not change a lead's `status`.
 Marking a lead `recommended` or `dismissed` is a separate command:
-`node scripts/leads/find-jobs.mjs mark <id> --status recommended`.
+`node src/leads/find-jobs.mjs mark <id> --status recommended`.
 
 **(f) `--status` is an exact string match** unless it is `all`. There is no "new
 or recommended" mode. The default is `"new"`, so a lead already marked
@@ -787,13 +787,13 @@ or recommended" mode. The default is `"new"`, so a lead already marked
 `../lib/db.mjs` (`readLeadStore`, `resolveLeadSource`, `openDb`, `keywordMap`);
 `./find-jobs.mjs` (`matchTitleKeyword`, `loadLimits`).
 
-**Imported by:** `scripts/leads/prep-queue.mjs` (`rankLeads`);
+**Imported by:** `src/leads/prep-queue.mjs` (`rankLeads`);
 `tests/leads/title-rank.test.mjs`, `tests/leads/keyword-wiring.test.mjs`,
 `tests/leads/efficiency-tools.test.mjs`.
 
 ---
 
-## 2. `scripts/leads/prep-queue.mjs` — what to tailor in advance
+## 2. `src/leads/prep-queue.mjs` — what to tailor in advance
 
 ### 2.1 What it is and why it exists
 
@@ -820,17 +820,17 @@ irreducibly model-shaped step.
 ### 2.2 How you run it
 
 ```bash
-node scripts/leads/prep-queue.mjs --top 5 --cluster --json
+node src/leads/prep-queue.mjs --top 5 --cluster --json
 ```
 
 Three things call it by name:
 
 1. `.claude/skills/pipeline-jobs/SKILL.md` — the exact command above, followed by
    a table mapping each row's `reason` to what the subagent should do.
-2. `scripts/auto/cycle.mjs` — the unattended cycle runs it as stage 3 and parses
+2. `src/auto/cycle.mjs` — the unattended cycle runs it as stage 3 and parses
    its JSON:
    ```js
-   const prep = step("scripts/leads/prep-queue.mjs", [
+   const prep = step("src/leads/prep-queue.mjs", [
      "--top",
      String(top),
      "--cluster",
@@ -954,7 +954,7 @@ checked first here, the profile second.
    existing resume and are not silently gone — they are counted here."_
 9. Emit in one of the three output modes.
 
-**About the clustering** (`scripts/leads/cluster.mjs`, documented fully
+**About the clustering** (`src/leads/cluster.mjs`, documented fully
 elsewhere, summarized here because `--cluster` changes what this script
 returns). Two postings are compared by
 
@@ -1023,7 +1023,7 @@ Five things to take from this loop:
    // states and equally done.
    const DONE_STATUSES = new Set(["verified", "approved", "rendered"])
    ```
-   The full status ladder in `scripts/lib/lib.mjs` is
+   The full status ladder in `src/lib/lib.mjs` is
    `["pending", "drafted", "verified", "approved", "rendered"]`, so `pending`
    and `drafted` are **not** done and stay queued.
 5. **`--top` is applied after filtering, not before** — two already-verified
@@ -1128,7 +1128,7 @@ reads it; it must never create one.
 
 **(h) THE BIG ONE — "queued" does not mean "applicable".** This is the most
 expensive lesson in this file's history, and it is recorded not here but in
-`scripts/auto/cycle.mjs`:
+`src/auto/cycle.mjs`:
 
 > MEASURED, first real cycle (2026-08-03): prep-queue ranks on FIT and knows
 > nothing about where a posting lives, so it picked ten leads of which every
@@ -1175,12 +1175,12 @@ top leads are already prepped — say so and stop; do not re-tailor to look busy
 `../lib/db.mjs` (`openDb`, `keywordMap`, `readLeadStore`, `resolveLeadSource`,
 and — on a second `import` line for the same module — `readApplications`).
 
-**Depended on by:** `scripts/auto/cycle.mjs` (spawns it and parses its JSON);
+**Depended on by:** `src/auto/cycle.mjs` (spawns it and parses its JSON);
 `.claude/skills/pipeline-jobs/SKILL.md`; `tests/leads/prep-queue.test.mjs`.
 
 ---
 
-## 3. `scripts/leads/find-boards.mjs` — company name → board slug
+## 3. `src/leads/find-boards.mjs` — company name → board slug
 
 This is the first link of the board discovery chain.
 
@@ -1221,8 +1221,8 @@ host their boards.
 ### 3.2 How you run it
 
 ```bash
-node scripts/leads/find-boards.mjs --names "Acme,Globex" [--out docs/board-candidates.yaml]
-node scripts/leads/find-boards.mjs --file docs/candidates/fortune500.yaml [--limit 100]
+node src/leads/find-boards.mjs --names "Acme,Globex" [--out docs/board-candidates.yaml]
+node src/leads/find-boards.mjs --file docs/candidates/fortune500.yaml [--limit 100]
 # plus [--concurrency 6] [--json] [--append]
 ```
 
@@ -1378,7 +1378,7 @@ Exit: `0` normally; `2` with a usage line when no names were supplied; `1` if
 ### 3.5 Worked example
 
 ```bash
-node scripts/leads/find-boards.mjs --names "Vercel,Konami Gaming" --append
+node src/leads/find-boards.mjs --names "Vercel,Konami Gaming" --append
 ```
 
 - **Vercel** → `slugsFor` gives `["vercel"]`. Probe 1 is
@@ -1417,7 +1417,7 @@ what most large and most local employers use:
 **Writes:** `docs/board-candidates.yaml` (or `--out`), with this exact header:
 
 ```yaml
-# Board candidates discovered by scripts/leads/find-boards.mjs.
+# Board candidates discovered by src/leads/find-boards.mjs.
 # NOT swept yet — run discover-boards.mjs to yield-gate these, then add
 # the survivors with manage-sources. Nothing here touches job-sources.yaml.
 candidates:
@@ -1436,7 +1436,7 @@ That file currently holds **217 candidates in 872 lines**, every one tagged
 > silently replaced.** The merge block is gated on `args.includes("--append")`,
 > but `fs.writeFileSync(outPath, ...)` runs unconditionally whenever
 > `fresh.length > 0`. A run of
-> `node scripts/leads/find-boards.mjs --names "Acme"` that finds one new board
+> `node src/leads/find-boards.mjs --names "Acme"` that finds one new board
 > **replaces all 217 existing candidates with that one.** There is no backup and
 > no warning. The file is tracked in git, so it is recoverable — but only if it
 > had been committed. Until this is fixed, treat `--append` as mandatory.
@@ -1501,7 +1501,7 @@ it; `docs/operate/01-commands.md` catalogues it as a command.
 
 ---
 
-## 4. `scripts/leads/board-yield.mjs` — is a board earning its keep?
+## 4. `src/leads/board-yield.mjs` — is a board earning its keep?
 
 This section comes before `discover-boards.mjs` because that file imports
 `scoreBoard` from here.
@@ -1530,8 +1530,8 @@ sentence to remember.
 ### 4.2 How you run it
 
 ```bash
-node scripts/leads/board-yield.mjs [--json]
-node scripts/leads/board-yield.mjs --query "full stack" --concurrency 6 --min-qualifying 0
+node src/leads/board-yield.mjs [--json]
+node src/leads/board-yield.mjs --query "full stack" --concurrency 6 --min-qualifying 0
 ```
 
 | Flag                 | Default        | Meaning                                                                                                                                      |
@@ -1632,7 +1632,7 @@ exception.** One unreachable ATS must not abort the audit of the other 43. This
 pattern — catching an error and turning it into an ordinary data value — is worth
 naming: "errors as values". It is what lets the report be complete.
 
-`mapPool` lives in `scripts/lib/lib.mjs` and is re-exported here with the comment
+`mapPool` lives in `src/lib/lib.mjs` and is re-exported here with the comment
 _"Shared with the sweep — one implementation, in lib.mjs. Re-exported so the
 existing tests and importers keep working."_ Its own comment:
 
@@ -1703,7 +1703,7 @@ A dead board's proposal block:
 
 ```text
 28 board(s) produced no reachable posting. Proposed removals (review first — nothing was changed):
-  node scripts/leads/manage-sources.mjs remove "Palantir"   # 214 live, 0 reachable
+  node src/leads/manage-sources.mjs remove "Palantir"   # 214 live, 0 reachable
 ```
 
 That printed command is correct as-is, because `removeEntryFromText` matches on
@@ -1810,12 +1810,12 @@ For Caesars this yields `oracle_cloud:edmn.fa.us2.oraclecloud.com` in one and
 **Imports:** `./find-jobs.mjs` (`loadSources`, `loadLimits`, `passesLimits`,
 `fetchBoard`); `../lib/lib.mjs` (`isTerse`, `mapPool`).
 **Exports:** `mapPool` (re-export), `scoreBoard`, `auditBoards`.
-**Depended on by:** `scripts/leads/discover-boards.mjs` imports `scoreBoard`;
+**Depended on by:** `src/leads/discover-boards.mjs` imports `scoreBoard`;
 `tests/leads/board-yield.test.mjs` imports `scoreBoard` and `mapPool`.
 
 ---
 
-## 5. `scripts/leads/discover-boards.mjs` — the yield bar
+## 5. `src/leads/discover-boards.mjs` — the yield bar
 
 ### 5.1 What it is and why it exists
 
@@ -1858,8 +1858,8 @@ Two later measurements sharpen it further, and both belong here:
 ### 5.2 How you run it
 
 ```bash
-node scripts/leads/discover-boards.mjs --candidates docs/board-candidates.yaml
-node scripts/leads/discover-boards.mjs --type greenhouse --slug acme --company "Acme"
+node src/leads/discover-boards.mjs --candidates docs/board-candidates.yaml
+node src/leads/discover-boards.mjs --type greenhouse --slug acme --company "Acme"
 ```
 
 | Flag                                  | Default                | Meaning                                                 |
@@ -1989,7 +1989,7 @@ ACCEPTED — 1 board(s) cleared the bar:
   Databricks (greenhouse:databricks)
     180 live, 2 reachable (1.1%), posts below Senior
     e.g. Software Engineer - Full Stack
-    node scripts/leads/manage-sources.mjs add --type greenhouse --slug databricks --company "Databricks"
+    node src/leads/manage-sources.mjs add --type greenhouse --slug databricks --company "Databricks"
 ```
 
 Terse output:
@@ -2006,7 +2006,7 @@ candidates=3 skipped_known=1 accepted=1 rejected=1 broken=0 ms=3120
 > host-based boards.**
 >
 > ```js
-> ;`    node scripts/leads/manage-sources.mjs add --type ${r.type} --slug ${r.label.split(":")[1]} --company "${r.company}"\n`
+> ;`    node src/leads/manage-sources.mjs add --type ${r.type} --slug ${r.label.split(":")[1]} --company "${r.company}"\n`
 > ```
 >
 > It always emits `--slug <label-part>`. Workday needs `--host --tenant --site`,
@@ -2054,7 +2054,7 @@ command by `find-boards.mjs` and by `docs/operate/01-commands.md`.
 
 ---
 
-## 6. `scripts/leads/manage-sources.mjs` — the only writer
+## 6. `src/leads/manage-sources.mjs` — the only writer
 
 ### 6.1 What it is and why it exists
 
@@ -2088,12 +2088,12 @@ entry on one line is what makes a purely textual, line-by-line edit possible.
 ### 6.2 How you run it
 
 ```bash
-node scripts/leads/manage-sources.mjs add --type <ats> --slug <slug> --company "Name"
-node scripts/leads/manage-sources.mjs add --type workday --company "Name" \
+node src/leads/manage-sources.mjs add --type <ats> --slug <slug> --company "Name"
+node src/leads/manage-sources.mjs add --type workday --company "Name" \
   --host x.wd5.myworkdayjobs.com --tenant x --site SiteName
-node scripts/leads/manage-sources.mjs remove "<company or slug>"
-node scripts/leads/manage-sources.mjs verify            # live-check every board
-node scripts/leads/manage-sources.mjs list
+node src/leads/manage-sources.mjs remove "<company or slug>"
+node src/leads/manage-sources.mjs verify            # live-check every board
+node src/leads/manage-sources.mjs list
 ```
 
 The dispatcher is a plain chain of comparisons:
@@ -2400,7 +2400,7 @@ No terse variant; the output is identical either way.
 ### 6.6 Worked example — adding Databricks
 
 ```console
-$ node scripts/leads/manage-sources.mjs add --type greenhouse --slug databricks --company "Databricks"
+$ node src/leads/manage-sources.mjs add --type greenhouse --slug databricks --company "Databricks"
 ```
 
 1. `entry = { type: "greenhouse", company: "Databricks", slug: "databricks",
@@ -2515,7 +2515,7 @@ Here is one company followed the whole way, so the four files fit together.
 **Step 1 — name → slug (`find-boards.mjs`).**
 
 ```bash
-node scripts/leads/find-boards.mjs --names "Databricks" --append
+node src/leads/find-boards.mjs --names "Databricks" --append
 ```
 
 `slugsFor("Databricks")` → `["databricks"]` (all four generated candidates
@@ -2540,7 +2540,7 @@ The `live: 180` is printed and then discarded (§3.7(e)).
 **Step 2 — is it worth sweeping? (`discover-boards.mjs`).**
 
 ```bash
-node scripts/leads/discover-boards.mjs --candidates docs/board-candidates.yaml
+node src/leads/discover-boards.mjs --candidates docs/board-candidates.yaml
 ```
 
 The board is fetched **again** — this is the duplicated work — and every posting
@@ -2557,7 +2557,7 @@ Note what happened to the sibling candidates: Snowflake had 240 live postings an
 **Step 3 — you decide (`manage-sources.mjs`).**
 
 ```bash
-node scripts/leads/manage-sources.mjs add --type greenhouse --slug databricks --company "Databricks"
+node src/leads/manage-sources.mjs add --type greenhouse --slug databricks --company "Databricks"
 ```
 
 Validation ladder, duplicate check, a live prescreen, then one line appended to
@@ -2570,7 +2570,7 @@ containment for fuzzy matching is a human looking at the company name.
 **Step 4 — later, is it still earning its keep? (`board-yield.mjs`).**
 
 ```bash
-node scripts/leads/board-yield.mjs
+node src/leads/board-yield.mjs
 ```
 
 Every tracked board is refetched and scored. Boards whose `solid` count is at or

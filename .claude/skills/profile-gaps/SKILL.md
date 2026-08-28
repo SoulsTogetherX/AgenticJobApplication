@@ -12,7 +12,7 @@ recommend only HONEST fixes.
 ## Run the analysis
 
 ```bash
-node scripts/profile/profile-gaps.mjs --json
+node src/profile/profile-gaps.mjs --json
 ```
 
 It scans every captured job workspace and stored lead, extracts tech terms,

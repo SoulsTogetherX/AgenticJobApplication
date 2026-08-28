@@ -6,7 +6,7 @@
 // Score = tech overlap with the profile + role-title fit + freshness
 //         + salary signal - risk flags.
 //
-// Usage: node scripts/leads/recommend.mjs [--top N] [--status new|recommended|all]
+// Usage: node src/leads/recommend.mjs [--top N] [--status new|recommended|all]
 //        [--json] [--leads <path>] [--profile <path>] [--jobs-dir <path>]
 //        [--applicable [--limits <path>]]
 //

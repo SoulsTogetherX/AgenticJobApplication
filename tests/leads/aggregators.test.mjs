@@ -11,7 +11,7 @@ import {
   BOARD_TYPES,
   passesLimits,
   bodyDisqualifiers,
-} from "../../scripts/leads/find-jobs.mjs"
+} from "../../src/leads/find-jobs.mjs"
 
 const LIMITS = {
   location: {

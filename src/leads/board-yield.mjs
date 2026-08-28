@@ -11,9 +11,9 @@
 // Reports only. Removing a board is the user's call (docs/job-sources.yaml is
 // user-facing), so this prints proposals and never edits anything.
 //
-// Usage: node scripts/leads/board-yield.mjs [--query "full stack"] [--json]
+// Usage: node src/leads/board-yield.mjs [--query "full stack"] [--json]
 //                                     [--concurrency N] [--min-qualifying N]
-//        node scripts/leads/board-yield.mjs --history [--live] [--json]
+//        node src/leads/board-yield.mjs --history [--live] [--json]
 //                                     [--dead-days 30] [--zero-streak 5]
 //                                     [--min-sweeps 5]
 //
@@ -300,7 +300,7 @@ async function historyMain(args) {
     )
     for (const p of proposals) {
       console.log(
-        `  node scripts/leads/manage-sources.mjs remove "${p.company ?? p.board_id}"   # ${p.reasons.join("; ")}`,
+        `  node src/leads/manage-sources.mjs remove "${p.company ?? p.board_id}"   # ${p.reasons.join("; ")}`,
       )
     }
   } else {
@@ -312,7 +312,7 @@ async function historyMain(args) {
 async function main() {
   const args = process.argv.slice(2)
   // STRICT. a bare run performs a LIVE network sweep of every tracked board, so an unrecognised flag must not
-  // be ignored. See scripts/lib/args.mjs.
+  // be ignored. See src/lib/args.mjs.
   try {
     assertKnownFlags(args, {
       known: [
@@ -432,7 +432,7 @@ async function main() {
     )
     for (const r of dead) {
       console.log(
-        `  node scripts/leads/manage-sources.mjs remove "${r.company}"   # ${r.live} live, 0 reachable`,
+        `  node src/leads/manage-sources.mjs remove "${r.company}"   # ${r.live} live, 0 reachable`,
       )
     }
   }

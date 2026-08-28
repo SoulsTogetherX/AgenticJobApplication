@@ -1,4 +1,4 @@
-// Tests for the CI test gate (.github/workflows/test-gate.mjs).
+// Tests for the CI test gate (tools/ci/test-gate.mjs).
 //
 // The gate's entire job is to make a green run mean something, so the property
 // under test is "it can fail". Every case here drives it to a verdict from a
@@ -21,7 +21,7 @@ const ROOT = path.resolve(
   "..",
   "..",
 )
-const GATE = path.join(ROOT, ".github", "workflows", "test-gate.mjs")
+const GATE = path.join(ROOT, "tools", "ci", "test-gate.mjs")
 
 function fixture(files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gate-fixture-"))
@@ -383,16 +383,16 @@ test("package.json pins the Phase 1 gate to the plan's exact paths", () => {
   assert.ok(full.floor >= 946, `full floor must not be lowered (${full.floor})`)
   assert.equal(full.maxTodo, 0)
 
-  assert.equal(pkg.scripts.test, "node .github/workflows/test-gate.mjs full")
+  assert.equal(pkg.scripts.test, "node tools/ci/test-gate.mjs full")
   assert.equal(
     pkg.scripts["test:security"],
-    "node .github/workflows/test-gate.mjs security",
+    "node tools/ci/test-gate.mjs security",
   )
   // The 2026-07-29 reorg moved this; `npm run verify` pointed at the old path
   // for two days without anyone noticing, because nothing checked it.
-  assert.equal(pkg.scripts.verify, "node scripts/documents/verify-claims.mjs")
+  assert.equal(pkg.scripts.verify, "node src/documents/verify-claims.mjs")
   assert.ok(
-    fs.existsSync(path.join(ROOT, "scripts", "documents", "verify-claims.mjs")),
+    fs.existsSync(path.join(ROOT, "src", "documents", "verify-claims.mjs")),
     "npm run verify must point at a file that exists",
   )
 })

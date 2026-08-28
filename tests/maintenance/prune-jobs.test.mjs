@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { planPrune } from "../../scripts/maintenance/prune-jobs.mjs"
+import { planPrune } from "../../src/maintenance/prune-jobs.mjs"
 
 const FILES = [
   "resume.md",

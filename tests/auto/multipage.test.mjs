@@ -16,9 +16,9 @@ import {
   abandonDraft,
   DRAFT_ABANDONERS,
   MAX_PAGES,
-} from "../../scripts/auto/multipage.mjs"
-import { authorizeSubmit, planSha256 } from "../../scripts/auto/authorize.mjs"
-import { openDb } from "../../scripts/lib/db.mjs"
+} from "../../src/auto/multipage.mjs"
+import { authorizeSubmit, planSha256 } from "../../src/auto/authorize.mjs"
+import { openDb } from "../../src/lib/db.mjs"
 
 const APPLY_URL = "https://boards.greenhouse.io/acme/jobs/1"
 
@@ -548,7 +548,7 @@ test("MEASURED IN PART is not measured: a page with no verify beside one with a 
   // produced a PRESENT verify holding page 1's counts alone — page 2's silence
   // arriving at the gate as page 2's zero. The gate cannot see per-page
   // coverage; only this function can, so it says so here.
-  const { submitReadiness } = await import("../../scripts/apply/fill-plan.mjs")
+  const { submitReadiness } = await import("../../src/apply/fill-plan.mjs")
   const got = mergePages([
     okPage(1),
     { page: 2, plan: { items: [{ k: "f2" }], defer: [] }, report: { ok: 1 } },
@@ -573,7 +573,7 @@ test("UNIFORM absence is still the legitimate case — it does not fail", async 
   // broke: no page verifying is the ordinary shape of a walk whose fill stage
   // never runs a verify pass, and of every walk with no fill stage at all.
   // Nothing was measured, nothing is claimed, and nothing is refused.
-  const { submitReadiness } = await import("../../scripts/apply/fill-plan.mjs")
+  const { submitReadiness } = await import("../../src/apply/fill-plan.mjs")
   const got = mergePages([
     { page: 1, plan: { items: [{ k: "a" }], defer: [] }, report: { ok: 1 } },
     { page: 2, plan: { items: [{ k: "b" }], defer: [] }, report: { ok: 1 } },
@@ -621,7 +621,7 @@ test("THE WHOLE PATH: a failed fill on page 1 refuses the merged submit", async 
   // exactly what job.mjs does: it hands `walk.report` to authorizeSubmit and to
   // submitOnce, and both put it through submitReadiness. Before this fix the
   // walk below returned ok and the gate said ready.
-  const { submitReadiness } = await import("../../scripts/apply/fill-plan.mjs")
+  const { submitReadiness } = await import("../../src/apply/fill-plan.mjs")
   const f = form({ pages: 2 })
   const got = await walk(f, {
     fillStage: async (_p, _plan, { page: n }) => ({
@@ -655,7 +655,7 @@ test("THE WHOLE PATH: a failed fill on page 1 refuses the merged submit", async 
   // clicked Next, and page 2 was scanned, planned and filled. The submit is
   // correctly blocked — that is the assertion above — but the run put the
   // user's data into a second page of a form that will never be sent.
-  // scripts/auto/multipage.mjs carries the reasoning for why this round records
+  // src/auto/multipage.mjs carries the reasoning for why this round records
   // that rather than changing the walk. If a later round DOES change it, this
   // is the assertion that will fail, and it should be updated rather than
   // deleted.
@@ -671,7 +671,7 @@ test("plan.actuated survives the merge — a ticked widget still blocks the unat
   // page refused. submitReadiness blocks on `plan.actuated` because rule 6
   // delegates assent when the USER hands over a URL, and the unattended runner
   // holds no such instruction.
-  const { submitReadiness } = await import("../../scripts/apply/fill-plan.mjs")
+  const { submitReadiness } = await import("../../src/apply/fill-plan.mjs")
   const got = mergePages([
     okPage(1),
     {
@@ -710,7 +710,7 @@ test("THE BOARD'S OWN validation text survives the merge, and the gate refuses o
   // the form itself saying "This field is required." passed the gate. Both
   // halves are asserted — the merge carries the message, and the gate quotes it
   // back rather than reporting a count.
-  const { submitReadiness } = await import("../../scripts/apply/fill-plan.mjs")
+  const { submitReadiness } = await import("../../src/apply/fill-plan.mjs")
   const got = mergePages([
     okPage(1),
     okPage(2, {
@@ -733,7 +733,7 @@ test("a clean multi-page walk still reaches ready — the fix is not a blanket r
   // form where everything landed must still pass. `form()`'s own fillStage
   // returns `{uploads}` with no failure keys and no verify at all, which is the
   // legitimate "nobody measured this" shape.
-  const { submitReadiness } = await import("../../scripts/apply/fill-plan.mjs")
+  const { submitReadiness } = await import("../../src/apply/fill-plan.mjs")
   const f = form({ pages: 3 })
   const got = await walk(f)
   assert.equal(got.ok, true)

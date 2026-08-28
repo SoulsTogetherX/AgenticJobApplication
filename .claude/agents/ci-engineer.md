@@ -19,7 +19,7 @@ machinery that proves features work.
 
 - `.github/workflows/*`
 - `package.json` (scripts **and** dependencies)
-- `scripts/hooks/*` — `guard-files.mjs`, `guard-bash.mjs`, `prettify.mjs`
+- `src/hooks/*` — `guard-files.mjs`, `guard-bash.mjs`, `prettify.mjs`
 - `.claude/settings.json`, `.claude/settings.local.json`
 - `.gitignore`, `.prettierignore`
 - `tests/hooks/*`
@@ -48,10 +48,10 @@ itself and is deliberately outside every agent's reach.
 
 ## What is broken right now
 
-- **`npm run verify` points at `scripts/verify-claims.mjs`**, which moved to
-  `scripts/documents/verify-claims.mjs` in the 2026-07-29 reorg. Dead since.
+- **`npm run verify` points at `src/verify-claims.mjs`**, which moved to
+  `src/documents/verify-claims.mjs` in the 2026-07-29 reorg. Dead since.
 - **`.claude/settings.local.json` pre-approves two dead pre-reorg paths**
-  (`scripts/find-jobs.mjs`), so those permissions grant nothing.
+  (`src/find-jobs.mjs`), so those permissions grant nothing.
 - **`guard-bash.mjs` over-matches.** It denied `git branch --show-current` — a
   read-only query — with "Branch create/delete/rename is blocked". The policy
   itself is correct and stays: no checkout/create/delete/rename off `dev`, no

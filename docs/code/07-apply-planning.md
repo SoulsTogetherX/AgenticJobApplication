@@ -73,19 +73,19 @@ You do not need these to follow this document, but they set the scene.
 - [`./11-record-and-profile.md`](./11-record-and-profile.md) —
   `save-answer.mjs`, the only way anything enters the answer bank.
 - [`./01-lib-foundation.md`](./01-lib-foundation.md) — `answerClass`,
-  `sanitizeUntrusted` and the rest of `scripts/lib/untrusted.mjs`.
+  `sanitizeUntrusted` and the rest of `src/lib/untrusted.mjs`.
 
 **The files covered here**
 
-| file                                  | lines | one-line purpose                                                                                                          |
-| ------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/apply/answer-bank.mjs`       | 1783  | Looks up an answer for every scanned field, from the profile and the answer bank only, and stamps each one with a status. |
-| `scripts/apply/intents.mjs`           | 924   | Types a question against a closed set of eight propositions and resolves its truth value by boolean algebra.              |
-| `scripts/apply/fill-plan.mjs`         | 2722  | Turns a scan plus those resolutions into a plan: the exact actions a browser engine may take, and the list a human owns.  |
-| `scripts/apply/field-cache.mjs`       | 348   | Remembers the shape of a form already filled, so the next application does not re-probe every dropdown.                   |
-| `scripts/apply/pending-questions.mjs` | 330   | Every question the fact base cannot answer, across all prepped jobs, merged into one list.                                |
-| `scripts/apply/disclosure.mjs`        | 242   | Two limits on how much of the fact base one form may extract.                                                             |
-| `scripts/apply/automatability.mjs`    | 756   | Could the deterministic pipeline apply to this posting with no human at all? A pre-filter, never an authorisation.        |
+| file                              | lines | one-line purpose                                                                                                          |
+| --------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------- |
+| `src/apply/answer-bank.mjs`       | 1783  | Looks up an answer for every scanned field, from the profile and the answer bank only, and stamps each one with a status. |
+| `src/apply/intents.mjs`           | 924   | Types a question against a closed set of eight propositions and resolves its truth value by boolean algebra.              |
+| `src/apply/fill-plan.mjs`         | 2722  | Turns a scan plus those resolutions into a plan: the exact actions a browser engine may take, and the list a human owns.  |
+| `src/apply/field-cache.mjs`       | 348   | Remembers the shape of a form already filled, so the next application does not re-probe every dropdown.                   |
+| `src/apply/pending-questions.mjs` | 330   | Every question the fact base cannot answer, across all prepped jobs, merged into one list.                                |
+| `src/apply/disclosure.mjs`        | 242   | Two limits on how much of the fact base one form may extract.                                                             |
+| `src/apply/automatability.mjs`    | 756   | Could the deterministic pipeline apply to this posting with no human at all? A pre-filter, never an authorisation.        |
 
 Read `answer-bank.mjs` first if you are reading the source alongside. Data flows
 **answer-bank → fill-plan**, never the other way; `fill-plan.mjs` imports
@@ -149,15 +149,15 @@ to the planner came from the same party that wrote the label.
 For every field the pipeline has to answer two separate questions, and the split
 between them is the architecture of this whole area:
 
-1. **What should go in this box?** — `scripts/apply/answer-bank.mjs`. It looks
+1. **What should go in this box?** — `src/apply/answer-bank.mjs`. It looks
    things up in the owner's own files and nowhere else, and it stamps each field
    with a **status**.
-2. **Am I allowed to put it there without a human?** — `scripts/apply/fill-plan.mjs`.
+2. **Am I allowed to put it there without a human?** — `src/apply/fill-plan.mjs`.
    It reads those statuses, applies every safety rule, and produces a **plan**:
    a list of actions the browser engine may perform, and a list of fields a human
    must handle.
 
-Downstream of the plan is `scripts/apply/fill-engine.mjs`, which has no judgement
+Downstream of the plan is `src/apply/fill-engine.mjs`, which has no judgement
 whatsoever. It performs exactly what the plan says and reports what happened.
 All the deciding is in the two files above.
 
@@ -246,7 +246,7 @@ Because deferrals cost throughput, there is standing pressure to reduce them.
 CLAUDE.md hard rule 6 names the only three ways that is allowed to happen:
 
 1. **An adapter** — code that knows a specific board's shape
-   (`scripts/apply/ats/greenhouse.mjs`, `lever.mjs`, `ashby.mjs`).
+   (`src/apply/ats/greenhouse.mjs`, `lever.mjs`, `ashby.mjs`).
 2. **A probed option list** — the real options, read off the live form by the
    scanner.
 3. **A banked answer** — a question the owner answered, saved through
@@ -452,7 +452,7 @@ r.classDescription = describeClass(info);
 Read that as a sentence: _if this value came from a bank entry, and that entry's
 own class is `assertion` rather than `datum`, re-grade it._
 
-`answerClass` lives in `scripts/lib/untrusted.mjs`. It prefers the entry's stored
+`answerClass` lives in `src/lib/untrusted.mjs`. It prefers the entry's stored
 `class` (with its `class_source`: `user`, `model` or `inferred`), and falls back
 to `classifyAnswer`, which tests the **stored question text** against seven
 patterns: `work_authorization`, `consent_or_agreement`,
@@ -569,7 +569,7 @@ Two paths consume the plan and they are not the same path.
   and hard rule 6 (revised 2026-08-03) says the agent applies: it may actuate
   consent tickboxes and `confirm-widget` controls, and **must name every one it
   actuated, with the label quoted**, in its report.
-- **The unattended path** — `scripts/auto/`, no human. Its gate is
+- **The unattended path** — `src/auto/`, no human. Its gate is
   `submitReadiness()`, which blocks on **any** defer.
 
 | status / marker                               | plan outcome                    | user-directed path                                                    | unattended path                       |
@@ -1633,7 +1633,7 @@ not the same fact as "this value is not offered".
 
 ## Part G — typed intents
 
-`scripts/apply/intents.mjs` is the shape change the retired guards were
+`src/apply/intents.mjs` is the shape change the retired guards were
 approximating. Its own header states the problem in one sentence: the ladder
 mapped a question to an answer **string**, and nothing in that shape can tell "do
 you require sponsorship?" from "are you authorized to work without sponsorship?".
@@ -2380,7 +2380,7 @@ itself reported:
 > `submitReadiness` read only `report.revealed` and `mergePages` rebuilt the report
 > without the rest. So the fix that was supposed to stop an application going out
 > with no résumé was inert on the one path where nobody is watching.
-> `scripts/auto/multipage.mjs`'s `mergePages` now carries `failed`, `failures` and
+> `src/auto/multipage.mjs`'s `mergePages` now carries `failed`, `failures` and
 > `verify` through the multi-page walk.
 
 Two subtleties in the upload half, both easy to get backwards:
@@ -2435,7 +2435,7 @@ at all are distinguishable — both used to print `0/0`.
 The generated `jobs/<slug>/fill-plan.js` looks like this:
 
 ```js
-// Generated by scripts/apply/fill-plan.mjs — do not edit by hand.
+// Generated by src/apply/fill-plan.mjs — do not edit by hand.
 async (page) => {
   const ENGINE = "<the whole of fill-engine.mjs, as a string literal>";
   const PLAN = { …the plan… };
@@ -2498,7 +2498,7 @@ becomes JSON.
 > **Known defect (2026-08-05 audit).** `combosNeedingProbe()` computes exactly which
 > dropdowns are worth probing and prints it as a `probe\t…` line, and the file's own
 > comment describes how to wire it into the scanner's `skipProbe`. No caller wires
-> it: `scripts/auto/stages.mjs` calls `scanPage(page, { scannerSrc, url })` with
+> it: `src/auto/stages.mjs` calls `scanPage(page, { scannerSrc, url })` with
 > neither `knownOpts` nor `skipProbe`. Each unnecessary probe was measured at
 > 1.5–2.5 s.
 
@@ -2899,7 +2899,7 @@ This is the route that costs latency rather than a human turn, which is why
 **Use when** the fix is knowledge about a **board's shape** rather than about the
 owner.
 
-An adapter in `scripts/apply/ats/` contributes knowledge, never behaviour:
+An adapter in `src/apply/ats/` contributes knowledge, never behaviour:
 
 ```js
 { id, match, comboStrategies[], fileOrder[], fileFields[{match, doc}],

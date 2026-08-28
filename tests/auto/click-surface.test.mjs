@@ -1,4 +1,4 @@
-// §4.11 invariant 1: `.click(` appears in scripts/auto/ ONLY in submit.mjs and
+// §4.11 invariant 1: `.click(` appears in src/auto/ ONLY in submit.mjs and
 // advance.mjs — ASSERTED BY A TEST, NOT BY A HABIT.
 //
 // This is the whole reason the click surface stays reviewable. "Never click
@@ -24,7 +24,7 @@ const AUTO_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
-  "scripts",
+  "src",
   "auto",
 )
 
@@ -36,7 +36,7 @@ const PERMITTED = new Map([
 
 // A comment mentioning a click is not a click. Matching `.click(` rather than
 // the word is what keeps this test from failing on prose — every file in
-// scripts/auto/ discusses clicking at length, on purpose.
+// src/auto/ discusses clicking at length, on purpose.
 const CLICK = /\.click\s*\(/
 
 function autoFiles() {
@@ -62,7 +62,7 @@ test("only submit.mjs and advance.mjs contain a click", () => {
   assert.deepEqual(
     offenders,
     [],
-    `these files under scripts/auto/ contain a click and are not permitted to: ` +
+    `these files under src/auto/ contain a click and are not permitted to: ` +
       `${offenders.join(", ")}. The click surface is exactly ` +
       `${[...PERMITTED.keys()].join(" and ")} (§4.10, §4.11).`,
   )

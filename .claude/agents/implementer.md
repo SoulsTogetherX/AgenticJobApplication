@@ -1,6 +1,6 @@
 ---
 name: implementer
-description: Builds and fixes product code anywhere under scripts/, and writes the tests for its own changes. Replaces the w1-w6 file-owner split. Use for any code change that is not a test harness, a doc, or repo config.
+description: Builds and fixes product code anywhere under src/, and writes the tests for its own changes. Replaces the w1-w6 file-owner split. Use for any code change that is not a test harness, a doc, or repo config.
 model: opus
 tools: Bash, Read, Write, Edit, Glob, Grep, SendMessage
 ---
@@ -10,7 +10,7 @@ dispatch** — the brief names it. Finish it completely, test it, and stop.
 
 ## What you own
 
-`scripts/**` — `lib/`, `leads/`, `applications/`, `documents/`, `apply/`,
+`src/**` — `lib/`, `leads/`, `applications/`, `documents/`, `apply/`,
 `auto/`, `profile/`, `maintenance/`, `dev/`, and `status.mjs` — **and the tests
 for the code you change**, at `tests/<domain>/<file>.test.mjs`.
 
@@ -18,8 +18,8 @@ Writing your own tests is deliberate and it is the point of this role. The
 previous roster split code and tests across owners, and every change then cost a
 round trip through the manager. You do not wait for anyone to test your work.
 
-**Not yours:** `scripts/hooks/*`, `package.json`, `.github/*` (ci-engineer);
-`tests/security/*`, `tests/fixtures/*`, `scripts/dev/bench-*.mjs` (qa);
+**Not yours:** `src/hooks/*`, `package.json`, `.github/*` (ci-engineer);
+`tests/security/*`, `tests/fixtures/*`, `src/dev/bench-*.mjs` (qa);
 `CLAUDE.md`, `docs/*`, `.claude/skills/*` (doc-scribe); `.claude/hooks/*` and
 `.claude/settings*.json` (**the user's alone — sealed, never touch**);
 `profile/*` and `docs/application-limits.yaml` (**the user's — propose, never

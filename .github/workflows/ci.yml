@@ -119,7 +119,7 @@ jobs:
       # the runner instead of a mystery. The gate itself fails on a skip that
       # carries no reason.
       - name: Report browser availability (attributes any PDF skips)
-        run: node .github/workflows/report-browsers.mjs
+        run: node tools/ci/report-browsers.mjs
 
       # `npm test` is the gate, not a bare `node --test`: it asserts the test
       # COUNT against the floor in package.json "testGate", fails on any todo,
@@ -162,7 +162,7 @@ jobs:
         with:
           node-version: 22
       - name: Prove the reaper can still go red
-        run: node .github/workflows/scaffolding-reaper.mjs --self-test
+        run: node tools/ci/scaffolding-reaper.mjs --self-test
       - name: Fail if any scaffolding artifact outlived its phase
         run: npm run reap
 
@@ -207,7 +207,7 @@ jobs:
       - name: bench-runner vs docs/perf-baseline.json
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
-        run: node .github/workflows/perf-gate.mjs
+        run: node tools/ci/perf-gate.mjs
 
   # ---------------------------------------------------------------------
   # NOT wired, on purpose — and stated here rather than wired vacuously,
@@ -220,7 +220,7 @@ jobs:
   #   is no store to diff against and no previous run to compare with. It
   #   stays a local step the owner of a gate change runs, and CLAUDE.md says
   #   to run it after ANY gate change:
-  #     node scripts/leads/gate-audit.mjs
+  #     node src/leads/gate-audit.mjs
   #   Wiring it would need a committed fixture store, which is a different
   #   piece of work owned by w5-leads, not a CI change.
   # ---------------------------------------------------------------------

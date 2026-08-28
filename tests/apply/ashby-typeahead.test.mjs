@@ -19,8 +19,8 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { buildPlan, resolveFields } from "../../scripts/apply/fill-plan.mjs"
-import { detectAts } from "../../scripts/apply/ats/index.mjs"
+import { buildPlan, resolveFields } from "../../src/apply/fill-plan.mjs"
+import { detectAts } from "../../src/apply/ats/index.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")

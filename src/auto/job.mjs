@@ -326,7 +326,7 @@ export async function runJob({
         "plan",
         `no captured post-submit page for ${safeText(hostOf(liveUrl), 60)} — ` +
           `a live click could not be read afterwards; capture one attended ` +
-          `(scripts/apply/capture-post-submit.mjs: stage → review → promote) ` +
+          `(src/apply/capture-post-submit.mjs: stage → review → promote) ` +
           `and re-enqueue`,
       )
 

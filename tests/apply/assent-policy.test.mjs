@@ -20,13 +20,13 @@ import {
   normalizeAssentPolicy,
   grantEnabled,
   anyGrant,
-} from "../../scripts/apply/assent-policy.mjs"
+} from "../../src/apply/assent-policy.mjs"
 import {
   buildPlan,
   submitReadiness,
   readiness,
-} from "../../scripts/apply/fill-plan.mjs"
-import greenhouse from "../../scripts/apply/ats/greenhouse.mjs"
+} from "../../src/apply/fill-plan.mjs"
+import greenhouse from "../../src/apply/ats/greenhouse.mjs"
 
 const files = {
   resume: "C:\\jobs\\x\\resume.pdf",

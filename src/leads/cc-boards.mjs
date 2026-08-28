@@ -32,7 +32,7 @@
 // single JSON object and stays on fetchJson. Both take the politeness gate.
 //
 // Usage:
-//   node scripts/leads/cc-boards.mjs --crawl CC-MAIN-2026-30 --hosts ashby,greenhouse
+//   node src/leads/cc-boards.mjs --crawl CC-MAIN-2026-30 --hosts ashby,greenhouse
 //        [--out <file>] [--max-pages N] [--json]
 import fs from "node:fs"
 import path from "node:path"
@@ -309,7 +309,7 @@ async function main() {
     fs.writeFileSync(
       out,
       "# Board candidates enumerated from the Common Crawl URL index by\n" +
-        "# scripts/leads/cc-boards.mjs. NOT swept, NOT vetted — run\n" +
+        "# src/leads/cc-boards.mjs. NOT swept, NOT vetted — run\n" +
         "# discover-boards.mjs to yield-gate a batch, then add survivors with\n" +
         "# manage-sources. Nothing here touches job-sources.yaml.\n" +
         `# crawl: ${crawl}; seen = captures of the board in that crawl.\n` +
@@ -342,7 +342,7 @@ async function main() {
           ? `\n  INCOMPLETE: ${r.remaining} page(s) left — re-run to resume.`
           : "") +
         `\n  written to ${r.out}` +
-        `\n  Next: node scripts/leads/discover-boards.mjs --candidates ${r.out}`,
+        `\n  Next: node src/leads/discover-boards.mjs --candidates ${r.out}`,
     )
   }
   console.log("")

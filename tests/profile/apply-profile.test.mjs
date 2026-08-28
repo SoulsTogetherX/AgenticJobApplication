@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { loadYamlFile } from "../../scripts/lib/lib.mjs"
+import { loadYamlFile } from "../../src/lib/lib.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 const FIXTURE_PROFILE = path.join(ROOT, "tests", "fixtures", "profile.yaml")

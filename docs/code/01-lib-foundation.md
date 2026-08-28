@@ -1,4 +1,4 @@
-# `scripts/lib/` — the shared foundation
+# `src/lib/` — the shared foundation
 
 Every other script in this repository imports something from this folder. When
 `find-jobs.mjs` fetches a job board, it uses a helper from here. When
@@ -64,14 +64,14 @@ them, but they answer questions this one assumes:
 
 **The files covered here**
 
-| File                           | Lines | What it is                                                                                                                      |
-| ------------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/lib/lib.mjs`          | 546   | The general toolbox. Output mode, concurrency, HTTP, HTML-to-text, the fact index, the evidence rule, similarity, validators.   |
-| `scripts/lib/keywords.mjs`     | 624   | The one skill lexicon — a single hand-curated table of 131 technologies, projected into four different consumers.               |
-| `scripts/lib/verification.mjs` | 220   | What "this document was verified" means, defined by hashing the document's bytes and the fact base's bytes.                     |
-| `scripts/lib/lock.mjs`         | 487   | Advisory cross-process file locking with stale-holder recovery, so two writers cannot silently lose each other's work.          |
-| `scripts/lib/db.mjs`           | 2190  | The entire storage layer: the SQLite schema plus every function that reads or writes it.                                        |
-| `scripts/lib/untrusted.mjs`    | 1944  | Hard rule 0 in code. Strips instruction-shaped text out of job postings, and three sibling boundaries that share the same idea. |
+| File                       | Lines | What it is                                                                                                                      |
+| -------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `src/lib/lib.mjs`          | 546   | The general toolbox. Output mode, concurrency, HTTP, HTML-to-text, the fact index, the evidence rule, similarity, validators.   |
+| `src/lib/keywords.mjs`     | 624   | The one skill lexicon — a single hand-curated table of 131 technologies, projected into four different consumers.               |
+| `src/lib/verification.mjs` | 220   | What "this document was verified" means, defined by hashing the document's bytes and the fact base's bytes.                     |
+| `src/lib/lock.mjs`         | 487   | Advisory cross-process file locking with stale-holder recovery, so two writers cannot silently lose each other's work.          |
+| `src/lib/db.mjs`           | 2190  | The entire storage layer: the SQLite schema plus every function that reads or writes it.                                        |
+| `src/lib/untrusted.mjs`    | 1944  | Hard rule 0 in code. Strips instruction-shaped text out of job postings, and three sibling boundaries that share the same idea. |
 
 Line counts are as of the 2026-08-06 working tree and will drift; they are here
 to give you a sense of scale, not as a citation.
@@ -90,12 +90,12 @@ visible to any other file. A file makes something visible by writing `export` in
 front of it, and another file gets at it by writing `import`.
 
 ```js
-// scripts/lib/lib.mjs — the definition
+// src/lib/lib.mjs — the definition
 export function isTerse(argv = process.argv) {
   /* … */
 }
 
-// scripts/status.mjs — the use
+// src/status.mjs — the use
 import { isTerse } from "./lib/lib.mjs"
 ```
 
@@ -119,10 +119,10 @@ Three details that come up below:
 ### 0.2 A library versus a command
 
 Some files in this project are **commands**: you type
-`node scripts/status.mjs` and something happens. Those files read
+`node src/status.mjs` and something happens. Those files read
 `process.argv` (the words you typed after `node`) and print things.
 
-Every file in `scripts/lib/` is a **library**: it defines functions and exports
+Every file in `src/lib/` is a **library**: it defines functions and exports
 them, and running it directly does nothing useful. There is no `main()`, no
 argument parsing, and nothing prints.
 
@@ -130,7 +130,7 @@ argument parsing, and nothing prints.
 > `#!/usr/bin/env node`. That line (a "shebang") is what makes a file directly
 > executable on Linux and macOS. Both files are leftovers from an earlier shape
 > of the project; neither has a command-line interface. Running
-> `node scripts/lib/db.mjs` loads the module, defines everything and exits
+> `node src/lib/db.mjs` loads the module, defines everything and exits
 > having done nothing at all.
 
 ### 0.3 "Deterministic, no LLM"
@@ -194,7 +194,7 @@ in [`../guide/07-safety-model.md`](../guide/07-safety-model.md).
 
 ## Part 1 — `lib.mjs`, the general toolbox
 
-**Path:** `scripts/lib/lib.mjs`. Imported by 42 scripts under `scripts/` and 19
+**Path:** `src/lib/lib.mjs`. Imported by 42 scripts under `src/` and 19
 test files. It is the single most widely imported file in the project.
 
 ### 1.1 What is in it, and why these things share a file
@@ -243,7 +243,7 @@ export const isTerse = (argv = process.argv) => outputMode(argv) === "terse"
 #### What the pieces mean
 
 **`process.argv`** is an array of the words you typed on the command line. If
-you run `node scripts/status.mjs --verbose`, then inside that script
+you run `node src/status.mjs --verbose`, then inside that script
 `process.argv` is roughly
 `["/path/to/node", "/path/to/status.mjs", "--verbose"]`. The function takes it
 as a parameter with a default value, which is a small testability trick: real
@@ -263,7 +263,7 @@ somewhere else — most importantly, into a **pipe**.
 
 A **pipe** is a connection that feeds one program's output into another
 program's input, or into a buffer that some other software reads. When you
-write `node scripts/status.mjs | grep applied` in a shell, the `|` is a pipe.
+write `node src/status.mjs | grep applied` in a shell, the `|` is a pipe.
 When an AI agent runs a command through a tool call, the agent's harness reads
 the output through a pipe too — there is no terminal involved anywhere.
 
@@ -308,7 +308,7 @@ That means:
 
 - Piping a command through anything at all — even `| cat`, which changes nothing
   about the output — makes it terse. This surprises people.
-- Redirecting to a file (`node scripts/status.mjs > out.txt`) makes it terse.
+- Redirecting to a file (`node src/status.mjs > out.txt`) makes it terse.
 - Running a script from inside another script makes it terse.
 
 If you want prose in any of those situations, pass `--verbose` yourself. If you
@@ -1037,8 +1037,8 @@ the two is the exact bug that rule exists to prevent. `buildFactIndex` answers
 "what is this fact?"; `evidenceText` answers "what may a document claim?".
 
 Callers: `scripts/profile/apply-profile.mjs`,
-`scripts/documents/verify-claims.mjs` and
-`scripts/documents/assemble-resume.mjs`.
+`src/documents/verify-claims.mjs` and
+`src/documents/assemble-resume.mjs`.
 
 ### 1.9 `extractNumbers` and `extractMonthYears`
 
@@ -1206,8 +1206,8 @@ decimal place: 72 months → 6, 50 months → 4.2.
 **Verified by running it.** A profile with a single entry
 `{ title: "Software Engineer", dates: "Jan 2019 - Jan 2025" }` returns `6`.
 
-Callers: the seniority gate in `scripts/leads/screen.mjs` and the safety-net
-report in `scripts/leads/gate-audit.mjs`.
+Callers: the seniority gate in `src/leads/screen.mjs` and the safety-net
+report in `src/leads/gate-audit.mjs`.
 
 > **Known defect (2026-08-05 audit).** `parseDateRange` requires a month name,
 > so an experience entry written as years only — `"2019 - 2025"` — returns `null`
@@ -1232,7 +1232,7 @@ that the owner has a skill?**
 
 Hard rule 1 says a tailored document may contain only facts from
 `profile/profile.yaml` and `profile/answers.yaml`. The verifier
-(`scripts/documents/verify-claims.mjs`) enforces that by building a **corpus** —
+(`src/documents/verify-claims.mjs`) enforces that by building a **corpus** —
 one large string of everything the fact base says — and then checking that every
 technology name, every number and every date in the tailored document appears
 somewhere in that corpus. Rule R6 is the technology one.
@@ -1604,7 +1604,7 @@ returning the wrong one is a real mistake that has been made:
 | Returns | an **Array** of surface strings           | a **Set** of canonical names            |
 | Feeds   | verify-claims R6, ats-lint, reuse-check   | `lead_keywords`, screening, ranking     |
 
-`scripts/apply/automatability.mjs` carries a comment warning about exactly this
+`src/apply/automatability.mjs` carries a comment warning about exactly this
 confusion. Part 2.3 explains why the two must never be merged.
 
 > **Known defect (2026-08-05 audit).** `techTermsIn` redoes constant work on
@@ -1697,8 +1697,8 @@ Measured with the real functions:
 | `"Senior Full-Stack Engineer II"` vs `"Full Stack Engineer"`  | 1.0   |
 | `"Senior Full-Stack Engineer II"` vs `"Full Stack Developer"` | 0.333 |
 
-Callers: `scripts/leads/cluster.mjs` groups near-duplicate postings, and
-`scripts/documents/reuse-check.mjs` asks whether an existing tailored resume
+Callers: `src/leads/cluster.mjs` groups near-duplicate postings, and
+`src/documents/reuse-check.mjs` asks whether an existing tailored resume
 could be reused.
 
 > **Known defect (2026-08-05 audit).** The stop-word list does not achieve the
@@ -1768,12 +1768,12 @@ location.
 `file://` URL rather than a plain path, and `fileURLToPath` converts it — which
 is the part that makes this work on Windows, where a naive string manipulation
 of a `file:///C:/...` URL would produce a broken path. Two directories up from
-`scripts/lib/` is the repository root.
+`src/lib/` is the repository root.
 
 The same three-line idiom appears at the top of `db.mjs`, `verification.mjs` and
 `lock.mjs` as a module-level `ROOT` constant.
 
-Its only caller is `scripts/apply/auth-sync.mjs`.
+Its only caller is `src/apply/auth-sync.mjs`.
 
 ### 1.16 Quick reference — everything `lib.mjs` exports
 
@@ -1835,7 +1835,7 @@ Its only caller is `scripts/apply/auth-sync.mjs`.
 
 ## Part 2 — `keywords.mjs`, the one skill lexicon
 
-**Path:** `scripts/lib/keywords.mjs`. Imported by 11 scripts. It imports
+**Path:** `src/lib/keywords.mjs`. Imported by 11 scripts. It imports
 **nothing** — zero `import` statements — which makes it the leaf of the
 dependency graph and is why `lib.mjs` can import it without creating a cycle.
 
@@ -2503,7 +2503,7 @@ The surviving 13: AWS, GCP, CI/CD, JWT, SSO, RBAC, TDD, ETL, LLM, RAG, IaC,
 WCAG, SLA. There is a test named `"the pair list stays short enough not to cry
 wolf"` that keeps it that way.
 
-Its only caller is `scripts/documents/ats-lint.mjs`.
+Its only caller is `src/documents/ats-lint.mjs`.
 
 ### 2.8 Traps in `keywords.mjs`
 
@@ -2533,7 +2533,7 @@ Its only caller is `scripts/documents/ats-lint.mjs`.
 
 ## Part 3 — `verification.mjs`, what "verified" means
 
-**Path:** `scripts/lib/verification.mjs`. A library; the `#!/usr/bin/env node`
+**Path:** `src/lib/verification.mjs`. A library; the `#!/usr/bin/env node`
 line at the top is vestigial. Its opening line is the whole brief:
 
 ```js
@@ -2810,7 +2810,7 @@ apply URL first, then the aggregator URL, then the original source.
 The `rows` parameter exists so tests can supply the candidate list without a
 database.
 
-Callers: `scripts/apply/automatability.mjs` and `scripts/auto/auto-apply.mjs`.
+Callers: `src/apply/automatability.mjs` and `src/auto/auto-apply.mjs`.
 
 > **Known defect (2026-08-05 audit, low impact).** This is an N+1 query: one
 > `SELECT DISTINCT` fetches the candidate slugs, then `hasPassingVerification`
@@ -2839,9 +2839,9 @@ Callers: `scripts/apply/automatability.mjs` and `scripts/auto/auto-apply.mjs`.
 
 ## Part 4 — `lock.mjs`, stopping two writers losing each other's work
 
-**Path:** `scripts/lib/lock.mjs`. The first 111 lines are an essay; read them
+**Path:** `src/lib/lock.mjs`. The first 111 lines are an essay; read them
 before touching the code. Three production files use it:
-`scripts/leads/find-jobs.mjs`, `scripts/apply/auth-sync.mjs` and
+`src/leads/find-jobs.mjs`, `src/apply/auth-sync.mjs` and
 `scripts/profile/save-answer.mjs`.
 
 ### 4.1 What a lock is, and the bug it prevents
@@ -2966,8 +2966,8 @@ export const AUTO_RUN_LOCK = path.join(ROOT, "jobs", ".auto", "run.lock")
 > all.
 
 > **Known defect (2026-08-05 audit, low impact).** `AUTO_RUN_LOCK` is declared
-> and **nothing ever takes it** — a search across `scripts/` and `tests/` finds no
-> reference outside this file. So nothing under `scripts/auto/` takes a run-level
+> and **nothing ever takes it** — a search across `src/` and `tests/` finds no
+> reference outside this file. So nothing under `src/auto/` takes a run-level
 > lock. It is also the one well-known lock that bypasses `lockPathFor`, which the
 > file itself says exists so two processes cannot guard one file under two names.
 > Per-slug exclusion on the unattended path is separately covered by
@@ -3337,10 +3337,10 @@ it is old enough.
 
 ### 4.12 How the three callers use it
 
-- **`scripts/leads/find-jobs.mjs`** imports `withLock`, `LEADS_LOCK` and
+- **`src/leads/find-jobs.mjs`** imports `withLock`, `LEADS_LOCK` and
   `lockPathFor`, and wraps its entire lead-store ingest in one critical section.
   It handles `ELOCKLOST` explicitly.
-- **`scripts/apply/auth-sync.mjs`** imports `acquire` and `lockPathFor` and holds
+- **`src/apply/auth-sync.mjs`** imports `acquire` and `lockPathFor` and holds
   the lock by hand around the browser auth profile.
 - **`scripts/profile/save-answer.mjs`** imports only the three _dangerous_ halves
   — `readLock`, `breakStale` and `isRetryableCreateError` — and keeps its own
@@ -3373,7 +3373,7 @@ it is old enough.
 
 ## Part 5 — `db.mjs`, the storage layer's accessors
 
-**Path:** `scripts/lib/db.mjs`. 2190 lines, imported by 35 production scripts and
+**Path:** `src/lib/db.mjs`. 2190 lines, imported by 35 production scripts and
 26 test files. Everything in this project that touches the disk store goes
 through a function exported from here.
 
@@ -3752,7 +3752,7 @@ The provenance rule, hard rule 2, is stated in this file at the point of
 implementation:
 
 > The applications TABLE is the source of truth (user decision, 2026-07-29:
-> applications are only ever created by `scripts/applications/log-application.mjs`
+> applications are only ever created by `src/applications/log-application.mjs`
 > after the user confirms a submission — nobody hand-edits them, so a file
 > pretending to be authoritative bought nothing but a sync problem).
 >
@@ -4112,13 +4112,13 @@ database that already exists.
 > `(slug, mode, doc_sha256)`; `EXPLAIN QUERY PLAN` shows the planner choosing the
 > automatic one. Meanwhile `auto_queue` has **no** index on `board_key` although
 > three queries filter or group on it. And `countCompanySubmissions` and
-> `readAutoRuns` have no caller anywhere, in `scripts/` or in `tests/`.
+> `readAutoRuns` have no caller anywhere, in `src/` or in `tests/`.
 
 ---
 
 ## Part 6 — `untrusted.mjs`, hard rule 0 in code
 
-**Path:** `scripts/lib/untrusted.mjs`. 1944 lines, imported by 11 scripts. It is
+**Path:** `src/lib/untrusted.mjs`. 1944 lines, imported by 11 scripts. It is
 the longest single-purpose file in the project and the one most worth reading in
 full.
 
@@ -4647,7 +4647,7 @@ the page.
 > `sanitizeUntrusted` callers are exposed, and a delimiter carrying an English
 > instruction is still caught by the instruction patterns — this lets a bare
 > delimiter through. The fix is to loop the decode to a fixed point with a bound of
-> three, which is exactly what `decodeForScan` in `scripts/auto/untrusted-text.mjs`
+> three, which is exactly what `decodeForScan` in `src/auto/untrusted-text.mjs`
 > already does.
 
 #### Step 2 — the Unicode Tags shadow, read before it is deleted
@@ -5025,8 +5025,8 @@ lead with reason
 
 `isDisqualifying` accepts either a finding object or a bare kind string, which
 is why it appears in three unattended-path gates —
-`scripts/auto/trust.mjs`, `scripts/auto/authorize.mjs` and
-`scripts/apply/fill-plan.mjs` — as well as in `risk.mjs`.
+`src/auto/trust.mjs`, `src/auto/authorize.mjs` and
+`src/apply/fill-plan.mjs` — as well as in `risk.mjs`.
 
 ### 6.8 The public API of section A
 
@@ -5409,7 +5409,7 @@ weakest provenance, not the strongest.**
 > **user-directed** path, where the owner hands the agent a posting URL, consent
 > tickboxes and `confirm-widget` controls **may** now be actuated on the owner's
 > behalf, and every one that is must be named in the report with its label quoted.
-> The **unattended** path in `scripts/auto/` is a separate question and is still
+> The **unattended** path in `src/auto/` is a separate question and is still
 > gated — it ships `enabled: false, dry_run: true`, and an assertion still blocks
 > the submit there. The comment quoted above predates that amendment. What has not
 > changed is the direction of the guarantee: an inferred class is weaker than a
@@ -5659,7 +5659,7 @@ Two practical consequences follow, and both are stated in `CLAUDE.md`:
 
 ### 7.1 The dependency graph
 
-Inside `scripts/lib/`, the arrows point one way. There are no cycles.
+Inside `src/lib/`, the arrows point one way. There are no cycles.
 
 ```text
 keywords.mjs          (imports nothing at all — the leaf)

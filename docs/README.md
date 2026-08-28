@@ -34,7 +34,7 @@ to follow it.
 | #                                   | area                    | covers                                                                      |
 | ----------------------------------- | ----------------------- | --------------------------------------------------------------------------- |
 | [00](code/00-file-index.md)         | File index              | every file in the repository, with the document that explains it            |
-| [01](code/01-lib-foundation.md)     | `scripts/lib/`          | shared helpers, the database layer, the skill lexicon, injection defence    |
+| [01](code/01-lib-foundation.md)     | `src/lib/`              | shared helpers, the database layer, the skill lexicon, injection defence    |
 | [02](code/02-leads-finding.md)      | Finding jobs            | every board fetcher, the ingest gates, dedupe                               |
 | [03](code/03-leads-screening.md)    | Screening jobs          | the L0–L3 stages, scam and ghost-job detection                              |
 | [04](code/04-leads-ranking.md)      | Ranking and sources     | the ranking formula, board discovery and yield                              |
@@ -79,7 +79,7 @@ them breaks it.
 | `job-sources.yaml`                           | **yours.** the boards swept by `find-jobs`, `enrich`, `board-yield`     |
 | `tailoring-rules.md`                         | loaded by the tailoring skills at runtime — an instruction to the model |
 | `board-candidates.yaml`, `candidates/*.yaml` | `find-boards.mjs`                                                       |
-| `perf-baseline.json`                         | `.github/workflows/perf-gate.mjs`                                       |
+| `perf-baseline.json`                         | `tools/ci/perf-gate.mjs`                                                |
 | `measurements.md`                            | appended to by the benchmark harnesses                                  |
 
 See [operate/04-config-reference.md](operate/04-config-reference.md) for the

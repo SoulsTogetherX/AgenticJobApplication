@@ -11,9 +11,9 @@ const ROOT = path.resolve(
   "..",
   "..",
 )
-const GUARD_FILES = path.join(ROOT, "scripts", "hooks", "guard-files.mjs")
-const GUARD_BASH = path.join(ROOT, "scripts", "hooks", "guard-bash.mjs")
-const PRETTIFY = path.join(ROOT, "scripts", "hooks", "prettify.mjs")
+const GUARD_FILES = path.join(ROOT, "src", "hooks", "guard-files.mjs")
+const GUARD_BASH = path.join(ROOT, "src", "hooks", "guard-bash.mjs")
+const PRETTIFY = path.join(ROOT, "src", "hooks", "prettify.mjs")
 
 function runHook(script, payload) {
   const res = spawnSync(process.execPath, [script], {
@@ -85,7 +85,7 @@ test("guard-files allows any writes inside the project, including new files", ()
     write(path.join(ROOT, "jobs", "acme-dev", "resume.md")),
     write(path.join(ROOT, "totally-new-file.md")), // development freedom
     edit(path.join(ROOT, "docs", "tailoring-rules.md")),
-    edit(path.join(ROOT, "scripts", "hooks", "guard-files.mjs")),
+    edit(path.join(ROOT, "src", "hooks", "guard-files.mjs")),
   ]
   for (const payload of allowed) {
     const { decision } = runHook(GUARD_FILES, payload)
@@ -109,7 +109,7 @@ test("guard-bash no longer blocks file management commands", () => {
     "Remove-Item stale.log",
     "git checkout -- docs/tailoring-rules.md", // path restore, not a branch switch
     "npm test",
-    "node scripts/new-job.mjs acme --company Acme --title Dev",
+    "node src/new-job.mjs acme --company Acme --title Dev",
     "git status",
     "git log --oneline -5",
   ]
@@ -214,7 +214,7 @@ test("guard-bash allows read-only git branch queries", () => {
     "git status && git branch --show-current",
     "git worktree list",
     "git checkout -p",
-    "git checkout -- scripts/hooks/guard-bash.mjs",
+    "git checkout -- src/hooks/guard-bash.mjs",
   ]
   for (const c of allowed) {
     const { decision } = runHook(GUARD_BASH, bash(c))
@@ -313,7 +313,7 @@ test("guard-bash reads a heredoc body as data, not as commands", () => {
         "Three bypasses existed: git checkout -B main was allowed, and so",
         "was git -C . checkout main. Both now deny.",
         "EOF",
-        "git commit -F /tmp/ci.txt -- scripts/hooks/guard-bash.mjs",
+        "git commit -F /tmp/ci.txt -- src/hooks/guard-bash.mjs",
       ].join("\n"),
       // Unquoted delimiter.
       "cat > f <<EOF\ngit checkout main\nEOF\ngit commit -F f",

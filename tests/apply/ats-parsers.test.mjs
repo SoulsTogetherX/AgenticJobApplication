@@ -8,7 +8,7 @@ import {
   parseJobviteFeed,
   parseSuccessFactorsPage,
   parseSuccessFactorsTotal,
-} from "../../scripts/leads/find-jobs.mjs"
+} from "../../src/leads/find-jobs.mjs"
 
 const JOBVITE_BOARD = { slug: "agscareer", company: "AGS" }
 

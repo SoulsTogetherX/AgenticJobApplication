@@ -8,19 +8,19 @@
 // Jobs whose application ended in rejection or silence count double — those
 // are the requirements that are actually costing interviews.
 //
-// Usage: node scripts/profile/profile-gaps.mjs [--json] [--min-demand N]
+// Usage: node src/profile/profile-gaps.mjs [--json] [--min-demand N]
 //        [--profile <path>] [--jobs-dir <path>] [--leads <path>] [--applications <path>]
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { loadYamlFile, isTerse } from "../lib/lib.mjs"
+import { loadYamlFile, isTerse } from "#lib/lib.mjs"
 import {
   readLeadStore,
   resolveLeadSource,
   readApplications,
   openDb,
   keywordMap,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 
@@ -31,8 +31,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 // drove verify-claims R6 — and they had already drifted apart in both
 // directions. Re-exported rather than moved outright so existing importers
 // (recommend.mjs, find-jobs.mjs) keep working unchanged.
-export { TECH_LEXICON, extractTech } from "../lib/keywords.mjs"
-import { TECH_LEXICON, extractTech } from "../lib/keywords.mjs"
+export { TECH_LEXICON, extractTech } from "#lib/keywords.mjs"
+import { TECH_LEXICON, extractTech } from "#lib/keywords.mjs"
 
 // Flatten every string in the profile into one searchable blob.
 export function profileText(profile) {

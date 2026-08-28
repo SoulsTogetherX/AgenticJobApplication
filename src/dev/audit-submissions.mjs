@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // AUDIT — did the clicks this repo recorded as submissions actually submit?
 //
-// Usage: node scripts/dev/audit-submissions.mjs [--json]
+// Usage: node src/dev/audit-submissions.mjs [--json]
 //
 // WHY THIS EXISTS. Every live click this pipeline has made classified
 // `unclassified`, and not one carries a confirmation_url. That is consistent
@@ -44,7 +44,7 @@ const STAGE_DIR = path.join(ROOT, "jobs", ".auto", "post-submit")
 
 // THE TEST, and it is deliberately the crude one. A confirmation page has
 // stopped offering the submit. This is not a classifier and must never grow
-// into one — `scripts/auto/classify.mjs` owns that, bounded by captured
+// into one — `src/auto/classify.mjs` owns that, bounded by captured
 // evidence per host. Here the only job is to sort pages into "obviously still
 // the form" and "everything else a human should look at".
 //
@@ -179,7 +179,7 @@ function main(argv = process.argv.slice(2)) {
     )
   console.log(
     `\nNothing here changes the ledger. Correct a wrong row with:\n` +
-      `  node scripts/applications/applications.mjs remove <slug> --confirm`,
+      `  node src/applications/applications.mjs remove <slug> --confirm`,
   )
   return 0
 }

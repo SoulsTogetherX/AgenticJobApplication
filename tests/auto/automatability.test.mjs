@@ -13,13 +13,13 @@ import {
   tierCounts,
   TIERS,
   DEFAULT_CACHE_MAX_AGE_DAYS,
-} from "../../scripts/apply/automatability.mjs"
-import { STAGE_IDS } from "../../scripts/leads/stages.mjs"
-import { isEvaluable } from "../../scripts/leads/fit.mjs"
+} from "../../src/apply/automatability.mjs"
+import { STAGE_IDS } from "../../src/leads/stages.mjs"
+import { isEvaluable } from "../../src/leads/fit.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SOURCE = fs.readFileSync(
-  path.resolve(HERE, "../../scripts/apply/automatability.mjs"),
+  path.resolve(HERE, "../../src/apply/automatability.mjs"),
   "utf8",
 )
 
@@ -809,10 +809,10 @@ const ROUND_TRIP_CASES = [
 ]
 
 test("EVERY SHAPE THAT CLASSIFIES GREEN PRODUCES A PLAN submitReadiness ACCEPTS", async () => {
-  const { recordCache } = await import("../../scripts/apply/field-cache.mjs")
+  const { recordCache } = await import("../../src/apply/field-cache.mjs")
   const { buildPlan, submitReadiness, resolveFields } =
-    await import("../../scripts/apply/fill-plan.mjs")
-  const { detectAts } = await import("../../scripts/apply/ats/index.mjs")
+    await import("../../src/apply/fill-plan.mjs")
+  const { detectAts } = await import("../../src/apply/ats/index.mjs")
   const files = { resume: "C:\\jobs\\x\\resume.pdf" }
   const adapter = detectAts(GH_URL)
   let greens = 0

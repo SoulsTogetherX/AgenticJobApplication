@@ -2,7 +2,7 @@
 // SUBMIT CLICK (§4.10). Phase 5 W1.
 //
 // tests/auto/click-surface.test.mjs asserts that `.click(` appears under
-// scripts/auto/ only here and in advance.mjs, and that advance.mjs refuses any
+// src/auto/ only here and in advance.mjs, and that advance.mjs refuses any
 // control whose scanned role is `submit`. That test is the enforcement; this
 // comment is only the explanation.
 //

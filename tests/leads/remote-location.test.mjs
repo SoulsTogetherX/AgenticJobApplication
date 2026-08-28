@@ -15,7 +15,7 @@ import {
   passesLimits,
   matchesAny,
   US_WIDE_LOCATION,
-} from "../../scripts/leads/find-jobs.mjs"
+} from "../../src/leads/find-jobs.mjs"
 
 const LIMITS = {
   location: {

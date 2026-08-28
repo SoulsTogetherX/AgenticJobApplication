@@ -1,4 +1,4 @@
-// Tests for the 0.12 prevalence harness (scripts/dev/bench-green-prevalence.mjs).
+// Tests for the 0.12 prevalence harness (src/dev/bench-green-prevalence.mjs).
 //
 // WHAT THESE ARE FOR. The harness reports a number that gates the autonomy
 // supply math, and its one real risk is silent drift: it BUCKETS strings that
@@ -21,9 +21,9 @@ import {
   selfCheck,
   allFieldsAsScanner,
   analyseCache,
-} from "../../scripts/dev/bench-green-prevalence.mjs"
-import { loadCache, CACHE_VERSION } from "../../scripts/apply/field-cache.mjs"
-import { resolveFieldsFromFiles } from "../../scripts/apply/answer-bank.mjs"
+} from "../../src/dev/bench-green-prevalence.mjs"
+import { loadCache, CACHE_VERSION } from "../../src/apply/field-cache.mjs"
+import { resolveFieldsFromFiles } from "../../src/apply/answer-bank.mjs"
 
 test("every rule shapeBlockers() actually emits lands in a known bucket", () => {
   const results = selfCheck()

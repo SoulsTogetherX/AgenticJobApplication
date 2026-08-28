@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { validateJob, validateContext } from "../../scripts/lib/lib.mjs"
+import { validateJob, validateContext } from "../../src/lib/lib.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -16,7 +16,7 @@ const ROOT = path.resolve(
 function run(argsArr, opts = {}) {
   return spawnSync(
     process.execPath,
-    [path.join(ROOT, "scripts", "documents", "new-job.mjs"), ...argsArr],
+    [path.join(ROOT, "src", "documents", "new-job.mjs"), ...argsArr],
     { cwd: ROOT, encoding: "utf8", ...opts },
   )
 }

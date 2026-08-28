@@ -6,7 +6,7 @@
 // source of truth, and profile/applications.yaml is regenerated from it after
 // every write. The guardrail is unchanged; only the file underneath it is.
 //
-// Usage: node scripts/applications/log-application.mjs <slug> --company "X" --title "Y"
+// Usage: node src/applications/log-application.mjs <slug> --company "X" --title "Y"
 //        [--url <url>] [--date YYYY-MM-DD] [--notes "..."] [--file <yaml>]
 // --file forces the legacy YAML-only path, which is what the tests use.
 import fs from "node:fs"
@@ -64,7 +64,7 @@ if (dup) {
   console.error(
     `Already logged: applied to ${dup.company} — ${dup.title} on ${dup.applied_at} (slug ${dup.slug}).\n` +
       `Change it with update-application.mjs, or remove it with:\n` +
-      `  node scripts/applications/applications.mjs remove ${dup.slug} --confirm`,
+      `  node src/applications/applications.mjs remove ${dup.slug} --confirm`,
   )
   process.exit(1)
 }

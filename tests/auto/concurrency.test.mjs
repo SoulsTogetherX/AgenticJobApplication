@@ -22,15 +22,15 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-import { runCampaign } from "../../scripts/auto/auto-apply.mjs"
-import { runPool, originCount } from "../../scripts/auto/pool.mjs"
+import { runCampaign } from "../../src/auto/auto-apply.mjs"
+import { runPool, originCount } from "../../src/auto/pool.mjs"
 import {
   openDb,
   enqueueAutoJobs,
   recordVerification,
   readAutoQueue,
   readOrphanAttempts,
-} from "../../scripts/lib/db.mjs"
+} from "../../src/lib/db.mjs"
 
 const DOC_SHA = "a".repeat(64)
 const PROFILE_SHA = "b".repeat(64)

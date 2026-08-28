@@ -2,7 +2,7 @@
 // Build jobs/leads.db from the on-disk sources. Deterministic, no LLM.
 //
 // FLAT, NOT VERSIONED. There is no migration chain and no schema_version
-// table: scripts/lib/db.mjs declares the whole schema with CREATE TABLE IF NOT
+// table: src/lib/db.mjs declares the whole schema with CREATE TABLE IF NOT
 // EXISTS, and this script re-imports from the files that are still the
 // user-owned source of truth. Running it twice is a no-op, running it after a
 // schema addition just fills in the new tables. A single-user tool whose
@@ -52,9 +52,9 @@
 // application to the same company. auto_submissions is never touched by this
 // script at all — that is the ledger of record.
 //
-// Usage: node scripts/maintenance/migrate.mjs [--dry-run] [--db <path>]
+// Usage: node src/maintenance/migrate.mjs [--dry-run] [--db <path>]
 //        [--leads-json <path>] [--applications <path>] [--reset-queue]
-//        node scripts/maintenance/migrate.mjs --export <file>   # snapshot leads
+//        node src/maintenance/migrate.mjs --export <file>   # snapshot leads
 import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"

@@ -27,9 +27,9 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
-import { resolveIntent, typeQuestion } from "../../scripts/apply/intents.mjs"
-import { createResolver } from "../../scripts/apply/answer-bank.mjs"
-import { buildPlan } from "../../scripts/apply/fill-plan.mjs"
+import { resolveIntent, typeQuestion } from "../../src/apply/intents.mjs"
+import { createResolver } from "../../src/apply/answer-bank.mjs"
+import { buildPlan } from "../../src/apply/fill-plan.mjs"
 
 // A self-contained fact base. Written to a temp dir rather than
 // tests/fixtures/ (another owner's directory) and never near profile/, which
@@ -614,7 +614,7 @@ test("the resolution path contains no model call and no network call", () => {
   // exercised by these fixtures would still be a live path in production.
   for (const f of ["intents.mjs", "answer-bank.mjs", "disclosure.mjs"]) {
     const src = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "..", "scripts", "apply", f),
+      path.join(import.meta.dirname, "..", "..", "src", "apply", f),
       "utf8",
     )
     assert.doesNotMatch(

@@ -14,7 +14,7 @@ import {
   lintHtml,
   lintPdf,
   checkCoverage,
-} from "../../scripts/documents/ats-lint.mjs"
+} from "../../src/documents/ats-lint.mjs"
 
 // render-pdf.mjs validates its argv at module top level and process.exit(2)s
 // when there is none, so it cannot be imported — the existing render-pdf test
@@ -207,7 +207,7 @@ test("a real rendered resume passes the linter", (t) => {
   const pdf = path.join(dir, "resume.pdf")
   const render = spawnSync(
     process.execPath,
-    [path.join(ROOT, "scripts", "documents", "render-pdf.mjs"), md, pdf],
+    [path.join(ROOT, "src", "documents", "render-pdf.mjs"), md, pdf],
     { cwd: ROOT, encoding: "utf8", timeout: 90_000 },
   )
   if (render.status === 3) {
@@ -219,7 +219,7 @@ test("a real rendered resume passes the linter", (t) => {
   const lint = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "documents", "ats-lint.mjs"),
+      path.join(ROOT, "src", "documents", "ats-lint.mjs"),
       md,
       "--pdf",
       pdf,

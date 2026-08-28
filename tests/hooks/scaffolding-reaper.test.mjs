@@ -1,4 +1,4 @@
-// Tests for the scaffolding reaper (.github/workflows/scaffolding-reaper.mjs).
+// Tests for the scaffolding reaper (tools/ci/scaffolding-reaper.mjs).
 //
 // The reaper's whole value is that it can go RED. On this repo it currently
 // finds zero declared artifacts, so a run against the real tree proves
@@ -26,7 +26,7 @@ const ROOT = path.resolve(
   "..",
   "..",
 )
-const REAPER = path.join(ROOT, ".github", "workflows", "scaffolding-reaper.mjs")
+const REAPER = path.join(ROOT, "tools", "ci", "scaffolding-reaper.mjs")
 
 function fixture(files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reaper-fixture-"))
@@ -90,7 +90,7 @@ test("an artifact that outlived its phase FAILS the build, and is named", (t) =>
 
 test("scaffolding with NO remove_after fails — an unbounded promise is the defect", (t) => {
   const dir = fixture({
-    "scripts/dev/helper.mjs": `#!/usr/bin/env node
+    "src/dev/helper.mjs": `#!/usr/bin/env node
 // A development helper.
 // scaffolding: true
 // owner: innov-perf
@@ -220,7 +220,7 @@ example:
 
 test("a declaration below the leading block is not read — only the top counts", (t) => {
   const dir = fixture({
-    "scripts/thing.mjs": `#!/usr/bin/env node
+    "src/thing.mjs": `#!/usr/bin/env node
 // A real module.
 export const x = 1
 
@@ -246,7 +246,7 @@ remove_after: phase-1
 
 test("a leading comment block in a script IS read, so helpers are covered too", (t) => {
   const dir = fixture({
-    "scripts/dev/harness.mjs": `#!/usr/bin/env node
+    "src/dev/harness.mjs": `#!/usr/bin/env node
 // Benchmark harness.
 // scaffolding: true
 // remove_after: phase-2

@@ -25,8 +25,8 @@
 // manage-sources (CLAUDE.md rule 10 territory: the sweep list is user policy).
 //
 // Usage:
-//   node scripts/leads/find-boards.mjs --names "Acme,Globex" [--out docs/board-candidates.yaml]
-//   node scripts/leads/find-boards.mjs --file docs/candidates/fortune500.yaml [--limit 100]
+//   node src/leads/find-boards.mjs --names "Acme,Globex" [--out docs/board-candidates.yaml]
+//   node src/leads/find-boards.mjs --file docs/candidates/fortune500.yaml [--limit 100]
 //   [--concurrency 6] [--json] [--append]
 import fs from "node:fs"
 import path from "node:path"
@@ -228,7 +228,7 @@ async function main() {
     fs.mkdirSync(path.dirname(outPath), { recursive: true })
     fs.writeFileSync(
       outPath,
-      "# Board candidates discovered by scripts/leads/find-boards.mjs.\n" +
+      "# Board candidates discovered by src/leads/find-boards.mjs.\n" +
         "# NOT swept yet — run discover-boards.mjs to yield-gate these, then add\n" +
         "# the survivors with manage-sources. Nothing here touches job-sources.yaml.\n" +
         yaml.dump({ candidates: merged }),
@@ -256,7 +256,7 @@ async function main() {
     }
     console.log(`\nNext, yield-gate them before adding any:`)
     console.log(
-      `  node scripts/leads/discover-boards.mjs --candidates ${outPath}\n`,
+      `  node src/leads/discover-boards.mjs --candidates ${outPath}\n`,
     )
   } else {
     console.log("No new boards found.\n")

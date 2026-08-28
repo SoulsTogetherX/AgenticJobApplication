@@ -15,14 +15,14 @@ import {
   applicability,
   preferApplicable,
   APPLICABILITY,
-} from "../../scripts/leads/prep-queue.mjs"
+} from "../../src/leads/prep-queue.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
 )
-const SCRIPT = path.join(ROOT, "scripts", "leads", "prep-queue.mjs")
+const SCRIPT = path.join(ROOT, "src", "leads", "prep-queue.mjs")
 
 const lead = (n, over = {}) => ({
   id: `gh:${n}`,
@@ -495,7 +495,7 @@ test("CLI: a lead screening already REJECTED is left out of the queue and counte
   // (three of the top twenty on 2026-08-17). The verdict read is the same one
   // the runner's trust gate reads — model first, mechanical fallback.
   const { openDb, upsertLeads, recordScreens } =
-    await import("../../scripts/lib/db.mjs")
+    await import("../../src/lib/db.mjs")
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prep-queue-screened-"))
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
   const dbFile = path.join(dir, "leads.db")

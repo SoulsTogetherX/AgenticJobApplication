@@ -18,7 +18,7 @@ import {
   titleScore,
   isFlatRanking,
   rankLeads,
-} from "../../scripts/leads/recommend.mjs"
+} from "../../src/leads/recommend.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -145,7 +145,7 @@ function runRecommend(leads, extra = []) {
     return spawnSync(
       process.execPath,
       [
-        path.join(ROOT, "scripts", "leads", "recommend.mjs"),
+        path.join(ROOT, "src", "leads", "recommend.mjs"),
         "--leads",
         leadsPath,
         "--jobs-dir",

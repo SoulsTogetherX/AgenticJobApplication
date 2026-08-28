@@ -15,7 +15,7 @@ defect report, not a merge veto.
 ## What you own
 
 `tests/security/*`, `tests/fixtures/*` (hostile job ads, fake ATS boards,
-malformed scans), `scripts/dev/bench-*.mjs`, `tests/dev/*`.
+malformed scans), `src/dev/bench-*.mjs`, `tests/dev/*`.
 
 You may **read** anything. When an attack proves a defect in product code, the
 repro and the failing test are yours; **the fix is the implementer's** — report

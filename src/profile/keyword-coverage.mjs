@@ -34,14 +34,14 @@
 // fact base. It prints the save-answer.mjs command; the user answers in chat.
 //
 // Usage:
-//   node scripts/profile/keyword-coverage.mjs [--min-demand 2] [--top 40]
+//   node src/profile/keyword-coverage.mjs [--min-demand 2] [--top 40]
 //        [--include-dismissed] [--job jobs/<slug>/job.json] [--json]
 //        [--profile <p>] [--answers <a>] [--leads <l>]
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { loadYamlFile, isTerse, evidenceText } from "../lib/lib.mjs"
-import { extractTech, adjacentTo, SKILL_BY_NAME } from "../lib/keywords.mjs"
+import { loadYamlFile, isTerse, evidenceText } from "#lib/lib.mjs"
+import { extractTech, adjacentTo, SKILL_BY_NAME } from "#lib/keywords.mjs"
 import { splitRequirements } from "../leads/fit.mjs"
 import { profileText } from "./profile-gaps.mjs"
 import {
@@ -49,7 +49,7 @@ import {
   resolveLeadSource,
   openDb,
   keywordMap,
-} from "../lib/db.mjs"
+} from "#lib/db.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 

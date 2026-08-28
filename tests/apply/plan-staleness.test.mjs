@@ -18,14 +18,14 @@ import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { newestInputMtime } from "../../scripts/apply/pending-questions.mjs"
+import { newestInputMtime } from "../../src/apply/pending-questions.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
 )
-const SCRIPT = path.join(ROOT, "scripts", "apply", "pending-questions.mjs")
+const SCRIPT = path.join(ROOT, "src", "apply", "pending-questions.mjs")
 
 // Far enough either side of the threshold that filesystem timestamp
 // granularity cannot make the assertion flap.
@@ -169,7 +169,7 @@ test("banking an answer makes every earlier plan stale", () => {
 
 test("newestInputMtime rises when a planner source is touched", () => {
   const before = newestInputMtime()
-  const probe = path.join(ROOT, "scripts", "apply", "fill-plan.mjs")
+  const probe = path.join(ROOT, "src", "apply", "fill-plan.mjs")
   const stat = fs.statSync(probe)
   try {
     const bumped = (before + DAY) / 1000

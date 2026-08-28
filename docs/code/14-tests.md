@@ -71,7 +71,7 @@ import assert from "node:assert/strict"
 
 Here is a complete, real test, from
 [`tests/lib/lib.test.mjs`](../../tests/lib/lib.test.mjs). It exercises
-`extractNumbers`, a function in `scripts/lib/lib.mjs` that pulls every number
+`extractNumbers`, a function in `src/lib/lib.mjs` that pulls every number
 out of a piece of text so that `verify-claims.mjs` can later check whether a
 number on your resume appears anywhere in your fact base:
 
@@ -157,7 +157,7 @@ six months later who has no idea what the test was for. From
 assert.deepEqual(
   offenders,
   [],
-  `these files under scripts/auto/ contain a click and are not permitted to: ` +
+  `these files under src/auto/ contain a click and are not permitted to: ` +
     `${offenders.join(", ")}. The click surface is exactly ` +
     `${[...PERMITTED.keys()].join(" and ")} (§4.10, §4.11).`,
 )
@@ -251,7 +251,7 @@ fullstack-generalist--default-budget.md
 fullstack-hostile.md       fullstack-hostile-clean.md
 ```
 
-Each is a complete tailored resume that `scripts/documents/assemble-resume.mjs`
+Each is a complete tailored resume that `src/documents/assemble-resume.mjs`
 produced for the matching job in `tests/documents/assemble/jobs/`. The test in
 [`tests/documents/assemble-resume.test.mjs`](../../tests/documents/assemble-resume.test.mjs)
 is named
@@ -387,7 +387,7 @@ Nobody found that by reading code. A test found it, named it, and the count
 being identical across both runs is what proved the fix did not delete the test
 instead of fixing the bug.
 
-**The suite being green over a real hole.** `scripts/auto/` once shipped with a
+**The suite being green over a real hole.** `src/auto/` once shipped with a
 literal NUL byte inside a string sentinel (`origin ?? "\0no-origin"`). Prettier
 formatted the file and left it alone. `node --check` parsed it. Every unit test
 passed, because the **value** was correct. `git diff` showed nothing unusual.
@@ -406,7 +406,7 @@ catch, the fix has two halves, and the second half is a test.
 is exactly two files. You cannot observe that by running anything — a file that
 is never called still contains the click, and the day someone calls it is the
 day it matters. So `tests/auto/click-surface.test.mjs` reads every `.mjs` under
-`scripts/auto/`, strips comment lines (so that a future author quoting
+`src/auto/`, strips comment lines (so that a future author quoting
 `locator.click()` in an explanation does not fail the build and then get the
 test loosened to accommodate them), and matches `/\.click\s*\(/` against what is
 left. Its own header is careful about when this is legitimate:
@@ -470,12 +470,12 @@ So `npm test` does not run `node --test`. It runs a program that runs
 
 ```json
 "scripts": {
-  "test": "node .github/workflows/test-gate.mjs full",
-  "test:security": "node .github/workflows/test-gate.mjs security"
+  "test": "node tools/ci/test-gate.mjs full",
+  "test:security": "node tools/ci/test-gate.mjs security"
 }
 ```
 
-[`.github/workflows/test-gate.mjs`](../../.github/workflows/test-gate.mjs)
+[`tools/ci/test-gate.mjs`](../../tools/ci/test-gate.mjs)
 states its purpose in its first paragraph: `node --test` exits 0 when it runs
 zero tests, so the exit code alone is worthless as evidence.
 
@@ -483,7 +483,7 @@ zero tests, so the exit code alone is worthless as evidence.
 `*.yaml` from that directory and ignores everything else, so a `.mjs` file there
 is inert to Actions while sitting beside the workflow that calls it. That is an
 ownership convenience, not a requirement — the file's own header notes that
-moving it to `scripts/ci/` would be a two-line change.)
+moving it to `src/ci/` would be a two-line change.)
 
 ## 2.2 What the gate actually asserts
 
@@ -759,7 +759,7 @@ see [`12-harness-and-ci.md`](12-harness-and-ci.md), Part 2.
 
 # Part 3 — What is in `tests/`, directory by directory
 
-`tests/` mirrors `scripts/` one-for-one: `tests/leads/` tests `scripts/leads/`,
+`tests/` mirrors `src/` one-for-one: `tests/leads/` tests `src/leads/`,
 and so on. Three directories break the mirror and each has a reason —
 `tests/security/`, `tests/hooks/` and `tests/fixtures/`.
 
@@ -803,7 +803,7 @@ turned into assertions.
 | `board-fidelity.test.mjs`   | 415   | the fixtures are faithful: each label in a scan JSON is re-derived from the HTML actually served, so the HTML and its scan cannot drift apart.                                                                                                  |
 | `scan-fidelity.test.mjs`    | 312   | the stronger version of the same: every scan fixture is deep-compared against what the **real** `scan-page.js` produces for its page — `sel`, `t`, `lSeen`, `labelExact`, field order and all.                                                  |
 | `fixture-origins.test.mjs`  | 449   | the concurrency gate's denominator: eight fixture employers on one loopback port are eight **tenants**, not eight **origins**, and the in-flight exclusion key is the registrable origin.                                                       |
-| `source-bytes.test.mjs`     | 139   | no raw control byte appears in any text file under `scripts/`, `tests/` or `docs/`. The NUL-byte incident from 1.6, made mechanical.                                                                                                            |
+| `source-bytes.test.mjs`     | 139   | no raw control byte appears in any text file under `src/`, `tests/` or `docs/`. The NUL-byte incident from 1.6, made mechanical.                                                                                                                |
 
 Two things to notice about how this suite is written.
 
@@ -912,7 +912,7 @@ gitignored.
 
 These five files plus `empty.md` are the smallest, clearest corpus in the
 repository. Each is a resume or cover letter containing exactly one kind of lie,
-and each pins one numbered rule in `scripts/documents/verify-claims.mjs`.
+and each pins one numbered rule in `src/documents/verify-claims.mjs`.
 
 | fixture                     | what is wrong with it                                                               | rule it proves                                                                                                    |
 | --------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -998,7 +998,7 @@ waterfall uses, hosting the **real** `scan-page.js`.
 ## 4.4 `tests/fixtures/hostile/`
 
 **`bypasses.mjs`** exports 25 entries, each a way to smuggle an instruction past
-`scripts/lib/untrusted.mjs`. Every entry carries the same fields — `id`,
+`src/lib/untrusted.mjs`. Every entry carries the same fields — `id`,
 `carrier`, `payload`, `plain`, `html`, `claim`, `consumer` — and every one aims
 at the same outcome on purpose: get the word **Kubernetes** onto a document
 signed with your name. Uniform target, so the assertion is falsifiable ("did the
@@ -1154,7 +1154,7 @@ The asymmetry is what makes an empty corpus the right answer rather than a gap:
 Writing a plausible regex from an idea of what Greenhouse says after a submit is
 rule 0's forbidden guess with the model removed and this repository's
 imagination left in. The only lawful way to fill this corpus is the user's own
-attended applies, through `scripts/apply/capture-post-submit.mjs`: **stage**
+attended applies, through `src/apply/capture-post-submit.mjs`: **stage**
 (redacts against `profile/` and generic identifier patterns, and refuses to
 write anything if an identifier survived) → **review** (a human reads the
 redacted text) → **promote** `--kind confirmation --user-approved`. Promoting a
@@ -1175,15 +1175,15 @@ find tests  -name '*.test.mjs' | sort  # 123 files
 
 Then, for each script, ask two questions:
 
-1. Is there a test file with the matching name — `scripts/leads/risk.mjs` →
+1. Is there a test file with the matching name — `src/leads/risk.mjs` →
    `tests/leads/risk.test.mjs`?
 2. Failing that, does **any** file under `tests/` reference it — by import path
-   (`../../scripts/leads/risk.mjs`), by spawn path
+   (`../../src/leads/risk.mjs`), by spawn path
    (`path.join(ROOT, "scripts", "leads", "risk.mjs")`), or by name?
 
 Question 1 alone is misleading in both directions. Several scripts have no
-same-named test and are thoroughly covered: `scripts/apply/fill-engine.mjs` is
-referenced by eleven test files and `scripts/apply/browser.mjs` by nine — they
+same-named test and are thoroughly covered: `src/apply/fill-engine.mjs` is
+referenced by eleven test files and `src/apply/browser.mjs` by nine — they
 are libraries, and their behaviour is asserted wherever it matters rather than
 in one place. Conversely, a same-named test file that only checks the CLI's
 usage message is not coverage.
@@ -1198,15 +1198,15 @@ those undercounts.)
 **Three scripts have no test coverage of any kind.** No same-named test file, no
 importer under `tests/`, no spawn.
 
-| script                        | size / role                                                                                    | status                                                                                                                                                                                                                                                       |
-| ----------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `scripts/apply/longform.mjs`  | 199 lines exporting `parseLengthDemand`, `longFormPrompt`, `describeNeed`, `draftShortfall`    | **dead.** A repo-wide search finds no importer anywhere in `scripts/`, `.claude/` or `tests/` — only mentions in documentation. It has a 35-line header arguing carefully why it is lawful under rule 1, and it is wired to nothing and asserted by nothing. |
-| `scripts/auto/cycle.mjs`      | ~420 lines; the only end-to-end unattended entry point (find → screen → prep → tailor → apply) | **live but unasserted.** Invoked by `scripts/auto/cycle.cmd` for a scheduler. Its header states two testable contracts — "a stage that fails for one lead does not change the exit code" and "IDEMPOTENT ON PURPOSE" — and nothing proves either.            |
-| `scripts/apply/ats/lever.mjs` | one adapter in the ATS registry                                                                | reached only through the registry — read the qualification below before calling this a gap.                                                                                                                                                                  |
+| script                    | size / role                                                                                    | status                                                                                                                                                                                                                                                   |
+| ------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/apply/longform.mjs`  | 199 lines exporting `parseLengthDemand`, `longFormPrompt`, `describeNeed`, `draftShortfall`    | **dead.** A repo-wide search finds no importer anywhere in `src/`, `.claude/` or `tests/` — only mentions in documentation. It has a 35-line header arguing carefully why it is lawful under rule 1, and it is wired to nothing and asserted by nothing. |
+| `src/auto/cycle.mjs`      | ~420 lines; the only end-to-end unattended entry point (find → screen → prep → tailor → apply) | **live but unasserted.** Invoked by `src/auto/cycle.cmd` for a scheduler. Its header states two testable contracts — "a stage that fails for one lead does not change the exit code" and "IDEMPOTENT ON PURPOSE" — and nothing proves either.            |
+| `src/apply/ats/lever.mjs` | one adapter in the ATS registry                                                                | reached only through the registry — read the qualification below before calling this a gap.                                                                                                                                                              |
 
 The third row needs an honest qualification, and it is the reason a raw
 "no test file" list is never the whole answer. `ashby.mjs` and `lever.mjs` are
-imported by `scripts/apply/ats/index.mjs`, and six test files import that
+imported by `src/apply/ats/index.mjs`, and six test files import that
 registry. `tests/apply/fill-plan.test.mjs` asserts both by URL:
 
 ```js
@@ -1224,14 +1224,14 @@ as well as the real upload slot. Ashby now has two dedicated files
 the issue; Lever has none, and Lever's adapter detail is therefore asserted only
 where a fixture happens to touch it.
 
-> **Known defect (2026-08-05 audit), `scripts/apply/longform.mjs`.** A module
+> **Known defect (2026-08-05 audit), `src/apply/longform.mjs`.** A module
 > that exists but never runs is the shape that later gets mistaken for a live
 > control. A reader assumes prose prompts are handled, and they are not. The
 > audit's recommendation is to wire it into `fill-plan.mjs`'s defer path — which
 > currently hardcodes `why: "needs a document or long-form text"` — **with
 > tests**, or to delete it.
 
-> **Known defect (2026-08-05 audit), `scripts/auto/cycle.mjs`.** The one
+> **Known defect (2026-08-05 audit), `src/auto/cycle.mjs`.** The one
 > scheduled entry point has no test file. A concrete failing input exists today:
 > a lead whose `keyword-plan` stage exits non-zero should leave the other leads
 > processed and the cycle exit 0, and nothing proves it does.
@@ -1240,32 +1240,32 @@ where a fixture happens to touch it.
 at least one test.** Most are fine. The ones worth naming, with the count of
 test files that touch them:
 
-| script                          | referenced by | how                                                                               |
-| ------------------------------- | ------------- | --------------------------------------------------------------------------------- |
-| `scripts/apply/fill-engine.mjs` | 11            | imported by the fill and scan tests, and by the security suite                    |
-| `scripts/apply/browser.mjs`     | 9             | imported wherever a real or fake page is driven                                   |
-| `scripts/apply/ats/index.mjs`   | 8             | `detectAts` / `ADAPTERS` — six of those are direct imports                        |
-| `scripts/apply/scan-engine.mjs` | 7             | imported by the scan and fidelity tests                                           |
-| `scripts/leads/screen.mjs`      | 3             | `efficiency-tools` and `screen-blockers` import it; `screen-cache` spawns the CLI |
-| `scripts/leads/recommend.mjs`   | 3             | `efficiency-tools`, `keyword-wiring`, `title-rank`                                |
-| `scripts/leads/stages.mjs`      | 3             | `automatability`, `gate-audit`, `screen-stages`                                   |
-| `scripts/status.mjs`            | 3             | `digest`, `bench-runner`, `efficiency-tools`                                      |
-| `scripts/auto/caps.mjs`         | 1             | via `audit.test.mjs`                                                              |
-| `scripts/auto/notify.mjs`       | 1             | via `inbox.test.mjs`                                                              |
-| `scripts/auto/stages.mjs`       | 1             | via `browser-leg.test.mjs`                                                        |
-| `scripts/hooks/guard-files.mjs` | 1             | via `guard-hooks.test.mjs`                                                        |
-| `scripts/hooks/prettify.mjs`    | 1             | via `guard-hooks.test.mjs`                                                        |
+| script                      | referenced by | how                                                                               |
+| --------------------------- | ------------- | --------------------------------------------------------------------------------- |
+| `src/apply/fill-engine.mjs` | 11            | imported by the fill and scan tests, and by the security suite                    |
+| `src/apply/browser.mjs`     | 9             | imported wherever a real or fake page is driven                                   |
+| `src/apply/ats/index.mjs`   | 8             | `detectAts` / `ADAPTERS` — six of those are direct imports                        |
+| `src/apply/scan-engine.mjs` | 7             | imported by the scan and fidelity tests                                           |
+| `src/leads/screen.mjs`      | 3             | `efficiency-tools` and `screen-blockers` import it; `screen-cache` spawns the CLI |
+| `src/leads/recommend.mjs`   | 3             | `efficiency-tools`, `keyword-wiring`, `title-rank`                                |
+| `src/leads/stages.mjs`      | 3             | `automatability`, `gate-audit`, `screen-stages`                                   |
+| `src/status.mjs`            | 3             | `digest`, `bench-runner`, `efficiency-tools`                                      |
+| `src/auto/caps.mjs`         | 1             | via `audit.test.mjs`                                                              |
+| `src/auto/notify.mjs`       | 1             | via `inbox.test.mjs`                                                              |
+| `src/auto/stages.mjs`       | 1             | via `browser-leg.test.mjs`                                                        |
+| `src/hooks/guard-files.mjs` | 1             | via `guard-hooks.test.mjs`                                                        |
+| `src/hooks/prettify.mjs`    | 1             | via `guard-hooks.test.mjs`                                                        |
 
 The pattern in the last five: one test file covering several small modules. That
 is a reasonable choice for a hook or a helper. It becomes a problem when the
 module grows, and the honest signal is the count — a 1 in that column next to a
-module that is doing real work is worth a second look. `scripts/leads/screen.mjs`
+module that is doing real work is worth a second look. `src/leads/screen.mjs`
 is the row to watch: it is the screening CLI, and three of the four files whose
 names contain "screen" reference it only in comments, testing the separate
 `fit.mjs` and `risk.mjs` modules instead.
 
 **And one gap that is not about scripts at all:** `loadPhases` in
-`.github/workflows/scaffolding-reaper.mjs` has no test. Its self-test uses a
+`tools/ci/scaffolding-reaper.mjs` has no test. Its self-test uses a
 hardcoded phase list, which is why nobody noticed that `package.json` declares
 `"current": "phase-5"` while `"order"` stops at `phase-4` — making
 `order.indexOf(current)` return `-1` forever and silently disabling every
@@ -1292,7 +1292,7 @@ something to leave unwritten.
 npm test
 ```
 
-This is `node .github/workflows/test-gate.mjs full`. It takes roughly two
+This is `node tools/ci/test-gate.mjs full`. It takes roughly two
 minutes on this machine (the most recent measurements in `package.json` record
 119.6 s, 120.4 s and 146.1 s — the spread is contention, per 2.5). It prints a
 per-test spec report as it goes, then a summary block. The shape is fixed by the

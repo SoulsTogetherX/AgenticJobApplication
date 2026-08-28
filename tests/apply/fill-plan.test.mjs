@@ -23,10 +23,10 @@ import {
   buildBootstrap,
   resolveFields,
   labelHazard,
-} from "../../scripts/apply/fill-plan.mjs"
-import { engineSandboxSource } from "../../scripts/apply/browser.mjs"
-import { detectAts, ADAPTERS } from "../../scripts/apply/ats/index.mjs"
-import greenhouse from "../../scripts/apply/ats/greenhouse.mjs"
+} from "../../src/apply/fill-plan.mjs"
+import { engineSandboxSource } from "../../src/apply/browser.mjs"
+import { detectAts, ADAPTERS } from "../../src/apply/ats/index.mjs"
+import greenhouse from "../../src/apply/ats/greenhouse.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -1150,7 +1150,7 @@ test("routing (which bank rule fires) still uses the matched label, not the visi
 test("a question about the name is not answered with the name", async () => {
   // Caught live on Affirm: "Name Pronunciation" was filled with "Xavier
   // Alvarez", which is not an answer to what was asked.
-  const { resolveFields } = await import("../../scripts/apply/fill-plan.mjs")
+  const { resolveFields } = await import("../../src/apply/fill-plan.mjs")
   const rows = resolveFields(
     [
       { k: "f1", t: "text", l: "Name Pronunciation" },
@@ -1889,7 +1889,7 @@ test("end to end: the CLI embeds the real engine and points the bootstrap at the
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "apply", "fill-plan.mjs"),
+      path.join(ROOT, "src", "apply", "fill-plan.mjs"),
       slug,
       "--jobs-dir",
       dir,
@@ -1910,7 +1910,7 @@ test("end to end: the CLI embeds the real engine and points the bootstrap at the
   const written = fs.readFileSync(jsPath, "utf8")
 
   // The REAL engine, not a stand-in, must be what got embedded — and it now
-  // comes from scripts/apply/fill-engine.mjs via engineSandboxSource(), which
+  // comes from src/apply/fill-engine.mjs via engineSandboxSource(), which
   // is an ordinary ESM module the local runner imports directly. The old
   // .claude/skills/apply-job/fill-page.js was only ever a string to push into
   // the page, and pushing it there was the vulnerability.
@@ -2022,7 +2022,7 @@ test("end to end: page 2's scan is never silently planned as page 1", (t) => {
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "apply", "fill-plan.mjs"),
+      path.join(ROOT, "src", "apply", "fill-plan.mjs"),
       slug,
       "--jobs-dir",
       dir,
@@ -2042,7 +2042,7 @@ test("end to end: page 2's scan is never silently planned as page 1", (t) => {
   const withPage = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "apply", "fill-plan.mjs"),
+      path.join(ROOT, "src", "apply", "fill-plan.mjs"),
       slug,
       "--jobs-dir",
       dir,
@@ -2124,7 +2124,7 @@ test("labelHazard: an instruction addressed to the agent is flagged, hidden char
 // US?", answered truthfully from the bank — produced an auto-`fill` item,
 // under a comment reading "truthfully answered, no flag". Truthfulness was
 // never the question the classifier asks. w1-security's answerClass()
-// (scripts/lib/untrusted.mjs) splits a bank answer into `datum` (a fact about
+// (src/lib/untrusted.mjs) splits a bank answer into `datum` (a fact about
 // the user) and `assertion` (something the user asserts or agrees to — work
 // authorisation, relocation, background check, arbitration), and
 // w3-resolution wired it into resolveFields()/buildPlan(): an assertion never

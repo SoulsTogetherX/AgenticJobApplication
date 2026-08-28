@@ -1,4 +1,4 @@
-// A RECORDING page double for scripts/apply/fill-engine.mjs.
+// A RECORDING page double for src/apply/fill-engine.mjs.
 //
 // WHY THIS EXISTS, and why it is not tests/apply/fill-page.test.mjs's fakePage.
 // That one is good and it is the right double for engine unit tests, but it

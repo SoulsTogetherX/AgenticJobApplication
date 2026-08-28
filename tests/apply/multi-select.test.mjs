@@ -20,18 +20,18 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import fillPage from "../../scripts/apply/fill-engine.mjs"
-import { launchBrowser } from "../../scripts/apply/browser.mjs"
+import fillPage from "../../src/apply/fill-engine.mjs"
+import { launchBrowser } from "../../src/apply/browser.mjs"
 import {
   matchOption,
   resolveFieldsFromFiles,
-} from "../../scripts/apply/answer-bank.mjs"
-import { buildPlan, readiness } from "../../scripts/apply/fill-plan.mjs"
+} from "../../src/apply/answer-bank.mjs"
+import { buildPlan, readiness } from "../../src/apply/fill-plan.mjs"
 import {
   readScannerSource,
   scannerExpression,
-} from "../../scripts/apply/scan-engine.mjs"
-import greenhouse from "../../scripts/apply/ats/greenhouse.mjs"
+} from "../../src/apply/scan-engine.mjs"
+import greenhouse from "../../src/apply/ats/greenhouse.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

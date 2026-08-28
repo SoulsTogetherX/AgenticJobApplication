@@ -39,7 +39,7 @@
 // runner's durable (slug, mode) row refuses a second attempt on a slug.
 //
 // Usage:
-//   node scripts/auto/cycle.mjs [--top N] [--limit N] [--json]
+//   node src/auto/cycle.mjs [--top N] [--limit N] [--json]
 //        [--skip-search] [--skip-apply] [--any-board] [--jobs-dir jobs]
 //
 //   --top N        leads to tailor this cycle (default 10)
@@ -61,7 +61,7 @@
 // The command, so it does not live only in a session note (it did, and the
 // note was the only place — 2026-08-17). Elevated PowerShell:
 //
-//   $act = New-ScheduledTaskAction -Execute "<repo>\scripts\auto\cycle.cmd" -Argument "--skip-apply"
+//   $act = New-ScheduledTaskAction -Execute "<repo>\src\auto\cycle.cmd" -Argument "--skip-apply"
 //   $trg = New-ScheduledTaskTrigger -Daily -At 07:00
 //   $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 //   Register-ScheduledTask -TaskName "AgenticJobApplication" -Action $act -Trigger $trg -Settings $set -User $env:USERNAME -RunLevel Limited -Force
@@ -231,20 +231,14 @@ export function prepareDocuments(slug, lead, { jobsDir, run = step }) {
   }
 
   if (!fs.existsSync(path.join(dir, "job.json"))) {
-    const r = run("scripts/documents/new-job.mjs", [
-      slug,
-      "--from-lead",
-      lead.url,
-    ])
+    const r = run("src/documents/new-job.mjs", [slug, "--from-lead", lead.url])
     if (!record("new-job", r)) return { slug, ok: false, stages }
   }
 
   // keyword-plan is the ONLY step that reads the posting, and it sanitises
   // first — hard rule 0. What it produces can move which of the user's own
   // facts are selected and can never contribute a word of text.
-  if (
-    !record("keyword-plan", run("scripts/documents/keyword-plan.mjs", [slug]))
-  )
+  if (!record("keyword-plan", run("src/documents/keyword-plan.mjs", [slug])))
     return { slug, ok: false, stages }
 
   // A REFUSAL IS NOT A FAILURE, and the two must read differently. Exit
@@ -255,7 +249,7 @@ export function prepareDocuments(slug, lead, { jobsDir, run = step }) {
   // reason a real failure does: nothing may reach verify-claims, so no pass
   // row is written and the runner never sees the lead.
   {
-    const r = run("scripts/documents/assemble-resume.mjs", [slug])
+    const r = run("src/documents/assemble-resume.mjs", [slug])
     const skipped = !r.ok && r.code === EXIT_NO_FIT ? "no-summary-fit" : null
     if (!record("assemble-resume", r, skipped ? { skipped } : {}))
       return { slug, ok: false, ...(skipped ? { skipped } : {}), stages }
@@ -267,7 +261,7 @@ export function prepareDocuments(slug, lead, { jobsDir, run = step }) {
   if (
     !record(
       "verify-claims",
-      run("scripts/documents/verify-claims.mjs", [
+      run("src/documents/verify-claims.mjs", [
         "resume",
         path.join(dir, "resume.md"),
         "--job",
@@ -280,7 +274,7 @@ export function prepareDocuments(slug, lead, { jobsDir, run = step }) {
   if (
     !record(
       "render-pdf",
-      run("scripts/documents/render-pdf.mjs", [
+      run("src/documents/render-pdf.mjs", [
         path.join(dir, "resume.md"),
         path.join(dir, "resume.pdf"),
       ]),
@@ -303,7 +297,7 @@ export function prepareDocuments(slug, lead, { jobsDir, run = step }) {
   if (fs.existsSync(coverMd)) {
     record(
       "render-cover-pdf",
-      run("scripts/documents/render-pdf.mjs", [
+      run("src/documents/render-pdf.mjs", [
         coverMd,
         path.join(dir, "cover-letter.pdf"),
       ]),
@@ -318,7 +312,7 @@ export function prepareDocuments(slug, lead, { jobsDir, run = step }) {
 // merely get ignored here, it fails OPEN and the cycle submits applications.
 // The user's 7:00 scheduled task passes `--skip-apply` to prepare only; a
 // single mistyped character in that registration would have sent real
-// applications with nothing in the log saying so. See scripts/lib/args.mjs.
+// applications with nothing in the log saying so. See src/lib/args.mjs.
 export const CYCLE_USAGE = `cycle.mjs - one job-application cycle
 
   --top N          leads to tailor this cycle (default 10)
@@ -374,20 +368,16 @@ export async function runCycle(argv = []) {
   }
 
   if (!argv.includes("--skip-search")) {
-    const r = step(
-      "scripts/leads/find-jobs.mjs",
-      ["search", "--source", "all"],
-      {
-        timeout: 600_000,
-      },
-    )
+    const r = step("src/leads/find-jobs.mjs", ["search", "--source", "all"], {
+      timeout: 600_000,
+    })
     out.stages.search = stageRecord(r)
   }
 
   // Screening is where hard rule 0 is enforced, and the runner refuses an
   // unscreened lead outright, so this is not optional housekeeping.
   {
-    const r = step("scripts/leads/screen.mjs", ["--skip-screened"], {
+    const r = step("src/leads/screen.mjs", ["--skip-screened"], {
       timeout: 600_000,
     })
     out.stages.screen = stageRecord(r)
@@ -480,7 +470,7 @@ export async function runCycle(argv = []) {
     }
   }
 
-  const prep = step("scripts/leads/prep-queue.mjs", [
+  const prep = step("src/leads/prep-queue.mjs", [
     "--top",
     String(top),
     "--cluster",
@@ -620,7 +610,7 @@ export async function runCycle(argv = []) {
     // The runner reads the user's own enabled/dry_run. Nothing above this line
     // can change what it decides to do.
     const r = step(
-      "scripts/auto/auto-apply.mjs",
+      "src/auto/auto-apply.mjs",
       ["--limit", String(limit), "--json"],
       {
         timeout: 1_800_000,

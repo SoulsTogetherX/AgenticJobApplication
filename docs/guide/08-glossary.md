@@ -69,13 +69,13 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   board's application form: which order it renders its file-upload slots in, and
   which sequence of typing and clicking actually commits a value in its dropdown
   widgets. This repository ships three named adapters —
-  `scripts/apply/ats/greenhouse.mjs`, `lever.mjs`, `ashby.mjs` — plus
+  `src/apply/ats/greenhouse.mjs`, `lever.mjs`, `ashby.mjs` — plus
   `generic.mjs`, a fallback whose `match` pattern is `/.^/`, a regular expression
   deliberately written so it can never match anything and can therefore only be
   chosen explicitly as the last resort. →
   [`../code/08-apply-filling.md`](../code/08-apply-filling.md)
 
-- **advance** — `scripts/auto/advance.mjs`, the only file besides `submit.mjs`
+- **advance** — `src/auto/advance.mjs`, the only file besides `submit.mjs`
   allowed to contain a browser click, and it may click only a control the plan
   has typed as a `next`-role page-advance button — never a submit. →
   [`../code/09-auto-runner.md`](../code/09-auto-runner.md)
@@ -92,7 +92,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   trust, because the aggregator is not the employer. →
   [`../code/02-leads-finding.md`](../code/02-leads-finding.md)
 
-- **alias (keyword)** — In `scripts/lib/keywords.mjs`, a way an outsider's job ad
+- **alias (keyword)** — In `src/lib/keywords.mjs`, a way an outsider's job ad
   might refer to a skill. Deliberately **not** interchangeable with `surface`:
   folding aliases into a truthfulness check would let a stranger's vocabulary
   vouch for a claim your own facts cannot back. →
@@ -130,7 +130,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
 
 - **argument (positional)** — A value you type after a command with no name
   attached, identified purely by its place: in
-  `node scripts/documents/keyword-plan.mjs render-postgres-product-engineer`, the
+  `node src/documents/keyword-plan.mjs render-postgres-product-engineer`, the
   slug is positional. Contrast a **flag**. →
   [`../operate/01-commands.md`](../operate/01-commands.md)
 
@@ -194,7 +194,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   this documentation traces back to it. →
   [`../audit-2026-08-05.md`](../audit-2026-08-05.md)
 
-- **automatability** — `scripts/apply/automatability.mjs`: a judgement about
+- **automatability** — `src/apply/automatability.mjs`: a judgement about
   whether the deterministic pipeline could fill a given posting's form without a
   human. Four tiers, first match wins: `handoff`, `blocked`, `amber`, `green`. It
   is deliberately **not** a screening stage, because "we cannot do this one alone"
@@ -205,7 +205,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
 
 - **backoff** — Waiting before retrying something that just failed, usually
   waiting longer after each failure. The board pause in
-  `scripts/auto/breaker.mjs` is a timed backoff. →
+  `src/auto/breaker.mjs` is a timed backoff. →
   [`../code/10-auto-safety.md`](../code/10-auto-safety.md)
 
 - **baseline** — A recorded measurement that later runs are compared against. The
@@ -213,14 +213,14 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   [`../code/15-benchmarks.md`](../code/15-benchmarks.md)
 
 - **benchmark** — A program that measures how long something takes, run enough
-  times to be believable. `scripts/dev/bench-apply.mjs` and
-  `scripts/dev/bench-runner.mjs` are this project's. A single sample is not a
+  times to be believable. `src/dev/bench-apply.mjs` and
+  `src/dev/bench-runner.mjs` are this project's. A single sample is not a
   measurement. →
   [`../code/15-benchmarks.md`](../code/15-benchmarks.md)
 
 - **blast radius** — How much damage one thing going wrong can do. Most of the
   unattended-path design is blast-radius arithmetic: a scoped STOP brakes one
-  company instead of the night, and `scripts/auto/caps.mjs` limits how many
+  company instead of the night, and `src/auto/caps.mjs` limits how many
   applications a single run can send. →
   [`../code/10-auto-safety.md`](../code/10-auto-safety.md)
 
@@ -255,7 +255,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   happy path. →
   [`../code/14-tests.md`](../code/14-tests.md)
 
-- **breaker (circuit breaker)** — `scripts/auto/breaker.mjs`, the anomaly
+- **breaker (circuit breaker)** — `src/auto/breaker.mjs`, the anomaly
   detector for the unattended runner. Its rules are all N-invariant: identical
   failures twice in a row pauses that board; a board failing three of its last
   five pauses that board; eight of the last ten attempts failing across two or
@@ -287,7 +287,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   trying to migrate it. →
   [`../code/07-apply-planning.md`](../code/07-apply-planning.md)
 
-- **caps** — `scripts/auto/caps.mjs`: the arithmetic limiting how many
+- **caps** — `src/auto/caps.mjs`: the arithmetic limiting how many
   applications an unattended run may send. Read from `auto_apply` in
   `docs/application-limits.yaml` — `per_run_max`, `per_day_max`,
   `per_company_max_per_week`. Caps are the user's numbers, not a safety throttle
@@ -317,7 +317,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   error. →
   [`./06-data-model.md`](./06-data-model.md)
 
-- **classifier (post-submit)** — `scripts/auto/classify.mjs`: a pure function
+- **classifier (post-submit)** — `src/auto/classify.mjs`: a pure function
   over `(url, html)` that decides what page came back after a submit click. Its
   closed set of answers is `confirmation`, `identity-verification`,
   `bot-challenge`, `email-code-challenge`, `posting-gone`, `error`,
@@ -328,7 +328,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   [`../code/10-auto-safety.md`](../code/10-auto-safety.md)
 
 - **CLI (command-line interface)** — A program you run by typing its name and
-  arguments into a terminal, as opposed to clicking. Every script in `scripts/`
+  arguments into a terminal, as opposed to clicking. Every script in `src/`
   is one. →
   [`./02-computer-basics.md`](./02-computer-basics.md)
 
@@ -357,7 +357,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   [`./05-architecture.md`](./05-architecture.md)
 
 - **CONFIRM** — A resolution status stamped by `resolveFields` in
-  `scripts/apply/fill-plan.mjs` onto a field the answer bank resolved from an
+  `src/apply/fill-plan.mjs` onto a field the answer bank resolved from an
   entry whose class is `assertion` rather than `datum`. It carries the value
   forward but marks it as needing your eye once, this run. Deliberately distinct
   from `UNKNOWN`, which would re-ask a question you have already answered, forever.
@@ -398,7 +398,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
 - **corpus** — **In general:** a labelled body of examples. **Here:** the set of
   real post-submit pages the classifier would need in order to recognise a real
   confirmation, gathered only from your own attended applications through
-  `scripts/apply/capture-post-submit.mjs`. It is small, which is why the
+  `src/apply/capture-post-submit.mjs`. It is small, which is why the
   classifier is blind on real boards. →
   [`../code/10-auto-safety.md`](../code/10-auto-safety.md)
 
@@ -435,7 +435,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   [`./07-safety-model.md`](./07-safety-model.md)
 
 - **defer taxonomy** — The closed list of reasons a defer can carry, grouped into
-  five **reason classes** by `scripts/auto/taxonomy.mjs`: `understanding` (the
+  five **reason classes** by `src/auto/taxonomy.mjs`: `understanding` (the
   machine did not understand the page — the only class engineering may shrink),
   `assent` (a human must say yes — must not shrink), `environment` (the board
   declined), `policy` (our own rules said no) and `malfunction` (something broke).
@@ -457,7 +457,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   does is deterministic, and that the model's territory is narrow and named. →
   [`./05-architecture.md`](./05-architecture.md)
 
-- **disclosure budget** — `scripts/apply/disclosure.mjs`: a count of how many
+- **disclosure budget** — `src/apply/disclosure.mjs`: a count of how many
   distinct banked facts one application form pulls out of your answer bank, and a
   limit on how much of a single long answer one field may extract. It exists
   because a hostile form asking forty questions to harvest forty facts was
@@ -488,7 +488,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
 ## E
 
 - **enrichment** — Fetching a posting's full description after the list endpoint
-  gave only a title, done by `scripts/leads/enrich.mjs`. Four of the board types
+  gave only a title, done by `src/leads/enrich.mjs`. Four of the board types
   list jobs without bodies, so without enrichment their leads cannot be screened
   on content. →
   [`../code/02-leads-finding.md`](../code/02-leads-finding.md)
@@ -523,7 +523,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
 
 - **fact base** — `profile/profile.yaml` and `profile/answers.yaml` together:
   everything true about you that the system is allowed to state. Nothing else
-  counts as a fact. No program in `scripts/` may write to it, and a hook blocks
+  counts as a fact. No program in `src/` may write to it, and a hook blocks
   the agent from editing it. →
   [`./06-data-model.md`](./06-data-model.md)
 
@@ -551,18 +551,18 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   [`./05-architecture.md`](./05-architecture.md)
 
 - **field cache** — `jobs/.field-cache.json`, managed by
-  `scripts/apply/field-cache.mjs`. It remembers the _shape_ of forms already seen
+  `src/apply/field-cache.mjs`. It remembers the _shape_ of forms already seen
   — which widget each field is and what options it offers — keyed on a fingerprint
   of the form rather than its URL, so two postings on the same Greenhouse form
   share one cache entry. It never stores answers. →
   [`../code/07-apply-planning.md`](../code/07-apply-planning.md)
 
-- **fill engine** — `scripts/apply/fill-engine.mjs`: the code that executes a fill
+- **fill engine** — `src/apply/fill-engine.mjs`: the code that executes a fill
   plan against a live page. It runs Playwright-side, in Node, and nothing is read
   back out of the page to make a decision. →
   [`../code/08-apply-filling.md`](../code/08-apply-filling.md)
 
-- **fill plan** — `scripts/apply/fill-plan.mjs` and the `fill-plan.json` it writes
+- **fill plan** — `src/apply/fill-plan.mjs` and the `fill-plan.json` it writes
   into a job workspace: a list of instructions saying, for each scanned field,
   which verb to apply and what value to use, plus every field that deferred and
   why. Building the plan and executing it are separate steps so the plan can be
@@ -607,7 +607,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   the **submit gate**, the **test gate** (count gate) and the **perf gate**. →
   [`./07-safety-model.md`](./07-safety-model.md)
 
-- **gate-audit** — `scripts/leads/gate-audit.mjs`: re-runs the screening stages
+- **gate-audit** — `src/leads/gate-audit.mjs`: re-runs the screening stages
   over every stored lead and reports which leads a rule change newly rejects. To
   be run after **any** gate change, because a job you never see is the worst
   failure this system has. →
@@ -640,7 +640,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   adapter here. →
   [`../code/02-leads-finding.md`](../code/02-leads-finding.md)
 
-- **guard** — A check placed before an action to refuse it. `scripts/auto/guard.mjs`
+- **guard** — A check placed before an action to refuse it. `src/auto/guard.mjs`
   holds the unattended path's guards: the filesystem boundary, the STOP kill
   switch, and read-only access to `profile/`. →
   [`../code/10-auto-safety.md`](../code/10-auto-safety.md)
@@ -667,7 +667,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   the important rules are hooks rather than prose. →
   [`../code/12-harness-and-ci.md`](../code/12-harness-and-ci.md)
 
-- **hooks, the two owners of** — `scripts/hooks/*` (`guard-bash.mjs`,
+- **hooks, the two owners of** — `src/hooks/*` (`guard-bash.mjs`,
   `guard-files.mjs`, `prettify.mjs`) is agent-editable. `.claude/hooks/*` and
   `.claude/settings*.json` are yours alone and sealed against agent edits on both
   the file and shell paths. →
@@ -700,11 +700,11 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
 - **injection carrier** — A place hostile text can hide in a job posting where a
   human reader will not see it but a model will: an HTML comment, an element
   styled `display:none`, an image's `alt` text, a zero-width Unicode character, a
-  URL-encoded query parameter. `scripts/lib/untrusted.mjs` strips the known ones.
+  URL-encoded query parameter. `src/lib/untrusted.mjs` strips the known ones.
   The pattern list is explicitly **not** the guarantee. →
   [`../code/01-lib-foundation.md`](../code/01-lib-foundation.md)
 
-- **intent (typed intent)** — `scripts/apply/intents.mjs`: the replacement for
+- **intent (typed intent)** — `src/apply/intents.mjs`: the replacement for
   matching a form question to an answer by text similarity. An intent resolves a
   question into `{concept, polarity, class, provenance}` — a named proposition
   from a closed set, a truth value, an answer class, and which bank entry supplied
@@ -751,13 +751,13 @@ WebFetch, WebSearch` — no browser. →
 
 ## K
 
-- **keyword lexicon** — `scripts/lib/keywords.mjs`: a hand-maintained list of
+- **keyword lexicon** — `src/lib/keywords.mjs`: a hand-maintained list of
   technologies with their canonical name, their `surface` spellings and their
   `aliases`. A controlled list rather than an AI embedding, so matching is
   explainable and repeatable. →
   [`../code/01-lib-foundation.md`](../code/01-lib-foundation.md)
 
-- **keyword plan** — `scripts/documents/keyword-plan.mjs` and the `keywords.json`
+- **keyword plan** — `src/documents/keyword-plan.mjs` and the `keywords.json`
   it writes into a workspace. It computes `must_use` — the **intersection** of
   the posting's terms and your fact base, so every term in it is already true of
   you — plus `blocked`, the posting's other terms, listed precisely so they stay
@@ -773,7 +773,7 @@ WebFetch, WebSearch` — no browser. →
 ## L
 
 - **L0, L1, L2, L3** — The four screening stages a lead passes through in order,
-  registered in `scripts/leads/stages.mjs`, stopping at the first rejection:
+  registered in `src/leads/stages.mjs`, stopping at the first rejection:
   - **L0** — `title/location/date`: does the posting's title, location, salary and
     age pass `docs/application-limits.yaml`?
   - **L1** — `body disqualifiers`: does the description contain a hard
@@ -811,7 +811,7 @@ WebFetch, WebSearch` — no browser. →
   [`../code/08-apply-filling.md`](../code/08-apply-filling.md)
 
 - **lock (file lock)** — A small file created to signal "I am working on this,
-  wait". `scripts/lib/lock.mjs` provides `withLock`, `LEADS_LOCK` and
+  wait". `src/lib/lock.mjs` provides `withLock`, `LEADS_LOCK` and
   `AUTO_RUN_LOCK`, with a stale timeout (`DEFAULT_STALE_MS = 10_000`) so a crashed
   holder does not block everyone forever. →
   [`../code/01-lib-foundation.md`](../code/01-lib-foundation.md)
@@ -828,7 +828,7 @@ WebFetch, WebSearch` — no browser. →
 
 ## M
 
-- **`mapPool`** — `scripts/lib/lib.mjs`'s bounded-concurrency helper,
+- **`mapPool`** — `src/lib/lib.mjs`'s bounded-concurrency helper,
   `mapPool(items, limit, fn)`. It runs at most `limit` pieces of work at once —
   the sweep uses eight — which is faster than one at a time and politer than all
   at once. →
@@ -850,7 +850,7 @@ EXISTS` statements with no version table and no migration chain. →
   [`./06-data-model.md`](./06-data-model.md)
 
 - **mode** — For the unattended runner, `dry_run` or `live`, resolved in
-  `scripts/auto/auto-apply.mjs` as `auto?.dry_run === false ? "live" : "dry_run"`.
+  `src/auto/auto-apply.mjs` as `auto?.dry_run === false ? "live" : "dry_run"`.
   It is also half the primary key of `auto_submissions`, so a dry run cannot
   consume a live run's claim on a job. →
   [`../code/09-auto-runner.md`](../code/09-auto-runner.md)
@@ -861,7 +861,7 @@ EXISTS` statements with no version table and no migration chain. →
   [`./04-ai-and-agents.md`](./04-ai-and-agents.md)
 
 - **multi-page walk** — Handling an application form that spans several pages:
-  fill, advance, scan the next page, repeat. `scripts/auto/multipage.mjs` merges
+  fill, advance, scan the next page, repeat. `src/auto/multipage.mjs` merges
   the per-page reports. →
   [`../code/09-auto-runner.md`](../code/09-auto-runner.md)
 
@@ -915,7 +915,7 @@ EXISTS` statements with no version table and no migration chain. →
 
 - **orphan** — A submit attempt whose outcome nobody can determine: the durable
   row says an application may exist at an employer, and the process died before
-  anything confirmed it. `scripts/auto/reconcile.mjs` exists to resolve these, and
+  anything confirmed it. `src/auto/reconcile.mjs` exists to resolve these, and
   an unresolvable one raises a company-scoped STOP. →
   [`../code/10-auto-safety.md`](../code/10-auto-safety.md)
 
@@ -926,7 +926,7 @@ EXISTS` statements with no version table and no migration chain. →
   instead of an average because averages hide the tail. →
   [`../code/15-benchmarks.md`](../code/15-benchmarks.md)
 
-- **perf gate** — `.github/workflows/perf-gate.mjs`: runs the benchmark against a
+- **perf gate** — `tools/ci/perf-gate.mjs`: runs the benchmark against a
   loopback fixture and fails the build on a regression. Its rules differ in
   strength by design — `model_turns` is hard with no override (a model turn on the
   green path is the property being gone, not a regression in degree), while
@@ -952,7 +952,7 @@ EXISTS` statements with no version table and no migration chain. →
   [`../code/07-apply-planning.md`](../code/07-apply-planning.md)
 
 - **pool** — Two different pools here. A **worker pool** (`mapPool`) bounds how
-  many pieces of work run at once. The **browser pool** (`scripts/auto/pool.mjs`,
+  many pieces of work run at once. The **browser pool** (`src/auto/pool.mjs`,
   `runPool`) is keyed by origin, so two jobs on the same board share a browser
   context and jobs on different boards do not contend. →
   [`../code/09-auto-runner.md`](../code/09-auto-runner.md)
@@ -971,7 +971,7 @@ EXISTS` statements with no version table and no migration chain. →
   one usually loosens the other, so every filter here states which it favours. →
   [`../code/03-leads-screening.md`](../code/03-leads-screening.md)
 
-- **prep queue** — `scripts/leads/prep-queue.mjs`: picks which leads get a
+- **prep queue** — `src/leads/prep-queue.mjs`: picks which leads get a
   tailored résumé prepared ahead of time, so the document already exists when you
   decide to apply. →
   [`../code/04-leads-ranking.md`](../code/04-leads-ranking.md)
@@ -1031,7 +1031,7 @@ EXISTS` statements with no version table and no migration chain. →
 
 ## R
 
-- **R1–R8** — The verification rules in `scripts/documents/verify-claims.mjs`,
+- **R1–R8** — The verification rules in `src/documents/verify-claims.mjs`,
   the program that must pass before any document is rendered or shown as final:
   - **R1** — every bullet line must carry `<!-- fact:ID -->`.
   - **R2** — every cited fact id must exist in the fact base.
@@ -1060,12 +1060,12 @@ EXISTS` statements with no version table and no migration chain. →
   followed by a write. →
   [`./05-architecture.md`](./05-architecture.md)
 
-- **rank** — `scripts/leads/recommend.mjs`'s `rankLeads`: scoring stored leads so
+- **rank** — `src/leads/recommend.mjs`'s `rankLeads`: scoring stored leads so
   the best ones surface first, using title keywords, technology overlap with your
   profile, freshness and salary signals. →
   [`../code/04-leads-ranking.md`](../code/04-leads-ranking.md)
 
-- **reaper (scaffolding reaper)** — `.github/workflows/scaffolding-reaper.mjs`:
+- **reaper (scaffolding reaper)** — `tools/ci/scaffolding-reaper.mjs`:
   fails the build when a development-only artifact outlives the phase it declared
   it would die in. Artifacts declare themselves in the file's leading block with
   `scaffolding: true` and `remove_after: phase-N`. →
@@ -1078,7 +1078,7 @@ EXISTS` statements with no version table and no migration chain. →
 
 - **reason class** — See **defer taxonomy**.
 
-- **reconcile** — `scripts/auto/reconcile.mjs`: attempts to determine, by
+- **reconcile** — `src/auto/reconcile.mjs`: attempts to determine, by
   re-reading the board, whether an orphaned attempt actually submitted. It ships
   descoped to boards that expose application state to a candidate, and on today's
   allowlist that set is empty, so it returns `undecidable` — which brakes one
@@ -1086,7 +1086,7 @@ EXISTS` statements with no version table and no migration chain. →
   [`../code/10-auto-safety.md`](../code/10-auto-safety.md)
 
 - **Recruitee** — A smaller applicant tracking system with a lead fetcher in
-  `scripts/leads/find-jobs.mjs` but no fill adapter. →
+  `src/leads/find-jobs.mjs` but no fill adapter. →
   [`../code/02-leads-finding.md`](../code/02-leads-finding.md)
 
 - **regression** — A thing that used to work and now does not. A **regression
@@ -1112,7 +1112,7 @@ EXISTS` statements with no version table and no migration chain. →
   `assertion`. `UNKNOWN` blocks on **both** the attended and unattended paths. →
   [`../code/07-apply-planning.md`](../code/07-apply-planning.md)
 
-- **risk (L3)** — `scripts/leads/risk.mjs`: the scam, ghost-job and injection
+- **risk (L3)** — `src/leads/risk.mjs`: the scam, ghost-job and injection
   screen. It scores repost counts, scam patterns and untrusted findings, and
   rejects a lead outright when a finding is one of the eight instruction-shaped
   kinds. →
@@ -1138,7 +1138,7 @@ EXISTS` statements with no version table and no migration chain. →
 
 ## S
 
-- **sanitiser** — `scripts/lib/untrusted.mjs`: the code that strips known
+- **sanitiser** — `src/lib/untrusted.mjs`: the code that strips known
   injection carriers out of third-party text before it reaches a model, and
   reports what it found as `untrusted_findings`. Its eight instruction-shaped
   kinds are `override_instructions`, `role_reassignment`, `fake_system_turn`,
@@ -1165,7 +1165,7 @@ EXISTS` statements with no version table and no migration chain. →
   [`../code/06-apply-scanning.md`](../code/06-apply-scanning.md)
 
 - **schema** — The shape of stored data: which tables exist, which columns they
-  have, which types. This project's lives in `SCHEMA` in `scripts/lib/db.mjs` —
+  have, which types. This project's lives in `SCHEMA` in `src/lib/db.mjs` —
   and note it is a template literal, so a backtick inside its SQL would end the
   string. →
   [`./06-data-model.md`](./06-data-model.md)
@@ -1180,7 +1180,7 @@ EXISTS` statements with no version table and no migration chain. →
 
 - **screen / screening** — Running a lead through the L0–L3 stages and recording
   a verdict of `pass`, `caution` or `reject` in the `screens` table
-  (`scripts/leads/screen.mjs`). Screening never deletes a lead; it marks it. →
+  (`src/leads/screen.mjs`). Screening never deletes a lead; it marks it. →
   [`../code/03-leads-screening.md`](../code/03-leads-screening.md)
 
 - **SHA-256** — The cryptographic hash used throughout for fingerprints, from the
@@ -1209,7 +1209,7 @@ EXISTS` statements with no version table and no migration chain. →
   store of record is one SQLite file, `jobs/leads.db`. →
   [`./06-data-model.md`](./06-data-model.md)
 
-- **stage** — One screening step (L0–L3), registered into `scripts/leads/stages.mjs`'s
+- **stage** — One screening step (L0–L3), registered into `src/leads/stages.mjs`'s
   registry so no stage file has to import any other and no import cycle forms. →
   [`../code/03-leads-screening.md`](../code/03-leads-screening.md)
 
@@ -1236,7 +1236,7 @@ EXISTS` statements with no version table and no migration chain. →
   and `qa`. →
   [`../code/13-skills-and-agents.md`](../code/13-skills-and-agents.md)
 
-- **submit gate** — `authorizeSubmit` in `scripts/auto/authorize.mjs`: the only
+- **submit gate** — `authorizeSubmit` in `src/auto/authorize.mjs`: the only
   place that reads every precondition for an unattended submit together. Eleven
   named checks — `auto_apply_block`, `enabled`, `mode`, `trust_gate`,
   `apply_origin`, `screening`, `plan_defer`, `label_flag`, `submit_readiness`,
@@ -1291,7 +1291,7 @@ mgmresorts`). →
   call. →
   [`../operate/01-commands.md`](../operate/01-commands.md)
 
-- **test gate (count gate)** — `.github/workflows/test-gate.mjs`, run by
+- **test gate (count gate)** — `tools/ci/test-gate.mjs`, run by
   `npm test`. It exists because `node --test` exits `0` when it runs **zero**
   tests, so an exit code alone is not evidence anything happened. The gate asserts
   the count against a floor, that no test failed, that `todo` count is `0`, and
@@ -1309,7 +1309,7 @@ IMMEDIATE` takes the write lock at once, which is what stops two concurrent
   read-modify-writes clobbering each other. →
   [`./06-data-model.md`](./06-data-model.md)
 
-- **trust gate** — `scripts/auto/trust.mjs`: five mechanical facts checked before
+- **trust gate** — `src/auto/trust.mjs`: five mechanical facts checked before
   an unattended application may proceed — `allowlist` (the domain is on the list
   you wrote), `adapter` (that list names an ATS this repo ships an adapter for),
   `screening` (the lead cleared every stage), `https`, and `origin_stable` (the
@@ -1321,7 +1321,7 @@ IMMEDIATE` takes the write lock at once, which is what stops two concurrent
 ## U
 
 - **unattended path** — Applying with nobody watching, driven by
-  `scripts/auto/auto-apply.mjs` on a schedule. Everything about it is gated more
+  `src/auto/auto-apply.mjs` on a schedule. Everything about it is gated more
   tightly than the attended path: `CONFIRM`, `confirm-widget`, consent tickboxes,
   `UNKNOWN`, an unprobed dropdown, a failed fill, an unverified document, an
   untrusted board or an L3 rejection each block the submit and defer the
@@ -1356,7 +1356,7 @@ IMMEDIATE` takes the write lock at once, which is what stops two concurrent
 
 - **verb (plan verb)** — The instruction in a fill plan saying how to operate a
   field. The complete map from scanned field type to verb, in
-  `scripts/apply/fill-plan.mjs`, is: text/email/tel/url/number/date/search/textarea
+  `src/apply/fill-plan.mjs`, is: text/email/tel/url/number/date/search/textarea
   → `fill`, select → `select`, combo → `combo`, checkbox/radio → `check`, richtext
   → `type`, file → `upload`. →
   [`../code/07-apply-planning.md`](../code/07-apply-planning.md)
@@ -1372,7 +1372,7 @@ IMMEDIATE` takes the write lock at once, which is what stops two concurrent
   stale approved document in play. →
   [`../code/05-documents.md`](../code/05-documents.md)
 
-- **`verify-claims`** — `scripts/documents/verify-claims.mjs`, the truthfulness
+- **`verify-claims`** — `src/documents/verify-claims.mjs`, the truthfulness
   gate. It runs R1–R8 over a document and refuses it if any claim cannot be traced
   to a fact id. Hard rule 4 requires it to pass before anything is rendered or
   shown as final. →

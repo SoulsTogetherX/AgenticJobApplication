@@ -23,9 +23,9 @@ import {
   DEFAULT_BUDGET,
   EXIT_NO_FIT,
   NoSummaryFit,
-} from "../../scripts/documents/assemble-resume.mjs"
-import { buildPlan } from "../../scripts/documents/keyword-plan.mjs"
-import { buildFactIndex } from "../../scripts/lib/lib.mjs"
+} from "../../src/documents/assemble-resume.mjs"
+import { buildPlan } from "../../src/documents/keyword-plan.mjs"
+import { buildFactIndex } from "../../src/lib/lib.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")
@@ -140,7 +140,7 @@ test("the CLI exits 3 on no-summary-fit and writes nothing", (t) => {
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "documents", "assemble-resume.mjs"),
+      path.join(ROOT, "src", "documents", "assemble-resume.mjs"),
       "graphql-api",
       "--jobs-dir",
       dir,

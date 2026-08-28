@@ -7,11 +7,11 @@
 // lead store at jobs/leads.json.
 //
 // Usage:
-//   node scripts/leads/find-jobs.mjs search [--source all|hn|boards|adzuna] [--query "full stack"] [--max-age N] [--leads <path>]
-//   node scripts/leads/find-jobs.mjs import <file.json> [--leads <path>]   # leads captured in-session (Playwright/WebFetch)
+//   node src/leads/find-jobs.mjs search [--source all|hn|boards|adzuna] [--query "full stack"] [--max-age N] [--leads <path>]
+//   node src/leads/find-jobs.mjs import <file.json> [--leads <path>]   # leads captured in-session (Playwright/WebFetch)
 //   --leads overrides the store (and its lock) from jobs/leads.db — for tests only; omit it in normal use.
-//   node scripts/leads/find-jobs.mjs list [--status new|recommended|dismissed|applied|all]
-//   node scripts/leads/find-jobs.mjs mark <id-or-url> --status <status> [--notes "..."]
+//   node src/leads/find-jobs.mjs list [--status new|recommended|dismissed|applied|all]
+//   node src/leads/find-jobs.mjs mark <id-or-url> --status <status> [--notes "..."]
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -627,7 +627,7 @@ export function loadLimits(file = LIMITS_PATH) {
 }
 
 // Backed by jobs/leads.db when it exists, else the legacy jobs/leads.json.
-// See scripts/lib/db.mjs for why SQLite and what it fixes. `explicit` mirrors
+// See src/lib/db.mjs for why SQLite and what it fixes. `explicit` mirrors
 // resolveLeadSource's own parameter — sibling CLIs (screen.mjs) already accept
 // a `--leads <path>` override so tests can point at a scratch store instead of
 // the real one; ingest() threads the same override through so a concurrency
@@ -1501,7 +1501,7 @@ function recordSweep(results, limits, now) {
 // in-memory copy read before another process's write clobbers whatever that
 // process changed in the interim (a status set by `mark`, a repost counter
 // from another sweep, a screening verdict). That is the defect
-// `scripts/lib/lock.mjs`'s header names by this function. The fix is to
+// `src/lib/lock.mjs`'s header names by this function. The fix is to
 // re-read fresh, apply this call's changes to THAT copy, and write it back —
 // all inside LEADS_LOCK, and with nothing added to the critical section that
 // doesn't need to be there.

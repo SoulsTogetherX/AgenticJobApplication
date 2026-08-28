@@ -22,8 +22,8 @@ import {
   promoteComboStrategy,
   knownOptsFromEntry,
   CACHE_VERSION,
-} from "../../scripts/apply/field-cache.mjs"
-import { lockPathFor } from "../../scripts/lib/lock.mjs"
+} from "../../src/apply/field-cache.mjs"
+import { lockPathFor } from "../../src/lib/lock.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -1017,7 +1017,7 @@ test("end to end: a second run reuses the shape the first one learned", (t) => {
     spawnSync(
       process.execPath,
       [
-        path.join(ROOT, "scripts", "apply", "fill-plan.mjs"),
+        path.join(ROOT, "src", "apply", "fill-plan.mjs"),
         slug,
         "--jobs-dir",
         dir,

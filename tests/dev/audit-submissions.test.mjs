@@ -15,7 +15,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { verdictFor } from "../../scripts/dev/audit-submissions.mjs"
+import { verdictFor } from "../../src/dev/audit-submissions.mjs"
 
 const page = (body) => `<html><body>${body}</body></html>`
 

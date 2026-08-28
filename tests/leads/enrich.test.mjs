@@ -15,7 +15,7 @@ import {
   workdayDescription,
   enrichDescriptions,
   canEnrich,
-} from "../../scripts/leads/enrich.mjs"
+} from "../../src/leads/enrich.mjs"
 
 // --- URL derivation ----------------------------------------------------------
 

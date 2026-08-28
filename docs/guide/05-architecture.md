@@ -60,7 +60,7 @@ treatment later; here is enough to read the picture.
   PDF, the form scan, the fill plan.
 - **Fact base** — `profile/profile.yaml` and `profile/answers.yaml` together.
   Everything true about you that the system is allowed to state. Nothing else
-  counts as a fact, and no program in `scripts/` may write to it.
+  counts as a fact, and no program in `src/` may write to it.
 - **Defer** — to decline one specific thing and say why. Not an error. It is the
   designed outcome whenever the system meets something it does not
   deterministically understand.
@@ -74,7 +74,7 @@ Read it top to bottom. Boxes are stages; the text on an arrow is the file that
 performs that step. `▓` marks a place the flow can stop.
 
 ```
-        YOU OWN THESE. Scripts read them; nothing in scripts/ writes them.
+        YOU OWN THESE. Scripts read them; nothing in src/ writes them.
    ┌──────────────────────────────────────────────────────────────────────┐
    │  docs/job-sources.yaml         44 company boards to sweep            │
    │  docs/application-limits.yaml  the rules a job must pass, + caps     │
@@ -91,7 +91,7 @@ performs that step. `▓` marks a place the flow can stop.
 ║  ┌─────────────────┐                                                    ║
 ║  │ 44 ATS boards   │──┐                                                 ║
 ║  │ greenhouse ×24  │  │  fetchBoard(), pooled 8 at a time               ║
-║  │ ashby ×8        │  │  scripts/leads/find-jobs.mjs                    ║
+║  │ ashby ×8        │  │  src/leads/find-jobs.mjs                    ║
 ║  │ workday ×3 …    │  │                                                 ║
 ║  ├─────────────────┤  │                                                 ║
 ║  │ Hacker News     │──┤  fetchHackerNews()   find-jobs.mjs              ║
@@ -106,29 +106,29 @@ performs that step. `▓` marks a place the flow can stop.
 ║  │ L0  title / location / date / salary         │─▓ rejected, dropped   ║
 ║  │     passesLimits()      find-jobs.mjs        │                       ║
 ║  └──────────────────┬───────────────────────────┘                       ║
-║                     │  enrichDescriptions()     scripts/leads/enrich.mjs║
-║                     │  sanitizeHtmlSnippet()    scripts/lib/untrusted.mjs
-║                     │  canonicalizeLeads()      scripts/leads/canonical.mjs
+║                     │  enrichDescriptions()     src/leads/enrich.mjs║
+║                     │  sanitizeHtmlSnippet()    src/lib/untrusted.mjs
+║                     │  canonicalizeLeads()      src/leads/canonical.mjs
 ║                     ▼                                                   ║
 ║  ┌──────────────────────────────────────────────┐                       ║
 ║  │ L1  hard disqualifiers in the body           │─▓ rejected, dropped   ║
 ║  │     bodyDisqualifiers()  find-jobs.mjs       │                       ║
 ║  └──────────────────┬───────────────────────────┘                       ║
 ║                     │  withLock(LEADS_LOCK) → saveLeads()               ║
-║                     │  find-jobs.mjs / scripts/lib/lock.mjs             ║
+║                     │  find-jobs.mjs / src/lib/lock.mjs             ║
 ║                     ▼                                                   ║
 ║           ┌───────────────────────┐  indexKeywords()  find-jobs.mjs     ║
 ║           │  leads table          │◄──────────────────────────────      ║
 ║           │  lead_keywords table  │                                     ║
 ║           │  in jobs/leads.db     │                                     ║
 ║           └───────────┬───────────┘                                     ║
-║                       │  evaluateStages()   scripts/leads/stages.mjs    ║
-║                       ▼        ├─ L2 scoreFit()   scripts/leads/fit.mjs ║
-║           ┌───────────────────┐└─ L3 scoreRisk()  scripts/leads/risk.mjs║
+║                       │  evaluateStages()   src/leads/stages.mjs    ║
+║                       ▼        ├─ L2 scoreFit()   src/leads/fit.mjs ║
+║           ┌───────────────────┐└─ L3 scoreRisk()  src/leads/risk.mjs║
 ║           │  screen.mjs       │──▓ verdict "reject" — lead stays but is ║
 ║           │  writes `screens` │    marked, never tailored               ║
 ║           └─────────┬─────────┘                                         ║
-║                     │  rankLeads()        scripts/leads/recommend.mjs   ║
+║                     │  rankLeads()        src/leads/recommend.mjs   ║
 ║                     ▼                                                   ║
 ║           ┌───────────────────────────────────┐                         ║
 ║           │  a ranked shortlist               │                         ║
@@ -215,7 +215,7 @@ performs that step. `▓` marks a place the flow can stop.
    └────────────┬───────────────┘
                 │ dueFollowUps()  follow-ups.mjs
                 │ alreadyApplied() check-applied.mjs
-                │ buildAutoStatus() digest.mjs → scripts/status.mjs
+                │ buildAutoStatus() digest.mjs → src/status.mjs
                 ▼
         what to chase, what not to re-apply to, is the machine working
 ```
@@ -259,10 +259,10 @@ prevent.
 
 **What triggers it.** One of three things: you say something like "find me jobs"
 (the `find-jobs` skill runs the command), you run it yourself, or
-`scripts/auto/cycle.mjs` runs it as step 1 of a scheduled cycle.
+`src/auto/cycle.mjs` runs it as step 1 of a scheduled cycle.
 
 ```bash
-node scripts/leads/find-jobs.mjs search --source all --query "full stack"
+node src/leads/find-jobs.mjs search --source all --query "full stack"
 ```
 
 **What it reads.** `docs/job-sources.yaml` (the 44 boards),
@@ -275,7 +275,7 @@ plus one `board_stats` row per board swept.
 
 #### The walk
 
-**1. `cmdSearch()` in `scripts/leads/find-jobs.mjs`** parses the flags and
+**1. `cmdSearch()` in `src/leads/find-jobs.mjs`** parses the flags and
 resolves the search query in a fixed order: an explicit `--query` wins, then
 `roles.search_query` from your limits file, then the built-in
 `DEFAULT_SEARCH_QUERY` of `"full stack"`.
@@ -286,7 +286,7 @@ descriptors. A descriptor is a small object like
 selects which fetcher runs.
 
 **3. `mapPool(boards, 8, fetchBoard)`** — the sweep's worker pool, from
-`scripts/lib/lib.mjs`. Eight boards are in flight at once. `fetchBoard()`
+`src/lib/lib.mjs`. Eight boards are in flight at once. `fetchBoard()`
 dispatches on `board.type` to one of a dozen functions: `fetchGreenhouse()`,
 `fetchLever()`, `fetchAshby()`, `fetchSmartRecruiters()`, `fetchWorkable()`,
 `fetchRecruitee()`, `fetchWorkday()`, `fetchOracleCloud()`, `fetchJobvite()`,
@@ -319,10 +319,10 @@ other.
   here discards the candidate. Most candidates die here, which is the design:
   everything after it is more expensive.
 - `enrichDescriptions(survivors)` — for the four board types whose list payload
-  carries no description, `scripts/leads/enrich.mjs` fetches the per-posting
+  carries no description, `src/leads/enrich.mjs` fetches the per-posting
   detail endpoint, pooled again.
 - The fetched HTML goes through `sanitizeHtmlSnippet()` in
-  `scripts/lib/untrusted.mjs` before it is stored. **This is the rule-0
+  `src/lib/untrusted.mjs` before it is stored. **This is the rule-0
   boundary**: the point where third-party text stops being markup and starts
   being a string this project is willing to keep. What it removes and what it
   merely flags is the subject of
@@ -373,10 +373,10 @@ than by one bad day.
 
 #### Then screening proper
 
-L0 and L1 ran during ingest. **L2 and L3 run later**, in `scripts/leads/screen.mjs`:
+L0 and L1 ran during ingest. **L2 and L3 run later**, in `src/leads/screen.mjs`:
 
 ```bash
-node scripts/leads/screen.mjs --status new
+node src/leads/screen.mjs --status new
 ```
 
 `main()` builds a **stage context** once — your years of experience from
@@ -387,10 +387,10 @@ repost). Then for each lead it calls two things:
 
 - `screenJob(job, limits, now, profileYears)` — the pattern screen: scam signals,
   culture signals, years-required extraction.
-- `evaluateStages(job, ctx, stages)` from `scripts/leads/stages.mjs` — the ordered
+- `evaluateStages(job, ctx, stages)` from `src/leads/stages.mjs` — the ordered
   funnel. `stages.mjs` holds a `REGISTRY` mapping each stage id to a function:
   `l0` → `passesLimits`, `l1` → `bodyDisqualifiers`, `l2` → `scoreFit`
-  (`scripts/leads/fit.mjs`), `l3` → `scoreRisk` (`scripts/leads/risk.mjs`). It
+  (`src/leads/fit.mjs`), `l3` → `scoreRisk` (`src/leads/risk.mjs`). It
   runs them in order and stops at the first rejection.
 
 The registration lives in `stages.mjs` rather than in each check's own file for a
@@ -408,7 +408,7 @@ model-reviewed one.
 rejection (the lead survives but is marked and the unattended runner refuses it),
 or the whole sweep failing because no lead store exists yet (`exit 2`).
 
-**Then ranking.** `scripts/leads/recommend.mjs`'s `rankLeads()` scores each lead:
+**Then ranking.** `src/leads/recommend.mjs`'s `rankLeads()` scores each lead:
 technology overlap with your profile, role-title fit from
 `roles.title_rank`, freshness, a salary signal, minus risk flags. It is a
 **weighted linear model** — multiply each signal by a weight, add them up — which
@@ -417,7 +417,7 @@ line by line. `isFlatRanking()` exists as an honesty guard: if every returned le
 ties, the "ranking" fell through to alphabetical-by-company and is not a ranking
 however it is labelled.
 
-`scripts/leads/prep-queue.mjs` then picks which of the ranked leads are worth
+`src/leads/prep-queue.mjs` then picks which of the ranked leads are worth
 tailoring **before** you sit down, so tailoring is not on the critical path with
 you watching.
 
@@ -429,7 +429,7 @@ you watching.
 
 **What triggers it.** The `tailor-resume` or `tailor-cover-letter` skill, the
 `pipeline-jobs` skill fanning out one `job-worker` subagent per job, or step 4 of
-`scripts/auto/cycle.mjs`.
+`src/auto/cycle.mjs`.
 
 **What it reads.** The lead store (for the posting), `profile/profile.yaml` and
 `profile/answers.yaml` (the only permitted source of facts), and
@@ -440,7 +440,7 @@ the `verifications` table.
 
 #### The walk
 
-**1. `node scripts/documents/new-job.mjs <slug> --from-lead "<url>"`** creates the
+**1. `node src/documents/new-job.mjs <slug> --from-lead "<url>"`** creates the
 workspace. It matches on lead id, then URL, then URL with tracking parameters and
 trailing slashes stripped. It writes exactly two files:
 
@@ -464,7 +464,7 @@ lead (the caller falls back to reading the page).
 > posting age and remote flag the sweep already captured; and a flag value placed
 > before the slug is taken as the slug.
 
-**2. `node scripts/documents/keyword-plan.mjs <slug>`** writes `keywords.json`.
+**2. `node src/documents/keyword-plan.mjs <slug>`** writes `keywords.json`.
 Its job is to give the drafting step a truthful target for both gatekeepers that
 read a résumé: the classic ATS parser doing literal keyword matching, and the LLM
 layer that summarises whatever survives. The critical property is stated in its
@@ -474,7 +474,7 @@ base, so every term in it is already true of you and placing it invents nothing.
 
 **3. The draft.** Two routes exist.
 
-- **`node scripts/documents/assemble-resume.mjs <slug>`** — deterministic, no
+- **`node src/documents/assemble-resume.mjs <slug>`** — deterministic, no
   model at all. It emits each selected fact's text **verbatim, byte for byte**,
   with its `<!-- fact:ID -->` annotation. Verbatim emission cannot invent a skill,
   an employer, a date or a metric, so the verification rules hold by construction
@@ -487,7 +487,7 @@ base, so every term in it is already true of you and placing it invents nothing.
 > hand and never calls `assemble-resume.mjs`, so the deterministic assembler is
 > unused on the path a human actually takes.
 
-**4. `node scripts/documents/verify-claims.mjs <slug>`** is the gate. It is an
+**4. `node src/documents/verify-claims.mjs <slug>`** is the gate. It is an
 ordinary program, not a prompt, and it runs seven rules:
 
 | Rule | What it requires                                                                |
@@ -518,7 +518,7 @@ as final until this passes.
 **5. Your approval** (hard rule 5) — the agent shows what it emphasised, dropped
 and rephrased versus the general résumé.
 
-**6. `node scripts/documents/render-pdf.mjs jobs/<slug>/resume.md jobs/<slug>/resume.pdf`**
+**6. `node src/documents/render-pdf.mjs jobs/<slug>/resume.md jobs/<slug>/resume.pdf`**
 converts markdown to PDF by shelling out to your locally installed Edge or
 Chrome. `PDF_BROWSER` overrides discovery; exit `3` means no browser was found.
 It leaves a `.render.html` intermediate behind, which `prune-jobs.mjs` always
@@ -553,11 +553,11 @@ application.
 
 1. Check preconditions: Playwright MCP tools available, and
    `profile.yaml` has `meta.approved_by_user: true`.
-2. `node scripts/documents/new-job.mjs <slug> --from-lead "<url>"`. If it prints
+2. `node src/documents/new-job.mjs <slug> --from-lead "<url>"`. If it prints
    `description=<n>`, the sweep already captured the posting and **no page read
    happens at all**. If it prints `description=missing` or exits 4, the model
    reads the page for the body only.
-3. `node scripts/applications/check-applied.mjs "<Company>"` — the duplicate
+3. `node src/applications/check-applied.mjs "<Company>"` — the duplicate
    guard.
 
 **Phase 2 — read the form before tailoring.** The order is deliberate: the form
@@ -588,22 +588,22 @@ than three.
    `form` → continue; `login` → stop and ask you to log in; `confirm` → the
    application is already in; `unknown` → read the heading and ask.
 
-6. **`node scripts/apply/fill-plan.mjs <slug>`** — the single most important
+6. **`node src/apply/fill-plan.mjs <slug>`** — the single most important
    command on this path. It:
    - reads `jobs/<slug>/scan-p<N>.json`,
-   - runs `detectAts(url)` from `scripts/apply/ats/index.mjs` to pick an adapter
+   - runs `detectAts(url)` from `src/apply/ats/index.mjs` to pick an adapter
      (`greenhouse`, `lever`, `ashby`, `generic`; `workday` sets `handoff` and the
      script exits **3**, because Workday requires creating an account),
    - loads `jobs/.field-cache.json` and calls `applyCache(scan, cachedEntry)` to
      fill in remembered dropdown options,
    - calls `resolveFields(scan.fields, { profile, answers })` from
-     `scripts/apply/answer-bank.mjs`, which is the only thing that turns a form
+     `src/apply/answer-bank.mjs`, which is the only thing that turns a form
      label into a value, and only from the fact base,
    - calls `buildPlan({...})` to produce the plan.
 
    It writes two files: `fill-plan.json` (the plan data, for you and for tests)
    and `fill-plan.js` (a self-contained bootstrap holding the plan **and** the
-   source of `scripts/apply/fill-engine.mjs`, read off disk here in an ordinary
+   source of `src/apply/fill-engine.mjs`, read off disk here in an ordinary
    Node process).
 
    It prints, in terse machine form:
@@ -643,7 +643,7 @@ than three.
 **Phase 5 — fill.**
 
 8. The bootstrap is loaded into the page and `fillPage(page, plan)` from
-   `scripts/apply/fill-engine.mjs` runs **inside the browser**. It executes each
+   `src/apply/fill-engine.mjs` runs **inside the browser**. It executes each
    item's verb, then runs a verify pass and returns a report:
    `report.uploads` (one entry per attachment, with `{k, tag, file, match, how,
 target, attached, seen, seenFile}`), `verify.mismatch`, `verify.requiredEmpty`,
@@ -662,10 +662,10 @@ target, attached, seen, seenFile}`), `verify.mismatch`, `verify.requiredEmpty`,
    `confirm-widget` it actuated on your behalf is named in that summary with its
    label quoted — you are delegating assent, not waiving the record of it.
 
-10. `node scripts/applications/log-application.mjs <slug> --company "…" --title "…" --url "…"`
+10. `node src/applications/log-application.mjs <slug> --company "…" --title "…" --url "…"`
     once you confirm.
 
-11. `node scripts/apply/capture-post-submit.mjs stage --url … --html-file … --board … --slug …`
+11. `node src/apply/capture-post-submit.mjs stage --url … --html-file … --board … --slug …`
     on the page that comes back. This is the **only lawful source** for the
     unattended classifier's corpus, and §2.4 explains why that matters so much.
     It redacts against `profile/` plus generic identifier patterns and refuses to
@@ -679,8 +679,8 @@ deferral** — say which one and stop — not a hand-off.
 
 ### 2.4 Pipeline 4 — The unattended runner
 
-**What triggers it.** `scripts/auto/cycle.cmd` from a Windows scheduled task, or
-`node scripts/auto/cycle.mjs` by hand, or `node scripts/auto/auto-apply.mjs`
+**What triggers it.** `src/auto/cycle.cmd` from a Windows scheduled task, or
+`node src/auto/cycle.mjs` by hand, or `node src/auto/auto-apply.mjs`
 directly.
 
 **What it reads.** `docs/application-limits.yaml`'s `auto_apply` block, the lead
@@ -691,7 +691,7 @@ and the append-only JSONL in `jobs/.auto/runs/<runid>.jsonl`.
 
 #### The cycle
 
-`scripts/auto/cycle.mjs` is the join nobody had before it. Five steps, each a
+`src/auto/cycle.mjs` is the join nobody had before it. Five steps, each a
 child process, so one lead whose keyword plan throws cannot take the other nine
 down with it:
 
@@ -714,8 +714,8 @@ costs nothing measurable and buys crash isolation.
 
 #### The runner's walk
 
-**1. `main()` in `scripts/auto/auto-apply.mjs`** parses arguments, reads the
-limits file, and runs `preflight()` from `scripts/auto/preflight.mjs`. Preflight
+**1. `main()` in `src/auto/auto-apply.mjs`** parses arguments, reads the
+limits file, and runs `preflight()` from `src/auto/preflight.mjs`. Preflight
 answers "would a run start right now?" with six checks: `stop_switch`,
 `auto_apply_caps`, `auto_submit_authorised`, `profile_approved`,
 `answer_bank_scan`, `profile_fact_scan`. It supplies **no defaults** for anything
@@ -730,7 +730,7 @@ in your file — an absent setting is a refusal, not a guess.
 **2. `selectEligible()`** picks which leads go into the queue, and
 `enqueueAutoJobs()` writes them to `auto_queue` in state `queued`.
 
-**3. `launchBrowser()`** from `scripts/apply/browser.mjs` opens one Chromium. Then
+**3. `launchBrowser()`** from `src/apply/browser.mjs` opens one Chromium. Then
 `makeOpenPage(session)` builds a per-job page factory with two lanes:
 
 - **non-persistent** (the default): `browser.newContext()` per job — genuine
@@ -744,14 +744,14 @@ in your file — an absent setting is a refusal, not a guess.
 > from reaching the public internet — is never called on this path.
 
 **4. `runCampaign()`** opens the run record via `startRun()` in
-`scripts/auto/audit.mjs`, releases stale claims, and hands the queue to
+`src/auto/audit.mjs`, releases stale claims, and hands the queue to
 `runPool()`.
 
 **5. `runPool({ jobs, runOne, concurrency, shouldStop, onSkip })`** in
-`scripts/auto/pool.mjs` runs at most `concurrency` jobs at once and **at most one
+`src/auto/pool.mjs` runs at most `concurrency` jobs at once and **at most one
 per origin**. §5.3 explains why the exclusion key is the origin.
 
-**6. `runJob()`** in `scripts/auto/job.mjs` is the per-job state machine, and it
+**6. `runJob()`** in `src/auto/job.mjs` is the per-job state machine, and it
 is the file to read if you read only one. Its states:
 
 ```
@@ -766,7 +766,7 @@ any point leaves a row saying exactly how far that job got. The sequence:
 - `claimAutoJob(db, slug, …)` — returns `1` if this worker now owns the slug, `0`
   otherwise. On `0` the worker returns `NOT_CLAIMED` and touches nothing. §5.6.
 - `trustBoard({ lead, limits, screening, recordedOrigin })` from
-  `scripts/auto/trust.mjs` — **before the browser opens**, deliberately, so an
+  `src/auto/trust.mjs` — **before the browser opens**, deliberately, so an
   untrusted board costs one row and no page load. Trust is mechanical: the board's
   host must be on your `board_allowlist` and the declared ATS must name an adapter
   this repository ships. The gate never infers the ATS from the URL, because a
@@ -775,30 +775,30 @@ any point leaves a row saying exactly how far that job got. The sequence:
 - `openPage(applyUrl)` with a bounded retry (`navRetries`, default 1, with
   backoff). A 404 or 410 becomes `posting-gone` — routine at hundreds of leads,
   and the board's event, not a malfunction.
-- `walkPages(page, {...})` from `scripts/auto/multipage.mjs` — the walk. One page
+- `walkPages(page, {...})` from `src/auto/multipage.mjs` — the walk. One page
   or several; the single-page case is the same code path with the loop running
   once. Per page it runs the scan stage (`scan-engine.mjs`), the plan stage
   (`fill-plan.mjs`'s `buildPlan`), the fill stage (`fill-engine.mjs`), and between
-  pages `advanceOnce()` from `scripts/auto/advance.mjs`. `MAX_PAGES = 8`. A token
+  pages `advanceOnce()` from `src/auto/advance.mjs`. `MAX_PAGES = 8`. A token
   is minted per page, so a brake pulled while a worker is on page 2 of 4 stops it
   there. `mergePages()` combines the per-page plans and reports into one.
 - `classifyPlanDefers(plan.defer, …)` — everything the machine did not understand,
   as one typed reason from the closed taxonomy.
-- `authorizeSubmit({...})` from `scripts/auto/authorize.mjs` — the only thing that
+- `authorizeSubmit({...})` from `src/auto/authorize.mjs` — the only thing that
   can produce permission to click. It runs the checks in `SUBMIT_CHECKS` and
   either defers with a named failing check or mints a single-use token.
 - `setAutoJobState(db, slug, "attempted")` — **before** `submitOnce`. Of the two
   possible orderings this one can only ever over-report, and over-reporting an
   attempt costs a human one look at a URL while under-reporting one costs a
   duplicate application.
-- `submitOnce(page, {...})` from `scripts/auto/submit.mjs` — eleven named
+- `submitOnce(page, {...})` from `src/auto/submit.mjs` — eleven named
   preconditions (`token_live`, `token_slug`, `token_plan_sha`, `token_mode`,
   `page_origin`, `queue_claimed`, `durable_attempt`, `plan_clean`, `stop_clear`,
   `board_trusted`, `document_verified`), then the durable `(slug, mode)` row, then
   `locator.click()`. That is one of the two `.click(` calls anywhere under
-  `scripts/auto/`, and `tests/auto/click-surface.test.mjs` asserts there are
+  `src/auto/`, and `tests/auto/click-surface.test.mjs` asserts there are
   exactly two.
-- `classify(url, html)` from `scripts/auto/classify.mjs` on the page that comes
+- `classify(url, html)` from `src/auto/classify.mjs` on the page that comes
   back.
 
 **7. The classifier is deliberately blind on every real board.** This is the most
@@ -857,7 +857,7 @@ a value.
 > instead of implemented._
 
 **Where it can stop.** Every one of these ends the application with a typed reason
-from the closed taxonomy in `scripts/lib/db.mjs`:
+from the closed taxonomy in `src/lib/db.mjs`:
 
 | stage       | stop                                      | reason kind                                          |
 | ----------- | ----------------------------------------- | ---------------------------------------------------- |
@@ -896,31 +896,31 @@ AgenticJobApplication/
 ├── logs/               machine-local cycle logs, gitignored
 ├── profile/            YOUR FACTS, gitignored except the example
 ├── schemas/            context.schema.json, job.schema.json
-├── scripts/            all the deterministic code — no LLM calls anywhere
+├── src/            all the deterministic code — no LLM calls anywhere
 ├── templates/          document.css, the print stylesheet for rendered PDFs
-├── tests/              mirrors scripts/ one for one
+├── tests/              mirrors src/ one for one
 ├── CLAUDE.md           the hard rules, loaded into every session
 └── package.json        two runtime dependencies: js-yaml and marked
 ```
 
-### 3.1 `scripts/` — the deterministic core
+### 3.1 `src/` — the deterministic core
 
 Grouped by domain. Nothing in here calls a language model; that is the definition
 of the directory.
 
-| Directory               | What lives there                                                                                                                                                                                                                                                                                                                                                  |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/lib/`          | The foundation everything imports: `db.mjs` (schema and every accessor), `lib.mjs` (output mode, `mapPool`, HTTP), `lock.mjs` (the file lock), `untrusted.mjs` (the rule-0 sanitiser), `keywords.mjs`, `verification.mjs`                                                                                                                                         |
-| `scripts/leads/`        | Finding and judging postings: `find-jobs.mjs`, `enrich.mjs`, `screen.mjs`, `stages.mjs`, `fit.mjs`, `risk.mjs`, `recommend.mjs`, `prep-queue.mjs`, `cluster.mjs`, `canonical.mjs`, `gate-audit.mjs`, `manage-sources.mjs`, `find-boards.mjs`, `discover-boards.mjs`, `board-yield.mjs`                                                                            |
-| `scripts/documents/`    | Producing and checking documents: `new-job.mjs`, `keyword-plan.mjs`, `letter-plan.mjs`, `assemble-resume.mjs`, `verify-claims.mjs`, `render-pdf.mjs`, `reuse-check.mjs`, `ats-lint.mjs`                                                                                                                                                                           |
-| `scripts/apply/`        | Reading and filling a live form: `scan-engine.mjs`, `fill-plan.mjs`, `fill-engine.mjs`, `answer-bank.mjs`, `field-cache.mjs`, `intents.mjs`, `disclosure.mjs`, `longform.mjs`, `browser.mjs`, `auth-sync.mjs`, `pending-questions.mjs`, `capture-post-submit.mjs`, `automatability.mjs`, and `ats/` (one adapter per board)                                       |
-| `scripts/auto/`         | The unattended runner and its guardrails: `cycle.mjs`, `auto-apply.mjs`, `job.mjs`, `pool.mjs`, `stages.mjs`, `multipage.mjs`, `advance.mjs`, `submit.mjs`, `authorize.mjs`, `trust.mjs`, `caps.mjs`, `breaker.mjs`, `guard.mjs`, `classify.mjs`, `taxonomy.mjs`, `audit.mjs`, `digest.mjs`, `reconcile.mjs`, `preflight.mjs`, `notify.mjs`, `untrusted-text.mjs` |
-| `scripts/applications/` | The record: `log-application.mjs`, `update-application.mjs`, `applications.mjs`, `check-applied.mjs`, `follow-ups.mjs`                                                                                                                                                                                                                                            |
-| `scripts/profile/`      | The fact base's only doors: `save-answer.mjs`, `apply-profile.mjs`, `profile-gaps.mjs`, `keyword-coverage.mjs`                                                                                                                                                                                                                                                    |
-| `scripts/maintenance/`  | `archive.mjs`, `migrate.mjs`, `prune-jobs.mjs`                                                                                                                                                                                                                                                                                                                    |
-| `scripts/dev/`          | Benchmarks and measurement, never on any application path: `bench-apply.mjs`, `bench-runner.mjs`, `bench-green-prevalence.mjs`, `flake-rate.mjs`                                                                                                                                                                                                                  |
-| `scripts/hooks/`        | Agent-editable guardrails: `guard-bash.mjs`, `guard-files.mjs`, `prettify.mjs`                                                                                                                                                                                                                                                                                    |
-| `scripts/status.mjs`    | The whole-pipeline digest, at the root because it belongs to no one domain                                                                                                                                                                                                                                                                                        |
+| Directory           | What lives there                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/lib/`          | The foundation everything imports: `db.mjs` (schema and every accessor), `lib.mjs` (output mode, `mapPool`, HTTP), `lock.mjs` (the file lock), `untrusted.mjs` (the rule-0 sanitiser), `keywords.mjs`, `verification.mjs`                                                                                                                                         |
+| `src/leads/`        | Finding and judging postings: `find-jobs.mjs`, `enrich.mjs`, `screen.mjs`, `stages.mjs`, `fit.mjs`, `risk.mjs`, `recommend.mjs`, `prep-queue.mjs`, `cluster.mjs`, `canonical.mjs`, `gate-audit.mjs`, `manage-sources.mjs`, `find-boards.mjs`, `discover-boards.mjs`, `board-yield.mjs`                                                                            |
+| `src/documents/`    | Producing and checking documents: `new-job.mjs`, `keyword-plan.mjs`, `letter-plan.mjs`, `assemble-resume.mjs`, `verify-claims.mjs`, `render-pdf.mjs`, `reuse-check.mjs`, `ats-lint.mjs`                                                                                                                                                                           |
+| `src/apply/`        | Reading and filling a live form: `scan-engine.mjs`, `fill-plan.mjs`, `fill-engine.mjs`, `answer-bank.mjs`, `field-cache.mjs`, `intents.mjs`, `disclosure.mjs`, `longform.mjs`, `browser.mjs`, `auth-sync.mjs`, `pending-questions.mjs`, `capture-post-submit.mjs`, `automatability.mjs`, and `ats/` (one adapter per board)                                       |
+| `src/auto/`         | The unattended runner and its guardrails: `cycle.mjs`, `auto-apply.mjs`, `job.mjs`, `pool.mjs`, `stages.mjs`, `multipage.mjs`, `advance.mjs`, `submit.mjs`, `authorize.mjs`, `trust.mjs`, `caps.mjs`, `breaker.mjs`, `guard.mjs`, `classify.mjs`, `taxonomy.mjs`, `audit.mjs`, `digest.mjs`, `reconcile.mjs`, `preflight.mjs`, `notify.mjs`, `untrusted-text.mjs` |
+| `src/applications/` | The record: `log-application.mjs`, `update-application.mjs`, `applications.mjs`, `check-applied.mjs`, `follow-ups.mjs`                                                                                                                                                                                                                                            |
+| `scripts/profile/`  | The fact base's only doors: `save-answer.mjs`, `apply-profile.mjs`, `profile-gaps.mjs`, `keyword-coverage.mjs`                                                                                                                                                                                                                                                    |
+| `src/maintenance/`  | `archive.mjs`, `migrate.mjs`, `prune-jobs.mjs`                                                                                                                                                                                                                                                                                                                    |
+| `src/dev/`          | Benchmarks and measurement, never on any application path: `bench-apply.mjs`, `bench-runner.mjs`, `bench-green-prevalence.mjs`, `flake-rate.mjs`                                                                                                                                                                                                                  |
+| `src/hooks/`        | Agent-editable guardrails: `guard-bash.mjs`, `guard-files.mjs`, `prettify.mjs`                                                                                                                                                                                                                                                                                    |
+| `src/status.mjs`    | The whole-pipeline digest, at the root because it belongs to no one domain                                                                                                                                                                                                                                                                                        |
 
 The grouping is not filing — it is a dependency direction. `lib/` imports nothing
 from the others. Everything imports `lib/`. `auto/` imports `apply/` (it reuses
@@ -971,14 +971,14 @@ reading. `docs/reference/`, `docs/autonomy/`, the two `autonomy-plan*.md` files
 and the old `README.md` are stale — treat them as leads to verify, never as
 sources of truth.
 
-### 3.4 `tests/` — mirrors `scripts/` one for one
+### 3.4 `tests/` — mirrors `src/` one for one
 
 124 test files across twelve directories: `applications` (3), `apply` (24),
 `auto` (27), `dev` (4), `documents` (12), `hooks` (7), `leads` (22), `lib` (6),
 `maintenance` (3), `profile` (5), `security` (11), plus `fixtures/` (data, not
 tests).
 
-`npm test` runs `node .github/workflows/test-gate.mjs full`, not a bare
+`npm test` runs `node tools/ci/test-gate.mjs full`, not a bare
 `node --test`. The difference matters: `node --test` exits `0` on an empty run, so
 an exit code alone is not evidence that anything ran. The gate expands the
 directories itself and asserts the count against a floor in `package.json` —
@@ -1028,7 +1028,7 @@ itself:
 ```
 # APPLICATION LOG — GENERATED, do not edit.
 # Source of truth is the `applications` table in jobs/leads.db.
-# Regenerate: node scripts/applications/applications.mjs export
+# Regenerate: node src/applications/applications.mjs export
 ```
 
 If you edit that YAML file by hand, your edit survives until the next application
@@ -1073,7 +1073,7 @@ against the real `profile/` without `--file <temp>`, `--user-approved` or
 **The files under `.claude/hooks/` and `.claude/settings*.json` are yours alone**,
 sealed on both the edit path and the shell path. `settings.json` is included
 because it _wires_ every hook — a guard that can be unwired is not a guard.
-`scripts/hooks/*` is a different matter: those are agent-editable, because they
+`src/hooks/*` is a different matter: those are agent-editable, because they
 implement project conventions rather than protect your data.
 
 ---
@@ -1101,7 +1101,7 @@ with nothing anywhere saying so.
 
 ### 5.2 The board sweep's worker pool
 
-`mapPool(items, limit, fn)` in `scripts/lib/lib.mjs` is nineteen lines and worth
+`mapPool(items, limit, fn)` in `src/lib/lib.mjs` is nineteen lines and worth
 reading in full, because it is the whole pattern:
 
 ```js
@@ -1140,7 +1140,7 @@ those APIs staying open to it.
 
 ### 5.3 The origin-keyed browser pool
 
-`runPool()` in `scripts/auto/pool.mjs` is a different shape, because browsers
+`runPool()` in `src/auto/pool.mjs` is a different shape, because browsers
 share state in a way HTTP requests do not.
 
 An **origin** is scheme + host + port: `https://boards.greenhouse.io` is one
@@ -1163,13 +1163,13 @@ Concurrency is recovered structurally instead — cookie-free boards get their o
 Three details are worth carrying into anything you build:
 
 **A job with no known origin is serialised under one shared key**, not let through
-unbounded. That shared key is `NO_ORIGIN` in `scripts/auto/pool.mjs`, and its
+unbounded. That shared key is `NO_ORIGIN` in `src/auto/pool.mjs`, and its
 value is the NUL character followed by `no-origin`. The NUL is written as a
 six-character JavaScript escape — backslash, `u`, then four zeros — and never as
 a raw NUL byte in the file. A raw one passes prettier and
 `node --check` untouched, is invisible in every editor, and makes ripgrep classify
 the file as binary so a codebase-wide search silently skips it. Two files in
-`scripts/` had already been broken that way.
+`src/` had already been broken that way.
 
 **A blocked job is left in place, not moved to the back of the queue.** Reordering
 by origin contention would silently de-prioritise exactly the boards you have most
@@ -1207,7 +1207,7 @@ Each subagent opens its own SQLite connection. That is the concurrency the
 
 ### 5.5 What protects shared state, part 1: the file lock
 
-`scripts/lib/lock.mjs` implements a **lock file**: a small file whose existence
+`src/lib/lock.mjs` implements a **lock file**: a small file whose existence
 means "someone is writing; wait." `acquire()` creates it exclusively — the
 create-if-not-exists operation is atomic at the OS level, so two processes racing
 it cannot both succeed.
@@ -1350,8 +1350,8 @@ applied to would become permanently unappliable, loudly, forever. Widening that
 exception list re-opens the same deadlock.
 
 > **Known defect (2026-08-05 audit).** `reconcileAll` and `reconcileOne` in
-> `scripts/auto/reconcile.mjs` are imported only by their own test. No file under
-> `scripts/` imports that module. So `reconciled-not-sent`, and the entire
+> `src/auto/reconcile.mjs` are imported only by their own test. No file under
+> `src/` imports that module. So `reconciled-not-sent`, and the entire
 > release-the-claim path, cannot fire in production today.
 
 ### 5.8 The four brakes, side by side
@@ -1372,7 +1372,7 @@ escalates a company brake to a global one looks like extra safety and is actuall
 a denial of service on your own job search.
 
 > **Known defect (2026-08-05 audit).** Scoped STOPs are invisible to
-> `scripts/status.mjs`: `digest.mjs` computes stop status from the global path
+> `src/status.mjs`: `digest.mjs` computes stop status from the global path
 > only. A company brake — the kind only a human can clear — never appears in the
 > one command that answers "is the machine working?"
 
@@ -1384,7 +1384,7 @@ A realistic walk using a slug that actually exists in this repository:
 `render-postgres-product-engineer`. Values below are illustrative where the real
 ones would contain personal data.
 
-**1. The sweep runs.** `node scripts/leads/find-jobs.mjs search --source all`.
+**1. The sweep runs.** `node src/leads/find-jobs.mjs search --source all`.
 `loadSources()` returns 44 boards; `mapPool` fetches them eight at a time.
 Render's Ashby board answers with its current postings, one of which is titled
 "Product Engineer, Postgres".
@@ -1412,7 +1412,7 @@ appends the lead, checks `handle.stillHeld()`, and writes. The lead now has
 `apply_url`, `description`, `flags: []`. Then `indexKeywords()` writes its
 technology terms to `lead_keywords`: `postgres`, `go`, `kubernetes`, and so on.
 
-**7. Screening.** `node scripts/leads/screen.mjs --status new` runs
+**7. Screening.** `node src/leads/screen.mjs --status new` runs
 `evaluateStages()`. L2 (`scoreFit`) compares the posting's stack against your
 profile's and produces a fit score. L3 (`scoreRisk`) looks for scam signals, ghost
 signals, and repost history. Both pass. A row lands in `screens` with
@@ -1423,7 +1423,7 @@ freshness plus a salary signal minus risk flags. It lands in the top ten, so
 `prep-queue.mjs` queues it for tailoring ahead of time.
 
 **9. The workspace is created.**
-`node scripts/documents/new-job.mjs render-postgres-product-engineer --from-lead "<url>"`
+`node src/documents/new-job.mjs render-postgres-product-engineer --from-lead "<url>"`
 prints `description=4180 untrusted=none` and writes
 `jobs/render-postgres-product-engineer/job.json` and `context.json`. **No page was
 read** — the sweep already had everything.
@@ -1450,7 +1450,7 @@ that `prune-jobs.mjs` will delete.
 the page inventory. Every element gets a `data-aj` stamp. The scan is written to
 `jobs/render-postgres-product-engineer/scan-p1.json`.
 
-**15. The plan is built.** `node scripts/apply/fill-plan.mjs render-postgres-product-engineer`
+**15. The plan is built.** `node src/apply/fill-plan.mjs render-postgres-product-engineer`
 detects Ashby, loads `jobs/.field-cache.json`, resolves every field through
 `answer-bank.mjs`, and writes `fill-plan.json` and `fill-plan.js`. The real plan
 from this workspace has this shape (a value redacted):
@@ -1525,19 +1525,19 @@ radios named with their labels quoted, and "Pronouns" left blank with its reason
 Then `browser_click` on the submit control.
 
 **20. The post-submit page is captured.**
-`node scripts/apply/capture-post-submit.mjs stage --url … --html-file … --board ashby --slug render-postgres-product-engineer`
+`node src/apply/capture-post-submit.mjs stage --url … --html-file … --board ashby --slug render-postgres-product-engineer`
 redacts and stages it. You review it and decide whether to promote it. If you do,
 the unattended classifier gains one real Ashby confirmation page and stops being
 blind on that host.
 
 **21. The record.**
-`node scripts/applications/log-application.mjs render-postgres-product-engineer --company "Render" --title "Product Engineer, Postgres" --url "<url>"`
+`node src/applications/log-application.mjs render-postgres-product-engineer --company "Render" --title "Product Engineer, Postgres" --url "<url>"`
 writes a row to the `applications` table and immediately regenerates
 `profile/applications.yaml` from the whole table.
 
 **22. Afterwards.** `check-applied.mjs` will now refuse a duplicate.
 `follow-ups.mjs` will list this application when it is due a nudge.
-`scripts/status.mjs` folds it into the whole-pipeline digest. And
+`src/status.mjs` folds it into the whole-pipeline digest. And
 `archive.mjs archive --closed` will eventually fold the whole workspace into the
 `documents` table, one row per file with its exact bytes and sha256, and remove
 the directory — so `ls jobs/` shows live work only.

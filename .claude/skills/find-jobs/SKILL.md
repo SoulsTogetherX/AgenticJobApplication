@@ -27,14 +27,14 @@ recommendation. Never applies to anything — that is pipeline-jobs / apply-job.
 `docs/application-limits.yaml` is the contract: no relocation away from North
 Las Vegas (remote OK, Las Vegas metro on-site OK, occasional travel OK), no
 stale postings (default > 30 days), Full-Stack roles only.
-`scripts/leads/find-jobs.mjs` enforces it mechanically on everything stored.
+`src/leads/find-jobs.mjs` enforces it mechanically on everything stored.
 
 ## Flows
 
 **1. API sweep (default)** — run:
 
 ```bash
-node scripts/leads/find-jobs.mjs search --source all --query "full stack"
+node src/leads/find-jobs.mjs search --source all --query "full stack"
 ```
 
 Covers every board in `docs/job-sources.yaml`, Hacker News job posts, and —
@@ -58,7 +58,7 @@ into a document; if unconfigured, `all` skips it with a warning.
 - Otherwise capture the page with WebFetch (static) or Playwright MCP
   (JS-heavy), extract postings, normalize each to
   `{ company, title, location, url, posted_at }`, write the array to a temp
-  JSON file, and run `node scripts/leads/find-jobs.mjs import <file>` so the same
+  JSON file, and run `node src/leads/find-jobs.mjs import <file>` so the same
   limits/dedupe apply. Never hand-edit the lead store.
 - Fortune 500 companies mostly run Workday/Taleo (no public API): use their
   public careers-site search page via this capture flow, or WebSearch
@@ -88,7 +88,7 @@ When asked "what did you find" / "recommend jobs":
 
 1. **Rank deterministically first — do not read the lead store by hand:**
    ```bash
-   node scripts/leads/recommend.mjs --top 10
+   node src/leads/recommend.mjs --top 10
    ```
    It scores every lead on tech overlap with the profile, role-title fit,
    freshness, salary signal, and risk flags, and prints one compact line per
@@ -97,10 +97,10 @@ When asked "what did you find" / "recommend jobs":
    score is misleading). Do not re-derive the ranking.
 3. Present a short table: company, title, location, age, URL, one-line fit
    rationale. Mention any `unknown_location` / `unknown_age` flags.
-4. `node scripts/leads/find-jobs.mjs mark <id> --status recommended` for the ones
+4. `node src/leads/find-jobs.mjs mark <id> --status recommended` for the ones
    surfaced; `--status dismissed --notes "why"` for the ones the user rejects.
 
 The store lives at `jobs/leads.db` — SQLite, gitignored like all personal data.
 There is **no standing `jobs/leads.json`**: a second copy went stale the moment
 a sweep ran. Take a point-in-time snapshot with
-`node scripts/maintenance/migrate.mjs --export <file>` if you need one.
+`node src/maintenance/migrate.mjs --export <file>` if you need one.

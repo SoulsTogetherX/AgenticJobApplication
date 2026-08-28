@@ -13,17 +13,17 @@
 //   CLOSED  rows in the `documents` table, directory removed.
 //
 // Usage:
-//   node scripts/maintenance/archive.mjs list [--json]
-//   node scripts/maintenance/archive.mjs show <slug> [--json]
-//   node scripts/maintenance/archive.mjs archive <slug> [--force]
-//   node scripts/maintenance/archive.mjs archive --closed [--dry-run]
-//   node scripts/maintenance/archive.mjs restore <slug> [--to <dir>] [--force]
-//   node scripts/maintenance/archive.mjs purge [--days N] [--apply] [--json]
+//   node src/maintenance/archive.mjs list [--json]
+//   node src/maintenance/archive.mjs show <slug> [--json]
+//   node src/maintenance/archive.mjs archive <slug> [--force]
+//   node src/maintenance/archive.mjs archive --closed [--dry-run]
+//   node src/maintenance/archive.mjs restore <slug> [--to <dir>] [--force]
+//   node src/maintenance/archive.mjs purge [--days N] [--apply] [--json]
 //     Deletes ARCHIVED `documents` rows whose JOB POSTING (not the archive
 //     date, not the application date) is older than --days — default is
 //     docs/application-limits.yaml's freshness.max_age_days, else 30. Dry
 //     run unless --apply is passed: this is IRREVERSIBLE (see the
-//     `documents` table comment in scripts/lib/db.mjs).
+//     `documents` table comment in src/lib/db.mjs).
 //   ... plus [--jobs-dir <path>] [--db <path>] [--applications <path>]
 //
 // Exit codes: 0 ok, 1 refused / nothing to do, 2 usage.
@@ -460,7 +460,7 @@ function main() {
             `${r.regenerable} regenerable, archived ${r.archived_at.slice(0, 10)}`,
         )
       console.log(
-        `\nRestore one with: node scripts/maintenance/archive.mjs restore <slug>\n`,
+        `\nRestore one with: node src/maintenance/archive.mjs restore <slug>\n`,
       )
       return
     } finally {
@@ -548,7 +548,7 @@ function main() {
       console.log(`restored\t${r.slug}\t${r.written.length} file(s)\t${r.dest}`)
       for (const g of r.regenerable) {
         console.log(
-          `regenerable\t${g.name}\trebuild with scripts/documents/render-pdf.mjs`,
+          `regenerable\t${g.name}\trebuild with src/documents/render-pdf.mjs`,
         )
       }
       // Rows are kept on purpose: restoring is for inspecting or reusing, not

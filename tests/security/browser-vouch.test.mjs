@@ -25,8 +25,8 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { start } from "../fixtures/boards/server.mjs"
-import { buildPlan } from "../../scripts/apply/fill-plan.mjs"
-import { normalizeQuestion } from "../../scripts/apply/answer-bank.mjs"
+import { buildPlan } from "../../src/apply/fill-plan.mjs"
+import { normalizeQuestion } from "../../src/apply/answer-bank.mjs"
 
 // The wording the user approved and put on their own allowlist.
 const APPROVED =
@@ -38,10 +38,9 @@ const SHOWN =
 async function browserOrReason() {
   let launchBrowser, scanPage
   try {
-    ;({ launchBrowser, scanPage } =
-      await import("../../scripts/apply/browser.mjs"))
+    ;({ launchBrowser, scanPage } = await import("../../src/apply/browser.mjs"))
   } catch (e) {
-    return { reason: `scripts/apply/browser.mjs did not import: ${e.message}` }
+    return { reason: `src/apply/browser.mjs did not import: ${e.message}` }
   }
   try {
     const session = await launchBrowser({ headless: true, localOnly: true })

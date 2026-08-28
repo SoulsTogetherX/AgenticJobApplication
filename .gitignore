@@ -57,5 +57,5 @@ node_modules/
 !tests/fixtures/**/*.html
 !tests/fixtures/**/*.pdf
 
-# Unattended cycle logs (scripts/auto/cycle.cmd) — machine-local run records.
+# Unattended cycle logs (src/auto/cycle.cmd, via the scripts/auto shim while the Scheduled Task points there) — machine-local run records.
 logs/

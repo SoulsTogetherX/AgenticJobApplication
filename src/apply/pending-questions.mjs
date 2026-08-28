@@ -18,7 +18,7 @@
 // Consent, terms and e-signature fields are NEVER listed: they are the user's
 // to tick in the browser, not questions with answers worth storing.
 //
-// Usage: node scripts/apply/pending-questions.mjs [<slug> ...] [--jobs-dir jobs]
+// Usage: node src/apply/pending-questions.mjs [<slug> ...] [--jobs-dir jobs]
 //        [--no-predict] [--profile <path>] [--answers <path>] [--json]
 //
 // Exit codes: 0 ok, 2 usage / missing jobs dir.
@@ -268,7 +268,7 @@ function readJson(file) {
 // `resolveFields`, taken from the import graph rather than from memory. Naming
 // a directory costs a `readdirSync` per run and cannot be forgotten when a new
 // planner file lands beside the others, which is the failure being closed.
-const PLAN_INPUT_PATHS = ["scripts/apply", "scripts/lib"]
+const PLAN_INPUT_PATHS = ["src/apply", "src/lib"]
 
 // The fact base is an input too, and BOTH halves of it are. `profile.yaml` was
 // missing until 2026-08-24: `resolveFields` reads it for address, name and
@@ -449,7 +449,7 @@ function main() {
       `${stalePlans.length} plan(s) predate the planner or the fact base and were NOT read — ` +
         `their defers may already be resolved. Rebuild before trusting this list:
 ` +
-        `  node scripts/apply/rebuild-plans.mjs
+        `  node src/apply/rebuild-plans.mjs
 `,
     )
   }

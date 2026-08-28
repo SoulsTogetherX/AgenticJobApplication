@@ -26,12 +26,12 @@ import {
   scorePair,
   makeSha256,
   CACHE_MIN_WORKSPACES,
-} from "../../scripts/documents/reuse-check.mjs"
+} from "../../src/documents/reuse-check.mjs"
 import {
   openDb,
   readWorkspaceStacks,
   upsertWorkspaceStack,
-} from "../../scripts/lib/db.mjs"
+} from "../../src/lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -242,7 +242,7 @@ test("an unreadable cache row degrades to a recompute, never a crash", (t) => {
 function cli(args) {
   return spawnSync(
     process.execPath,
-    [path.join(ROOT, "scripts", "documents", "reuse-check.mjs"), ...args],
+    [path.join(ROOT, "src", "documents", "reuse-check.mjs"), ...args],
     { cwd: ROOT, encoding: "utf8" },
   )
 }

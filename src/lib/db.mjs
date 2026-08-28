@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_apps_applied ON applications(applied_at);
 -- Per-lead screening verdicts, keyed by WHO produced them.
 --
 -- The source column is the whole point. The mechanical screen
--- (scripts/leads/screen.mjs) is regex over stored text and costs ~125 ms for
+-- (src/leads/screen.mjs) is regex over stored text and costs ~125 ms for
 -- the entire store, so caching it saves nothing; it is kept because a verdict
 -- with no history cannot be audited. The expensive source is "model" — the
 -- pipeline-jobs Stage A read, which fetches the live posting and judges
@@ -181,7 +181,7 @@ CREATE TABLE IF NOT EXISTS board_stats (
   zero_streak        INTEGER DEFAULT 0
 );
 
--- Unattended auto-apply runs. One row per run of scripts/auto/auto-apply.mjs.
+-- Unattended auto-apply runs. One row per run of src/auto/auto-apply.mjs.
 --
 -- This is the SECOND of two copies, not the only one. jobs/.auto/runs/ holds
 -- the same events as append-only JSONL, and that is the copy that survives:
@@ -901,7 +901,7 @@ export function keywordDemand(db, { status = null, limit = 50 } = {}) {
 // --- applications --------------------------------------------------------------
 
 // The applications TABLE is the source of truth (user decision, 2026-07-29:
-// applications are only ever created by scripts/applications/log-application.mjs after the
+// applications are only ever created by src/applications/log-application.mjs after the
 // user confirms a submission — nobody hand-edits them, so a file pretending to
 // be authoritative bought nothing but a sync problem).
 //
@@ -952,8 +952,8 @@ export function exportApplicationsYaml(
   const header =
     "# APPLICATION LOG — GENERATED, do not edit.\n" +
     "# Source of truth is the `applications` table in jobs/leads.db.\n" +
-    "# Regenerate: node scripts/applications/applications.mjs export\n" +
-    "# Entries are only ever created by scripts/applications/log-application.mjs, after the\n" +
+    "# Regenerate: node src/applications/applications.mjs export\n" +
+    "# Entries are only ever created by src/applications/log-application.mjs, after the\n" +
     "# user confirms they submitted the application.\n"
   const body = dumpYaml
     ? dumpYaml({ applications })
@@ -1590,7 +1590,7 @@ export const AUTO_QUEUE_TERMINAL = new Set([
 // re-typing a string, and a writer that cannot name a kind cannot write a row.
 // The POLICY on top of these — which stage produced a kind, which class it
 // aggregates into, which of several defers is the blocking one — is
-// scripts/auto/taxonomy.mjs's. This is only the vocabulary.
+// src/auto/taxonomy.mjs's. This is only the vocabulary.
 //
 // WHY TYPED AND NOT FREE TEXT. Every deferral already carried a reason, as a
 // sentence. A sentence cannot be aggregated: "unprobed dropdown" and "dropdown

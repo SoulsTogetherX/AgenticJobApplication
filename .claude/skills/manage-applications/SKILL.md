@@ -35,14 +35,14 @@ CLAUDE.md rule 2 still holds, and it is about _provenance_, not about a file:
 ## Reading
 
 ```bash
-node scripts/applications/applications.mjs list [--status <s>] [--company "X"] [--json]
-node scripts/applications/applications.mjs find "<company|title|slug>" [--json]
-node scripts/applications/applications.mjs stats [--json]
+node src/applications/applications.mjs list [--status <s>] [--company "X"] [--json]
+node src/applications/applications.mjs find "<company|title|slug>" [--json]
+node src/applications/applications.mjs stats [--json]
 ```
 
 `find` is the fast answer to "did I apply to X?" — it matches slug, company and
 title. For the richer duplicate check that also reasons about how long ago and
-about near-miss company names, `scripts/applications/check-applied.mjs` is still the right
+about near-miss company names, `src/applications/check-applied.mjs` is still the right
 tool and the check-applied skill still owns that flow.
 
 ## Writing
@@ -51,9 +51,9 @@ Creating and updating keep their own scripts — they carry the confirmation
 rules above:
 
 ```bash
-node scripts/applications/log-application.mjs <slug> --company "X" --title "Y" \
+node src/applications/log-application.mjs <slug> --company "X" --title "Y" \
   [--url <url>] [--date YYYY-MM-DD] [--notes "..."]
-node scripts/applications/update-application.mjs <slug-or-company> --status <status> [--followed-up]
+node src/applications/update-application.mjs <slug-or-company> --status <status> [--followed-up]
 ```
 
 Statuses: `applied`, `followed_up`, `interviewing`, `offer`, `rejected`,
@@ -62,9 +62,9 @@ Statuses: `applied`, `followed_up`, `interviewing`, `offer`, `rejected`,
 Removing and re-exporting:
 
 ```bash
-node scripts/applications/applications.mjs remove <slug>            # dry run: prints what would go
-node scripts/applications/applications.mjs remove <slug> --confirm  # actually deletes
-node scripts/applications/applications.mjs export                   # rewrite the YAML export
+node src/applications/applications.mjs remove <slug>            # dry run: prints what would go
+node src/applications/applications.mjs remove <slug> --confirm  # actually deletes
+node src/applications/applications.mjs export                   # rewrite the YAML export
 ```
 
 `remove` without `--confirm` prints the entry and exits non-zero. Show that
@@ -81,8 +81,8 @@ When you record a closing outcome (`rejected`, `withdrawn`, `no_response`,
 `closed`), offer to fold the workspace away:
 
 ```bash
-node scripts/maintenance/archive.mjs archive --closed --dry-run   # what would go
-node scripts/maintenance/archive.mjs archive --closed             # do it
+node src/maintenance/archive.mjs archive --closed --dry-run   # what would go
+node src/maintenance/archive.mjs archive --closed             # do it
 ```
 
 `--closed` only ever touches applications with a **recorded** closed outcome.
@@ -93,7 +93,7 @@ archiving something still in motion.
 For a workspace that was prepped but never submitted, the manual path is fine:
 
 ```bash
-node scripts/maintenance/archive.mjs archive <slug>
+node src/maintenance/archive.mjs archive <slug>
 ```
 
 It refuses a slug whose application is still live unless `--force`.
@@ -103,10 +103,10 @@ before the directory is removed, and a mismatch aborts with the directory left
 in place. Restore is byte-identical:
 
 ```bash
-node scripts/maintenance/archive.mjs list
-node scripts/maintenance/archive.mjs show <slug>
-node scripts/maintenance/archive.mjs restore <slug>            # back to jobs/<slug>/
-node scripts/maintenance/archive.mjs restore <slug> --to <dir> # somewhere else
+node src/maintenance/archive.mjs list
+node src/maintenance/archive.mjs show <slug>
+node src/maintenance/archive.mjs restore <slug>            # back to jobs/<slug>/
+node src/maintenance/archive.mjs restore <slug> --to <dir> # somewhere else
 ```
 
 `--to <dir>` is how `verify-claims.mjs` runs against an archived document —
@@ -118,14 +118,14 @@ one only if it is actually needed again.
 
 ## Maintenance
 
-- `node scripts/maintenance/migrate.mjs` rebuilds `jobs/leads.db` from the on-disk sources.
+- `node src/maintenance/migrate.mjs` rebuilds `jobs/leads.db` from the on-disk sources.
   It is flat and idempotent — safe to re-run. It imports applications **only**
   when the table is empty, so it can never undo recorded outcomes.
 - If `jobs/leads.db` is lost, the YAML export is the recovery path: migrate
   bootstraps the table straight back from it. **Archived documents are the
   exception** — once a directory is folded away, the database is the only copy,
   so nothing can rebuild them. Backing them up means copying `jobs/leads.db`.
-- `node scripts/maintenance/prune-jobs.mjs` now only removes `.render.html`
+- `node src/maintenance/prune-jobs.mjs` now only removes `.render.html`
   intermediates. Closed-application cleanup belongs to `archive.mjs`.
 
 ## Token discipline

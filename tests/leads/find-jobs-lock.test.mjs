@@ -1,5 +1,5 @@
 // The lead store's read-modify-write is serialized by LEADS_LOCK — see
-// scripts/lib/lock.mjs's header, which names find-jobs.mjs's cmdSearch (via
+// src/lib/lock.mjs's header, which names find-jobs.mjs's cmdSearch (via
 // ingest()) as the one caller it was built for, and this file as the reason:
 // `writeLeadStore` upserts every lead object it is given, doc column and
 // all, so committing a copy read before a concurrent writer's commit
@@ -13,7 +13,7 @@
 // Every sighting and every insert must survive.
 //
 // CANARIED 2026-08-01: with the `withLock(...)` wrapper in
-// scripts/leads/find-jobs.mjs's ingest() temporarily replaced by a direct,
+// src/leads/find-jobs.mjs's ingest() temporarily replaced by a direct,
 // unlocked call to the same callback, this test failed — base.repost_count
 // landed well under WRITERS (lost increments) on every trial. Restored
 // before commit; see this agent's report for the exact numbers.
@@ -29,14 +29,14 @@ import os from "node:os"
 import path from "node:path"
 import { execFile } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { openDb, upsertLeads, readLeadStore } from "../../scripts/lib/db.mjs"
+import { openDb, upsertLeads, readLeadStore } from "../../src/lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
 )
-const CLI = path.join(ROOT, "scripts", "leads", "find-jobs.mjs")
+const CLI = path.join(ROOT, "src", "leads", "find-jobs.mjs")
 
 function tmpdir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "aj-leadslock-"))

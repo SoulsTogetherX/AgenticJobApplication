@@ -31,14 +31,10 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { start } from "../fixtures/boards/server.mjs"
-import { launchBrowser } from "../../scripts/apply/browser.mjs"
-import { runCampaign, makeOpenPage } from "../../scripts/auto/auto-apply.mjs"
-import { makeStages } from "../../scripts/auto/stages.mjs"
-import {
-  openDb,
-  recordVerification,
-  readAutoQueue,
-} from "../../scripts/lib/db.mjs"
+import { launchBrowser } from "../../src/apply/browser.mjs"
+import { runCampaign, makeOpenPage } from "../../src/auto/auto-apply.mjs"
+import { makeStages } from "../../src/auto/stages.mjs"
+import { openDb, recordVerification, readAutoQueue } from "../../src/lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -209,10 +205,7 @@ test("the stages are the SAME code the attended path uses, not a second implemen
   // off the source rather than asserted in prose: stages.mjs must IMPORT the
   // attended modules, and must not spawn anything (§4.1 — `spawns_per_app` is a
   // gate column asserted to be 0).
-  const src = fs.readFileSync(
-    path.join(ROOT, "scripts/auto/stages.mjs"),
-    "utf8",
-  )
+  const src = fs.readFileSync(path.join(ROOT, "src/auto/stages.mjs"), "utf8")
   for (const mod of [
     "../apply/scan-engine.mjs",
     "../apply/fill-engine.mjs",

@@ -13,10 +13,10 @@
 // re-paid on every re-screen. Record one with the `record` subcommand, and skip
 // leads that already have one with --skip-screened.
 //
-// Usage: node scripts/leads/screen.mjs [--status new] [--json] [--skip-screened]
+// Usage: node src/leads/screen.mjs [--status new] [--json] [--skip-screened]
 //        [--no-record] [--leads <path>] [--jobs-dir <path>] [--limits <path>]
 //        [--profile <path>]
-//        node scripts/leads/screen.mjs record <lead-id> --verdict pass|caution|reject
+//        node src/leads/screen.mjs record <lead-id> --verdict pass|caution|reject
 //          [--reason "..."] [--signals a,b] [--source model]
 import fs from "node:fs"
 import { assertKnownFlags } from "../lib/args.mjs"

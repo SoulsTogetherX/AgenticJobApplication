@@ -33,11 +33,11 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { runScanner } from "../fixtures/boards/dom.mjs"
-import scanPage from "../../scripts/apply/scan-engine.mjs"
-import fillPage from "../../scripts/apply/fill-engine.mjs"
-import { buildPlan } from "../../scripts/apply/fill-plan.mjs"
-import { launchBrowser } from "../../scripts/apply/browser.mjs"
-import genericAdapter from "../../scripts/apply/ats/generic.mjs"
+import scanPage from "../../src/apply/scan-engine.mjs"
+import fillPage from "../../src/apply/fill-engine.mjs"
+import { buildPlan } from "../../src/apply/fill-plan.mjs"
+import { launchBrowser } from "../../src/apply/browser.mjs"
+import genericAdapter from "../../src/apply/ats/generic.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

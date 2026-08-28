@@ -3,8 +3,8 @@
 // several separate commands (and the model round-trips between them) that
 // answering "where do things stand?" used to take.
 //
-// Usage: node scripts/status.mjs [--json] [--days N] [--cadence-hours H]
-//        node scripts/status.mjs --db <path> --stop-path <path>   # fixtures
+// Usage: node src/status.mjs [--json] [--days N] [--cadence-hours H]
+//        node src/status.mjs --db <path> --stop-path <path>   # fixtures
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"

@@ -3,20 +3,12 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import {
-  startRun,
-  hashProfile,
-  PROFILE_FILES,
-} from "../../scripts/auto/audit.mjs"
-import { capCheck } from "../../scripts/auto/caps.mjs"
-import { authorizeSubmit, planSha256 } from "../../scripts/auto/authorize.mjs"
+import { startRun, hashProfile, PROFILE_FILES } from "../../src/auto/audit.mjs"
+import { capCheck } from "../../src/auto/caps.mjs"
+import { authorizeSubmit, planSha256 } from "../../src/auto/authorize.mjs"
 import { DatabaseSync } from "node:sqlite"
-import { openDb, upsertApplications } from "../../scripts/lib/db.mjs"
-import {
-  StopError,
-  readStop,
-  scopedStopPath,
-} from "../../scripts/auto/guard.mjs"
+import { openDb, upsertApplications } from "../../src/lib/db.mjs"
+import { StopError, readStop, scopedStopPath } from "../../src/auto/guard.mjs"
 
 function sandbox({ profile = "name: x\n", answers = "answers: []\n" } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aj-audit-"))

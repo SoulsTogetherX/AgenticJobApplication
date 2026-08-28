@@ -21,19 +21,19 @@ import {
   recordBoardPause,
   upsertAutoRun,
   upsertApplications,
-} from "../../scripts/lib/db.mjs"
+} from "../../src/lib/db.mjs"
 import {
   buildAutoStatus,
   percentile,
   blindBoards,
-} from "../../scripts/auto/digest.mjs"
+} from "../../src/auto/digest.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
 )
-const STATUS = path.join(ROOT, "scripts", "status.mjs")
+const STATUS = path.join(ROOT, "src", "status.mjs")
 
 const HOUR = 3_600_000
 const NOW = new Date("2026-08-02T12:00:00Z")
@@ -538,7 +538,7 @@ test("every assent a confirmed submission made for the user is NAMED in the dige
 function await_import() {
   // The renderers are pure over the status object; imported lazily here so
   // the file's existing import list stays as it was.
-  return import("../../scripts/auto/digest.mjs").then((m) => m)
+  return import("../../src/auto/digest.mjs").then((m) => m)
 }
 
 // --- allowlisted but unreadable ---------------------------------------------

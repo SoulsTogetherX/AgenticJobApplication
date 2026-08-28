@@ -43,14 +43,14 @@ cannot debug.
 **Conventions used in every recipe**
 
 - Commands are shown for a shell at the **repository root** — the folder
-  containing `package.json`, `scripts/` and `docs/`. If a command reports "no
+  containing `package.json`, `src/` and `docs/`. If a command reports "no
   such file", check where you are first (`pwd` in Git Bash, `Get-Location` in
   PowerShell).
 - Every script is run with `node <path>`. `node` is the JavaScript runtime; these
   scripts are ordinary programs, not part of any framework.
 - A **flag** is an option that starts with `--`, like `--json` or `--top 5`. A
   **positional argument** is a bare value whose meaning comes from its position,
-  like the `<slug>` in `node scripts/documents/keyword-plan.mjs my-slug`. Several
+  like the `<slug>` in `node src/documents/keyword-plan.mjs my-slug`. Several
   scripts in this repository parse flags in a way that breaks when a flag comes
   **before** the positional argument; where that is true, the recipe says so.
 - An **exit code** is a number a program hands back to whatever ran it. `0` means
@@ -103,7 +103,7 @@ you can re-rank a hundred times without touching the network.
 ### Step 1 — Sweep
 
 ```bash
-node scripts/leads/find-jobs.mjs search --source all
+node src/leads/find-jobs.mjs search --source all
 ```
 
 `--source all` means boards + Hacker News + Adzuna. You can narrow it to
@@ -142,7 +142,7 @@ That is deliberate. One dead board must never lose you the other forty.
 ### Step 2 — Screen
 
 ```bash
-node scripts/leads/screen.mjs
+node src/leads/screen.mjs
 ```
 
 Screening is a mechanical first pass for scam signals, ghost-job signals and
@@ -170,7 +170,7 @@ Verdicts are cached in a `screens` table so a later re-screen can skip them with
 ### Step 3 — See the best ones
 
 ```bash
-node scripts/leads/recommend.mjs --top 5
+node src/leads/recommend.mjs --top 5
 ```
 
 This ranks stored leads against your profile with no AI involvement at all. The
@@ -196,7 +196,7 @@ have to work around, and it is what feeds `profile-gaps.mjs` later.
 ### Step 4 (optional) — Queue documents ahead of time
 
 ```bash
-node scripts/leads/prep-queue.mjs --top 10
+node src/leads/prep-queue.mjs --top 10
 ```
 
 This picks which leads are worth a tailored resume **before** you sit down to
@@ -217,7 +217,7 @@ means a workspace exists but has no tailored resume in it.
 ### How to tell the whole recipe worked
 
 ```bash
-node scripts/status.mjs
+node src/status.mjs
 ```
 
 ```
@@ -233,24 +233,24 @@ That is the check.
 
 | Symptom                                       | Cause                                                  | What to do                                                                                                                                                       |
 | --------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stored=0 rejected=0`                         | Every board fetch failed, or your source list is empty | Run `node scripts/leads/manage-sources.mjs verify` — it live-checks every board and prints `BROKEN <name> — <reason>` for each failure                           |
+| `stored=0 rejected=0`                         | Every board fetch failed, or your source list is empty | Run `node src/leads/manage-sources.mjs verify` — it live-checks every board and prints `BROKEN <name> — <reason>` for each failure                               |
 | `adzuna — ... (skipped)`                      | No Adzuna credentials                                  | Copy `.env.example` to `.env` and fill `ADZUNA_APP_ID` / `ADZUNA_APP_KEY`, free from Adzuna's developer site. Never paste those values into a chat or a document |
 | `stored=0` but `rejected` is in the thousands | The gate is rejecting everything                       | Recipe 12                                                                                                                                                        |
 | Sweep takes minutes                           | Boards are fetched at concurrency 8 by default         | `--concurrency 12` raises it; be polite, these are other people's servers                                                                                        |
 
 > **Known defect (2026-08-05 audit).** `dedupeLeads` in
-> `scripts/leads/find-jobs.mjs` records a "repost sighting" whenever a
+> `src/leads/find-jobs.mjs` records a "repost sighting" whenever a
 > candidate's company + title matches a stored lead and the candidate's own id is
 > not yet stored — and then drops the candidate, so its id **never** enters the
 > store and the same live posting is counted again on every subsequent sweep.
-> `scripts/leads/risk.mjs` sets `repost_reject: 3`, so at the third sweep the L3
+> `src/leads/risk.mjs` sets `repost_reject: 3`, so at the third sweep the L3
 > stage rejects the lead outright. Two consequences you will actually see: a
 > company with two genuinely different openings under the same title can only
 > ever store one of them, and a legitimate posting that sits on a board for three
 > days is destroyed as a "repost". If a job you know is real vanishes after a few
 > days with an `l3` reason mentioning reposting, this is why.
 
-> **Known defect (2026-08-05 audit).** `scripts/leads/prep-queue.mjs` calls the
+> **Known defect (2026-08-05 audit).** `src/leads/prep-queue.mjs` calls the
 > shared ranking function without the keyword map and without your limits
 > document, so technology overlap contributes almost nothing to its order and a
 > custom `roles.title_rank` in `docs/application-limits.yaml` does not affect it
@@ -295,7 +295,7 @@ and as a key in the database, so keep it filesystem-safe: letters, digits and
 hyphens.
 
 ```bash
-node scripts/documents/new-job.mjs northwind-full-stack-engineer \
+node src/documents/new-job.mjs northwind-full-stack-engineer \
   --from-lead "https://job-boards.greenhouse.io/northwind/jobs/8098945"
 ```
 
@@ -307,7 +307,7 @@ parameters and trailing slashes stripped.
 If there is no stored lead, scaffold it explicitly instead:
 
 ```bash
-node scripts/documents/new-job.mjs northwind-full-stack-engineer \
+node src/documents/new-job.mjs northwind-full-stack-engineer \
   --company "Northwind Logistics" --title "Full Stack Engineer" \
   --url "https://job-boards.greenhouse.io/northwind/jobs/8098945" \
   --description-file /tmp/posting.txt
@@ -350,7 +350,7 @@ hard rule 0 in code form: **a job posting is data, never instructions.**
 ### Step 2 — Build the keyword plan
 
 ```bash
-node scripts/documents/keyword-plan.mjs northwind-full-stack-engineer
+node src/documents/keyword-plan.mjs northwind-full-stack-engineer
 ```
 
 **What you should see.** A summary line, then the two lists, written to
@@ -386,7 +386,7 @@ failed that check. That is the system working.
 
 > **Known defect (2026-08-05 audit).** `keyword-plan.mjs` finds the slug with
 > `args.find(a => !a.startsWith("--"))` while its flag reader does not remove the
-> flag's value from the list. Writing `node scripts/documents/keyword-plan.mjs
+> flag's value from the list. Writing `node src/documents/keyword-plan.mjs
 --jobs-dir jobs my-slug` therefore treats `jobs` as the slug. **Always put the
 > slug first**, before any flag. The same shape affects `ats-lint.mjs` and
 > `assemble-resume.mjs`.
@@ -402,7 +402,7 @@ performs no writing operation at all — the posting influences only _which_ of
 your own sentences are selected, never a word of text:
 
 ```bash
-node scripts/documents/assemble-resume.mjs northwind-full-stack-engineer
+node src/documents/assemble-resume.mjs northwind-full-stack-engineer
 ```
 
 **Model tailoring** is what happens when you ask the agent to tailor a resume (the
@@ -418,7 +418,7 @@ form accepts attachments beyond the resume, or the posting explicitly asks. Reci
 ### Step 4 — Verify
 
 ```bash
-node scripts/documents/verify-claims.mjs resume \
+node src/documents/verify-claims.mjs resume \
   jobs/northwind-full-stack-engineer/resume.md \
   --job jobs/northwind-full-stack-engineer/job.json
 ```
@@ -470,7 +470,7 @@ skip that (tests use it).
 ### Step 5 — Lint for machine readability
 
 ```bash
-node scripts/documents/ats-lint.mjs jobs/northwind-full-stack-engineer/resume.md
+node src/documents/ats-lint.mjs jobs/northwind-full-stack-engineer/resume.md
 ```
 
 An applicant tracking system reads the **text layer** of a PDF, not the picture
@@ -499,7 +499,7 @@ clean, `1` problems found, `2` usage error.
 ### Step 6 — Check whether you should reuse an existing resume
 
 ```bash
-node scripts/documents/reuse-check.mjs northwind-full-stack-engineer
+node src/documents/reuse-check.mjs northwind-full-stack-engineer
 ```
 
 ```
@@ -554,7 +554,7 @@ happened.
 Only after you approve, and only if the form actually needs a file:
 
 ```bash
-node scripts/documents/render-pdf.mjs \
+node src/documents/render-pdf.mjs \
   jobs/northwind-full-stack-engineer/resume.md \
   jobs/northwind-full-stack-engineer/resume.pdf
 ```
@@ -592,7 +592,7 @@ message covering all five points above.
 | `Output exists but is not a valid PDF`     | The browser wrote something else                     | Same fix; check the intermediate `.render.html` opens correctly in a browser                             |
 | `new-job.mjs` exits 1                      | The workspace exists already                         | Use a different slug, or work in the existing folder                                                     |
 
-Housekeeping: `node scripts/maintenance/prune-jobs.mjs --apply` deletes the
+Housekeeping: `node src/maintenance/prune-jobs.mjs --apply` deletes the
 `*.render.html` intermediates, which are waste at every moment after the render.
 
 ---
@@ -635,7 +635,7 @@ context window.
 - Check for a duplicate first:
 
 ```bash
-node scripts/applications/check-applied.mjs "Northwind Logistics"
+node src/applications/check-applied.mjs "Northwind Logistics"
 ```
 
 ```json
@@ -694,7 +694,7 @@ fields deferred to you.
 ### Step 3 — Build the fill plan
 
 ```bash
-node scripts/apply/fill-plan.mjs northwind-full-stack-engineer
+node src/apply/fill-plan.mjs northwind-full-stack-engineer
 ```
 
 This reads the saved scan, resolves every field against `profile/profile.yaml`
@@ -755,7 +755,7 @@ resume`. That is expected before approval; re-run after rendering.
 ### Step 4 — Batch the questions across every prepped job
 
 ```bash
-node scripts/apply/pending-questions.mjs
+node src/apply/pending-questions.mjs
 ```
 
 `profile/answers.yaml` is **global**: answering "Do you require sponsorship?"
@@ -916,7 +916,7 @@ cover-letter.pdf → cover_letter (label match)
 ### Step 8 — Record it
 
 ```bash
-node scripts/applications/log-application.mjs northwind-full-stack-engineer \
+node src/applications/log-application.mjs northwind-full-stack-engineer \
   --company "Northwind Logistics" --title "Full Stack Engineer" \
   --url "https://job-boards.greenhouse.io/northwind/jobs/8098945"
 ```
@@ -1163,7 +1163,7 @@ excluded from version control and a plain-text copy is cheap disaster recovery.
 ### Step 1 — Record the submission
 
 ```bash
-node scripts/applications/log-application.mjs northwind-full-stack-engineer \
+node src/applications/log-application.mjs northwind-full-stack-engineer \
   --company "Northwind Logistics" \
   --title "Full Stack Engineer" \
   --url "https://job-boards.greenhouse.io/northwind/jobs/8098945"
@@ -1176,7 +1176,7 @@ pass it in normal operation.
 **What you should see.** A confirmation naming the slug and the date. Verify with:
 
 ```bash
-node scripts/applications/applications.mjs stats
+node src/applications/applications.mjs stats
 ```
 
 ```
@@ -1188,7 +1188,7 @@ total=26 companies=15 first=2026-07-27 latest=2026-08-07 applied=26
 ### Step 2 — Later, record what happened
 
 ```bash
-node scripts/applications/update-application.mjs northwind-full-stack-engineer --status interviewing
+node src/applications/update-application.mjs northwind-full-stack-engineer --status interviewing
 ```
 
 The key can be a slug **or** a company name. The six statuses are `applied`,
@@ -1198,7 +1198,7 @@ The key can be a slug **or** a company name. The six statuses are `applied`,
 To record that you sent a nudge:
 
 ```bash
-node scripts/applications/update-application.mjs northwind-full-stack-engineer --followed-up
+node src/applications/update-application.mjs northwind-full-stack-engineer --followed-up
 ```
 
 Add `--date YYYY-MM-DD` if it was not today. Flags combine.
@@ -1206,9 +1206,9 @@ Add `--date YYYY-MM-DD` if it was not today. Flags combine.
 ### Step 3 — Read the record back
 
 ```bash
-node scripts/applications/applications.mjs list --status interviewing
-node scripts/applications/applications.mjs find "Northwind"
-node scripts/applications/applications.mjs export
+node src/applications/applications.mjs list --status interviewing
+node src/applications/applications.mjs find "Northwind"
+node src/applications/applications.mjs export
 ```
 
 `export` regenerates `profile/applications.yaml` from the table. You will rarely
@@ -1217,7 +1217,7 @@ need it — every write regenerates it — but it is there if the export ever dr
 ### Correcting a mistake
 
 ```bash
-node scripts/applications/applications.mjs remove northwind-full-stack-engineer --confirm
+node src/applications/applications.mjs remove northwind-full-stack-engineer --confirm
 ```
 
 The `--confirm` flag is required on the same command line, not as a second
@@ -1227,7 +1227,7 @@ rather than a bare command.
 
 ### How to tell it worked
 
-`node scripts/status.mjs` shows the new totals, and the by-status breakdown
+`node src/status.mjs` shows the new totals, and the by-status breakdown
 matches what you expect:
 
 ```
@@ -1236,14 +1236,14 @@ applications total=27 applied=26 interviewing=1 awaiting=26
 
 ### When it does not work
 
-| Symptom                                    | Cause                                                                | Fix                                                                                  |
-| ------------------------------------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `no logged application matches "X"`        | Wrong slug or company spelling                                       | `node scripts/applications/applications.mjs find "X"` to see what is actually stored |
-| An outcome does not appear in `status.mjs` | Statuses that show a response are excluded from "awaiting" by design | That is correct behaviour, not a bug                                                 |
-| A duplicate record                         | Logged twice                                                         | `remove <slug> --confirm`, then log once                                             |
+| Symptom                                    | Cause                                                                | Fix                                                                              |
+| ------------------------------------------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `no logged application matches "X"`        | Wrong slug or company spelling                                       | `node src/applications/applications.mjs find "X"` to see what is actually stored |
+| An outcome does not appear in `status.mjs` | Statuses that show a response are excluded from "awaiting" by design | That is correct behaviour, not a bug                                             |
+| A duplicate record                         | Logged twice                                                         | `remove <slug> --confirm`, then log once                                         |
 
 > **Known defect (2026-08-05 audit).** A race-safe merge function for the
-> applications table exists in `scripts/lib/db.mjs` and **nothing calls it**.
+> applications table exists in `src/lib/db.mjs` and **nothing calls it**.
 > Two processes writing an application at the same instant can therefore lose
 > one. In practice you log applications one at a time by hand, so this is
 > unlikely to bite — but do not script a bulk import that writes concurrently.
@@ -1276,7 +1276,7 @@ never sends the message** — it drafts, you send.
 ### Step 1 — See what is due
 
 ```bash
-node scripts/applications/follow-ups.mjs
+node src/applications/follow-ups.mjs
 ```
 
 ```
@@ -1308,13 +1308,13 @@ Ask the agent for a draft, or write one yourself. The shape that works:
 You send the message, by email or on LinkedIn. Then:
 
 ```bash
-node scripts/applications/update-application.mjs northwind-full-stack-engineer --followed-up
+node src/applications/update-application.mjs northwind-full-stack-engineer --followed-up
 ```
 
 ### Step 4 — Record any response when it comes
 
 ```bash
-node scripts/applications/update-application.mjs "Northwind" --status rejected
+node src/applications/update-application.mjs "Northwind" --status rejected
 ```
 
 A rejection is not wasted data. `profile-gaps.mjs` weights the requirements of
@@ -1322,7 +1322,7 @@ rejected jobs **double**, so recording rejections is what makes the gap analysis
 honest:
 
 ```bash
-node scripts/profile/profile-gaps.mjs
+node src/profile/profile-gaps.mjs
 ```
 
 ### How to tell it worked
@@ -1369,7 +1369,7 @@ that slug, and the slug is usually a predictable squashing of the company name.
 So: generate candidate slugs, ask each system, keep what answers.
 
 ```bash
-node scripts/leads/find-boards.mjs --names "Vercel,Figma,Notion" --append
+node src/leads/find-boards.mjs --names "Vercel,Figma,Notion" --append
 ```
 
 ```
@@ -1396,7 +1396,7 @@ found" does not mean "not hiring".
 ### Step 2 — Yield-gate the candidates
 
 ```bash
-node scripts/leads/discover-boards.mjs --candidates docs/board-candidates.yaml
+node src/leads/discover-boards.mjs --candidates docs/board-candidates.yaml
 ```
 
 This fetches each candidate and applies the same yield bar the audit applies to
@@ -1410,7 +1410,7 @@ existing boards: does it produce a role this profile could actually take? It
 ### Step 3 — Add the survivors
 
 ```bash
-node scripts/leads/manage-sources.mjs add --type greenhouse --slug vercel --company "Vercel"
+node src/leads/manage-sources.mjs add --type greenhouse --slug vercel --company "Vercel"
 ```
 
 ```
@@ -1424,23 +1424,23 @@ Host-based systems need more than a slug:
 
 ```bash
 # Workday: host + tenant + site
-node scripts/leads/manage-sources.mjs add --type workday --company "Acme Corp" \
+node src/leads/manage-sources.mjs add --type workday --company "Acme Corp" \
   --host acme.wd5.myworkdayjobs.com --tenant acme --site Careers
 
 # Oracle Recruiting Cloud: host + site
-node scripts/leads/manage-sources.mjs add --type oracle_cloud --company "Acme Resorts" \
+node src/leads/manage-sources.mjs add --type oracle_cloud --company "Acme Resorts" \
   --host edmn.fa.us2.oraclecloud.com --site CX_1
 
 # SuccessFactors: host only (the career-site hostname)
-node scripts/leads/manage-sources.mjs add --type successfactors --company "Acme Gaming" \
+node src/leads/manage-sources.mjs add --type successfactors --company "Acme Gaming" \
   --host jobs.acmegaming.com
 ```
 
 ### Step 4 — Confirm and sweep
 
 ```bash
-node scripts/leads/manage-sources.mjs list
-node scripts/leads/manage-sources.mjs verify
+node src/leads/manage-sources.mjs list
+node src/leads/manage-sources.mjs verify
 ```
 
 `list` prints every tracked board:
@@ -1464,7 +1464,7 @@ Then run recipe 1 and watch for leads from the new company.
 ### Removing a board
 
 ```bash
-node scripts/leads/manage-sources.mjs remove "Vercel"
+node src/leads/manage-sources.mjs remove "Vercel"
 ```
 
 Matches on company name or slug. Removing a board does **not** remove the leads
@@ -1522,7 +1522,7 @@ every time and newly _accepted_ ones summarised in one line.
 ### Step 1 — Take the baseline
 
 ```bash
-node scripts/leads/gate-audit.mjs --save
+node src/leads/gate-audit.mjs --save
 ```
 
 This records the current verdict for every stored lead into
@@ -1568,7 +1568,7 @@ Two neighbouring keys interact with this one and are worth knowing:
 ### Step 3 — Re-audit
 
 ```bash
-node scripts/leads/gate-audit.mjs
+node src/leads/gate-audit.mjs
 ```
 
 ```
@@ -1595,8 +1595,8 @@ baseline, which is what you want while iterating. `--json` gives the full record
 ### Step 4 — Prove the change did what you wanted
 
 ```bash
-node scripts/leads/find-jobs.mjs search --source boards
-node scripts/leads/recommend.mjs --top 10
+node src/leads/find-jobs.mjs search --source boards
+node src/leads/recommend.mjs --top 10
 ```
 
 New titles should appear. If nothing does, recipe 12.
@@ -1616,7 +1616,7 @@ New titles should appear. If nothing does, recipe 12.
 > verdicts and all three are gates a person would edit. Tighten the seniority
 > gate and `gate-audit` will report "no lead became newly rejected" while
 > `screen.mjs` silently discards dozens. **After any change to those, also run
-> `node scripts/leads/screen.mjs` and compare the reject count by hand.**
+> `node src/leads/screen.mjs` and compare the reject count by hand.**
 
 > **Known defect (2026-08-05 audit).** `gate-audit` and `screen.mjs` judge
 > **different text**. `screen.mjs` folds in the captured posting from
@@ -1697,7 +1697,7 @@ entirely. If you cannot be sure, copy `jobs/leads.db`, `jobs/leads.db-wal` and
 ### Step 2 — A second, text-shaped copy of the leads
 
 ```bash
-node scripts/maintenance/migrate.mjs --export backups/leads-2026-08-07.json
+node src/maintenance/migrate.mjs --export backups/leads-2026-08-07.json
 ```
 
 ```
@@ -1713,7 +1713,7 @@ when you want one.
 regenerated on every write. Force one with:
 
 ```bash
-node scripts/applications/applications.mjs export
+node src/applications/applications.mjs export
 ```
 
 ### Step 3 — Restore
@@ -1730,7 +1730,7 @@ Copy-Item "D:\backups\ajp-2026-08-07\.env" ".env"
 **Partial rebuild from the text copies**, when the database is gone or corrupt:
 
 ```bash
-node scripts/maintenance/migrate.mjs --dry-run \
+node src/maintenance/migrate.mjs --dry-run \
   --leads-json backups/leads-2026-08-07.json
 ```
 
@@ -1772,8 +1772,8 @@ brake between a crash and a second application to the same company.
 ### Step 4 — Verify the restore
 
 ```bash
-node scripts/status.mjs
-node scripts/applications/applications.mjs stats
+node src/status.mjs
+node src/applications/applications.mjs stats
 ```
 
 Lead and application totals should match what you backed up.
@@ -1781,10 +1781,10 @@ Lead and application totals should match what you backed up.
 ### Archiving, which is not backing up
 
 ```bash
-node scripts/maintenance/archive.mjs list
-node scripts/maintenance/archive.mjs archive northwind-full-stack-engineer
-node scripts/maintenance/archive.mjs restore northwind-full-stack-engineer
-node scripts/maintenance/archive.mjs archive --closed --dry-run
+node src/maintenance/archive.mjs list
+node src/maintenance/archive.mjs archive northwind-full-stack-engineer
+node src/maintenance/archive.mjs restore northwind-full-stack-engineer
+node src/maintenance/archive.mjs archive --closed --dry-run
 ```
 
 Archiving folds a closed job folder into the `documents` table, verified byte for
@@ -1904,7 +1904,7 @@ back out of the page.
 ### Doing a dry run
 
 ```bash
-node scripts/auto/auto-apply.mjs --limit 5 --concurrency 1
+node src/auto/auto-apply.mjs --limit 5 --concurrency 1
 ```
 
 Flags:
@@ -1941,13 +1941,13 @@ run=2026-08-07T14-22-09-118Z-c1900f mode=dry_run outcome=ok submitted=0 deferred
 > are **structurally always zero**. The campaign function returns no `submitted`,
 > `deferred` or `failed` keys, and both this line and `cycle.mjs` read them with a
 > `?? 0` fallback. A run that sent five applications prints `submitted=0`.
-> **Do not read that line as a result.** Use `node scripts/status.mjs` (below)
+> **Do not read that line as a result.** Use `node src/status.mjs` (below)
 > or `--json`, which carries the real per-job results.
 
 ### Reading the real report
 
 ```bash
-node scripts/status.mjs
+node src/status.mjs
 ```
 
 ```
@@ -2015,12 +2015,12 @@ classifies as `unclassified`. That is not a gap to route around. Writing a
 plausible-looking pattern instead fails silently in the one direction that cannot
 be recovered — a page misread as a confirmation records an application that was
 never sent, and nothing later corrects it. The only lawful way to fill that corpus
-is `scripts/apply/capture-post-submit.mjs` on your own attended applies.
+is `src/apply/capture-post-submit.mjs` on your own attended applies.
 
 ### Scheduling it
 
-`scripts/auto/cycle.mjs` is one whole cycle — search, screen, prep, tailor, apply
-— and `scripts/auto/cycle.cmd` is the Windows Task Scheduler wrapper for it. The
+`src/auto/cycle.mjs` is one whole cycle — search, screen, prep, tailor, apply
+— and `src/auto/cycle.cmd` is the Windows Task Scheduler wrapper for it. The
 wrapper exists because Task Scheduler runs an action with no shell, no reliable
 PATH, and a working directory it picks; all three matter, because this pipeline
 resolves `jobs/`, `profile/` and the limits file relative to the repository root,
@@ -2031,7 +2031,7 @@ The wrapper pins the directory and writes a dated log to `logs/cycle.log`.
 system setting.
 
 ```bash
-node scripts/auto/cycle.mjs --top 10 --skip-apply
+node src/auto/cycle.mjs --top 10 --skip-apply
 ```
 
 `--skip-apply` prepares documents and stops before the runner, which is the safe
@@ -2091,7 +2091,7 @@ Never by having a model resolve an unknown field.
 
 ### The registry
 
-`scripts/apply/ats/index.mjs` holds three things:
+`src/apply/ats/index.mjs` holds three things:
 
 ```js
 export const ADAPTERS = [greenhouse, lever, ashby]
@@ -2119,7 +2119,7 @@ new system has that property, add it to `HANDOFF` rather than writing an adapter
 1. **Apply to one posting by hand, attended, and capture the form.** You need a
    real scan of a real page. Recipe 3's scan step writes it to
    `jobs/<slug>/scan-p1.json`.
-2. **Write the adapter** at `scripts/apply/ats/<name>.mjs`, following
+2. **Write the adapter** at `src/apply/ats/<name>.mjs`, following
    `greenhouse.mjs` as the model. Read
    [../code/08-apply-filling.md](../code/08-apply-filling.md) first — it is the
    detailed reference for every control type, the combo-box strategy ladder, the
@@ -2210,7 +2210,7 @@ question is never "which gate rejected it" — it is "was it ever seen".
 ### Step 1 — Is it in the store at all?
 
 ```bash
-node scripts/leads/find-jobs.mjs list --status all | grep -i "northwind"
+node src/leads/find-jobs.mjs list --status all | grep -i "northwind"
 ```
 
 If it **is** there with a status of `dismissed`, you or a screen dismissed it; go
@@ -2219,13 +2219,13 @@ to step 4. If it is not there at all, continue.
 ### Step 2 — Is the company's board even being swept?
 
 ```bash
-node scripts/leads/manage-sources.mjs list
+node src/leads/manage-sources.mjs list
 ```
 
 If the company is absent, that is your answer — recipe 7. If it is present:
 
 ```bash
-node scripts/leads/manage-sources.mjs verify
+node src/leads/manage-sources.mjs verify
 ```
 
 A `BROKEN` line means the board stopped answering. A company that changes systems
@@ -2235,7 +2235,7 @@ finding nothing forever without complaining loudly.
 ### Step 3 — Is the board producing anything?
 
 ```bash
-node scripts/leads/board-yield.mjs
+node src/leads/board-yield.mjs
 ```
 
 ```
@@ -2267,7 +2267,7 @@ number `yield=0%` hides both.
 ### Step 4 — Which gate rejected it, exactly?
 
 ```bash
-node scripts/leads/gate-audit.mjs --no-save
+node src/leads/gate-audit.mjs --no-save
 ```
 
 Every rejected lead in the store is shown with its stage and reason:
@@ -2281,7 +2281,7 @@ audited=194 passing=103 l0=80 l1=2 l2=1 l3=8
 And screening's own overlay reasons:
 
 ```bash
-node scripts/leads/screen.mjs --no-record | grep -i "northwind"
+node src/leads/screen.mjs --no-record | grep -i "northwind"
 ```
 
 ```
@@ -2305,7 +2305,7 @@ The vocabulary you will see most:
 ### Step 5 — Which titles are being thrown away?
 
 ```bash
-node scripts/leads/find-jobs.mjs search --source boards --explain
+node src/leads/find-jobs.mjs search --source boards --explain
 ```
 
 `--explain` prints the most common software-ish titles that were rejected purely
@@ -2324,7 +2324,7 @@ would take is a keyword worth adding.
 ### Step 6 — The remaining causes, in order of likelihood
 
 1. **You already applied.** The sweep dedupes against application history.
-   `node scripts/applications/check-applied.mjs "Northwind"`.
+   `node src/applications/check-applied.mjs "Northwind"`.
 2. **It was stored on an earlier sweep and dismissed.**
    `find-jobs.mjs list --status dismissed`.
 3. **The board type carries no description in its list endpoint** — Oracle

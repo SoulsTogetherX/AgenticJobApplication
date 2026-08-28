@@ -40,7 +40,7 @@ function verify(file, job) {
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "documents", "verify-claims.mjs"),
+      path.join(ROOT, "src", "documents", "verify-claims.mjs"),
       "resume",
       file,
       "--profile",

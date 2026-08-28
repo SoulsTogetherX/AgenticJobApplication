@@ -30,7 +30,7 @@ REM unusable in a filename on a machine set to anything but US English.
 for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HHmm"') do set "STAMP=%%i"
 
 echo ==== cycle %STAMP% ==== >> "logs\cycle.log"
-node "scripts\auto\cycle.mjs" %* >> "logs\cycle.log" 2>&1
+node "src\auto\cycle.mjs" %* >> "logs\cycle.log" 2>&1
 set "CODE=%ERRORLEVEL%"
 echo ==== exit %CODE% ==== >> "logs\cycle.log"
 

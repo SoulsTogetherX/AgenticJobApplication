@@ -30,12 +30,12 @@ import {
   looksLikeAgreementProse,
   readiness,
   submitReadiness,
-} from "../../scripts/apply/fill-plan.mjs"
-import { normalizeQuestion } from "../../scripts/apply/answer-bank.mjs"
-import { answerClass, classifyAnswer } from "../../scripts/lib/untrusted.mjs"
-import { loadYamlFile } from "../../scripts/lib/lib.mjs"
-import { questionsFromPlans } from "../../scripts/apply/pending-questions.mjs"
-import fillPage from "../../scripts/apply/fill-engine.mjs"
+} from "../../src/apply/fill-plan.mjs"
+import { normalizeQuestion } from "../../src/apply/answer-bank.mjs"
+import { answerClass, classifyAnswer } from "../../src/lib/untrusted.mjs"
+import { loadYamlFile } from "../../src/lib/lib.mjs"
+import { questionsFromPlans } from "../../src/apply/pending-questions.mjs"
+import fillPage from "../../src/apply/fill-engine.mjs"
 import {
   recordingPage,
   selectorsWritingTo,
@@ -289,7 +289,7 @@ test("no consent box auto-ticks on the decoupled or truncated fixture", () => {
   // which is the worst case: the user has approved all of this wording before.
   // It is still threaded through below even though buildPlan no longer reads
   // it for a grant (DELETED — see the consent branch's own "DELETED" comment
-  // in scripts/apply/fill-plan.mjs): that is deliberate. Passing the worst-case
+  // in src/apply/fill-plan.mjs): that is deliberate. Passing the worst-case
   // allowlist and asserting nothing ticks proves the defer is unconditional,
   // not merely untested with an allowlist absent.
   const raw = scan("consent-decoupled")
@@ -986,10 +986,10 @@ test("THE REAL CONTROL, at the file: the escalated page's own label cannot get a
 // because "the scanner can see it now" is one consumer short of the point.
 //
 // CLOSED FOR B AND C, 2026-07-31. w1-security added answerClass() to
-// scripts/lib/untrusted.mjs — an answer the user recorded is a `datum` (a fact:
+// src/lib/untrusted.mjs — an answer the user recorded is a `datum` (a fact:
 // email, phone) or an `assertion` (work authorisation, relocation, background
 // check, arbitration) — and w3-resolution wired it into resolveFields() in
-// scripts/apply/fill-plan.mjs, which now stamps `status: "CONFIRM"` on any OK
+// src/apply/fill-plan.mjs, which now stamps `status: "CONFIRM"` on any OK
 // row resolved from an assertion-class bank entry, and into buildPlan(), which
 // turns that into a `why: "confirm"` defer instead of an item.
 //
@@ -1256,7 +1256,7 @@ test("FIX (B and C): both plans defer the assertion, so readiness() refuses the 
 // ---------------------------------------------------------------------------
 // THE USER'S 2026-08-18 POLICY, AGAINST THE SAME TWO SHAPES.
 //
-// scripts/apply/assent-policy.mjs: under `required_assertions`, a REQUIRED
+// src/apply/assent-policy.mjs: under `required_assertions`, a REQUIRED
 // assertion the bank resolved at status OK is filled unattended. The user was
 // told, in the question that decided this, exactly what B and C demonstrate —
 // "a page whose visible label lies about which field it is would receive the
@@ -1511,7 +1511,7 @@ test("FIX (B and C): the gate keys on the recorded ANSWER, not on the widget the
 // data (Country, Gender, Veteran Status), correctly `datum`, and a better
 // pattern list makes that number worse, not better.
 //
-// THE FIX (w3-resolution, scripts/apply/fill-plan.mjs, buildPlan's check-verb
+// THE FIX (w3-resolution, src/apply/fill-plan.mjs, buildPlan's check-verb
 // branch): a checkbox or radio group never auto-acts unattended, whatever the
 // answer's class. A tick carries no value — it carries ASSENT, on a control the
 // BOARD owns. The defer is `why: "confirm-widget"`, deliberately a different

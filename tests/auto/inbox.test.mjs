@@ -16,8 +16,8 @@ import {
   raiseSecurityAlert,
   readStop,
   scopedStopPath,
-} from "../../scripts/auto/guard.mjs"
-import { toast } from "../../scripts/auto/notify.mjs"
+} from "../../src/auto/guard.mjs"
+import { toast } from "../../src/auto/notify.mjs"
 
 function tree(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-inbox-"))

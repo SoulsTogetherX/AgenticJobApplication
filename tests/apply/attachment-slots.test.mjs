@@ -14,10 +14,10 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { buildPlan } from "../../scripts/apply/fill-plan.mjs"
-import { kindForWhy, classifyPlanDefers } from "../../scripts/auto/taxonomy.mjs"
-import ashby from "../../scripts/apply/ats/ashby.mjs"
-import greenhouse from "../../scripts/apply/ats/greenhouse.mjs"
+import { buildPlan } from "../../src/apply/fill-plan.mjs"
+import { kindForWhy, classifyPlanDefers } from "../../src/auto/taxonomy.mjs"
+import ashby from "../../src/apply/ats/ashby.mjs"
+import greenhouse from "../../src/apply/ats/greenhouse.mjs"
 
 const RESUME = "C:\\jobs\\x\\resume.pdf"
 const COVER = "C:\\jobs\\x\\cover-letter.pdf"

@@ -16,7 +16,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { openDb, loadKeywordIndex } from "../../scripts/lib/db.mjs"
+import { openDb, loadKeywordIndex } from "../../src/lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -110,7 +110,7 @@ test("a path that does not exist yet is CREATED, and that is not an error", (t) 
 
 test("gate-audit does not write its baseline when the index failed", () => {
   const src = fs.readFileSync(
-    path.join(ROOT, "scripts", "leads", "gate-audit.mjs"),
+    path.join(ROOT, "src", "leads", "gate-audit.mjs"),
     "utf8",
   )
   assert.match(
@@ -130,7 +130,7 @@ test("gate-audit does not write its baseline when the index failed", () => {
 
 test("screen does not record a verdict when the index failed", () => {
   const src = fs.readFileSync(
-    path.join(ROOT, "scripts", "leads", "screen.mjs"),
+    path.join(ROOT, "src", "leads", "screen.mjs"),
     "utf8",
   )
   assert.match(
@@ -144,7 +144,7 @@ test("neither caller opens the store for keywords itself any more", () => {
   // One helper, so the two cannot drift apart again — which is how the same
   // defect came to exist twice.
   for (const f of ["gate-audit.mjs", "screen.mjs"]) {
-    const src = fs.readFileSync(path.join(ROOT, "scripts", "leads", f), "utf8")
+    const src = fs.readFileSync(path.join(ROOT, "src", "leads", f), "utf8")
     assert.match(src, /loadKeywordIndex\(/, `${f} must use the shared helper`)
     assert.doesNotMatch(
       src,

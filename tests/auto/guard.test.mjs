@@ -13,8 +13,8 @@ import {
   CHECKPOINTS,
   BoundaryError,
   StopError,
-} from "../../scripts/auto/guard.mjs"
-import * as guard from "../../scripts/auto/guard.mjs"
+} from "../../src/auto/guard.mjs"
+import * as guard from "../../src/auto/guard.mjs"
 
 function sandbox() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aj-guard-"))

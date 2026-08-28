@@ -12,7 +12,7 @@ import {
   assertFixtureIsolation,
   selectEligible,
   defaultDocuments,
-} from "../../scripts/auto/auto-apply.mjs"
+} from "../../src/auto/auto-apply.mjs"
 import {
   openDb,
   recordVerification,
@@ -20,8 +20,8 @@ import {
   recordScreens,
   upsertApplications,
   DB_PATH,
-} from "../../scripts/lib/db.mjs"
-import { detectAts } from "../../scripts/apply/ats/index.mjs"
+} from "../../src/lib/db.mjs"
+import { detectAts } from "../../src/apply/ats/index.mjs"
 
 // --- the refusal ------------------------------------------------------------
 
@@ -606,7 +606,7 @@ import {
   rejectionKind,
   rejectionBreakdown,
   formatRejections,
-} from "../../scripts/auto/auto-apply.mjs"
+} from "../../src/auto/auto-apply.mjs"
 
 test("every reason selectEligible produces maps to a named kind", () => {
   // The five trust checks return `${check}: ${detail}`; the other four sites
@@ -615,7 +615,7 @@ test("every reason selectEligible produces maps to a named kind", () => {
     ["lead status is dismissed — not queued while it stays so", "dismissed"],
     ["already applied on 2026-08-18 (matched by slug)", "already-applied"],
     [
-      "resume.pdf is not rendered for this workspace — run scripts/documents/render-pdf.mjs",
+      "resume.pdf is not rendered for this workspace — run src/documents/render-pdf.mjs",
       "no-resume-pdf",
     ],
     [

@@ -11,7 +11,7 @@ what happened, and the brakes that stop the machine when something on the page
 was not understood.
 
 The single sentence that explains the whole design is in the header of
-`scripts/auto/guard.mjs`:
+`src/auto/guard.mjs`:
 
 > "Every other write path in this project is fenced by PreToolUse hooks
 > (guard-files.mjs, guard-bash.mjs). A Windows scheduled task is not an agent
@@ -59,24 +59,24 @@ Nearby code documents: [`09-auto-runner.md`](09-auto-runner.md) is the runner
 that calls all of this; [`07-apply-planning.md`](07-apply-planning.md) and
 [`08-apply-filling.md`](08-apply-filling.md) are the machinery that produces the
 plan the gate checks; [`01-lib-foundation.md`](01-lib-foundation.md) covers
-`scripts/lib/db.mjs` and `scripts/lib/untrusted.mjs`, both of which this area
+`src/lib/db.mjs` and `src/lib/untrusted.mjs`, both of which this area
 leans on heavily.
 
 **The files covered here**
 
-| File                                       | Lines | One-line purpose                                                                                         |
-| ------------------------------------------ | ----: | -------------------------------------------------------------------------------------------------------- |
-| [`scripts/auto/trust.mjs`](#trust)         |   411 | Five mechanical facts that decide whether a job board may be submitted to unattended.                    |
-| [`scripts/auto/guard.mjs`](#guard)         |   587 | The filesystem boundary, the STOP kill switch and its four scopes, and the append-only alert inbox.      |
-| [`scripts/auto/preflight.mjs`](#preflight) |   606 | "Would a run start right now?" — six read-only checks, including a scan of the fact base.                |
-| [`scripts/auto/authorize.mjs`](#authorize) |   796 | Eleven preconditions in one place, and the frozen single-use token that is the only permission to click. |
-| [`scripts/auto/classify.mjs`](#classify)   |   333 | Types the page that comes back after the click, into one of seven kinds. Rules carry their evidence.     |
-| [`scripts/auto/breaker.mjs`](#breaker)     |   326 | The circuit breaker: retry a transient, pause one board, or stop the run.                                |
-| [`scripts/auto/reconcile.mjs`](#reconcile) |   288 | Ask the board, read-only, whether an orphaned attempt became an application.                             |
-| [`scripts/auto/audit.mjs`](#audit)         |  1028 | The run ledger, written twice: an append-only text file and SQLite.                                      |
-| [`scripts/auto/taxonomy.mjs`](#taxonomy)   |   394 | The closed vocabulary of reasons, and which single one gets recorded when several apply.                 |
-| [`scripts/auto/digest.mjs`](#digest)       |   290 | "Is the machine working?" — the `auto` section of `node scripts/status.mjs`.                             |
-| [`scripts/auto/notify.mjs`](#notify)       |    81 | A Windows toast when the runner disables itself. Best-effort, cannot throw.                              |
+| File                                   | Lines | One-line purpose                                                                                         |
+| -------------------------------------- | ----: | -------------------------------------------------------------------------------------------------------- |
+| [`src/auto/trust.mjs`](#trust)         |   411 | Five mechanical facts that decide whether a job board may be submitted to unattended.                    |
+| [`src/auto/guard.mjs`](#guard)         |   587 | The filesystem boundary, the STOP kill switch and its four scopes, and the append-only alert inbox.      |
+| [`src/auto/preflight.mjs`](#preflight) |   606 | "Would a run start right now?" — six read-only checks, including a scan of the fact base.                |
+| [`src/auto/authorize.mjs`](#authorize) |   796 | Eleven preconditions in one place, and the frozen single-use token that is the only permission to click. |
+| [`src/auto/classify.mjs`](#classify)   |   333 | Types the page that comes back after the click, into one of seven kinds. Rules carry their evidence.     |
+| [`src/auto/breaker.mjs`](#breaker)     |   326 | The circuit breaker: retry a transient, pause one board, or stop the run.                                |
+| [`src/auto/reconcile.mjs`](#reconcile) |   288 | Ask the board, read-only, whether an orphaned attempt became an application.                             |
+| [`src/auto/audit.mjs`](#audit)         |  1028 | The run ledger, written twice: an append-only text file and SQLite.                                      |
+| [`src/auto/taxonomy.mjs`](#taxonomy)   |   394 | The closed vocabulary of reasons, and which single one gets recorded when several apply.                 |
+| [`src/auto/digest.mjs`](#digest)       |   290 | "Is the machine working?" — the `auto` section of `node src/status.mjs`.                                 |
+| [`src/auto/notify.mjs`](#notify)       |    81 | A Windows toast when the runner disables itself. Best-effort, cannot throw.                              |
 
 ---
 
@@ -139,7 +139,7 @@ breaker.mjs     record() — was that a malfunction? pause a board? stop the run
 reconcile.mjs   (later) an attempt nobody resolved — ask the board, or brake
                  that one company
    |
-digest.mjs      is the machine working?  (read by `node scripts/status.mjs`)
+digest.mjs      is the machine working?  (read by `node src/status.mjs`)
 notify.mjs      a Windows toast when the runner disables itself
 taxonomy.mjs    the closed vocabulary every deferral and failure is recorded in
 ```
@@ -148,7 +148,7 @@ taxonomy.mjs    the closed vocabulary every deferral and failure is recorded in
 
 <a id="trust"></a>
 
-## 1. `scripts/auto/trust.mjs` — the board trust gate
+## 1. `src/auto/trust.mjs` — the board trust gate
 
 ### 1.1 What it is and why it exists
 
@@ -196,7 +196,7 @@ live elsewhere: carry no session cookie on boards that do not need one, and
 never read anything back out of the page to make a decision.
 
 **Why this file deliberately does not call `detectAts()`.** There is a function
-elsewhere in the repo, `detectAts()` in `scripts/apply/ats/index.mjs`, that
+elsewhere in the repo, `detectAts()` in `src/apply/ats/index.mjs`, that
 guesses which job-board software a URL belongs to. It matches its patterns
 against the **whole URL string**, which is right for picking a form-filling
 strategy (guess wrong and you just defer more fields) and dangerous for a trust
@@ -217,27 +217,27 @@ decision:
 This is a **library** — there is no command line and no `main()`. It is imported
 by:
 
-- `scripts/auto/auto-apply.mjs` — `trustBoard`, `allowlistProblems`,
+- `src/auto/auto-apply.mjs` — `trustBoard`, `allowlistProblems`,
   `readLimits`. Used in `selectEligible()` to filter the queue before anything is
   enqueued, and `allowlistProblems()` is printed to stderr at startup.
-- `scripts/auto/job.mjs` — `trustBoard`, re-run per job, so a configuration
+- `src/auto/job.mjs` — `trustBoard`, re-run per job, so a configuration
   change between queueing and execution cannot slip through.
-- `scripts/auto/cycle.mjs` — `trustBoard`, `readLimits`.
+- `src/auto/cycle.mjs` — `trustBoard`, `readLimits`.
 - `tests/auto/trust.test.mjs`.
 
 ### 1.3 Everything it exposes
 
-| Export                          | Signature / value                                                    | What it is                                                                                                     |
-| ------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `TRUST_CHECKS`                  | frozen `["allowlist","adapter","screening","https","origin_stable"]` | The closed list of check names. A sixth check must be added **here**, not smuggled in as an early return.      |
-| `ADAPTER_IDS`                   | frozen array — today `["greenhouse","lever","ashby"]`                | The job-board adapters this repository actually ships, taken from `ADAPTERS` in `scripts/apply/ats/index.mjs`. |
-| `isLoopbackHost(host)`          | `-> boolean`                                                         | Literal membership of `{"127.0.0.1", "[::1]", "::1", "localhost"}`, lowercased.                                |
-| `domainMatches(host, domain)`   | `-> boolean`                                                         | `h === d                                                                                                       |     | h.endsWith("." + d)`. |
-| `normalizeAllowlist(raw)`       | `-> [{domain, ats}]`                                                 | Accepts a YAML map or a list of objects. A bare list of domain strings is refused on purpose.                  |
-| `allowlistProblems(raw)`        | `-> string[]`                                                        | Human-actionable complaints about the user's allowlist.                                                        |
-| `allowlistEntry(host, entries)` | `-> {domain, ats} \| null`                                           | The longest matching domain wins, so a specific entry beats a broad one.                                       |
-| `trustBoard({...})`             | `-> frozen {ok, reason, kind, checks, failed, entry, origin}`        | The gate itself.                                                                                               |
-| `readLimits(file)`              | `-> parsed YAML \| null`                                             | Absent file gives `null`. A **malformed** file throws, deliberately.                                           |
+| Export                          | Signature / value                                                    | What it is                                                                                                 |
+| ------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `TRUST_CHECKS`                  | frozen `["allowlist","adapter","screening","https","origin_stable"]` | The closed list of check names. A sixth check must be added **here**, not smuggled in as an early return.  |
+| `ADAPTER_IDS`                   | frozen array — today `["greenhouse","lever","ashby"]`                | The job-board adapters this repository actually ships, taken from `ADAPTERS` in `src/apply/ats/index.mjs`. |
+| `isLoopbackHost(host)`          | `-> boolean`                                                         | Literal membership of `{"127.0.0.1", "[::1]", "::1", "localhost"}`, lowercased.                            |
+| `domainMatches(host, domain)`   | `-> boolean`                                                         | `h === d                                                                                                   |     | h.endsWith("." + d)`. |
+| `normalizeAllowlist(raw)`       | `-> [{domain, ats}]`                                                 | Accepts a YAML map or a list of objects. A bare list of domain strings is refused on purpose.              |
+| `allowlistProblems(raw)`        | `-> string[]`                                                        | Human-actionable complaints about the user's allowlist.                                                    |
+| `allowlistEntry(host, entries)` | `-> {domain, ats} \| null`                                           | The longest matching domain wins, so a specific entry beats a broad one.                                   |
+| `trustBoard({...})`             | `-> frozen {ok, reason, kind, checks, failed, entry, origin}`        | The gate itself.                                                                                           |
+| `readLimits(file)`              | `-> parsed YAML \| null`                                             | Absent file gives `null`. A **malformed** file throws, deliberately.                                       |
 
 `trustBoard` takes one options object:
 
@@ -282,7 +282,7 @@ the split:
    outcomes: no stored verdict at all gives `kind: "board-untrusted"`; an
    explicit rejection (`verdict === "reject"`, `rejected === true`, or
    `status === "dismissed"`) gives `kind: "l3-rejected"`; and any finding whose
-   kind passes `isDisqualifying()` (from `scripts/lib/untrusted.mjs`) also gives
+   kind passes `isDisqualifying()` (from `src/lib/untrusted.mjs`) also gives
    `l3-rejected`. Findings are gathered from four possible carriers on the stored
    verdict: `screening`, `screening.stages?.l3`, `screening.l3`, `screening.risk`.
 
@@ -395,7 +395,7 @@ from `../lib/untrusted.mjs`; `safeText` from `./untrusted-text.mjs`.
 
 <a id="guard"></a>
 
-## 2. `scripts/auto/guard.mjs` — the boundary, the kill switch, the inbox
+## 2. `src/auto/guard.mjs` — the boundary, the kill switch, the inbox
 
 ### 2.1 What it is and why it exists
 
@@ -413,7 +413,7 @@ difference between a _check_ and an _enforcement_ better than anything else in
 the repository:
 
 > "This paragraph previously claimed the guards were 'structurally impossible for
-> the runner to skip on the submit path, because scripts/auto/audit.mjs performs
+> the runner to skip on the submit path, because src/auto/audit.mjs performs
 > them before it will record anything'. That was written in the indicative about
 > something that had not been built … It was also wrong on its own terms —
 > RECORDING HAPPENS AFTER SUBMITTING. A check on the path to the record runs
@@ -427,7 +427,7 @@ What makes them unskippable is `authorize.mjs`'s token, plus the test
 
 A **library**. Imported by `audit.mjs`, `authorize.mjs`, `preflight.mjs`,
 `reconcile.mjs`, `digest.mjs`, `auto-apply.mjs`, `job.mjs` and
-`scripts/apply/capture-post-submit.mjs`, plus four test files.
+`src/apply/capture-post-submit.mjs`, plus four test files.
 
 Setting the brake by hand is a one-line shell command, and that is deliberate:
 
@@ -729,13 +729,13 @@ from `./notify.mjs`.
 **Depended on by:** `audit.mjs`, `authorize.mjs`, `preflight.mjs`,
 `reconcile.mjs`, `digest.mjs` (only `stopActive`/`readStop`), `auto-apply.mjs`
 (`StopError`, `ROOT`), `job.mjs` (`StopError`), and
-`scripts/apply/capture-post-submit.mjs`.
+`src/apply/capture-post-submit.mjs`.
 
 ---
 
 <a id="preflight"></a>
 
-## 3. `scripts/auto/preflight.mjs` — "would a run start right now?"
+## 3. `src/auto/preflight.mjs` — "would a run start right now?"
 
 ### 3.1 What it is and why it exists
 
@@ -774,7 +774,7 @@ lesson about guards in general:
 > bypassed guard protects nothing."
 
 So the matching is **two-factor**: the shared helper `findSensitiveValues()` in
-`scripts/lib/untrusted.mjs` refuses on the value alone only for shapes that carry
+`src/lib/untrusted.mjs` refuses on the value alone only for shapes that carry
 their own proof (a Social Security number's 3-2-4 grouping, an IBAN that passes
 its mod-97 checksum, a card number that passes the Luhn check _and_ has a real
 issuer prefix), and otherwise needs the question and the value to agree.
@@ -792,7 +792,7 @@ usage: preflight.mjs [--mode dry_run|live] [--answers <file>] [--profile <file>]
 A real run against the test fixtures:
 
 ```console
-$ node scripts/auto/preflight.mjs --mode dry_run \
+$ node src/auto/preflight.mjs --mode dry_run \
     --profile tests/fixtures/profile.yaml \
     --answers tests/fixtures/answers.yaml \
     --limits docs/application-limits.yaml
@@ -812,7 +812,7 @@ Limits: a boundary, not a proof: shape matching only, no view of where a value i
 And a refusal, pointing at a limits file with `enabled: false`:
 
 ```console
-$ node scripts/auto/preflight.mjs --mode live --limits /tmp/limits-off.yaml ...
+$ node src/auto/preflight.mjs --mode live --limits /tmp/limits-off.yaml ...
 Preflight (live) — nothing written.
   ok     stop_switch: no jobs/.auto/STOP
   ok     auto_apply_caps: per_run_max=10 per_day_max=10 per_company_max_per_week=5
@@ -1007,7 +1007,7 @@ a falsifiable form: _"grep this file for `writeFileSync` and you will find none.
 
 <a id="authorize"></a>
 
-## 4. `scripts/auto/authorize.mjs` — the only thing that can produce permission to click
+## 4. `src/auto/authorize.mjs` — the only thing that can produce permission to click
 
 ### 4.1 What it is and why it exists
 
@@ -1378,7 +1378,7 @@ from `../lib/untrusted.mjs`; `DB_PATH` from `../lib/db.mjs`.
 
 <a id="classify"></a>
 
-## 5. `scripts/auto/classify.mjs` — the post-click classifier
+## 5. `src/auto/classify.mjs` — the post-click classifier
 
 ### 5.1 What it is and why it exists
 
@@ -1450,11 +1450,11 @@ rather than passing quietly:
 > "no captured post-submit page for: confirmation, identity-verification,
 > bot-challenge, email-code-challenge, posting-gone, error — W2 is GATED on this
 > and it is not a code gap. The only lawful source is an attended apply: run
-> apply-job, and after the submit click scripts/apply/capture-post-submit.mjs
+> apply-job, and after the submit click src/apply/capture-post-submit.mjs
 > stages a redacted candidate for review. Until then every real board classifies
 > as `unclassified`, which hard-STOPs — the safe direction, and the honest one."
 
-**The only lawful way to change this** is `scripts/apply/capture-post-submit.mjs`,
+**The only lawful way to change this** is `src/apply/capture-post-submit.mjs`,
 driven from an attended apply the user is watching:
 
 ```text
@@ -1475,7 +1475,7 @@ attended path to run it.
 
 A **library**, and — importantly — it is **injected** rather than imported by the
 code that clicks. `submit.mjs` never imports it; the runner hands it in as the
-`classify` stage via `scripts/auto/stages.mjs`, and a live submit without one
+`classify` stage via `src/auto/stages.mjs`, and a live submit without one
 throws `ClassifierRequired`. So the live path is a refusal, not a stub.
 
 Also imported by `reconcile.mjs` (the fixture probe uses the **same** function,
@@ -1605,7 +1605,7 @@ Nothing, in either direction. It is pure. Its consumers do the work:
 - The function must stay **pure** — no clock, no network, no database.
 
 > **Known defect (2026-08-05 audit).** `AUTO_CHALLENGE_KINDS` in
-> `scripts/lib/db.mjs` is `["captcha","bot-challenge","email-code-challenge"]`, so
+> `src/lib/db.mjs` is `["captcha","bot-challenge","email-code-challenge"]`, so
 > a queue row in state `challenged` cannot carry `identity-verification` even
 > though that kind exists in `AUTO_DEFER_KINDS` and `classify.mjs` returns it.
 > `job.mjs` therefore maps `["identity-verification", "captcha"]`, and the
@@ -1638,13 +1638,13 @@ url, row}`; when the answer is `unclassified` — which, by design, is what ever
 **Imports:** only `safeText` from `./untrusted-text.mjs`.
 
 **Depended on by:** `stages.mjs`, `reconcile.mjs`,
-`scripts/apply/capture-post-submit.mjs`, and two test files.
+`src/apply/capture-post-submit.mjs`, and two test files.
 
 ---
 
 <a id="breaker"></a>
 
-## 6. `scripts/auto/breaker.mjs` — the anomaly circuit breaker
+## 6. `src/auto/breaker.mjs` — the anomaly circuit breaker
 
 ### 6.1 What it is and why it exists
 
@@ -1718,7 +1718,7 @@ Finally, transients are retried **before** they count:
 
 ### 6.2 How you run or use it
 
-A **library** with one production caller, `scripts/auto/auto-apply.mjs`:
+A **library** with one production caller, `src/auto/auto-apply.mjs`:
 
 ```js
 const breaker = makeBreaker({ db, runId: run.id, now: () => now() })
@@ -1890,7 +1890,7 @@ says why:
 
 <a id="reconcile"></a>
 
-## 7. `scripts/auto/reconcile.mjs` — resolving an orphaned submit attempt
+## 7. `src/auto/reconcile.mjs` — resolving an orphaned submit attempt
 
 ### 7.1 What it is and why it exists
 
@@ -2077,7 +2077,7 @@ and `auto_runs` has no `finished_at` for that run. Calling `reconcileAll({openPa
 ### 7.5 `reconciled-not-sent`, and why the exception must stay exactly one wide
 
 This is the most subtle piece of database reasoning in the project, and the
-comment in `scripts/lib/db.mjs` is worth reading twice.
+comment in `src/lib/db.mjs` is worth reading twice.
 
 The `auto_submissions` row for a slug **is** the claim: `recordAutoSubmission`
 returns `1` when this caller owns the submit and `0` when a row already exists for
@@ -2154,7 +2154,7 @@ because _an attempt is a submission until proven otherwise_. The SQL uses
 
 > **Known defect (2026-08-05 audit).** `reconcile.mjs` has **no production
 > caller**. `reconcileAll` and `reconcileOne` are imported only by
-> `tests/auto/reconcile.test.mjs`; no file under `scripts/` imports
+> `tests/auto/reconcile.test.mjs`; no file under `src/` imports
 > `./reconcile.mjs`. The orphan path that actually runs is
 > `assertNoOrphanAttempts`, which brakes and never resolves — so
 > `reconciled-not-sent`, the whole exception in `recordAutoSubmission`'s `WHERE`
@@ -2186,7 +2186,7 @@ because _an attempt is a submission until proven otherwise_. The SQL uses
 
 <a id="audit"></a>
 
-## 8. `scripts/auto/audit.mjs` — the run ledger, written twice
+## 8. `src/auto/audit.mjs` — the run ledger, written twice
 
 ### 8.1 What it is and why it exists
 
@@ -2617,13 +2617,13 @@ optional `meta`.
 
 <a id="taxonomy"></a>
 
-## 9. `scripts/auto/taxonomy.mjs` — the closed vocabulary of reasons
+## 9. `src/auto/taxonomy.mjs` — the closed vocabulary of reasons
 
 ### 9.1 What it is and why it exists
 
 The vocabulary itself — `AUTO_DEFER_KINDS`, `AUTO_FAILURE_KINDS`,
 `AUTO_CHALLENGE_KINDS`, `autoReasonClass`, `assertReasonKind` — lives in
-`scripts/lib/db.mjs`, _"beside the column that stores it, because a closed value
+`src/lib/db.mjs`, _"beside the column that stores it, because a closed value
 set is only closed if the writer enforces it"_. This file is the **policy** on
 top of it: which stage produced a reason, which class it aggregates into, and,
 when several reasons apply at once, **which single one is recorded**.
@@ -2645,7 +2645,7 @@ That last question is the whole point:
 
 A **library**. `job.mjs` imports `classifyPlanDefers`, `reasonRecord` and
 `toStateOpts`; `digest.mjs` imports `reasonClass` and `newlyChallengedBoards`;
-`scripts/dev/bench-runner.mjs` imports `classifyPlanDefers` and `toStateOpts`.
+`src/dev/bench-runner.mjs` imports `classifyPlanDefers` and `toStateOpts`.
 
 ### 9.3 Everything it exposes
 
@@ -2816,18 +2816,18 @@ applications this week" is a query, not a search.
 
 **Imports:** from `../lib/db.mjs` and `./untrusted-text.mjs`.
 
-**Depended on by:** `job.mjs`, `digest.mjs`, `scripts/dev/bench-runner.mjs`,
+**Depended on by:** `job.mjs`, `digest.mjs`, `src/dev/bench-runner.mjs`,
 `tests/auto/taxonomy.test.mjs`.
 
 ---
 
 <a id="digest"></a>
 
-## 10. `scripts/auto/digest.mjs` — "is the machine working?"
+## 10. `src/auto/digest.mjs` — "is the machine working?"
 
 ### 10.1 What it is and why it exists
 
-It computes the `auto` section of `node scripts/status.mjs`: queue depth,
+It computes the `auto` section of `node src/status.mjs`: queue depth,
 deferral counts by kind and class, latency percentiles, paused boards, orphans,
 the STOP switch, and a list of warnings.
 
@@ -2843,14 +2843,14 @@ the STOP switch, and a list of warnings.
 
 ### 10.2 How you run or use it
 
-A **library**, called only from `scripts/status.mjs`. That script wraps the call
+A **library**, called only from `src/status.mjs`. That script wraps the call
 in a `try/catch` and returns `{unavailable: <message>}` on error: _"'where do
 things stand?' must not fail because a feature the user has not switched on has no
 rows."_ Command-line flags that reach it: `--cadence-hours`, `--stop-path`,
 `--db`.
 
 ```console
-$ node scripts/status.mjs
+$ node src/status.mjs
 ```
 
 ### 10.3 Everything it exposes
@@ -2952,7 +2952,7 @@ service on, so it is a first-class output rather than a nice-to-have.
 > **Known defect (2026-08-05 audit).** Scoped STOPs are invisible to
 > `status.mjs`. `buildAutoStatus` computes
 > `stop: { active: stopActive(...), reason: readStop(...) }` from the **global**
-> path only, and the `stopped` warning fires only on that. Nothing in `scripts/`
+> path only, and the `stopped` warning fires only on that. Nothing in `src/`
 > calls `activeStops` except `assertNotStopped`. Since brakes became scoped, the
 > durable ones that actually get written are company-scoped — the kind only a
 > human can clear — so a company brake never appears in the one command that
@@ -2974,13 +2974,13 @@ service on, so it is a first-class output rather than a nice-to-have.
 **Imports:** nine readers from `../lib/db.mjs`, `stopActive`/`readStop` from
 `./guard.mjs`, `reasonClass`/`newlyChallengedBoards` from `./taxonomy.mjs`.
 
-**Depended on by:** `scripts/status.mjs`, `tests/auto/digest.test.mjs`.
+**Depended on by:** `src/status.mjs`, `tests/auto/digest.test.mjs`.
 
 ---
 
 <a id="notify"></a>
 
-## 11. `scripts/auto/notify.mjs` — the desktop toast
+## 11. `src/auto/notify.mjs` — the desktop toast
 
 ### 11.1 What it is and why it exists
 

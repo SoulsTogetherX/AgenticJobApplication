@@ -1,7 +1,7 @@
-// Tests for scripts/apply/auth-sync.mjs.
+// Tests for src/apply/auth-sync.mjs.
 //
 // Placed in tests/auto/ rather than tests/apply/ to follow the precedent set by
-// tests/auto/automatability.test.mjs: the script lives under scripts/apply/ but
+// tests/auto/automatability.test.mjs: the script lives under src/apply/ but
 // is owned by w4-autonomy, and tests/apply/ belongs to qa-breaker. Flagged to
 // the manager as a mirror-convention deviation rather than decided here.
 
@@ -28,10 +28,10 @@ import {
   MCP_PROFILE,
   AUTO_PROFILE,
   ROOT,
-} from "../../scripts/apply/auth-sync.mjs"
+} from "../../src/apply/auth-sync.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
-const SCRIPT = path.resolve(HERE, "../../scripts/apply/auth-sync.mjs")
+const SCRIPT = path.resolve(HERE, "../../src/apply/auth-sync.mjs")
 
 function sandbox() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aj-auth-"))

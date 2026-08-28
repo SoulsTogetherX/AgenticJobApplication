@@ -21,9 +21,9 @@ import {
   claimAutoJob,
   setAutoJobState,
   recordAutoSubmission,
-} from "../../../scripts/lib/db.mjs"
-import { startRun } from "../../../scripts/auto/audit.mjs"
-import { runCampaign } from "../../../scripts/auto/auto-apply.mjs"
+} from "../../../src/lib/db.mjs"
+import { startRun } from "../../../src/auto/audit.mjs"
+import { runCampaign } from "../../../src/auto/auto-apply.mjs"
 
 const arg = (f, d = null) => {
   const i = process.argv.indexOf(f)

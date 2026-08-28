@@ -11,7 +11,7 @@
 //        [--target profile/profile.yaml] [--allow-edits] [--allow-removals]
 import fs from "node:fs"
 import path from "node:path"
-import { loadYamlFile, buildFactIndex } from "../lib/lib.mjs"
+import { loadYamlFile, buildFactIndex } from "#lib/lib.mjs"
 
 const args = process.argv.slice(2)
 function flagBool(name) {

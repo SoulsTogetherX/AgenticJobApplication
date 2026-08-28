@@ -93,7 +93,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import crypto from "node:crypto"
-import { loadYamlFile, dumpYaml } from "../lib/lib.mjs"
+import { loadYamlFile, dumpYaml } from "#lib/lib.mjs"
 import {
   sanitizeUntrusted,
   describeFindings,
@@ -110,7 +110,7 @@ import {
   rescanAnswerBank,
   rescanSummary,
   RESCAN_LIMITS,
-} from "../lib/untrusted.mjs"
+} from "#lib/untrusted.mjs"
 // The dangerous halves of the lock live in ONE place now. This script keeps its
 // own acquire loop (see LOCK_TIMEOUT_MS below for the one reason why), but the
 // read, the break and the win32 error classification are shared — those are the
@@ -121,7 +121,7 @@ import {
   readLock as readLockAt,
   breakStale,
   isRetryableCreateError,
-} from "../lib/lock.mjs"
+} from "#lib/lock.mjs"
 
 const SOURCES = new Set(["user", "model"])
 const DEFAULT_FILE = "profile/answers.yaml"

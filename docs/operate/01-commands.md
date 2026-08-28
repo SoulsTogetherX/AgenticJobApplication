@@ -1,14 +1,14 @@
 # Every command, and when to use it
 
 This is the catalogue of everything in this repository that you can actually
-_run_. There are 47 runnable programs under `scripts/`, plus a handful of `npm`
+_run_. There are 47 runnable programs under `src/`, plus a handful of `npm`
 shortcuts, and none of them are discoverable by looking at the folder — the file
 names tell you roughly what a thing is about, but not what it changes, what it
 prints, or which of its flags will quietly rewrite a file you care about. This
 document answers those three questions for every one of them.
 
 It is organised **by the task you are trying to do**, not by folder, because
-"find jobs" is a thing you want and `scripts/leads/` is an implementation
+"find jobs" is a thing you want and `src/leads/` is an implementation
 detail. Every entry was written by reading the script's own argument-parsing
 code — not its README, not its header comment where the header disagreed with
 the code. Where a command prints a usage line, the usage line quoted here is the
@@ -16,7 +16,7 @@ real output of running it.
 
 **What you will learn**
 
-- How to run any of these at all: what `node scripts/…` means, where you have to
+- How to run any of these at all: what `node src/…` means, where you have to
   be standing when you type it, and what an "exit code" is and why this project
   leans on them so heavily.
 - The shared conventions — `--json`, terse-versus-prose output, the
@@ -54,26 +54,26 @@ Almost everything here is one line typed into a terminal, and it always looks
 like this:
 
 ```
-node scripts/<domain>/<name>.mjs [<subcommand>] [--flag value] [--switch]
+node src/<domain>/<name>.mjs [<subcommand>] [--flag value] [--switch]
 ```
 
 `node` is the JavaScript runtime — the program that reads a `.mjs` file and does
-what it says. `scripts/leads/find-jobs.mjs` is a path to a file relative to the
+what it says. `src/leads/find-jobs.mjs` is a path to a file relative to the
 project root. So:
 
 ```
-node scripts/leads/find-jobs.mjs search --source boards --query "full stack"
+node src/leads/find-jobs.mjs search --source boards --query "full stack"
 ```
 
-reads as: _run Node on the file `scripts/leads/find-jobs.mjs`, tell it to do the
+reads as: _run Node on the file `src/leads/find-jobs.mjs`, tell it to do the
 `search` job, sweep only the company boards, and search for the phrase "full
 stack"._
 
 **You must be standing in the project root** — the folder that contains
-`package.json`, `scripts/`, `docs/` and `jobs/`. Nearly every script resolves
+`package.json`, `src/`, `docs/` and `jobs/`. Nearly every script resolves
 `jobs/`, `profile/` and `docs/application-limits.yaml` relative to its own
 location, so most will work from elsewhere, but several resolve relative to the
-current directory and will silently read the wrong thing. `scripts/auto/cycle.cmd`
+current directory and will silently read the wrong thing. `src/auto/cycle.cmd`
 exists precisely because Windows Task Scheduler picks its own working directory
 and gets this wrong.
 
@@ -86,7 +86,7 @@ most common way to get a confusing error.
   `archive`, `promote`. Only some scripts have them. It always comes first.
 - A **positional argument** is a bare word that _is_ the thing you are operating
   on: a job slug, a filename, a company name. `node
-scripts/documents/keyword-plan.mjs acme-fullstack` — `acme-fullstack` is
+src/documents/keyword-plan.mjs acme-fullstack` — `acme-fullstack` is
   positional.
 - A **flag** starts with `--`. Some are switches (`--json`, `--apply`) that mean
   "yes" just by being present; others take a value in the next word (`--top 20`,
@@ -98,7 +98,7 @@ scripts/documents/keyword-plan.mjs acme-fullstack` — `acme-fullstack` is
 > put a flag first, its **value** gets picked up as the positional. This entry
 > named only `find-jobs.mjs` for three weeks; the same defect is in
 > `ats-lint.mjs`, `keyword-plan.mjs`, `flake-rate.mjs`, `applications.mjs` and
-> `manage-sources.mjs`. In `find-jobs.mjs` it is `cmdImport` and `cmdMark`. `node scripts/leads/find-jobs.mjs mark --status dismissed
+> `manage-sources.mjs`. In `find-jobs.mjs` it is `cmdImport` and `cmdMark`. `node src/leads/find-jobs.mjs mark --status dismissed
 greenhouse:acme:1` looks for a lead whose id is `"dismissed"` and reports `no
 lead matches "dismissed"`. Put the positional argument first and this cannot
 > bite you.
@@ -114,12 +114,12 @@ AI agent, both of which read the number rather than the prose.
 To see it yourself:
 
 ```powershell
-node scripts/documents/verify-claims.mjs resume jobs/acme/resume.md
+node src/documents/verify-claims.mjs resume jobs/acme/resume.md
 echo $LASTEXITCODE          # PowerShell
 ```
 
 ```bash
-node scripts/documents/verify-claims.mjs resume jobs/acme/resume.md
+node src/documents/verify-claims.mjs resume jobs/acme/resume.md
 echo $?                     # Git Bash / Linux / macOS
 ```
 
@@ -143,12 +143,12 @@ is special-cased by npm and needs no `run`.
 
 | Shortcut                  | What it actually runs                                       | Notes                                                                     |
 | ------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `npm test`                | `node .github/workflows/test-gate.mjs full`                 | **The** gate. See §2.1 — it is not a bare `node --test`.                  |
-| `npm run test:security`   | `node .github/workflows/test-gate.mjs security`             | The narrow security-only gate, floor 262.                                 |
+| `npm test`                | `node tools/ci/test-gate.mjs full`                          | **The** gate. See §2.1 — it is not a bare `node --test`.                  |
+| `npm run test:security`   | `node tools/ci/test-gate.mjs security`                      | The narrow security-only gate, floor 262.                                 |
 | `npm run test:raw`        | `node --test`                                               | Raw runner, no assertions about what ran. Diagnostic only.                |
-| `npm run verify`          | `node scripts/documents/verify-claims.mjs`                  | Convenience alias; takes the same arguments.                              |
+| `npm run verify`          | `node src/documents/verify-claims.mjs`                      | Convenience alias; takes the same arguments.                              |
 | `npm run browser:install` | `node node_modules/playwright-core/cli.js install chromium` | Downloads the headless browser. One-time setup.                           |
-| `npm run reap`            | `node .github/workflows/scaffolding-reaper.mjs`             | Fails the build when a development-only file outlives its declared phase. |
+| `npm run reap`            | `node tools/ci/scaffolding-reaper.mjs`                      | Fails the build when a development-only file outlives its declared phase. |
 
 ### 0.5 How this document marks danger
 
@@ -189,7 +189,7 @@ command emits; the 158 and the 41 are placeholders.
 
 Almost every script prints two different versions of the same information, and
 picks between them automatically. The logic lives in `outputMode` in
-`scripts/lib/lib.mjs`:
+`src/lib/lib.mjs`:
 
 ```js
 export function outputMode(argv = process.argv) {
@@ -204,7 +204,7 @@ yes, you get sentences. If the output is being piped into another program or
 captured by an AI agent, you get compact pipe-separated records carrying the same
 facts in a fraction of the words.
 
-So `node scripts/leads/recommend.mjs` typed by you prints:
+So `node src/leads/recommend.mjs` typed by you prints:
 
 ```
 [14] Acme Corp — Full-Stack Engineer
@@ -239,7 +239,7 @@ fields the human-readable summary leaves out.
 `automatability.mjs`, `auth-sync.mjs`, `preflight.mjs`, `auto-apply.mjs`,
 `cycle.mjs`, `applications.mjs`, `follow-ups.mjs`, `profile-gaps.mjs`,
 `keyword-coverage.mjs`, `prune-jobs.mjs`, `archive.mjs`, `save-answer.mjs`
-(under `--rescan` only), and all four `scripts/dev/` benchmarks.
+(under `--rescan` only), and all four `src/dev/` benchmarks.
 
 `check-applied.mjs` and `verify-claims.mjs` print JSON **always** — there is no
 prose mode.
@@ -292,8 +292,8 @@ there is a documented incident behind that sentence, described in §2.2.
 > live history is read instead.
 
 > **Known defect (2026-08-05 audit).** `recordSweep` in
-> `scripts/leads/find-jobs.mjs` calls `resolveLeadSource()` with no argument, so
-> `node scripts/leads/find-jobs.mjs search --leads /tmp/scratch.db` still writes
+> `src/leads/find-jobs.mjs` calls `resolveLeadSource()` with no argument, so
+> `node src/leads/find-jobs.mjs search --leads /tmp/scratch.db` still writes
 > `board_stats` rows into the real `jobs/leads.db`. The `--leads` override is
 > honoured everywhere else in that file.
 
@@ -336,7 +336,7 @@ success for a suite that was deleted, a folder that was renamed, or a file
 pattern that stopped matching. The exit code alone is not evidence that anything
 ran.
 
-`.github/workflows/test-gate.mjs` wraps the runner and asserts what a green run
+`tools/ci/test-gate.mjs` wraps the runner and asserts what a green run
 must actually _prove_. It fails the build when:
 
 - a required test directory is missing or contains no test files — this is what
@@ -432,7 +432,7 @@ part of the evidence corpus that decides whether a claim may appear on your
 résumé. So a hostile form label is worth more to an attacker than a hostile job
 description: the description influences one tailoring run, an entry here
 influences all of them. Both sides of every save therefore pass through the
-untrusted-text boundary in `scripts/lib/untrusted.mjs`.
+untrusted-text boundary in `src/lib/untrusted.mjs`.
 
 **The flags that matter:**
 
@@ -494,7 +494,7 @@ argument, because that is what a swallowed `--answers <path>` looks like.
 **WRITES `jobs/.gate-baseline.json` by default**
 
 ```
-node scripts/leads/gate-audit.mjs [--json] [--status all|new|...]
+node src/leads/gate-audit.mjs [--json] [--status all|new|...]
      [--baseline <file>] [--no-save] [--leads <path>] [--profile <path>]
 ```
 
@@ -505,7 +505,7 @@ is a gate. Tightening one is a two-word edit that can silently discard dozens of
 jobs you would have wanted.
 
 The four ordered stages, from `STAGE_IDS` and `STAGE_LABELS` in
-`scripts/leads/stages.mjs`:
+`src/leads/stages.mjs`:
 
 | Stage | Label                 | What it checks                                                                     |
 | ----- | --------------------- | ---------------------------------------------------------------------------------- |
@@ -577,7 +577,7 @@ are running it purely to look.
 **WRITES `jobs/leads.db`**
 
 ```
-node scripts/leads/find-jobs.mjs search [--source all|hn|boards|adzuna]
+node src/leads/find-jobs.mjs search [--source all|hn|boards|adzuna]
      [--query "full stack"] [--max-age N] [--concurrency 8]
      [--no-enrich] [--explain [N]] [--leads <path>]
 ```
@@ -622,7 +622,7 @@ deliberately do not.
 **WRITES `jobs/leads.db`**
 
 ```
-node scripts/leads/find-jobs.mjs import <file.json> [--no-enrich] [--leads <path>]
+node src/leads/find-jobs.mjs import <file.json> [--no-enrich] [--leads <path>]
 ```
 
 Takes a JSON file containing either an array of postings or an object with a
@@ -634,8 +634,8 @@ sweep. This is how a posting you found in a browser session gets into the store.
 **`list` is READ-ONLY; `mark` WRITES `jobs/leads.db`**
 
 ```
-node scripts/leads/find-jobs.mjs list [--status new|recommended|dismissed|applied|all]
-node scripts/leads/find-jobs.mjs mark <id-or-url> --status <status> [--notes "..."]
+node src/leads/find-jobs.mjs list [--status new|recommended|dismissed|applied|all]
+node src/leads/find-jobs.mjs mark <id-or-url> --status <status> [--notes "..."]
 ```
 
 `list` defaults to `--status new`. `mark` accepts exactly the four statuses
@@ -649,7 +649,7 @@ marking 57 leads used to mean 57 full rewrites of a 321 KB file.
 **Dry run by default; `--apply` WRITES `jobs/leads.db`**
 
 ```
-node scripts/leads/enrich.mjs [--apply]
+node src/leads/enrich.mjs [--apply]
 ```
 
 Four of the swept ATS types return a job _list_ with no description at all
@@ -670,7 +670,7 @@ derived from the description, and skipping the re-index would waste the fetch.
 **Dry run by default; `--apply` WRITES `jobs/leads.db`**
 
 ```
-node scripts/leads/canonical.mjs [--apply] [--network] [--limit N] [--json]
+node src/leads/canonical.mjs [--apply] [--network] [--limit N] [--json]
 ```
 
 Measured on the real store on 2026-08-03, 74 of 158 leads (47%) carried a host
@@ -703,11 +703,11 @@ than "resolved to whatever it gave us".
 **WRITES the `screens` table in `jobs/leads.db` (suppress with `--no-record`)**
 
 ```
-node scripts/leads/screen.mjs [--status new] [--json] [--skip-screened]
+node src/leads/screen.mjs [--status new] [--json] [--skip-screened]
      [--no-record] [--stage l0,l1,l2,l3|all]
      [--leads <path>] [--jobs-dir <path>] [--limits <path>] [--profile <path>]
 
-node scripts/leads/screen.mjs record <lead-id> --verdict pass|caution|reject
+node src/leads/screen.mjs record <lead-id> --verdict pass|caution|reject
      [--reason "..."] [--signals a,b] [--source model]
 ```
 
@@ -731,7 +731,7 @@ and runs each lead through the four ordered stages `l0`–`l3`. Verdicts are
 > documented as a diagnostic, but it is not paired with the recording block —
 > which runs unless `--no-record` is passed. (This entry used to say the block
 > runs "unconditionally"; it does not, and the workaround below was right for
-> the wrong reason.) `node scripts/leads/screen.mjs --stage l0` therefore
+> the wrong reason.) `node src/leads/screen.mjs --stage l0` therefore
 > **overwrites the stored `mechanical` verdict for every lead** with one
 > computed from a single stage — and that stored row is what the
 > unattended runner reads as its screening evidence when no model verdict exists.
@@ -746,7 +746,7 @@ and runs each lead through the four ordered stages `l0`–`l3`. Verdicts are
 **READ-ONLY**
 
 ```
-node scripts/leads/recommend.mjs [--top 10] [--status new|recommended|all]
+node src/leads/recommend.mjs [--top 10] [--status new|recommended|all]
      [--json] [--leads <path>] [--profile <path>] [--jobs-dir <path>]
      [--applicable [--limits <path>]]
 ```
@@ -794,7 +794,7 @@ lead carries the requested status.
 **READ-ONLY**
 
 ```
-node scripts/leads/prep-queue.mjs [--top 5] [--status new|all] [--json]
+node src/leads/prep-queue.mjs [--top 5] [--status new|all] [--json]
      [--leads <path>] [--profile <path>] [--jobs-dir <path>]
      [--applications <path>] [--limits <path>] [--cluster [--threshold 0.6]]
      [--by-score] [--include-rejected]
@@ -853,7 +853,7 @@ posting text is still not folded in.
 **READ-ONLY**
 
 ```
-node scripts/leads/cluster.mjs [--status new|all] [--threshold 0.6]
+node src/leads/cluster.mjs [--status new|all] [--threshold 0.6]
      [--min-size 2] [--leads <path>] [--json]
 ```
 
@@ -869,7 +869,7 @@ where that applies. It recommends; you approve the reuse.
 **READ-ONLY**
 
 ```
-node scripts/apply/automatability.mjs [--json] [--top N]
+node src/apply/automatability.mjs [--json] [--top N]
      [--jobs-dir <dir>] [--cache <file>] [--profile <p>] [--answers <a>]
 ```
 
@@ -897,7 +897,7 @@ cannot do this one alone" into "you never see this job".
 **READ-ONLY**
 
 ```
-node scripts/apply/pending-questions.mjs [<slug> ...] [--jobs-dir jobs]
+node src/apply/pending-questions.mjs [<slug> ...] [--jobs-dir jobs]
      [--no-predict] [--profile <path>] [--answers <path>] [--json]
 ```
 
@@ -928,7 +928,7 @@ before trusting the list.
 **WRITES `jobs/<slug>/fill-plan.{js,json}` and `jobs/.field-cache.json`**
 
 ```
-node scripts/apply/rebuild-plans.mjs [<slug> ...] [--all] [--dry-run]
+node src/apply/rebuild-plans.mjs [<slug> ...] [--all] [--dry-run]
      [--jobs-dir jobs]
 ```
 
@@ -958,9 +958,9 @@ alongside it.
 **WRITES `jobs/<slug>/job.json` and `jobs/<slug>/context.json`**
 
 ```
-node scripts/documents/new-job.mjs <slug> --company "Acme" --title "Full-Stack Developer"
+node src/documents/new-job.mjs <slug> --company "Acme" --title "Full-Stack Developer"
      [--url <url>] [--root jobs]
-node scripts/documents/new-job.mjs <slug> --from-lead <url|lead-id> [--leads <path>]
+node src/documents/new-job.mjs <slug> --from-lead <url|lead-id> [--leads <path>]
      [--description "<posting text>" | --description - | --description-file <path>]
 ```
 
@@ -985,7 +985,7 @@ will read. `--description -` means "read it from standard input", which is how a
 **WRITES `jobs/<slug>/keywords.json`**
 
 ```
-node scripts/documents/keyword-plan.mjs <slug> [--json]
+node src/documents/keyword-plan.mjs <slug> [--json]
      [--jobs-dir <d>] [--profile <p>] [--answers <a>] [--limits <l>]
 ```
 
@@ -1015,7 +1015,7 @@ list with a note that R6 will reject them, and the density cap.
 **WRITES `jobs/<slug>/resume.md` and `jobs/<slug>/resume-selection.json`**
 
 ```
-node scripts/documents/assemble-resume.mjs <slug> [--budget 3800] [--out <f>]
+node src/documents/assemble-resume.mjs <slug> [--budget 3800] [--out <f>]
      [--json] [--diff] [--stdout] [--no-selection-file]
      [--jobs-dir <d>] [--profile <p>] [--answers <a>] [--limits <l>]
      [--audit-rephrase <file>]
@@ -1062,10 +1062,10 @@ verifies; `1` means it did not.
 **WRITES a row into the `verifications` table (suppress with `--no-record`)**
 
 ```
-node scripts/documents/verify-claims.mjs resume <file.md>
+node src/documents/verify-claims.mjs resume <file.md>
      [--job jobs/<slug>/job.json] [--profile profile/profile.yaml]
      [--answers profile/answers.yaml] [--jobs-dir <d>] [--db <path>] [--no-record]
-node scripts/documents/verify-claims.mjs cover-letter <file.md> [same flags]
+node src/documents/verify-claims.mjs cover-letter <file.md> [same flags]
 ```
 
 **This is hard rule 4: it must pass before any document is rendered or shown as
@@ -1101,7 +1101,7 @@ document into a verification failure.
 **WRITES the output PDF and an intermediate `.render.html` beside it**
 
 ```
-node scripts/documents/render-pdf.mjs <input.md> <output.pdf> [--letter] [--css templates/document.css]
+node src/documents/render-pdf.mjs <input.md> <output.pdf> [--letter] [--css templates/document.css]
 ```
 
 Shells out to a locally installed Edge or Chrome in headless mode. It looks for
@@ -1123,7 +1123,7 @@ hands the parser no address at all).
 **READ-ONLY**
 
 ```
-node scripts/documents/ats-lint.mjs <resume.md> [--html <f.render.html>]
+node src/documents/ats-lint.mjs <resume.md> [--html <f.render.html>]
      [--pdf <f.pdf>] [--plan jobs/<slug>/keywords.json] [--json]
 ```
 
@@ -1145,7 +1145,7 @@ font-level regression inside Chrome would not be caught.
 **WRITES cached rows into `workspace_stacks` when the cache is on**
 
 ```
-node scripts/documents/reuse-check.mjs <slug> [--dir jobs] [--top 3]
+node src/documents/reuse-check.mjs <slug> [--dir jobs] [--top 3]
      [--threshold 0.75] [--json] [--cache auto|on|off] [--db <path>]
 ```
 
@@ -1166,7 +1166,7 @@ value.
 **READ-ONLY**
 
 ```
-node scripts/documents/letter-plan.mjs [--status new|all] [--threshold 0.6]
+node src/documents/letter-plan.mjs [--status new|all] [--threshold 0.6]
      [--leads <path>] [--json] [--price-only]
      [--in <tok>] [--out <tok>] [--in-rate <usd/Mtok>] [--out-rate <usd/Mtok>]
      [--revisions <n>]
@@ -1213,8 +1213,8 @@ See [`../code/06-apply-scanning.md`](../code/06-apply-scanning.md),
 **READ-ONLY**
 
 ```
-node scripts/apply/answer-bank.mjs --fields '[{"k":"f1","t":"text","l":"Email"}]' [--json]
-cat scan.json | node scripts/apply/answer-bank.mjs [--json] [--profile <p>] [--answers <a>]
+node src/apply/answer-bank.mjs --fields '[{"k":"f1","t":"text","l":"Email"}]' [--json]
+cat scan.json | node src/apply/answer-bank.mjs [--json] [--profile <p>] [--answers <a>]
 ```
 
 Takes the `fields` array a page scan produced and resolves each one against your
@@ -1243,7 +1243,7 @@ by having a model read the field and decide.
 **WRITES `jobs/<slug>/fill-plan.js`, `jobs/<slug>/fill-plan.json`, and `jobs/.field-cache.json`**
 
 ```
-node scripts/apply/fill-plan.mjs <slug> [--scan <path> | --page <N>]
+node src/apply/fill-plan.mjs <slug> [--scan <path> | --page <N>]
      [--url <url>] [--resume <pdf>] [--cover <pdf>] [--json]
      [--profile <p>] [--answers <a>] [--jobs-dir <d>] [--consent-allowlist <path>]
      [--no-cache] [--invalidate] [--record-via <path-to-fill-report.json>]
@@ -1284,9 +1284,9 @@ class, because a tick carries assent rather than a value.
 **`stage` and `review` write only to a gitignored staging directory; `promote` WRITES the committed corpus**
 
 ```
-node scripts/apply/capture-post-submit.mjs stage --url <url> --html-file <f> [--board <k>] [--slug <s>]
-node scripts/apply/capture-post-submit.mjs review [<id>]
-node scripts/apply/capture-post-submit.mjs promote <id> --kind <classification> --user-approved
+node src/apply/capture-post-submit.mjs stage --url <url> --html-file <f> [--board <k>] [--slug <s>]
+node src/apply/capture-post-submit.mjs review [<id>]
+node src/apply/capture-post-submit.mjs promote <id> --kind <classification> --user-approved
 ```
 
 The unattended runner needs to type the page an ATS shows _after_ submit —
@@ -1316,7 +1316,7 @@ it into the committed corpus and only with an explicit `--user-approved`.
 **WRITES `.playwright-auto/profile`**
 
 ```
-node scripts/apply/auth-sync.mjs [--check] [--src <dir>] [--dst <dir>] [--json]
+node src/apply/auth-sync.mjs [--check] [--src <dir>] [--dst <dir>] [--json]
 ```
 
 Its own help text, verbatim:
@@ -1351,7 +1351,7 @@ un-gitignored destination), `2` usage.
 **CAN SEND A REAL APPLICATION. WRITES `jobs/leads.db`.**
 
 ```
-node scripts/auto/auto-apply.mjs [--limit 25] [--concurrency 1]
+node src/auto/auto-apply.mjs [--limit 25] [--concurrency 1]
      [--db <file>] [--limits <file>] [--jobs-dir <dir>]
      [--enqueue] [--fixture] [--json] [--help]
 ```
@@ -1390,7 +1390,7 @@ impression that a page looks legitimate.
 > reads `auto_apply.enabled: true`, `dry_run: false`, `per_run_max: 10`,
 > `per_day_max: 10`, `per_company_max_per_week: 5`, and a `board_allowlist`
 > naming `boards.greenhouse.io`, `job-boards.greenhouse.io`, `jobs.lever.co` and
-> `jobs.ashbyhq.com`. Several header comments in `scripts/auto/` and a paragraph
+> `jobs.ashbyhq.com`. Several header comments in `src/auto/` and a paragraph
 > in `CLAUDE.md` still describe this as shipping `enabled: false, dry_run: true`
 > with no allowlist. **Those comments are stale; the file is the truth.** Read the
 > file before running this command.
@@ -1411,7 +1411,7 @@ not prevent the click — the click happens first, then the page cannot be typed
 so the job terminates as `post-submit-unclassified` and the attempt is left for a
 human to adjudicate.
 
-**Exit codes** (`EXIT` in `scripts/auto/preflight.mjs`): `0` OK, `1` REFUSED,
+**Exit codes** (`EXIT` in `src/auto/preflight.mjs`): `0` OK, `1` REFUSED,
 `2` USAGE, `3` INSTRUCTION_SHAPED, `4` SENSITIVE.
 
 **`--fixture` refuses to run against the real store**, checked before anything
@@ -1432,7 +1432,7 @@ rows and those count toward your real per-day and per-company caps.
 **CAN SEND A REAL APPLICATION (it calls `auto-apply.mjs`). WRITES `jobs/leads.db` and `jobs/<slug>/`.**
 
 ```
-node scripts/auto/cycle.mjs [--top 10] [--limit N] [--json]
+node src/auto/cycle.mjs [--top 10] [--limit N] [--json]
      [--skip-search] [--skip-apply] [--jobs-dir jobs]
 ```
 
@@ -1463,7 +1463,7 @@ durable `(slug, mode)` row refuses a second attempt on the same slug.
 does **not** change the exit code — the cycle's job is to get as far as it can and
 say exactly where each lead stopped.
 
-**`scripts/auto/cycle.cmd`** is a Windows Task Scheduler wrapper around the same
+**`src/auto/cycle.cmd`** is a Windows Task Scheduler wrapper around the same
 thing. It pins the working directory to the repository root and appends a
 timestamped log to `logs/cycle.log`. Registering it with Task Scheduler is your
 act, not the agent's — it changes a system setting.
@@ -1472,7 +1472,7 @@ act, not the agent's — it changes a system setting.
 an elevated PowerShell, with the repository path adjusted if yours differs:
 
 ```powershell
-$act = New-ScheduledTaskAction -Execute "C:\Users\xalva\Documents\Projects\VibeCoded\AgenticJobApplication\scripts\auto\cycle.cmd" -Argument "--skip-apply"
+$act = New-ScheduledTaskAction -Execute "C:\Users\xalva\Documents\Projects\VibeCoded\AgenticJobApplication\src\auto\cycle.cmd" -Argument "--skip-apply"
 $trg = New-ScheduledTaskTrigger -Daily -At 07:00
 $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 Register-ScheduledTask -TaskName "AgenticJobApplication" -Action $act -Trigger $trg -Settings $set -User $env:USERNAME -RunLevel Limited -Force
@@ -1511,7 +1511,7 @@ by the spawn timeout now reads `timed out after 600000ms (SIGTERM)`.
 **READ-ONLY. The script says so in its own usage text.**
 
 ```
-node scripts/auto/preflight.mjs [--mode dry_run|live] [--answers <file>]
+node src/auto/preflight.mjs [--mode dry_run|live] [--answers <file>]
      [--profile <file>] [--limits <file>] [--json] [--help]
 ```
 
@@ -1542,7 +1542,7 @@ particular file.
 **READ-ONLY**
 
 ```
-node scripts/applications/check-applied.mjs "<company, title, or slug>"
+node src/applications/check-applied.mjs "<company, title, or slug>"
      [--file profile/applications.yaml] [--today YYYY-MM-DD]
 ```
 
@@ -1561,7 +1561,7 @@ answer, not an error. `2` for usage, including a `--today` that is not
 **WRITES the `applications` table in `jobs/leads.db`, and regenerates `profile/applications.yaml`**
 
 ```
-node scripts/applications/log-application.mjs <slug> --company "X" --title "Y"
+node src/applications/log-application.mjs <slug> --company "X" --title "Y"
      [--url <url>] [--date YYYY-MM-DD] [--notes "..."] [--file <yaml>]
 ```
 
@@ -1577,11 +1577,11 @@ use — omit it.
 **`list`, `find` and `stats` are READ-ONLY; `remove` and `export` WRITE**
 
 ```
-node scripts/applications/applications.mjs list [--status s] [--company X] [--json]
-node scripts/applications/applications.mjs find "<company|title|slug>" [--json]
-node scripts/applications/applications.mjs stats [--json]
-node scripts/applications/applications.mjs remove <slug> --confirm
-node scripts/applications/applications.mjs export
+node src/applications/applications.mjs list [--status s] [--company X] [--json]
+node src/applications/applications.mjs find "<company|title|slug>" [--json]
+node src/applications/applications.mjs stats [--json]
+node src/applications/applications.mjs remove <slug> --confirm
+node src/applications/applications.mjs export
 ```
 
 `stats` prints totals, distinct company count, first and latest dates and a
@@ -1610,8 +1610,8 @@ is the source of truth.
 **WRITES the `applications` table**
 
 ```
-node scripts/applications/update-application.mjs <slug-or-company> --status <status>
-node scripts/applications/update-application.mjs <slug-or-company> --followed-up [--date YYYY-MM-DD]
+node src/applications/update-application.mjs <slug-or-company> --status <status>
+node src/applications/update-application.mjs <slug-or-company> --followed-up [--date YYYY-MM-DD]
 ```
 
 The statuses are exactly: `applied`, `followed_up`, `interviewing`, `offer`,
@@ -1633,7 +1633,7 @@ malformed date.
 **READ-ONLY**
 
 ```
-node scripts/applications/follow-ups.mjs [--days 10] [--json] [--file <path>]
+node src/applications/follow-ups.mjs [--days 10] [--json] [--file <path>]
 ```
 
 The policy, encoded in `dueFollowUps`:
@@ -1670,8 +1670,8 @@ Acme Corp — Full-Stack Engineer (acme-fullstack)
 empty tables if they are absent; it writes no rows)
 
 ```
-node scripts/status.mjs [--json] [--days 10] [--cadence-hours H]
-node scripts/status.mjs --db <path> --stop-path <path>     # fixtures only
+node src/status.mjs [--json] [--days 10] [--cadence-hours H]
+node src/status.mjs --db <path> --stop-path <path>     # fixtures only
 ```
 
 Replaces the several separate commands, and the round-trips between them, that
@@ -1701,7 +1701,7 @@ See §7.3.
 **READ-ONLY**
 
 ```
-node scripts/profile/profile-gaps.mjs [--json] [--min-demand N]
+node src/profile/profile-gaps.mjs [--json] [--min-demand N]
      [--profile <p>] [--jobs-dir <d>] [--leads <l>] [--applications <a>]
 ```
 
@@ -1718,7 +1718,7 @@ leads to analyse.
 **READ-ONLY**
 
 ```
-node scripts/profile/keyword-coverage.mjs [--min-demand 2] [--top 40]
+node src/profile/keyword-coverage.mjs [--min-demand 2] [--top 40]
      [--include-dismissed] [--job jobs/<slug>/job.json] [--json]
      [--profile <p>] [--answers <a>] [--leads <l>]
 ```
@@ -1783,12 +1783,12 @@ oracle_cloud, jobvite, successfactors, jobicy, remotive, remoteok
 **`add` and `remove` WRITE `docs/job-sources.yaml`; `verify` and `list` are READ-ONLY**
 
 ```
-node scripts/leads/manage-sources.mjs add --type <ats> --company "Name" [--slug <slug>]
-node scripts/leads/manage-sources.mjs add --type workday --company "Name" \
+node src/leads/manage-sources.mjs add --type <ats> --company "Name" [--slug <slug>]
+node src/leads/manage-sources.mjs add --type workday --company "Name" \
      --host x.wd5.myworkdayjobs.com --tenant x --site SiteName
-node scripts/leads/manage-sources.mjs remove "<company or slug>"
-node scripts/leads/manage-sources.mjs verify
-node scripts/leads/manage-sources.mjs list
+node src/leads/manage-sources.mjs remove "<company or slug>"
+node src/leads/manage-sources.mjs verify
+node src/leads/manage-sources.mjs list
 ```
 
 `add` **prescreens with a live API call** — the board must answer with a job list
@@ -1817,8 +1817,8 @@ missing required field, duplicate, or a failed prescreen).
 **WRITES `docs/board-candidates.yaml`**
 
 ```
-node scripts/leads/find-boards.mjs --names "Acme,Globex" [--out <f>] [--append]
-node scripts/leads/find-boards.mjs --file docs/candidates/fortune500.yaml [--limit 100]
+node src/leads/find-boards.mjs --names "Acme,Globex" [--out <f>] [--append]
+node src/leads/find-boards.mjs --file docs/candidates/fortune500.yaml [--limit 100]
      [--concurrency 6] [--json]
 ```
 
@@ -1848,8 +1848,8 @@ hiring" otherwise.
 **READ-ONLY. It never edits `docs/job-sources.yaml`.**
 
 ```
-node scripts/leads/discover-boards.mjs --candidates <file.yaml|file.json>
-node scripts/leads/discover-boards.mjs --type greenhouse --slug acme --company "Acme"
+node src/leads/discover-boards.mjs --candidates <file.yaml|file.json>
+node src/leads/discover-boards.mjs --type greenhouse --slug acme --company "Acme"
      [--min-solid 1] [--concurrency 6] [--query "full stack"] [--json]
 ```
 
@@ -1870,10 +1870,10 @@ It prints the `manage-sources.mjs add` command to run for anything that passes.
 **READ-ONLY**
 
 ```
-node scripts/leads/board-yield.mjs [--query "full stack"] [--json]
+node src/leads/board-yield.mjs [--query "full stack"] [--json]
      [--concurrency 6] [--min-qualifying 0]
 
-node scripts/leads/board-yield.mjs --history [--live] [--json]
+node src/leads/board-yield.mjs --history [--live] [--json]
      [--dead-days 30] [--zero-streak 5] [--min-sweeps 5]
 ```
 
@@ -1906,7 +1906,7 @@ ready-to-run `manage-sources.mjs remove` lines and nothing is changed.
 **WRITES `docs/candidates/cc-<crawl>-<host>.yaml` and resume state in `jobs/.cc/`**
 
 ```
-node scripts/leads/cc-boards.mjs --crawl CC-MAIN-2026-30 --hosts ashby,greenhouse
+node src/leads/cc-boards.mjs --crawl CC-MAIN-2026-30 --hosts ashby,greenhouse
      [--out <file>] [--max-pages N] [--json]
 ```
 
@@ -1943,13 +1943,13 @@ resumable).
 **WRITES `jobs/leads.db` (pass `--dry-run` to preview)**
 
 ```
-node scripts/maintenance/migrate.mjs [--dry-run] [--db <path>]
+node src/maintenance/migrate.mjs [--dry-run] [--db <path>]
      [--leads-json <path>] [--applications <path>] [--reset-queue]
-node scripts/maintenance/migrate.mjs --export <file>
+node src/maintenance/migrate.mjs --export <file>
 ```
 
 **Flat, not versioned.** There is no migration chain and no schema-version table:
-`scripts/lib/db.mjs` declares the whole schema with `CREATE TABLE IF NOT EXISTS`,
+`src/lib/db.mjs` declares the whole schema with `CREATE TABLE IF NOT EXISTS`,
 and this re-imports from the files that are still the user-owned source of truth.
 Running it twice is a no-op; running it after a schema addition fills in the new
 tables.
@@ -1978,7 +1978,7 @@ the database the moment a sweep runs, and a stale duplicate is worse than none.
 **Dry run by default; `--apply` DELETES files**
 
 ```
-node scripts/maintenance/prune-jobs.mjs [--apply] [--jobs-dir <path>] [--json]
+node src/maintenance/prune-jobs.mjs [--apply] [--jobs-dir <path>] [--json]
 ```
 
 Removes exactly one thing: `*.render.html`, the intermediate `render-pdf.mjs`
@@ -2006,12 +2006,12 @@ Documents are never pruned; closed applications go to archive.mjs.
 **`list` and `show` are READ-ONLY; `archive`, `restore` and `purge --apply` WRITE**
 
 ```
-node scripts/maintenance/archive.mjs list [--json]
-node scripts/maintenance/archive.mjs show <slug> [--json]
-node scripts/maintenance/archive.mjs archive <slug> [--force]
-node scripts/maintenance/archive.mjs archive --closed [--dry-run]
-node scripts/maintenance/archive.mjs restore <slug> [--to <dir>] [--force]
-node scripts/maintenance/archive.mjs purge [--days N] [--apply] [--json]
+node src/maintenance/archive.mjs list [--json]
+node src/maintenance/archive.mjs show <slug> [--json]
+node src/maintenance/archive.mjs archive <slug> [--force]
+node src/maintenance/archive.mjs archive --closed [--dry-run]
+node src/maintenance/archive.mjs restore <slug> [--to <dir>] [--force]
+node src/maintenance/archive.mjs purge [--days N] [--apply] [--json]
      [--jobs-dir <path>] [--db <path>] [--applications <path>]
 ```
 
@@ -2044,7 +2044,7 @@ commands turn "it feels slow" and "that test is flaky" into numbers.
 **READ-ONLY unless `--ledger` is passed**
 
 ```
-node scripts/dev/bench-apply.mjs [--board <b>] [--shape <s>] [--profile <p>]
+node src/dev/bench-apply.mjs [--board <b>] [--shape <s>] [--profile <p>]
      [--page N] [--runs N] [--json] [--ledger] [--real-sleep]
      [--browser] [--browser-fill] [--all-profiles] [--verbs] [--gate] [--help]
 ```
@@ -2067,7 +2067,7 @@ Chromium is installed.
 ### 12.2 `bench-runner.mjs` — time a campaign
 
 ```
-node scripts/dev/bench-runner.mjs [--apps 8] [--concurrency 4] [--board greenhouse]
+node src/dev/bench-runner.mjs [--apps 8] [--concurrency 4] [--board greenhouse]
      [--origins N] [--runs 1] [--profile typical] [--real-sleep]
      [--edge-spacing-ms N] [--latency <l>] [--json] [--ledger] [--allow-dirty]
 ```
@@ -2088,10 +2088,10 @@ would and stops.
 **READ-ONLY**
 
 ```
-node scripts/dev/bench-green-prevalence.mjs            # human report
-node scripts/dev/bench-green-prevalence.mjs --json
-node scripts/dev/bench-green-prevalence.mjs --self-check
-node scripts/dev/bench-green-prevalence.mjs --no-scans
+node src/dev/bench-green-prevalence.mjs            # human report
+node src/dev/bench-green-prevalence.mjs --json
+node src/dev/bench-green-prevalence.mjs --self-check
+node src/dev/bench-green-prevalence.mjs --no-scans
 ```
 
 Of the real application forms this machine has actually seen, how many could reach
@@ -2117,7 +2117,7 @@ and are never counted.
 **READ-ONLY**
 
 ```
-node scripts/dev/flake-rate.mjs <test-file> [--runs 10] [--load 1]
+node src/dev/flake-rate.mjs <test-file> [--runs 10] [--load 1]
      [--alongside <file>]... [--json] [--help]
 ```
 
@@ -2151,7 +2151,7 @@ flake rate — tests/lib/db.test.mjs  (load=4)
 
 ### 12.5 `spawn-counter.cjs` — not a command
 
-`scripts/dev/spawn-counter.cjs` is a `--require` preload, not something you run. It
+`src/dev/spawn-counter.cjs` is a `--require` preload, not something you run. It
 counts every child process and outbound request a run makes. It is a preload
 rather than a patch inside the harness because patching `child_process` from
 inside an ES module counts **zero** — a module that imported the function is bound
@@ -2165,13 +2165,13 @@ hard rule is `model_turns > 0`.
 
 Everything runnable, alphabetically within its folder, with what it changes.
 
-### `scripts/` root
+### `src/` root
 
 | Command      | Task               | Changes                                      |
 | ------------ | ------------------ | -------------------------------------------- |
 | `status.mjs` | Know where I stand | Nothing (opens the database; writes no rows) |
 
-### `scripts/leads/`
+### `src/leads/`
 
 | Command               | Task                      | Changes                                                                                 |
 | --------------------- | ------------------------- | --------------------------------------------------------------------------------------- |
@@ -2189,7 +2189,7 @@ Everything runnable, alphabetically within its folder, with what it changes.
 | `recommend.mjs`       | See what to do next       | **READ-ONLY**                                                                           |
 | `screen.mjs`          | Find jobs                 | `screens` rows unless `--no-record`                                                     |
 
-### `scripts/documents/`
+### `src/documents/`
 
 | Command               | Task                    | Changes                                                                           |
 | --------------------- | ----------------------- | --------------------------------------------------------------------------------- |
@@ -2203,7 +2203,7 @@ Everything runnable, alphabetically within its folder, with what it changes.
 | `reverify.mjs`        | Keep documents eligible | a `verifications` row per stale document; **deletes rows** with `--prune-orphans` |
 | `verify-claims.mjs`   | Tailor a résumé         | a `verifications` row unless `--no-record`                                        |
 
-### `scripts/apply/`
+### `src/apply/`
 
 | Command                   | Task                | Changes                                                         |
 | ------------------------- | ------------------- | --------------------------------------------------------------- |
@@ -2215,7 +2215,7 @@ Everything runnable, alphabetically within its folder, with what it changes.
 | `pending-questions.mjs`   | See what to do next | **READ-ONLY**                                                   |
 | `rebuild-plans.mjs`       | Apply               | `jobs/<slug>/fill-plan.{js,json}`, `jobs/.field-cache.json`     |
 
-### `scripts/applications/`
+### `src/applications/`
 
 | Command                  | Task                  | Changes                                    |
 | ------------------------ | --------------------- | ------------------------------------------ |
@@ -2234,7 +2234,7 @@ Everything runnable, alphabetically within its folder, with what it changes.
 | `profile-gaps.mjs`     | Know where I stand | **READ-ONLY**                                   |
 | `save-answer.mjs`      | **The fact base**  | `profile/answers.yaml` (never under `--rescan`) |
 
-### `scripts/auto/`
+### `src/auto/`
 
 | Command          | Task  | Changes                                                                                          |
 | ---------------- | ----- | ------------------------------------------------------------------------------------------------ |
@@ -2243,13 +2243,13 @@ Everything runnable, alphabetically within its folder, with what it changes.
 | `cycle.mjs`      | Apply | **CAN SEND A REAL APPLICATION.** Everything the tailoring chain writes, plus the runner's tables |
 | `preflight.mjs`  | Apply | **READ-ONLY** — states so in its own usage text                                                  |
 
-Every other file under `scripts/auto/` (`advance`, `audit`, `authorize`,
+Every other file under `src/auto/` (`advance`, `audit`, `authorize`,
 `breaker`, `caps`, `classify`, `digest`, `guard`, `job`, `multipage`, `notify`,
 `pool`, `reconcile`, `stages`, `submit`, `taxonomy`, `trust`, `untrusted-text`) is
-a library with no command line. So is everything under `scripts/lib/`,
-`scripts/hooks/`, `scripts/apply/ats/`, and `scripts/leads/{fit,risk,stages}.mjs`.
+a library with no command line. So is everything under `src/lib/`,
+`src/hooks/`, `src/apply/ats/`, and `src/leads/{fit,risk,stages}.mjs`.
 
-### `scripts/maintenance/`
+### `src/maintenance/`
 
 | Command          | Task               | Changes                                                |
 | ---------------- | ------------------ | ------------------------------------------------------ |
@@ -2257,7 +2257,7 @@ a library with no command line. So is everything under `scripts/lib/`,
 | `migrate.mjs`    | Maintain the store | `leads`, `lead_keywords`, `applications`, `auto_queue` |
 | `prune-jobs.mjs` | Maintain the store | Deletes `*.render.html`, with `--apply`                |
 
-### `scripts/dev/`
+### `src/dev/`
 
 | Command                      | Task                | Changes                                                                                         |
 | ---------------------------- | ------------------- | ----------------------------------------------------------------------------------------------- |

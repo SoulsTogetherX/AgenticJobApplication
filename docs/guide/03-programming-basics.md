@@ -6,14 +6,14 @@ The previous document,
 [./02-computer-basics.md](./02-computer-basics.md), taught you the ground the
 programs stand on: files, commands, exit codes, JSON, Git, SQLite. This one
 teaches the programs themselves — the ideas you need in order to open any file
-under `scripts/` and follow what it is doing.
+under `src/` and follow what it is doing.
 
 Every concept here is taught with a real example taken from this repository, not
 a textbook toy. When you read "a higher-order function", you will see the actual
-function in `scripts/lib/lib.mjs` that takes another function as an argument.
+function in `src/lib/lib.mjs` that takes another function as an argument.
 When you read "a race condition", you will see the measurement that proved this
 project had one, and the lock that was written to stop it. When you read about
-regular expressions, you will decode real patterns from `scripts/leads/screen.mjs`
+regular expressions, you will decode real patterns from `src/leads/screen.mjs`
 character by character, including the one that was wrong and the bug it caused.
 
 This is the document that makes the `docs/code/` documents readable. It does not
@@ -70,7 +70,7 @@ to it later.
 const SNIPPET_MAX = 4000
 ```
 
-That line is real — it is in `scripts/lib/lib.mjs` — and it does two things. It
+That line is real — it is in `src/lib/lib.mjs` — and it does two things. It
 creates a value, the number `4000`, and it gives it a name, `SNIPPET_MAX`. From
 then on, anywhere in that file, writing `SNIPPET_MAX` means `4000`.
 
@@ -83,7 +83,7 @@ There are two words for making a variable, and the difference matters:
 
 This codebase uses `const` for almost everything, and `let` only where a value
 genuinely has to change as the code runs. Here is a real pair from
-`scripts/apply/field-cache.mjs`:
+`src/apply/field-cache.mjs`:
 
 ```js
 let hits = 0
@@ -97,20 +97,20 @@ they must be `let`. Everything else in that function is `const`.
 A **type** is the kind of thing a value is. JavaScript has a small set of basic
 types, and this project uses all of them:
 
-| Type          | Looks like              | Real example in this repository                                      |
-| ------------- | ----------------------- | -------------------------------------------------------------------- |
-| **string**    | `"full stack"`          | `DEFAULT_SEARCH_QUERY` in `scripts/leads/find-jobs.mjs`              |
-| **number**    | `4000`, `0.7`, `-1`     | `SNIPPET_MAX`, `FETCH_TIMEOUT_MS` (`15000`) in `scripts/lib/lib.mjs` |
-| **boolean**   | `true` / `false`        | `relocation: false` in `docs/application-limits.yaml`                |
-| **null**      | `null`                  | what `parseDateRange` returns when it cannot read a date             |
-| **undefined** | `undefined`             | what you get for a property that was never set                       |
-| **object**    | `{ ... }` and `[ ... ]` | a lead, a scan, a plan — everything structured                       |
+| Type          | Looks like              | Real example in this repository                                  |
+| ------------- | ----------------------- | ---------------------------------------------------------------- |
+| **string**    | `"full stack"`          | `DEFAULT_SEARCH_QUERY` in `src/leads/find-jobs.mjs`              |
+| **number**    | `4000`, `0.7`, `-1`     | `SNIPPET_MAX`, `FETCH_TIMEOUT_MS` (`15000`) in `src/lib/lib.mjs` |
+| **boolean**   | `true` / `false`        | `relocation: false` in `docs/application-limits.yaml`            |
+| **null**      | `null`                  | what `parseDateRange` returns when it cannot read a date         |
+| **undefined** | `undefined`             | what you get for a property that was never set                   |
+| **object**    | `{ ... }` and `[ ... ]` | a lead, a scan, a plan — everything structured                   |
 
 Arrays, `Set`s, `Map`s, functions, dates and regular expressions are all
 technically objects. Part 2 takes them one at a time.
 
 You can ask what type a value is with `typeof`, and this codebase does exactly
-that when it needs to be defensive. From `scripts/lib/lib.mjs`:
+that when it needs to be defensive. From `src/lib/lib.mjs`:
 
 ```js
 export function validateJob(job) {
@@ -140,7 +140,7 @@ object `{}`, which surprises nearly everyone the first time.
 
 This is convenient and it is also a trap, because "has a value" and "has a value
 that is not zero" are different questions. Here is the real line, from
-`scoreLead` in `scripts/leads/recommend.mjs`:
+`scoreLead` in `src/leads/recommend.mjs`:
 
 ```js
 if (lead.salary_max) score += 2
@@ -173,7 +173,7 @@ accident everyone has to live with. The useful distinction in practice:
 - **`null`** means _somebody deliberately set this to nothing_. It is a decision,
   not an absence.
 
-This codebase uses that distinction on purpose. In `scripts/lib/verification.mjs`:
+This codebase uses that distinction on purpose. In `src/lib/verification.mjs`:
 
 ```js
 /** sha256 of a file's raw bytes, or null when it does not exist. */
@@ -220,7 +220,7 @@ for it you use `Number.isNaN(x)` or, better, `Number.isFinite(x)`, which asks th
 question you usually mean: "is this a real, usable number?"
 
 Where this bites in this repository is command-line flag parsing. A **value flag**
-takes the next word as its value. From `.github/workflows/test-gate.mjs`:
+takes the next word as its value. From `tools/ci/test-gate.mjs`:
 
 ```js
 if (a === "--floor") o.floor = Number(argv[++i])
@@ -243,7 +243,7 @@ Two operators pick a fallback value, and they are not the same.
 when `a` is `0`, `""` or `false` — values that are falsy but are real answers.
 
 Here is the real place that difference is load-bearing, in `recordCache` in
-`scripts/apply/field-cache.mjs`. The field cache remembers the shape of an
+`src/apply/field-cache.mjs`. The field cache remembers the shape of an
 application form: for each field, what kind it is, what its label says, and
 whether the form insists on it (`req`, short for "required"). When a new scan
 arrives, it is merged over what was remembered before:
@@ -307,7 +307,7 @@ find things by position.
 export const STAGE_IDS = ["l0", "l1", "l2", "l3"]
 ```
 
-That is real, from `scripts/leads/stages.mjs`, and the order **is** the meaning:
+That is real, from `src/leads/stages.mjs`, and the order **is** the meaning:
 it is the order the four screening stages run in, cheapest first.
 
 Positions start at `0`, not `1`. So `STAGE_IDS[0]` is `"l0"` and
@@ -326,7 +326,7 @@ element. These are used on nearly every page of this codebase:
 | `.sort()`   | "put them in this order"                       | the same array, reordered |
 | `.slice()`  | "give me a copy of this stretch"               | a new array               |
 
-A real one, from `scripts/lib/lib.mjs`:
+A real one, from `src/lib/lib.mjs`:
 
 ```js
 for (const sk of profile.skills ?? [])
@@ -358,7 +358,7 @@ need the second when the key is held in a variable.
 
 Objects are how this project represents every real-world thing: a lead, a job, a
 form field, a plan, a screening verdict. Here is the shape a screening stage must
-return, quoted from the header comment of `scripts/leads/stages.mjs`:
+return, quoted from the header comment of `src/leads/stages.mjs`:
 
 > A stage returns `{ ok, reasons[], flags[], ...extra }`.
 
@@ -376,7 +376,7 @@ another:
 const merged = { ...JSON.parse(row.doc), ...patch }
 ```
 
-That line from `scripts/lib/db.mjs` means: take all the fields of the stored
+That line from `src/lib/db.mjs` means: take all the fields of the stored
 document, then lay all the fields of `patch` on top; where both have the same key,
 `patch` wins because it came later.
 
@@ -396,7 +396,7 @@ const TITLE_STOP = new Set(
 )
 ```
 
-That is real, from `scripts/lib/lib.mjs`. It is the list of words that never
+That is real, from `src/lib/lib.mjs`. It is the list of words that never
 distinguish one job title from another, so they get thrown away before two titles
 are compared. `TITLE_STOP.has("senior")` is `true`; `TITLE_STOP.has("engineer")`
 is `false`.
@@ -409,7 +409,7 @@ invisible; for a check that runs on every word of every title of every posting o
 44 boards, it is the difference between free and not.
 
 The second thing a `Set` gives you is **automatic de-duplication**. From
-`extractNumbers` in `scripts/lib/lib.mjs`:
+`extractNumbers` in `src/lib/lib.mjs`:
 
 ```js
 export function extractNumbers(text) {
@@ -428,7 +428,7 @@ because the caller is asking "which numbers does this document claim?", not "how
 many times".
 
 `Set`s also make **set arithmetic** natural, which is how the fit scorer works.
-From `scoreLead` in `scripts/leads/recommend.mjs`:
+From `scoreLead` in `src/leads/recommend.mjs`:
 
 ```js
 const leadTech = new Set([...extractTech(text), ...(indexed ?? [])])
@@ -451,13 +451,13 @@ order, and it has an honest `.size`.
 export const SKILL_BY_NAME = new Map(SKILLS.map((s) => [s.canonical, s]))
 ```
 
-That is from `scripts/lib/keywords.mjs`. `SKILLS` is a long array of skill
+That is from `src/lib/keywords.mjs`. `SKILLS` is a long array of skill
 records; this line builds an index from each skill's canonical name to the whole
 record, so `SKILL_BY_NAME.get("PostgreSQL")` hands back the entry in one step
 instead of searching the array.
 
 Here is a `Map` doing more interesting work — `buildFactIndex` in
-`scripts/lib/lib.mjs`, which builds the index of every citable fact in your
+`src/lib/lib.mjs`, which builds the index of every citable fact in your
 profile:
 
 ```js
@@ -487,7 +487,7 @@ those objects alive. That garbage-collection detail is not why it is used here.
 It is used here because a `WeakMap` keys on **object identity** — on _this exact
 object_, not on anything the object says about itself.
 
-From `makeStages` in `scripts/auto/stages.mjs`:
+From `makeStages` in `src/auto/stages.mjs`:
 
 ```js
 const vouchOf = new WeakMap()
@@ -516,13 +516,13 @@ vouch. There is no string to forge, because the key is not a string.
 
 ## 2.6 Which container, where — the summary table
 
-| Container     | Use it when                                             | Real example in this repository                                  |
-| ------------- | ------------------------------------------------------- | ---------------------------------------------------------------- |
-| **array**     | order matters, or you will iterate all of it            | `STAGE_IDS` in `scripts/leads/stages.mjs` — the order stages run |
-| **object**    | a fixed set of named fields describing one thing        | a stage's `{ ok, reasons, flags }` return value                  |
-| **`Set`**     | "is this one of them?", or de-duplicating               | `TITLE_STOP`, `VOID_ELEMENTS` in `scripts/lib/untrusted.mjs`     |
-| **`Map`**     | look one thing up by a key, many times                  | `SKILL_BY_NAME`, the fact index from `buildFactIndex`            |
-| **`WeakMap`** | attach data to an object without the object carrying it | `vouchOf` in `scripts/auto/stages.mjs`                           |
+| Container     | Use it when                                             | Real example in this repository                              |
+| ------------- | ------------------------------------------------------- | ------------------------------------------------------------ |
+| **array**     | order matters, or you will iterate all of it            | `STAGE_IDS` in `src/leads/stages.mjs` — the order stages run |
+| **object**    | a fixed set of named fields describing one thing        | a stage's `{ ok, reasons, flags }` return value              |
+| **`Set`**     | "is this one of them?", or de-duplicating               | `TITLE_STOP`, `VOID_ELEMENTS` in `src/lib/untrusted.mjs`     |
+| **`Map`**     | look one thing up by a key, many times                  | `SKILL_BY_NAME`, the fact index from `buildFactIndex`        |
+| **`WeakMap`** | attach data to an object without the object carrying it | `vouchOf` in `src/auto/stages.mjs`                           |
 
 ---
 
@@ -544,7 +544,7 @@ export function jaccard(a, b) {
 }
 ```
 
-That is real, from `scripts/lib/lib.mjs`. It answers "how similar are these two
+That is real, from `src/lib/lib.mjs`. It answers "how similar are these two
 sets?" — count how many members they share, and divide by the total number of
 distinct members across both. Two identical sets score `1`; two sets with nothing
 in common score `0`. This project uses it to ask whether two job postings are the
@@ -613,7 +613,7 @@ const reasons = result.reasons
 const flags = result.flags
 ```
 
-The real version in `evaluateStages` (`scripts/leads/stages.mjs`) does four
+The real version in `evaluateStages` (`src/leads/stages.mjs`) does four
 things at once, and it is worth taking apart:
 
 ```js
@@ -649,7 +649,7 @@ The caller writes `fetchText(url)` or `fetchText(url, { timeoutMs: 3000 })`. The
 trailing `= {}` matters: without it, calling `fetchText(url)` with no second
 argument would try to destructure `undefined` and crash.
 
-You will see the pattern with many settings at once. From `scripts/auto/stages.mjs`:
+You will see the pattern with many settings at once. From `src/auto/stages.mjs`:
 
 ```js
 export function makeStages({
@@ -677,7 +677,7 @@ const overlap = [...leadTech].filter((t) => profileTech.has(t))
 `.filter()` is higher-order: `(t) => profileTech.has(t)` is a function being
 handed to it as data.
 
-The important one in this codebase is `mapPool`, from `scripts/lib/lib.mjs`:
+The important one in this codebase is `mapPool`, from `src/lib/lib.mjs`:
 
 ```js
 export async function mapPool(items, limit, fn) {
@@ -687,12 +687,12 @@ Its third parameter is literally called `fn` and it is a function. `mapPool`'s j
 is to run `fn` once for every item, at most `limit` at a time. It knows nothing at
 all about what `fn` does — fetching a board, enriching a lead, probing a URL. That
 separation is exactly the point: the "run these concurrently but not too
-concurrently" logic is written **once**, and six files under `scripts/leads/`
+concurrently" logic is written **once**, and six files under `src/leads/`
 reuse it — `find-jobs.mjs`, `enrich.mjs`, `canonical.mjs`, `board-yield.mjs`,
 `discover-boards.mjs` and `find-boards.mjs`. Part 6 takes it apart in detail.
 
 Another shape you will meet is a **factory function** — a function that returns a
-function. From `scripts/documents/reuse-check.mjs`:
+function. From `src/documents/reuse-check.mjs`:
 
 ```js
 export function makeSha256(createHash) {
@@ -716,7 +716,7 @@ different reasons. The contrast is instructive.
 
 ### The screening-stage registry: a real `Map`
 
-From `scripts/leads/stages.mjs`:
+From `src/leads/stages.mjs`:
 
 ```js
 const REGISTRY = new Map()
@@ -778,7 +778,7 @@ Three details in that registry are deliberate and worth noticing:
 
 ### The board-fetcher registry: a plain object
 
-From `scripts/leads/find-jobs.mjs`:
+From `src/leads/find-jobs.mjs`:
 
 ```js
 const BOARD_FETCHERS = {
@@ -831,7 +831,7 @@ finds.
 
 Passing a function in as an argument, rather than importing it, is called
 **dependency injection**. In most codebases it is a testing convenience. In this
-one it is occasionally a control. From `scripts/lib/verification.mjs`:
+one it is occasionally a control. From `src/lib/verification.mjs`:
 
 ```js
 export function hasVerifiedResume(
@@ -873,13 +873,13 @@ what it needs from them.
 - `import` pulls something in from another file.
 
 ```js
-// in scripts/lib/lib.mjs
+// in src/lib/lib.mjs
 export const SNIPPET_MAX = 4000
 export function jaccard(a, b) { ... }
 ```
 
 ```js
-// in scripts/leads/enrich.mjs
+// in src/leads/enrich.mjs
 import { fetchJson, fetchText, mapPool, decodeEntities } from "../lib/lib.mjs"
 ```
 
@@ -888,7 +888,7 @@ exact names. There is a second kind, a **default export**, which is a file's one
 main thing:
 
 ```js
-// in scripts/auto/stages.mjs
+// in src/auto/stages.mjs
 import scanPage from "../apply/scan-engine.mjs"
 import fillPage from "../apply/fill-engine.mjs"
 ```
@@ -898,7 +898,7 @@ to call whatever `scan-engine.mjs` exports as its default.
 
 The `../` is an ordinary relative path (see
 [./02-computer-basics.md](./02-computer-basics.md) §1): from
-`scripts/auto/stages.mjs`, `..` climbs to `scripts/`, then `apply/scan-engine.mjs`
+`src/auto/stages.mjs`, `..` climbs to `src/`, then `apply/scan-engine.mjs`
 goes back down.
 
 ## 4.2 The real incident: one rule, two copies, and a blind gate
@@ -919,7 +919,7 @@ text?" in two different places:
 Both need a list of technology names. So there were two lists — one in
 `lib.mjs` called `TECH_TERMS`, one in `profile-gaps.mjs` called `TECH_LEXICON`.
 And, exactly as you would expect, they drifted. From the header of
-`scripts/lib/keywords.mjs`:
+`src/lib/keywords.mjs`:
 
 > They disagreed in both directions: `TECH_LEXICON` knew Svelte, Kafka and
 > Observability; `TECH_TERMS` knew Cognito, EventBridge and Monte Carlo.
@@ -931,7 +931,7 @@ the render proceeds. Every term missing from `TECH_TERMS` was a hole in the
 truthfulness gate, and nobody could see the holes, because each list looked
 complete on its own.
 
-The fix was one shared file. `scripts/lib/keywords.mjs` now holds a single table,
+The fix was one shared file. `src/lib/keywords.mjs` now holds a single table,
 `SKILLS`, and both consumers are **projections** of it:
 
 - `TECH_LEXICON` is built from the table's `aliases` field — the loose,
@@ -972,7 +972,7 @@ it. Copies do not stay equal, and when they diverge nothing announces it.
 neither can be fully loaded before the other, and you get strange half-initialised
 values. §3.5 showed the standard escape: a third file that imports both and knows
 about the relationship, while neither of the two knows about it. That is precisely
-what `scripts/leads/stages.mjs` is.
+what `src/leads/stages.mjs` is.
 
 **Dynamic import.** Normal `import` statements sit at the top of a file and always
 run. Sometimes you want to load a module only if you actually need it:
@@ -982,7 +982,7 @@ const { openDb, resolveLeadSource, setLeadKeywords } =
   await import("../lib/db.mjs")
 ```
 
-That is from `scripts/leads/enrich.mjs`. The database module is only needed when
+That is from `src/leads/enrich.mjs`. The database module is only needed when
 the file is being run as a command; a test that imports `enrich.mjs` for one pure
 function does not pay for loading `node:sqlite`. `await import(...)` returns a
 promise, which is Part 6's subject.
@@ -1005,7 +1005,7 @@ for (const [re, name] of SCAM_PATTERNS) {
 }
 ```
 
-That is from `screenJob` in `scripts/leads/screen.mjs`. `for...of` walks a list
+That is from `screenJob` in `src/leads/screen.mjs`. `for...of` walks a list
 one item at a time. `SCAM_PATTERNS` is an array of pairs, and
 `const [re, name]` destructures each pair into two names.
 
@@ -1044,7 +1044,7 @@ The empty case is dealt with and dismissed on line two. Everything after it can
 assume there is a string to work with.
 
 Note the `"?"` — a **sentinel value**, a deliberate stand-in meaning "no answer".
-The comment in `scripts/apply/field-cache.mjs` explains why a sentinel rather than
+The comment in `src/apply/field-cache.mjs` explains why a sentinel rather than
 an error:
 
 > A scan with no URL, or one that does not parse as a URL, returns the sentinel
@@ -1071,7 +1071,7 @@ uses in this repository:
 const url = job.apply_url || job.url || job.source_url
 ```
 
-From `verifiedResumeUrls` in `scripts/lib/verification.mjs`: try the apply URL;
+From `verifiedResumeUrls` in `src/lib/verification.mjs`: try the apply URL;
 if there isn't one, the posting URL; if there isn't one, the source URL. Three
 fallbacks in one line.
 
@@ -1100,7 +1100,7 @@ worth understanding as a design idea and not only as syntax.
 
 The screening system asks four questions about every job posting it finds. They
 are deliberately ordered from cheapest to most expensive. From the header of
-`scripts/leads/stages.mjs`:
+`src/leads/stages.mjs`:
 
 > Stages run cheapest-first and stop at the first rejection, because the whole
 > design is that an expensive check only ever sees what the cheap ones let
@@ -1195,7 +1195,7 @@ which kind of thing it got before reading a field.
 
 One general lesson to carry away, stated in `CLAUDE.md` in a security context but
 true here too: **the order of checks in a function can itself be a control.** In
-this case the ordering is about cost. In `scripts/apply/ats/index.mjs`, the
+this case the ordering is about cost. In `src/apply/ats/index.mjs`, the
 hand-off list is checked before the adapter list, so an ATS the agent cannot
 handle produces an honest hand-off instead of a confusing stall. Order is not
 arbitrary; when you see a comment defending one, believe it.
@@ -1283,7 +1283,7 @@ async function withTimeout(url, timeoutMs, fn) {
 }
 ```
 
-This wrapper, in `scripts/lib/lib.mjs`, exists because of a measured problem. Its
+This wrapper, in `src/lib/lib.mjs`, exists because of a measured problem. Its
 comment:
 
 > Every fetch is bounded. Neither of these carried a signal, so a board that
@@ -1318,7 +1318,7 @@ That behaviour matters for §6.6.
 
 ## 6.5 The bounded-concurrency worker pool, in pictures
 
-Here is `mapPool` in full, from `scripts/lib/lib.mjs`:
+Here is `mapPool` in full, from `src/lib/lib.mjs`:
 
 ```js
 export async function mapPool(items, limit, fn) {
@@ -1342,7 +1342,7 @@ export async function mapPool(items, limit, fn) {
 Twelve lines. Let us give them the real numbers.
 
 `docs/job-sources.yaml` currently lists **44 boards**. The sweep in
-`scripts/leads/find-jobs.mjs` calls:
+`src/leads/find-jobs.mjs` calls:
 
 ```js
 const concurrency = Number(getFlag(args, "--concurrency", 8))
@@ -1473,7 +1473,7 @@ that had already succeeded.
 
 For a 44-board sweep that would be intolerable: one dead board would destroy the
 whole run. So the caller does not let `fn` throw. From
-`scripts/leads/find-jobs.mjs`:
+`src/leads/find-jobs.mjs`:
 
 ```js
 const results = await mapPool(boards, concurrency, async (board) => {
@@ -1559,7 +1559,7 @@ Square brackets mean "match exactly one character, from this set".
 | `[A-Za-z0-9]` | one letter or digit                                                     |
 | `[^>]`        | one character that is **not** `>` (the `^` inside brackets means "not") |
 
-A real one, from `scripts/leads/screen.mjs`:
+A real one, from `src/leads/screen.mjs`:
 
 ```js
 ;/\bfast[- ]paced\b/i
@@ -1580,7 +1580,7 @@ There are shorthands for the most common classes:
 | `\D` `\W` `\S` | the negation of each                          |                |
 | `.`            | any character except a newline                |                |
 
-And the Unicode property escapes, used once in `scripts/lib/untrusted.mjs`:
+And the Unicode property escapes, used once in `src/lib/untrusted.mjs`:
 
 ```js
 const WORD_RUN = /[\p{L}\p{M}\p{N}]+/gu
@@ -1637,7 +1637,7 @@ A **word boundary** is the position between a word character (`\w`) and a
 non-word character, or at the very start or end of the text. It is what stops
 `/rest/` from matching inside "interested".
 
-Watch what it buys, using a real pattern from `scripts/lib/lib.mjs`:
+Watch what it buys, using a real pattern from `src/lib/lib.mjs`:
 
 ```js
 const NON_PROFESSIONAL_TITLE =
@@ -1677,7 +1677,7 @@ const re =
 for (const m of String(text).matchAll(re)) out.add(`${m[1]} ${m[2]}`)
 ```
 
-That is `extractMonthYears` in `scripts/lib/lib.mjs`. Given `"Jan 2024 – Present"`
+That is `extractMonthYears` in `src/lib/lib.mjs`. Given `"Jan 2024 – Present"`
 it produces `"Jan 2024"`. Reading the pieces:
 
 - `(Jan|Feb|…|Dec)` — **capture group 1**: the three-letter month.
@@ -1721,7 +1721,7 @@ That is the number pattern in `extractNumbers`. Decoded:
 | `u`  | unicode          | required for `\p{...}` and proper handling of astral characters |
 
 The `i` flag has a real safety history in this project. From
-`scripts/lib/keywords.mjs`:
+`src/lib/keywords.mjs`:
 
 > R6 was CASE-SENSITIVE, so a document claiming "kubernetes" and "terraform" in
 > lowercase produced zero violations and exited 0. The load-bearing truthfulness
@@ -1735,12 +1735,12 @@ choices are rarely "just be stricter". Making everything case-insensitive means
 `"go to the store"` matches the language **Go**, and `"Spring 2027 internship"`
 matches the framework **Spring**. The resolution in this codebase is an
 enumerated exception list, `CASE_SENSITIVE_SURFACE` in
-`scripts/lib/keywords.mjs`. Its rule, in the file's own words: _"a term is listed
+`src/lib/keywords.mjs`. Its rule, in the file's own words: _"a term is listed
 here when its lowercase form is an ordinary English word a truthful resume or
 cover letter might really contain."_ So `Go`, `Spring`, `Express`, `Rails` and
 `REST` are on it; `Docker`, `Python` and `Kubernetes` are not, because this
 project already treats their lowercase forms as mis-spelled technology claims.
-The list is consulted in `termRegex`, in `scripts/lib/lib.mjs`:
+The list is consulted in `termRegex`, in `src/lib/lib.mjs`:
 
 ```js
 function termRegex(term, flags = "") {
@@ -1770,7 +1770,7 @@ re.test("aaa") // false — reached the end; lastIndex resets to 0
 The same regex, the same string, four different answers. This is a classic source
 of tests that pass alone and fail in a suite.
 
-Both directions of the problem show up in `scripts/lib/untrusted.mjs`. First,
+Both directions of the problem show up in `src/lib/untrusted.mjs`. First,
 **missing** `g` when you need it:
 
 > All are global. They were not, and `String.replace` with a non-global regex
@@ -1836,7 +1836,7 @@ Note the asymmetry: the lookbehind excludes `.` but the lookahead does not. That
 lets "Node.js" match at the start of a term without letting a trailing sentence
 full stop break it.
 
-Here is the second real lookbehind, in `scripts/lib/lib.mjs`:
+Here is the second real lookbehind, in `src/lib/lib.mjs`:
 
 ```js
 const SENTENCE_BREAK = /(?<=\.)\s+(?=[A-Z])/
@@ -1853,7 +1853,7 @@ stop:
 ## 7.10 Worked example: the pattern that caused a real bug
 
 This is the most instructive regex in the repository, because the fix is visible
-in it. From `extractYearsRequired` in `scripts/leads/screen.mjs`:
+in it. From `extractYearsRequired` in `src/leads/screen.mjs`:
 
 ```js
 const re =
@@ -1909,7 +1909,7 @@ something usable.
 
 ## 7.11 Worked example: a prompt-injection pattern
 
-From `INJECTION_PATTERNS` in `scripts/lib/untrusted.mjs`:
+From `INJECTION_PATTERNS` in `src/lib/untrusted.mjs`:
 
 ```js
 ;/\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|earlier|above|preceding|system|initial)\s+(?:instruction|prompt|direction|rule|context|message)/gi
@@ -1957,7 +1957,7 @@ nothing" — which is a syntax error. `Node.js` would have its `.` read as
 "any character", so it would happily match "NodeXjs".
 
 The fix is to escape every special character first. This exact line appears in
-several files, `scripts/lib/lib.mjs` and `scripts/lib/keywords.mjs` among them:
+several files, `src/lib/lib.mjs` and `src/lib/keywords.mjs` among them:
 
 ```js
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -1989,7 +1989,7 @@ issue it is "ReDoS": regular-expression denial of service. Hand a program a craf
 input and it hangs.
 
 This repository is aware of the risk and defends against it. From
-`scripts/lib/untrusted.mjs`:
+`src/lib/untrusted.mjs`:
 
 ```js
 // Tolerates ">" inside a quoted attribute value; the alternation branches are
@@ -2025,7 +2025,7 @@ third-party text, ask what the worst input would do.
 
 There is a milder cousin of the same idea worth knowing, also from the audit:
 
-> **Known defect (2026-08-05 audit).** `techTermsIn` in `scripts/lib/lib.mjs`
+> **Known defect (2026-08-05 audit).** `techTermsIn` in `src/lib/lib.mjs`
 > copies `TECH_TERMS`, sorts it longest-first, and constructs 153 fresh `RegExp`
 > objects **on every call** — none of which depends on the input text. Measured
 > over about 3 KB of text: 128.1 ms per 500 calls, against 47.5 ms for a
@@ -2051,7 +2051,7 @@ value — a **digest** — that acts as a fingerprint of the input.
 const hex = (buf) => crypto.createHash("sha256").update(buf).digest("hex")
 ```
 
-That is real, from `scripts/lib/verification.mjs`. Feed it anything and you get 64
+That is real, from `src/lib/verification.mjs`. Feed it anything and you get 64
 hexadecimal characters back.
 
 The properties that make it useful:
@@ -2075,7 +2075,7 @@ Hard rule 4 of `CLAUDE.md` says `verify-claims` must pass before any document is
 rendered or shown as final. The obvious way to record that a document passed is to
 note that it did. The problem is what "it" means.
 
-Here is what used to happen, from the header of `scripts/lib/verification.mjs`:
+Here is what used to happen, from the header of `src/lib/verification.mjs`:
 
 > Until now the only evidence that a tailored document had passed verify-claims was
 > that the file existed: `automatability.mjs` walked `jobs/*/` and treated any
@@ -2145,7 +2145,7 @@ like a system being careful — until someone removes the check to make it work.
 The second use of hashing here is as a **key**: turn a complicated thing into a
 short string you can look up.
 
-From `scripts/apply/field-cache.mjs`:
+From `src/apply/field-cache.mjs`:
 
 ```js
 export function fingerprint(scan, atsId) {
@@ -2215,7 +2215,7 @@ happened before you retry.
 
 ## 9.2 Where this project relies on it
 
-**The database build.** From the header of `scripts/maintenance/migrate.mjs`:
+**The database build.** From the header of `src/maintenance/migrate.mjs`:
 
 > Running it twice is a no-op, running it after a schema addition just fills in the
 > new tables. A single-user tool whose inputs are all re-derivable does not need
@@ -2226,7 +2226,7 @@ This is why the project has no migration chain and no schema version table — a
 deliberate design choice made possible by idempotence. Every `CREATE TABLE` is a
 `CREATE TABLE IF NOT EXISTS`, and every import is an upsert.
 
-**The backfill.** From `scripts/leads/enrich.mjs`:
+**The backfill.** From `src/leads/enrich.mjs`:
 
 > Flat and idempotent: a lead that already has a description is skipped, so
 > re-running costs nothing.
@@ -2234,7 +2234,7 @@ deliberate design choice made possible by idempotence. Every `CREATE TABLE` is a
 You never have to work out which leads you already enriched. Run it; it sorts
 itself out.
 
-**Form filling.** From `scripts/apply/fill-engine.mjs`:
+**Form filling.** From `src/apply/fill-engine.mjs`:
 
 > …idempotent, so replaying one item is safe. THREE attempts, not one
 
@@ -2275,7 +2275,7 @@ success. This is called a **lost update**.
 
 ## 10.2 The measurement that proved this project had one
 
-This is not theory here. From the header of `scripts/lib/lock.mjs`:
+This is not theory here. From the header of `src/lib/lock.mjs`:
 
 > WHY THIS EXISTS — measured, not hypothesised. Six concurrent `save-answer.mjs`
 > writers over five trials lost 1 to 3 of the 6 answers in four of them, and EVERY
@@ -2368,7 +2368,7 @@ cause the bug it recovers from.
 
 For the unattended application runner, the shared resource is not a file — it is
 the right to submit an application for a particular job. The mechanism is a
-database row. From `scripts/lib/db.mjs`:
+database row. From `src/lib/db.mjs`:
 
 ```js
 export function recordAutoSubmission(db, sub, retry = {}) {
@@ -2472,7 +2472,7 @@ try {
 }
 ```
 
-From `scripts/auto/stages.mjs`. An empty `catch` is usually a smell — it hides
+From `src/auto/stages.mjs`. An empty `catch` is usually a smell — it hides
 problems. Here it is correct, and the comment carries the argument: the wait is an
 optimisation, not a requirement. A page that genuinely has no form controls is a
 real answer (a login wall, a closed posting), and throwing would lose that answer
@@ -2482,7 +2482,7 @@ is a bug.
 
 ## 11.3 Custom error types
 
-An error can carry more than a message. `scripts/auto/submit.mjs` defines several:
+An error can carry more than a message. `src/auto/submit.mjs` defines several:
 
 ```js
 export class SubmitRefused extends Error {
@@ -2523,12 +2523,12 @@ those need opposite handling.
 
 Many functions here do **not** throw when they fail. They return `null`.
 
-| Function                                           | Returns `null` when                          |
-| -------------------------------------------------- | -------------------------------------------- |
-| `parseDateRange` (`scripts/lib/lib.mjs`)           | no month-year can be read from the text      |
-| `sha256File` (`scripts/lib/verification.mjs`)      | the file does not exist                      |
-| `slugForDocument` (`scripts/lib/verification.mjs`) | the file is not inside a job workspace       |
-| `textSnippet` (`scripts/lib/lib.mjs`)              | there is no text left after stripping markup |
+| Function                                       | Returns `null` when                          |
+| ---------------------------------------------- | -------------------------------------------- |
+| `parseDateRange` (`src/lib/lib.mjs`)           | no month-year can be read from the text      |
+| `sha256File` (`src/lib/verification.mjs`)      | the file does not exist                      |
+| `slugForDocument` (`src/lib/verification.mjs`) | the file is not inside a job workspace       |
+| `textSnippet` (`src/lib/lib.mjs`)              | there is no text left after stripping markup |
 
 The distinction is not about severity. It is about whether "no answer" is a
 **legitimate outcome of asking the question**.
@@ -2571,7 +2571,7 @@ JSON.stringify(value) // structure  -> text
 JSON.parse(text) // text       -> structure
 ```
 
-This project round-trips constantly. `scripts/lib/db.mjs` stores whole leads as
+This project round-trips constantly. `src/lib/db.mjs` stores whole leads as
 JSON text in a `doc` column:
 
 ```js
@@ -2621,7 +2621,7 @@ Every row but the last is silent. No error, no warning. The data is not there an
 more, and the shape still looks plausible.
 
 This is why the codebase converts explicitly at the boundary. From
-`scripts/lib/db.mjs`, where sets are stored and read back:
+`src/lib/db.mjs`, where sets are stored and read back:
 
 ```js
 stack: JSON.stringify([...(w.stack ?? [])])
@@ -2639,7 +2639,7 @@ short conversions, and the round trip is faithful.
 The first row of that table is not hypothetical here.
 
 Each supported applicant tracking system has an **adapter** — a plain object of
-knowledge about that board's quirks. `scripts/apply/ats/greenhouse.mjs` contains:
+knowledge about that board's quirks. `src/apply/ats/greenhouse.mjs` contains:
 
 ```js
 // Greenhouse renders its country picker with the dial code appended
@@ -2656,7 +2656,7 @@ valueAliases: [
 
 Sensible: a note that Greenhouse displays a chosen country differently from the way
 it was listed, so a verification step should not flag the difference as a failure.
-`scripts/apply/fill-plan.mjs` copies it onto the plan:
+`src/apply/fill-plan.mjs` copies it onto the plan:
 
 ```js
 valueAliases: adapter.valueAliases ?? [],
@@ -2677,13 +2677,13 @@ properties are none. The patterns are gone.
 > **Known defect (2026-08-05 audit).** The documented Greenhouse country-picker fix
 > does not exist at run time. The regular expressions serialise to `{}` and are
 > unrecoverable. It causes no visible harm today only because nothing reads
-> `plan.valueAliases` — a search across `scripts/` finds the adapter definitions and
+> `plan.valueAliases` — a search across `src/` finds the adapter definitions and
 > the two write sites, and no reader at all. The fix is to serialise each pattern as
 > its `source` string and rebuild it with `new RegExp` on the far side, or to delete
 > the key from all four adapters and both write sites. Full detail in
 > [../audit-2026-08-05.md](../audit-2026-08-05.md).
 >
-> Two files involved here — `scripts/apply/fill-plan.mjs` and `scripts/apply/ats/greenhouse.mjs`
+> Two files involved here — `src/apply/fill-plan.mjs` and `src/apply/ats/greenhouse.mjs`
 > — are under active repair as of this writing, so check their current state before
 > acting on this.
 
@@ -2721,7 +2721,7 @@ A test looks like this, from `tests/lib/lib.test.mjs`:
 ```js
 import test from "node:test"
 import assert from "node:assert/strict"
-import { extractNumbers } from "../../scripts/lib/lib.mjs"
+import { extractNumbers } from "../../src/lib/lib.mjs"
 
 test("extractNumbers normalizes separators and suffixes", () => {
   const n = extractNumbers(
@@ -2850,13 +2850,13 @@ You now have the vocabulary. These are the natural next steps:
 
 When you are ready to read actual code, start with these, in this order:
 
-- **[../code/01-lib-foundation.md](../code/01-lib-foundation.md)** — `scripts/lib/`
+- **[../code/01-lib-foundation.md](../code/01-lib-foundation.md)** — `src/lib/`
   line by line, including the deep version of `mapPool` from Part 6.
 - **[../code/03-leads-screening.md](../code/03-leads-screening.md)** — the four
   screening stages from Part 5.4, each one in full.
 - **[../code/14-tests.md](../code/14-tests.md)** — the deep version of Part 13.
 - **[../code/00-file-index.md](../code/00-file-index.md)** — a map of all 88 files
-  in `scripts/`, for when you want to find something specific.
+  in `src/`, for when you want to find something specific.
 
 And two references for when you are working rather than learning:
 

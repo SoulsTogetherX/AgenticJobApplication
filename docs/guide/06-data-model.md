@@ -76,7 +76,7 @@ The rule that follows from this: **a cache may never be read as a source of
 truth**, and **a generated export may never be edited by hand**, because the
 next regeneration will overwrite whatever you typed. This project writes that
 rule into the export file itself — `exportApplicationsYaml` in
-`scripts/lib/db.mjs` stamps five header lines at the top of
+`src/lib/db.mjs` stamps five header lines at the top of
 `profile/applications.yaml` beginning:
 
 ```
@@ -146,7 +146,7 @@ configured, started, and still running.
 file. There is no background program. Your code opens the file, reads and
 writes it, and closes it.
 
-`scripts/lib/db.mjs` states the reasoning in its own header, and it is worth
+`src/lib/db.mjs` states the reasoning in its own header, and it is worth
 quoting because it is the kind of trade-off reasoning a newcomer rarely sees
 written down:
 
@@ -186,7 +186,7 @@ real store of 99 leads and 321 KB:
 
 "O(n²)" is a way of saying the cost grows with the _square_ of the size: twice
 as many leads is four times the work. The file
-`scripts/lib/db.mjs` still exports `JSON_PATH` pointing at
+`src/lib/db.mjs` still exports `JSON_PATH` pointing at
 `jobs/leads.json`, but only so a repository that has not migrated yet can still
 be read — there is no standing `leads.json` any more.
 
@@ -263,7 +263,7 @@ that table. An index that no query uses is pure cost.
 > (`idx_leads_status`, `idx_leads_company`, `idx_leads_posted`) are maintained on
 > every write and used by nothing. Every query against that table in this
 > repository is an unfiltered `SELECT * FROM leads` — including `readLeadStore`
-> in `scripts/lib/db.mjs` — and the filtering happens in JavaScript after every
+> in `src/lib/db.mjs` — and the filtering happens in JavaScript after every
 > row's `doc` has been parsed. The header comment claims "reads filtered by
 > status scanned every lead; now they hit an index", and that is currently not
 > true of any caller.
@@ -276,7 +276,7 @@ need that SQL has one statement for it. It is spelled
 
 - insert).
 
-Here is the one this project uses for leads, from `scripts/lib/db.mjs` (the
+Here is the one this project uses for leads, from `src/lib/db.mjs` (the
 column list is generated from the `INDEXED` array, so the real source builds
 this string; this is what it produces):
 
@@ -302,7 +302,7 @@ There are two variants, and this project uses both, deliberately:
 
 - **`DO UPDATE`** — overwrite. Used when re-finding a lead should refresh it.
 - **`DO NOTHING`** — leave the existing row alone. `enqueueAutoJobs` in
-  `scripts/lib/db.mjs` was this until 2026-08-17, because re-running the planner
+  `src/lib/db.mjs` was this until 2026-08-17, because re-running the planner
   over a queue another worker is already working on must not reset a job
   somebody else holds. It is now the guarded form below with one narrow
   condition — `state = 'deferred'` and the reason is one of
@@ -335,7 +335,7 @@ produce `true` or `false` — they produce `NULL`, which is treated as "not true
 | `NULL IS NOT 'abandoned'` | `true`  | `IS NOT` is the identity form and answers properly                     |
 
 That last pair is not academic. This project's daily-cap counter,
-`countAutoSubmissions` in `scripts/lib/db.mjs`, counts applications sent since a
+`countAutoSubmissions` in `src/lib/db.mjs`, counts applications sent since a
 date, excluding two outcomes:
 
 ```sql
@@ -417,7 +417,7 @@ unit. You write `BEGIN`, then some statements, then `COMMIT`. Either all of them
 took effect or, if you write `ROLLBACK` instead (or the process dies), none of
 them did.
 
-This project's pattern, from `upsertLeads` in `scripts/lib/db.mjs`:
+This project's pattern, from `upsertLeads` in `src/lib/db.mjs`:
 
 ```js
 db.exec("BEGIN")
@@ -465,7 +465,7 @@ Worker B read the document _before_ A's change landed, merged onto that stale
 copy, and wrote it back — erasing `status:"interview"`. Nothing errored. This is
 called a **lost update**.
 
-`updateApplication` in `scripts/lib/db.mjs` uses `BEGIN IMMEDIATE` for exactly
+`updateApplication` in `src/lib/db.mjs` uses `BEGIN IMMEDIATE` for exactly
 this reason, and the comment names the human cost:
 
 ```
@@ -488,7 +488,7 @@ its own transaction and SQLite does not nest them."
 
 > **Known defect (2026-08-05 audit).** `updateApplication` — the one function
 > written to make an application patch safe under concurrency — is called only
-> by tests. The real command-line path in `scripts/applications/` does a
+> by tests. The real command-line path in `src/applications/` does a
 > read-modify-write across two separate connections with no transaction at all,
 > which is the exact shape the `BEGIN IMMEDIATE` comment says loses data.
 
@@ -499,7 +499,7 @@ Ten of the twelve tables have a column named `doc` holding
 ordinary columns holding copies of a few of its fields.
 
 Storing the same value twice looks like a mistake. It is not, and the reasoning
-is the single most important design note in `scripts/lib/db.mjs`:
+is the single most important design note in `src/lib/db.mjs`:
 
 ```
 // This shape was chosen after a column-per-field version failed its own
@@ -518,7 +518,7 @@ mapping flattened them together.
 Copying a few fields out into their own columns is called **denormalisation**.
 It is done for one reason only: you cannot index the inside of a JSON blob
 efficiently, but you can index a column. The list of copied fields is a single
-JavaScript array in `scripts/lib/db.mjs`:
+JavaScript array in `src/lib/db.mjs`:
 
 ```js
 const INDEXED = ["status", "company", "title", "posted_at"]
@@ -541,7 +541,7 @@ read it, parse it, change it and write it back. `'$.status'` is a **JSON path**:
 
 ### 0.10 WAL mode, busy timeouts, and opening the file
 
-`openDb` in `scripts/lib/db.mjs` is the only way anything in this project opens
+`openDb` in `src/lib/db.mjs` is the only way anything in this project opens
 the database. It does six things, and their order is load-bearing:
 
 1. Create the `jobs/` directory if it does not exist.
@@ -652,7 +652,7 @@ verdicts, 25 applications, 41 verifications and 84 archived files;
 ## Part 2 — `jobs/leads.db`, table by table
 
 Every table is created by one long SQL string, the `SCHEMA` constant in
-`scripts/lib/db.mjs`, run in a single `db.exec(SCHEMA)` inside `openDb`. Every
+`src/lib/db.mjs`, run in a single `db.exec(SCHEMA)` inside `openDb`. Every
 statement in it is `CREATE … IF NOT EXISTS`, so running it against a database
 that already exists does nothing.
 
@@ -669,7 +669,7 @@ table's shape had to change, three narrow repair functions were written instead
 
 ### 2.1 `leads` — job postings found by a sweep
 
-Written by `scripts/leads/find-jobs.mjs` through `upsertLeads` and
+Written by `src/leads/find-jobs.mjs` through `upsertLeads` and
 `setLeadStatus`. Read by nearly everything.
 
 | Column      | Type   | Nullable | Meaning                                                                         |
@@ -727,7 +727,7 @@ the lead:
 
 `GROUP BY` is the SQL clause that turns many rows into one row per distinct
 value, usually with a count. `keywordDemand` is exactly that query, and its
-answer is what `scripts/profile/profile-gaps.mjs` turns into "the market keeps
+answer is what `src/profile/profile-gaps.mjs` turns into "the market keeps
 asking for X and your profile does not evidence it".
 
 `setLeadKeywords` **deletes then re-inserts** the whole set for a lead, so
@@ -736,13 +736,13 @@ behind.
 
 > **Known defect (2026-08-05 audit), noted in `CLAUDE.md`'s gotchas.**
 > `lead_keywords` goes stale when the technology lexicon in
-> `scripts/lib/keywords.mjs` changes. The rows were extracted at ingest with the
+> `src/lib/keywords.mjs` changes. The rows were extracted at ingest with the
 > lexicon of that day; nothing re-extracts them when new terms are added.
 
 ### 2.3 `applications` — what the user actually submitted
 
 The store of record for hard rule 2. Written only through `writeApplication`,
-which is reached only from `scripts/applications/log-application.mjs` after the
+which is reached only from `src/applications/log-application.mjs` after the
 user confirms in chat that they submitted an application.
 
 | Column       | Type   | Nullable | Meaning                                                 |
@@ -766,11 +766,11 @@ The `doc` shape written by `log-application.mjs` is
 `profile/applications.yaml` is written from this table after every change, by
 `exportApplicationsYaml`. That file is **read back only to bootstrap a database
 that does not exist yet** — never merged. The reasoning, quoted from
-`scripts/lib/db.mjs`:
+`src/lib/db.mjs`:
 
 ```
 // The applications TABLE is the source of truth (user decision, 2026-07-29:
-// applications are only ever created by scripts/applications/log-application.mjs after the
+// applications are only ever created by src/applications/log-application.mjs after the
 // user confirms a submission — nobody hand-edits them, so a file pretending to
 // be authoritative bought nothing but a sync problem).
 ```
@@ -780,7 +780,7 @@ that does not exist yet** — never merged. The reasoning, quoted from
 > change — the exact per-mutation full rewrite that this file's own header says
 > SQLite was adopted to eliminate. And `readApplications` parses the entire
 > application history for every single-slug question;
-> `scripts/applications/check-applied.mjs` calls it on the hot path before every
+> `src/applications/check-applied.mjs` calls it on the hot path before every
 > tailor and every apply.
 
 > **Known defect (2026-08-05 audit).** This table stores no `posted_at`. So the
@@ -810,7 +810,7 @@ the clearest cost-control argument in the project:
 
 ```
 -- The mechanical screen
--- (scripts/leads/screen.mjs) is regex over stored text and costs ~125 ms for
+-- (src/leads/screen.mjs) is regex over stored text and costs ~125 ms for
 -- the entire store, so caching it saves nothing; it is kept because a verdict
 -- with no history cannot be audited. The expensive source is "model" — the
 -- pipeline-jobs Stage A read, which fetches the live posting and judges
@@ -834,7 +834,7 @@ transaction, so the whole batch rolls back rather than half-landing.
 
 ### 2.5 `documents` — archived job workspaces, one row per file
 
-Written by `writeDocuments`, from `scripts/maintenance/archive.mjs`. Read by
+Written by `writeDocuments`, from `src/maintenance/archive.mjs`. Read by
 `readDocuments`, `listDocuments`.
 
 | Column        | Type      | Nullable | Meaning                                                     |
@@ -856,11 +856,11 @@ and would be corrupted by being stored as one.
 A **SHA-256 hash** is a fixed-length fingerprint of some bytes — 64 hexadecimal
 characters. Change one byte of the input and the hash changes completely.
 Storing it lets a restore verify it wrote back exactly what was archived, and
-`restoreOne` in `scripts/maintenance/archive.mjs` does that check and refuses on
+`restoreOne` in `src/maintenance/archive.mjs` does that check and refuses on
 a mismatch.
 
 **`content IS NULL` means "regenerable, deliberately not stored".** PDFs are
-deterministic output of `scripts/documents/render-pdf.mjs`, so the markdown is
+deterministic output of `src/documents/render-pdf.mjs`, so the markdown is
 the artifact worth keeping and the PDF is rebuilt on demand. The classification
 is one line in `archive.mjs`: any name matching `/\.pdf$/i` is regenerable. The
 row survives with `content = NULL` so a restore can still say what was there.
@@ -885,7 +885,7 @@ SELECT slug, COUNT(*) files, SUM(bytes) bytes,
 
 ### 2.6 `board_stats` — job-board productivity over time
 
-Written by `recordBoardStats`, from `scripts/leads/find-jobs.mjs`.
+Written by `recordBoardStats`, from `src/leads/find-jobs.mjs`.
 
 | Column               | Type      | Nullable | Meaning                                                     |
 | -------------------- | --------- | -------- | ----------------------------------------------------------- |
@@ -931,14 +931,14 @@ That is a good example of a whole class of upsert bug: logic written only in the
 `DO UPDATE` branch never runs the first time.
 
 > **Known defect (2026-08-05 audit).** This table is written every sweep and read
-> by nothing. `scripts/leads/board-yield.mjs` — the script whose job is board
-> productivity — does not import `scripts/lib/db.mjs` at all and recomputes from
+> by nothing. `src/leads/board-yield.mjs` — the script whose job is board
+> productivity — does not import `src/lib/db.mjs` at all and recomputes from
 > the live boards instead.
 
 ### 2.7 `auto_runs` — one row per unattended run
 
-Written by `upsertAutoRun` from `scripts/auto/audit.mjs`. Read by
-`latestAutoRun` (the heartbeat `scripts/status.mjs` warns on when it is more
+Written by `upsertAutoRun` from `src/auto/audit.mjs`. Read by
+`latestAutoRun` (the heartbeat `src/status.mjs` warns on when it is more
 than 26 hours old) and by the orphan-attempt join in §2.8.
 
 | Column              | Type      | Nullable | Meaning                                                          |
@@ -993,7 +993,7 @@ answered cheaply before the next submit.
 > **Known defect (2026-08-05 audit).** `readAutoRuns` — the exported function for
 > listing recent runs — has zero callers anywhere, including tests. So does
 > `countCompanySubmissions`. Note that `countAutoSubmissions`, one letter apart,
-> _is_ live and is used by `scripts/auto/caps.mjs` and `scripts/auto/digest.mjs`.
+> _is_ live and is used by `src/auto/caps.mjs` and `src/auto/digest.mjs`.
 
 ### 2.8 `auto_submissions` — the ledger, and the key decision
 
@@ -1100,7 +1100,7 @@ ON CONFLICT(slug, mode) DO UPDATE SET … WHERE auto_submissions.outcome = 'reco
 ```
 
 That literal is interpolated from the exported constant `RECONCILED_NOT_SENT` in
-`scripts/lib/db.mjs` — safe because it is a code-owned string that never touches
+`src/lib/db.mjs` — safe because it is a code-owned string that never touches
 user input.
 
 The reason for the exception is a permanent-deadlock bug:
@@ -1241,7 +1241,7 @@ window between "check" and "act" for the other worker to slip into. That is what
 makes it an **atomic** operation, and atomicity is the only thing that makes a
 claim a claim.
 
-`scripts/auto/job.mjs` reads that zero and returns without touching anything —
+`src/auto/job.mjs` reads that zero and returns without touching anything —
 writing a reason there would overwrite the owner's. Zero is the ordinary outcome
 for every worker but one in a fan-out. It is not an error.
 
@@ -1261,7 +1261,7 @@ back-filled for the rows that mattered."
 #### The closed reason taxonomy
 
 `reason_kind` may only hold a value from one of three frozen lists in
-`scripts/lib/db.mjs`:
+`src/lib/db.mjs`:
 
 - **`AUTO_DEFER_KINDS`** (20 values) — the machine did not understand something,
   or the environment declined. Not a malfunction: `confirm-field`,
@@ -1302,7 +1302,7 @@ unlock.
 
 > **Known defect (2026-08-05 audit).** `setAutoJobState`'s ownership guard is
 > `AND ($run_id IS NULL OR run_id = $run_id)`. A row whose `run_id` is still
-> `NULL` — which is how `scripts/auto/auto-apply.mjs` enqueues jobs, _before_ the
+> `NULL` — which is how `src/auto/auto-apply.mjs` enqueues jobs, _before_ the
 > run exists — matches neither branch when a `run_id` is supplied, so the update
 > silently changes zero rows. Verified empirically: inserting a row with a `NULL`
 > `run_id` and running that predicate with a real `run_id` returns
@@ -1319,7 +1319,7 @@ unlock.
 ### 2.10 `board_pauses` — the circuit breaker's durable record
 
 Written by `recordBoardPause` and `clearBoardPause` from
-`scripts/auto/breaker.mjs`. Read by `readActiveBoardPauses`.
+`src/auto/breaker.mjs`. Read by `readActiveBoardPauses`.
 
 | Column          | Type   | Nullable | Meaning                                                   |
 | --------------- | ------ | -------- | --------------------------------------------------------- |
@@ -1371,7 +1371,7 @@ state was not held by anything.
 ### 2.11 `verifications` — what `verify-claims` decided, made durable
 
 Written by `recordVerification`. Read by `hasPassingVerification`, which is what
-`scripts/auto/submit.mjs` and `scripts/auto/auto-apply.mjs` call to enforce hard
+`src/auto/submit.mjs` and `src/auto/auto-apply.mjs` call to enforce hard
 rule 4.
 
 | Column           | Type   | Nullable | Meaning                                                  |
@@ -1412,7 +1412,7 @@ are not the ones it was checked against — a stale verdict about a corpus that 
 longer exists.
 
 The fact-base hash is computed by exactly one function, `factBaseSha256` in
-`scripts/lib/verification.mjs`, used by both the writer and the reader — because
+`src/lib/verification.mjs`, used by both the writer and the reader — because
 a writer and a reader that hash the fact base differently agree on nothing and
 **fail open** (that is, wrongly allow the thing they were meant to block).
 
@@ -1422,7 +1422,7 @@ construction. It also throws a `TypeError` if either hash is missing, with the
 message "a row missing either is not evidence of anything".
 
 > **Known defect (2026-08-05 audit).** `verifiedResumeUrls` in
-> `scripts/lib/verification.mjs` issues an N+1 query — one `SELECT DISTINCT` for
+> `src/lib/verification.mjs` issues an N+1 query — one `SELECT DISTINCT` for
 > the slug list, then a fresh `db.prepare` inside the loop for each slug, because
 > `hasPassingVerification` prepares its statement inline on every call. "N+1"
 > means one query to get a list plus one more per item, where a single query
@@ -1431,7 +1431,7 @@ message "a row missing either is not evidence of anything".
 ### 2.12 `workspace_stacks` — a strict cache
 
 Written by `upsertWorkspaceStack`, read by `readWorkspaceStacks`, for
-`scripts/documents/reuse-check.mjs`.
+`src/documents/reuse-check.mjs`.
 
 | Column       | Type   | Nullable | Meaning                                        |
 | ------------ | ------ | -------- | ---------------------------------------------- |
@@ -1516,7 +1516,7 @@ a numbered series of scripts, each turning schema version N into version N+1,
 with a version number stored in the database.
 
 This project has none. `CREATE TABLE IF NOT EXISTS` handles new tables, and
-three targeted "heal" functions in `scripts/lib/db.mjs` handle the three shape
+three targeted "heal" functions in `src/lib/db.mjs` handle the three shape
 changes that actually happened. All three run **before** `db.exec(SCHEMA)`, and
 that ordering is load-bearing.
 
@@ -1601,31 +1601,31 @@ the title — `twilio-swe-l4`, `render-swe-compute-infra`. It is the folder name
 and it is the key that ties the workspace to the `applications`, `verifications`
 and `auto_queue` rows.
 
-The folder is created by `scripts/documents/new-job.mjs`, which writes the first
+The folder is created by `src/documents/new-job.mjs`, which writes the first
 two files. Everything else is added by later stages. A workspace with only
 `job.json`, `context.json`, `scan-p1.json` and a fill plan is a job that was
 scanned but never tailored; a workspace with PDFs is one that reached the
 approval step.
 
-| File                                           | Written by                                                  | Read by                                                 | What it is                                                     |
-| ---------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
-| `job.json`                                     | `scripts/documents/new-job.mjs`                             | every tailoring and apply script                        | The captured posting. Schema: `schemas/job.schema.json`.       |
-| `context.json`                                 | `scripts/documents/new-job.mjs`, then both tailoring skills | both tailoring skills                                   | Shared tailoring state. Schema: `schemas/context.schema.json`. |
-| `keywords.json`                                | `scripts/documents/keyword-plan.mjs`                        | `scripts/documents/ats-lint.mjs`, the tailoring skill   | Which posting terms may be mirrored, and which may not.        |
-| `resume.md`                                    | `scripts/documents/assemble-resume.mjs`                     | `verify-claims.mjs`, `render-pdf.mjs`, `auto-apply.mjs` | The tailored resume, with fact citations.                      |
-| `resume-selection.json`                        | `scripts/documents/assemble-resume.mjs`                     | diagnostics                                             | Which profile items were included and why.                     |
-| `cover-letter.md`                              | the cover-letter skill                                      | `verify-claims.mjs`, `render-pdf.mjs`, `auto-apply.mjs` | The tailored cover letter.                                     |
-| `resume.render.html`                           | `scripts/documents/render-pdf.mjs`                          | `scripts/documents/ats-lint.mjs`                        | The intermediate HTML the PDF was made from.                   |
-| `resume.pdf`                                   | `scripts/documents/render-pdf.mjs`                          | the user; uploaded to forms                             | The final document. **Regenerable.**                           |
-| `cover-letter.render.html`, `cover-letter.pdf` | same                                                        | same                                                    | Same, for the letter.                                          |
-| `scan-p1.json`                                 | the apply skill's browser scanner                           | `scripts/apply/fill-plan.mjs`                           | What the application form looks like, page 1.                  |
-| `scan-p2.json`                                 | same, for a second page                                     | same                                                    | Page 2 of a multi-page form.                                   |
-| `fill-plan.json`                               | `scripts/apply/fill-plan.mjs`                               | `scripts/apply/pending-questions.mjs`, tests, the user  | The plan data alone — human-readable.                          |
-| `fill-plan.js`                                 | `scripts/apply/fill-plan.mjs`                               | the browser, via `page.evaluate`                        | A self-contained bootstrap bundle. Large.                      |
+| File                                           | Written by                                              | Read by                                                 | What it is                                                     |
+| ---------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
+| `job.json`                                     | `src/documents/new-job.mjs`                             | every tailoring and apply script                        | The captured posting. Schema: `schemas/job.schema.json`.       |
+| `context.json`                                 | `src/documents/new-job.mjs`, then both tailoring skills | both tailoring skills                                   | Shared tailoring state. Schema: `schemas/context.schema.json`. |
+| `keywords.json`                                | `src/documents/keyword-plan.mjs`                        | `src/documents/ats-lint.mjs`, the tailoring skill       | Which posting terms may be mirrored, and which may not.        |
+| `resume.md`                                    | `src/documents/assemble-resume.mjs`                     | `verify-claims.mjs`, `render-pdf.mjs`, `auto-apply.mjs` | The tailored resume, with fact citations.                      |
+| `resume-selection.json`                        | `src/documents/assemble-resume.mjs`                     | diagnostics                                             | Which profile items were included and why.                     |
+| `cover-letter.md`                              | the cover-letter skill                                  | `verify-claims.mjs`, `render-pdf.mjs`, `auto-apply.mjs` | The tailored cover letter.                                     |
+| `resume.render.html`                           | `src/documents/render-pdf.mjs`                          | `src/documents/ats-lint.mjs`                            | The intermediate HTML the PDF was made from.                   |
+| `resume.pdf`                                   | `src/documents/render-pdf.mjs`                          | the user; uploaded to forms                             | The final document. **Regenerable.**                           |
+| `cover-letter.render.html`, `cover-letter.pdf` | same                                                    | same                                                    | Same, for the letter.                                          |
+| `scan-p1.json`                                 | the apply skill's browser scanner                       | `src/apply/fill-plan.mjs`                               | What the application form looks like, page 1.                  |
+| `scan-p2.json`                                 | same, for a second page                                 | same                                                    | Page 2 of a multi-page form.                                   |
+| `fill-plan.json`                               | `src/apply/fill-plan.mjs`                               | `src/apply/pending-questions.mjs`, tests, the user      | The plan data alone — human-readable.                          |
+| `fill-plan.js`                                 | `src/apply/fill-plan.mjs`                               | the browser, via `page.evaluate`                        | A self-contained bootstrap bundle. Large.                      |
 
 ### 3.1 `job.json` — the captured posting
 
-Validated by `validateJob` in `scripts/lib/lib.mjs`; the shape is written down
+Validated by `validateJob` in `src/lib/lib.mjs`; the shape is written down
 in `schemas/job.schema.json`. Required: `slug`, `company`, `title`.
 
 ```json
@@ -1647,7 +1647,7 @@ descriptions for.
 
 **`description` is not verbatim.** The schema says so:
 
-> posting text after `scripts/lib/untrusted.mjs` has stripped the known
+> posting text after `src/lib/untrusted.mjs` has stripped the known
 > injection carriers — NOT verbatim. It is still third-party data, never
 > instructions (hard rule 0).
 
@@ -1671,7 +1671,7 @@ not enough to reconstruct it.
 
 ### 3.2 `context.json` — the shared tailoring state
 
-Validated by `validateContext` in `scripts/lib/lib.mjs`; schema in
+Validated by `validateContext` in `src/lib/lib.mjs`; schema in
 `schemas/context.schema.json`. This is the file that keeps the resume and the
 cover letter consistent — both skills read and write it.
 
@@ -1717,13 +1717,13 @@ Field meanings:
 
 > **Known defect (2026-08-05 audit).** A model fills `context.analysis` even
 > though two deterministic scripts already compute most of it —
-> `scripts/documents/keyword-plan.mjs` computes the evidenced/blocked split, and
-> `scripts/documents/assemble-resume.mjs` reports which items it included and
+> `src/documents/keyword-plan.mjs` computes the evidenced/blocked split, and
+> `src/documents/assemble-resume.mjs` reports which items it included and
 > why.
 
 ### 3.3 `keywords.json` — what may and may not be mirrored
 
-Written by `scripts/documents/keyword-plan.mjs`. Two lists:
+Written by `src/documents/keyword-plan.mjs`. Two lists:
 
 - **`must_use`** — the _intersection_ of the posting's technology terms and the
   fact base. Every term here is one the profile can already evidence, so
@@ -1795,9 +1795,9 @@ The `l` versus `lSeen` split matters: `First Name*` is what the page shows, and
 
 ### 3.6 `fill-plan.json` and `fill-plan.js`
 
-`scripts/apply/fill-plan.mjs` takes a scan and produces two files. The `.json`
+`src/apply/fill-plan.mjs` takes a scan and produces two files. The `.json`
 is the plan; the `.js` is a self-contained bundle that carries the plan **and**
-the source of `scripts/apply/fill-engine.mjs` embedded as strings, loaded into
+the source of `src/apply/fill-engine.mjs` embedded as strings, loaded into
 the page whole. (The bundling is not an optimisation — it is required, because
 some boards serve a Content-Security-Policy that blocks the ordinary way of
 adding a script to a page.)
@@ -1930,7 +1930,7 @@ ships with `false`.
 **Every item in `profile.yaml` carries a stable `id`.** That id is what a
 tailored document cites, and it is the entire mechanism behind hard rule 1.
 
-`buildFactIndex` in `scripts/lib/lib.mjs` walks the whole profile and builds a
+`buildFactIndex` in `src/lib/lib.mjs` walks the whole profile and builds a
 `Map` from id to `{ id, text }`. The `text` is what the verifier is allowed to
 compare a claim against, and how it is assembled differs per section:
 
@@ -1955,7 +1955,7 @@ readable to a human.
 
 ### 4.3 How a resume bullet cites a fact
 
-`scripts/documents/verify-claims.mjs` looks for exactly this pattern, defined by
+`src/documents/verify-claims.mjs` looks for exactly this pattern, defined by
 one regular expression:
 
 ```js
@@ -2035,7 +2035,7 @@ states, like work authorisation).
 
 An answer comes from the user. **The question does not** — it is a form label
 copied off an employer's page. `save-answer.mjs` runs both through
-`scripts/lib/untrusted.mjs` and **refuses** rather than storing a redacted
+`src/lib/untrusted.mjs` and **refuses** rather than storing a redacted
 version, exiting 3. Its own reasoning:
 
 ```
@@ -2055,7 +2055,7 @@ design**.
 `answers.yaml` stores the question as well as the answer, and the fact index
 concatenates both. But the _evidence corpus_ — the text a claim may be checked
 against — must not include the question, and `evidenceText` in
-`scripts/lib/lib.mjs` is the function that enforces that. The reason, quoted:
+`src/lib/lib.mjs` is the function that enforces that. The reason, quoted:
 
 ```
 // application forms ask questions that enumerate technologies:
@@ -2135,7 +2135,7 @@ once.
 ```
 
 **How it is keyed.** Not by URL. By a **fingerprint** — `fingerprint` in
-`scripts/apply/field-cache.mjs` takes a SHA-1 hash of
+`src/apply/field-cache.mjs` takes a SHA-1 hash of
 `"<ats id>|<host>|<sorted required labels>"` and keeps sixteen hex characters.
 Two postings by the same employer on the same board share a key; a board that
 redesigns its form gets a new fingerprint and re-probes automatically. Only
@@ -2153,7 +2153,7 @@ employer.
 
 **What invalidates it:**
 
-- `CACHE_VERSION` in `scripts/apply/field-cache.mjs` (currently `4`) not
+- `CACHE_VERSION` in `src/apply/field-cache.mjs` (currently `4`) not
   matching the file's `v`. `loadCache` then discards **every** remembered form.
 - The file not parsing at all — same discard.
 - `invalidate(cache, fp)`, called when the browser reported a mismatch on a
@@ -2205,7 +2205,7 @@ that an earlier shape had a checkbox is lost.
 
 It records nothing else, deliberately: never a label, an option, a selector, or
 anything from `entry.fields`. And it is **never read** by `applyCache`,
-`recordCache` or `scripts/apply/automatability.mjs` — it changes nothing about
+`recordCache` or `src/apply/automatability.mjs` — it changes nothing about
 what gets filled or what counts as automatable. It exists to be counted.
 
 **What invalidates it:** nothing. It is append-only.
@@ -2213,14 +2213,14 @@ what gets filled or what counts as automatable. It exists to be counted.
 **If you delete it:** the measurement starts over. Nothing else changes.
 
 > **Known defect (2026-08-05 audit).** The number this file was created to
-> justify is still hard-coded. `scripts/apply/disclosure.mjs` uses a threshold of
+> justify is still hard-coded. `src/apply/disclosure.mjs` uses a threshold of
 > 20 with its own comment saying "The right input is a real distribution, which
 > `jobs/.shape-history.jsonl` … is accumulating and which is empty today."
 
 ### 5.3 `jobs/.gate-baseline.json` — the last screening audit
 
 **What it remembers:** the verdict every lead in the store received the last time
-`scripts/leads/gate-audit.mjs` ran — whether it passed, which stage rejected it,
+`src/leads/gate-audit.mjs` ran — whether it passed, which stage rejected it,
 the stated reasons, and any flags.
 
 ```json
@@ -2273,7 +2273,7 @@ One audit's worth of change-detection is lost.
 Three things live here.
 
 **`jobs/.auto/runs/<run_id>.jsonl`** — append-only event log, one file per run.
-`scripts/auto/audit.mjs` writes it, and its header states the relationship to the
+`src/auto/audit.mjs` writes it, and its header states the relationship to the
 database plainly: this is the copy that survives, and the tables exist because
 JSONL cannot be queried.
 
@@ -2290,7 +2290,7 @@ atomic enough that a killed process leaves a truncated _last line_ rather than a
 corrupted file — which is the property the format was chosen for.
 
 **`jobs/.auto/post-submit/`** — staged captures of what a board showed after a
-submit, written by `scripts/apply/capture-post-submit.mjs` as an `.html` and a
+submit, written by `src/apply/capture-post-submit.mjs` as an `.html` and a
 `.json` per capture. These are **redacted** before they are written, and staging
 is gitignored. The three-step flow is _stage_ (right after the user's click),
 _review_ (the user reads the redacted visible text), _promote_ (copies it into
@@ -2310,8 +2310,8 @@ corrects it.
 look at. It does not exist on this machine because no run has produced one.
 
 > **Known defect (2026-08-05 audit).** `AUTO_RUN_LOCK` is exported by
-> `scripts/lib/lock.mjs` pointing at `jobs/.auto/run.lock`, and no code anywhere
-> takes it. Nothing in `scripts/auto/` imports the locking module at all.
+> `src/lib/lock.mjs` pointing at `jobs/.auto/run.lock`, and no code anywhere
+> takes it. Nothing in `src/auto/` imports the locking module at all.
 
 ### 5.5 The delete-it table
 
@@ -2322,7 +2322,7 @@ look at. It does not exist on this machine because no run has produced one.
 | `jobs/.gate-baseline.json`  | derived snapshot    | the next `gate-audit.mjs` run          | One audit's worth of change-detection.               |
 | `jobs/.auto/runs/*.jsonl`   | **ledger**          | **nothing**                            | The surviving record of what unattended runs did.    |
 | `jobs/.auto/post-submit/`   | staging             | nothing                                | Un-promoted captures. Promoted ones are in `tests/`. |
-| `jobs/<slug>/*.pdf`         | regenerable         | `scripts/documents/render-pdf.mjs`     | Seconds.                                             |
+| `jobs/<slug>/*.pdf`         | regenerable         | `src/documents/render-pdf.mjs`         | Seconds.                                             |
 | `jobs/<slug>/` (whole)      | mixed               | partly — `job.json` can be re-captured | The tailored documents and their approval state.     |
 | `jobs/leads.db`             | **store of record** | **only partly** — see Part 6           | See Part 6. This is the one that matters.            |
 
@@ -2380,7 +2380,7 @@ somewhere else, and what could not:
 | `verifications`    | Re-running `verify-claims.mjs` on every document     | Yes, at cost — if the documents exist.    |
 | `workspace_stacks` | Recomputed on demand.                                | Yes — it is a cache.                      |
 
-`scripts/maintenance/migrate.mjs` is the closest thing to a restore tool, and its
+`src/maintenance/migrate.mjs` is the closest thing to a restore tool, and its
 own header is explicit about the limits:
 
 - It re-imports **`leads`**, **`lead_keywords`** and **`applications`** (the last
@@ -2419,8 +2419,8 @@ Skip `.field-cache.json`, `.shape-history.jsonl` and `.gate-baseline.json` if yo
 like — they cost latency and one measurement sample, nothing more.
 
 **Verifying a backup is a backup.** A copy you have never restored is a hope, not
-a backup. Restore into a scratch directory and check that `node scripts/status.mjs`
-reports the counts you expect, and that `node scripts/maintenance/archive.mjs list`
+a backup. Restore into a scratch directory and check that `node src/status.mjs`
+reports the counts you expect, and that `node src/maintenance/archive.mjs list`
 lists the archived workspaces you remember.
 
 ---
@@ -2475,7 +2475,7 @@ is a bug somebody already hit.
 20. **`answers.yaml` question text is not evidence.** Use `evidenceText()`.
 21. **The field cache's `v` must match `CACHE_VERSION`**, and a mismatch discards
     every remembered shape.
-22. **Importing `scripts/lib/db.mjs` patches `process.emitWarning` globally** for
+22. **Importing `src/lib/db.mjs` patches `process.emitWarning` globally** for
     that process, to suppress exactly one experimental-SQLite warning. That is a
     side effect of `import`, not of any function call.
 

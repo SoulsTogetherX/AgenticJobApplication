@@ -35,9 +35,9 @@ import path from "node:path"
 import http from "node:http"
 import { fileURLToPath } from "node:url"
 
-import { launchBrowser } from "../../scripts/apply/browser.mjs"
-import { makeStages } from "../../scripts/auto/stages.mjs"
-import { loadCache, CACHE_VERSION } from "../../scripts/apply/field-cache.mjs"
+import { launchBrowser } from "../../src/apply/browser.mjs"
+import { makeStages } from "../../src/auto/stages.mjs"
+import { loadCache, CACHE_VERSION } from "../../src/apply/field-cache.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

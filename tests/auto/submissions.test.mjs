@@ -21,7 +21,7 @@ import {
   companySubmissionBreakdown,
   readOrphanAttempts,
   readSubmitLatencies,
-} from "../../scripts/lib/db.mjs"
+} from "../../src/lib/db.mjs"
 
 function store(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-subs-"))

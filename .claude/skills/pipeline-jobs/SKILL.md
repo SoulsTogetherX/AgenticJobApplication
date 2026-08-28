@@ -19,7 +19,7 @@ returns a compact verdict, never a transcript.
   protection, verify-claims, limits, dev-branch git, no submit).
 - **This pipeline never submits.** Rule 6 permits an unattended submit only on
   the Phase 3 auto path — a mechanical trust gate, nothing on the form needing a
-  judgement — and there is no runner on that path yet: `scripts/auto/` holds
+  judgement — and there is no runner on that path yet: `src/auto/` holds
   guards and an audit record, nothing that opens a browser. Whatever ships
   there, **this skill is not it**. PDF rendering still requires the user's
   approval (rule 5), so the pipeline preps applications and the user finishes
@@ -38,7 +38,7 @@ turns applying into fill-and-review. So when the user asks to pipeline, prep, or
 "get things ready", pick the targets mechanically:
 
 ```bash
-node scripts/leads/prep-queue.mjs --top 5 --cluster --json
+node src/leads/prep-queue.mjs --top 5 --cluster --json
 ```
 
 It returns only leads that rank well, have not been applied to, and have **no
@@ -51,7 +51,7 @@ carries a `reason`:
 | `no_resume`       | workspace exists; go straight to Stage B                  |
 | `resume_<status>` | a draft exists but never passed verify-claims — finish it |
 
-`--cluster` groups near-duplicate postings (`scripts/leads/cluster.mjs`) so four
+`--cluster` groups near-duplicate postings (`src/leads/cluster.mjs`) so four
 React/Node full-stack roles cost ONE tailoring run, not four. Each queued row
 lists what it `covers`; those siblings are not queued. Tailoring is the only
 irreducibly expensive step in this pipeline, so this is the flag that matters —
@@ -65,7 +65,7 @@ prepped — say so and stop; do not re-tailor to look busy.
 ## Input
 
 Ask which leads to process if not specified; default is
-`node scripts/leads/find-jobs.mjs list --status recommended` (falling back to
+`node src/leads/find-jobs.mjs list --status recommended` (falling back to
 `new`). Confirm with the user which stages to run: screen only, screen+tailor,
 or screen+tailor+apply.
 
@@ -107,7 +107,7 @@ No posting text, no document contents, no browsing logs in the reply.
 **Run the mechanical pass first — it is free (~125 ms for the whole store):**
 
 ```bash
-node scripts/leads/screen.mjs --status new --skip-screened
+node src/leads/screen.mjs --status new --skip-screened
 ```
 
 It flags scam wording, stale/repost age, culture-red-flag clusters, thin
@@ -150,22 +150,22 @@ JS-required) and judge:
 `--skip-screened` work on the next run:
 
 ```bash
-node scripts/leads/screen.mjs record <lead-id> --verdict pass|caution|reject \
+node src/leads/screen.mjs record <lead-id> --verdict pass|caution|reject \
   --reason "<why, one line>" --signals "evergreen,no_salary"
 ```
 
-`reject` → the subagent ALSO runs `node scripts/leads/find-jobs.mjs mark <id>
+`reject` → the subagent ALSO runs `node src/leads/find-jobs.mjs mark <id>
 --status dismissed --notes "<reason>"` and stops. Recording the verdict and
 dismissing the lead are separate: the verdict says what was judged and why, the
 status says what to do about it.
 
 ### Stage B — tailor (optional)
 
-Workspace via `node scripts/documents/new-job.mjs`, fill `job.json` from the captured
+Workspace via `node src/documents/new-job.mjs`, fill `job.json` from the captured
 posting, then follow `docs/tailoring-rules.md` + the tailor-resume /
 tailor-cover-letter skill rules: draft `resume.md` (and `cover-letter.md` per
 the automatic cover-letter rule above) with `<!-- fact:ID -->` annotations,
-run `node scripts/documents/verify-claims.mjs` until it passes. Do NOT render PDFs —
+run `node src/documents/verify-claims.mjs` until it passes. Do NOT render PDFs —
 that needs the user's approval in the main session. Subagents write ONLY
 inside `jobs/<slug>/` (CLAUDE.md rule 9).
 
@@ -187,7 +187,7 @@ global — "Do you require sponsorship?" answered once is answered for every
 application that will ever be filed:
 
 ```bash
-node scripts/apply/pending-questions.mjs
+node src/apply/pending-questions.mjs
 ```
 
 It merges what every prepped workspace still cannot answer, drops consent boxes

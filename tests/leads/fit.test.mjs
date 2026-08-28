@@ -9,7 +9,7 @@ import {
   seniorScopeSignals,
   isEvaluable,
   FIT_DEFAULTS,
-} from "../../scripts/leads/fit.mjs"
+} from "../../src/leads/fit.mjs"
 
 const PROFILE = new Set([
   "React",

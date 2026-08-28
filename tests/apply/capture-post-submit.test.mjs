@@ -23,7 +23,7 @@ import {
   reviewStaged,
   promoteCapture,
   readManifest,
-} from "../../scripts/apply/capture-post-submit.mjs"
+} from "../../src/apply/capture-post-submit.mjs"
 
 const PROFILE = `
 meta:

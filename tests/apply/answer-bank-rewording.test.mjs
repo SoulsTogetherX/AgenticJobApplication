@@ -27,7 +27,7 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { stem } from "../../scripts/apply/answer-bank.mjs"
+import { stem } from "../../src/apply/answer-bank.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -40,7 +40,7 @@ function resolveAll(fields) {
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "apply", "answer-bank.mjs"),
+      path.join(ROOT, "src", "apply", "answer-bank.mjs"),
       "--fields",
       JSON.stringify(fields),
       "--profile",

@@ -15,9 +15,9 @@ import {
   SUMMARY_SLOTS,
   DENSITY_CAP,
   TITLE_MAX,
-} from "../../scripts/documents/keyword-plan.mjs"
-import { evidenceText, techTermsIn } from "../../scripts/lib/lib.mjs"
-import { extractTech } from "../../scripts/lib/keywords.mjs"
+} from "../../src/documents/keyword-plan.mjs"
+import { evidenceText, techTermsIn } from "../../src/lib/lib.mjs"
+import { extractTech } from "../../src/lib/keywords.mjs"
 
 const PROFILE_BLOB =
   "Skills: React, Node.js, TypeScript, PostgreSQL, AWS, Docker, Git. " +
@@ -338,7 +338,7 @@ test("no term the plan BLOCKS can appear in the title it tells you to mirror", (
   })
   assert.ok(plan.blocked.some((b) => b.skill === "Kubernetes"))
   // "Elixir team" SURVIVES, and that is not a bug in this file: Elixir is not
-  // in scripts/lib/keywords.mjs, so nothing in the project sees it — not this
+  // in src/lib/keywords.mjs, so nothing in the project sees it — not this
   // strip, not `blocked`, and not verify-claims R6, which is what would have to
   // reject it in the finished document. The lexicon is the boundary of every
   // keyword control here; adding a skill to it is what moves that boundary.

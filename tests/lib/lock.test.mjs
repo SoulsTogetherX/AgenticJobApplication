@@ -19,11 +19,11 @@ import {
   LEADS_LOCK,
   DEFAULT_STALE_MS,
   DEFAULT_TIMEOUT_MS,
-} from "../../scripts/lib/lock.mjs"
+} from "../../src/lib/lock.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const LOCK_MJS = pathToFileURL(
-  path.resolve(HERE, "../../scripts/lib/lock.mjs"),
+  path.resolve(HERE, "../../src/lib/lock.mjs"),
 ).href
 
 function tmpdir() {

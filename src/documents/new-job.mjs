@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Scaffold a per-job workspace: jobs/<slug>/{job.json, context.json}
 //
-// Usage: node scripts/documents/new-job.mjs <slug> --company "Acme" --title "Full-Stack Developer" [--url <url>] [--root jobs]
-//        node scripts/documents/new-job.mjs <slug> --from-lead <url|lead-id> [--leads <path>]
+// Usage: node src/documents/new-job.mjs <slug> --company "Acme" --title "Full-Stack Developer" [--url <url>] [--root jobs]
+//        node src/documents/new-job.mjs <slug> --from-lead <url|lead-id> [--leads <path>]
 //        ... [--description "<posting text>" | --description - | --description-file <path>]
 //
 // --from-lead fills company/title/location/url/description straight out of the
@@ -34,7 +34,7 @@ import { assertKnownFlags } from "../lib/args.mjs"
 
 const args = process.argv.slice(2)
 // STRICT. this command writes jobs/<slug>/job.json and context.json, so an unrecognised flag must not
-// be ignored. See scripts/lib/args.mjs.
+// be ignored. See src/lib/args.mjs.
 try {
   assertKnownFlags(args, {
     known: [

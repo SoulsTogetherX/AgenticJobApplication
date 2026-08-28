@@ -34,7 +34,7 @@ Two design rules explain every step below:
     any `UNKNOWN` field, unprobed dropdown or failed fill; `verify-claims` not
     passing; the documents not yet user-approved. Say which, and stop. That is
     a stated deferral, not a hand-off — and it is rule 1, which did not move.
-  - **The UNATTENDED runner in `scripts/auto/` is a different question** and is
+  - **The UNATTENDED runner in `src/auto/` is a different question** and is
     still gated on `auto_apply.enabled` plus a `board_allowlist` in
     `docs/application-limits.yaml`, which is the user's file.
 - **Never click `r: "start"` on a page that already has fields** — on most ATSs
@@ -66,7 +66,7 @@ silently burn a frontier model on form-filling.
    sitting in the database. Try:
 
    ```bash
-   node scripts/documents/new-job.mjs <slug> --from-lead "<posting url>"
+   node src/documents/new-job.mjs <slug> --from-lead "<posting url>"
    ```
 
    It matches on lead id, then url, then url with tracking params and trailing
@@ -83,7 +83,7 @@ then `browser_evaluate` with `() => document.body.innerText.slice(0, 6000)` —
 cheaper and more complete than a snapshot for reading an ad. Extract company,
 title, location, requirements.
 
-3. **History check**: `node scripts/applications/check-applied.mjs "<Company>"`. Already
+3. **History check**: `node src/applications/check-applied.mjs "<Company>"`. Already
    applied → report it and get the user's go-ahead first.
 4. **Requirements**: fill `job.json`'s `requirements` from the description.
    `--from-lead` leaves it empty on purpose — that is an extraction, not a
@@ -97,7 +97,7 @@ in the single approval message.
 
 ### A0. Which ATS is this? (0 calls)
 
-`scripts/apply/ats/` is not a CLI — detection happens inside `fill-plan.mjs`.
+`src/apply/ats/` is not a CLI — detection happens inside `fill-plan.mjs`.
 What matters here is what it will decide:
 
 - **greenhouse / lever / ashby** → the deterministic path below. The model fills
@@ -164,7 +164,7 @@ scanned or filled through the parent frame) and scan again.
 Write the scan JSON to `jobs/<slug>/scan-p<N>.json`, then build the plan:
 
 ```bash
-node scripts/apply/fill-plan.mjs <slug>
+node src/apply/fill-plan.mjs <slug>
 ```
 
 This runs `answer-bank.mjs` internally (profile + answer bank only, never a
@@ -211,7 +211,7 @@ the widget cannot possibly change.
   (some Workday and in-house forms) needs no render at all — that saves ~6s and
   a browser launch. If there is a rich-text/textarea resume box instead, the
   markdown text goes there.
-- **Reuse?** `node scripts/documents/reuse-check.mjs <slug>` — if it returns
+- **Reuse?** `node src/documents/reuse-check.mjs <slug>` — if it returns
   `verdict=REUSE`, an existing tailored resume is close enough that re-tailoring
   is wasted work. Offer it in the approval message with the score; the user
   decides. Never reuse silently. **Skip the call entirely when the scan has no
@@ -237,7 +237,7 @@ global, so an answer given here resolves the same question on every future
 application:
 
 ```bash
-node scripts/apply/pending-questions.mjs
+node src/apply/pending-questions.mjs
 ```
 
 It merges the defers of every prepped workspace, drops consent boxes (those stay
@@ -251,7 +251,7 @@ into this one approval message rather than asking again per job.
 `resume.status` of `verified` (or `approved`/`rendered`), the pipeline
 pre-tailored it — skip this phase entirely and carry `tailor.summary` from
 `context.json` into the approval message. Re-tailoring verified work is pure
-latency with the user watching. `node scripts/leads/prep-queue.mjs` is what keeps
+latency with the user watching. `node src/leads/prep-queue.mjs` is what keeps
 that state populated ahead of time.
 
 Otherwise, unless the user accepted a reuse, hand the tailoring to `job-worker` (Sonnet):
@@ -312,7 +312,7 @@ What merges and what does not:
 - **Merged once, at the top:** the unknown-question list. `profile/answers.yaml`
   is global, so "Do you require sponsorship?" answered once is answered for
   every application that will ever be filed. The machinery already exists —
-  `node scripts/apply/pending-questions.mjs` merges the outstanding questions
+  `node src/apply/pending-questions.mjs` merges the outstanding questions
   across every prepped workspace and predicts what these boards will ask from
   the remembered form shapes.
 - **Never merged — one section per job, headed by company and slug:** the
@@ -344,7 +344,7 @@ one away.
 Then render the PDFs — only now, only if the form needs files:
 
 ```bash
-node scripts/documents/render-pdf.mjs jobs/<slug>/resume.md jobs/<slug>/resume.pdf
+node src/documents/render-pdf.mjs jobs/<slug>/resume.md jobs/<slug>/resume.pdf
 ```
 
 Later pages of the same application resolve those saved answers automatically in
@@ -354,7 +354,7 @@ B, so this message does not repeat unless a later page asks something new.
 
 ### D+E. Fill and verify (ONE call)
 
-Re-run `node scripts/apply/fill-plan.mjs <slug>` **only after rendering PDFs or
+Re-run `node src/apply/fill-plan.mjs <slug>` **only after rendering PDFs or
 saving new answers** — those are the two inputs a re-run can pick up. The
 `reason=` names what is still outstanding.
 
@@ -468,7 +468,7 @@ mcp__playwright__browser_evaluate
 ```
 
 ```bash
-node scripts/apply/fill-plan.mjs <slug> --record-via jobs/<slug>/fill-via-p<N>.json
+node src/apply/fill-plan.mjs <slug> --record-via jobs/<slug>/fill-via-p<N>.json
 ```
 
 Do it **before clicking `next`**: `--record-via` keys on the **last** plan built
@@ -490,7 +490,7 @@ nothing to record.
   later page get their own batched question round.
 - Only a `r: "submit"` button is left → **write the summary below FIRST, then
   click it.** The user gave you the URL; the application gets sent. Then run
-  `scripts/apply/capture-post-submit.mjs` on the page that comes back — the
+  `src/apply/capture-post-submit.mjs` on the page that comes back — the
   post-submit corpus is empty, and an attended apply is the only lawful way to
   fill it.
 - **Unless a field would be a guess.** An `UNKNOWN` field, an unprobed dropdown,
@@ -545,7 +545,7 @@ anything, so an injected plan cannot submit an application.
 Once the application is submitted:
 
 ```bash
-node scripts/applications/log-application.mjs <slug> --company "<Company>" --title "<Title>" --url "<posting url>"
+node src/applications/log-application.mjs <slug> --company "<Company>" --title "<Title>" --url "<posting url>"
 ```
 
 Update `context.json` statuses and confirm the log entry.
@@ -564,7 +564,7 @@ So, while the post-submit page is still on screen: save its HTML to a temp file
 (`browser_evaluate` returning `document.documentElement.outerHTML`), then
 
 ```bash
-node scripts/apply/capture-post-submit.mjs stage --url "<the post-submit url>" --html-file <temp> --board <greenhouse|lever|ashby> --slug <slug>
+node src/apply/capture-post-submit.mjs stage --url "<the post-submit url>" --html-file <temp> --board <greenhouse|lever|ashby> --slug <slug>
 ```
 
 It redacts against `profile/` plus generic identifier patterns and **refuses to
@@ -584,7 +584,7 @@ Per page, on a recognised ATS: **4 browser calls** — scan, write the scan to
 because it also pays the `browser_navigate`. Everything between them is Bash.
 Two human touchpoints per application, total.
 
-That number is counted, not guessed: `node scripts/dev/bench-apply.mjs --board
+That number is counted, not guessed: `node src/dev/bench-apply.mjs --board
 greenhouse --json` reports `round_trips` with the steps it counted, and on
 2026-07-31 it returned **5** for greenhouse page 1
 (`navigate, scan, scan-to-disk, fill, advance`). The older "2 browser calls"

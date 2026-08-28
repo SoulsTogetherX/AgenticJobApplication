@@ -18,7 +18,7 @@ const ROOT = path.resolve(
   "..",
   "..",
 )
-const SCRIPT = path.join(ROOT, "scripts", "leads", "recommend.mjs")
+const SCRIPT = path.join(ROOT, "src", "leads", "recommend.mjs")
 const PROFILE = path.join(ROOT, "tests", "fixtures", "profile.yaml")
 
 function fixture(t) {
@@ -159,7 +159,7 @@ import {
   preferApplicable,
   APPLICABILITY,
   APPLICABILITY_NAMES,
-} from "../../scripts/leads/applicability.mjs"
+} from "../../src/leads/applicability.mjs"
 
 // The shape normalizeAllowlist() actually produces: `domain`, not `host`.
 const ALLOW = [{ domain: "job-boards.greenhouse.io", ats: "greenhouse" }]

@@ -17,7 +17,7 @@ function verify(mode, file, extra = []) {
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "documents", "verify-claims.mjs"),
+      path.join(ROOT, "src", "documents", "verify-claims.mjs"),
       mode,
       path.join(FIX, file),
       "--profile",
@@ -252,7 +252,7 @@ test("a form question cannot whitelist a technology through a bare Yes", (t) => 
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "documents", "verify-claims.mjs"),
+      path.join(ROOT, "src", "documents", "verify-claims.mjs"),
       "resume",
       path.join(FIX, "bad-unknown-tech.md"),
       "--profile",
@@ -277,7 +277,7 @@ test("usage errors exit 2", () => {
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "documents", "verify-claims.mjs"),
+      path.join(ROOT, "src", "documents", "verify-claims.mjs"),
       "badmode",
       "x.md",
     ],
@@ -313,7 +313,7 @@ function verifyIn(w, file, extra = []) {
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "documents", "verify-claims.mjs"),
+      path.join(ROOT, "src", "documents", "verify-claims.mjs"),
       "resume",
       file,
       "--profile",
@@ -342,9 +342,9 @@ test("verifying a document in a job workspace writes a durable passing row", asy
   assert.equal(report.recorded.slug, "acme-dev")
 
   const { openDb, readVerifications, hasPassingVerification } =
-    await import("../../scripts/lib/db.mjs")
+    await import("../../src/lib/db.mjs")
   const { factBaseSha256, sha256File } =
-    await import("../../scripts/lib/verification.mjs")
+    await import("../../src/lib/verification.mjs")
   const db = openDb(w.db)
   try {
     const rows = readVerifications(db, "acme-dev")
@@ -378,9 +378,9 @@ test("a FAILING verification is recorded as a failure, never as evidence", async
   assert.equal(report.recorded.slug, "acme-dev")
 
   const { openDb, readVerifications, hasPassingVerification } =
-    await import("../../scripts/lib/db.mjs")
+    await import("../../src/lib/db.mjs")
   const { sha256File, factBaseSha256 } =
-    await import("../../scripts/lib/verification.mjs")
+    await import("../../src/lib/verification.mjs")
   const db = openDb(w.db)
   try {
     assert.equal(readVerifications(db, "acme-dev")[0].verdict, "fail")
@@ -427,7 +427,7 @@ test("re-verifying the same bytes updates the row rather than piling up rows", a
   const w = workspace(t)
   verifyIn(w, w.resume)
   verifyIn(w, w.resume)
-  const { openDb, readVerifications } = await import("../../scripts/lib/db.mjs")
+  const { openDb, readVerifications } = await import("../../src/lib/db.mjs")
   const db = openDb(w.db)
   try {
     assert.equal(readVerifications(db, "acme-dev").length, 1)

@@ -9,7 +9,7 @@
 // A lead is queued when it ranks well, has not been applied to, and has no
 // verified tailored resume yet.
 //
-// Usage: node scripts/leads/prep-queue.mjs [--top N] [--status new|all] [--json]
+// Usage: node src/leads/prep-queue.mjs [--top N] [--status new|all] [--json]
 //        [--leads <path>] [--profile <path>] [--jobs-dir <path>]
 //        [--applications <path>] [--limits <path>] [--cluster [--threshold 0.6]]
 //        [--by-score] [--include-rejected]
@@ -111,7 +111,7 @@ import {
 // Pure core (exported for tests).
 //
 // `covered` maps a lead id to the id of the cluster leader that stands in for
-// it (scripts/leads/cluster.mjs). A covered lead never earns its own tailoring
+// it (src/leads/cluster.mjs). A covered lead never earns its own tailoring
 // run — the resume tailored for its leader is the one it would be sent with —
 // so it is attached to the leader's entry as `covers` instead of queued.
 export function buildQueue(

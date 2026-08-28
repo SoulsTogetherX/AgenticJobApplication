@@ -24,7 +24,7 @@ function resolveAll(fields, answersFixture) {
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "apply", "answer-bank.mjs"),
+      path.join(ROOT, "src", "apply", "answer-bank.mjs"),
       "--fields",
       JSON.stringify(fields),
       "--profile",

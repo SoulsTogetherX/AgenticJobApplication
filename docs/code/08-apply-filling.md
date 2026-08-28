@@ -70,18 +70,18 @@ You can follow this document on its own, but these give the surrounding picture.
 
 **The files covered here**
 
-| file                                    | lines | one-line purpose                                                                                                    |
-| --------------------------------------- | ----: | ------------------------------------------------------------------------------------------------------------------- |
-| `scripts/apply/fill-engine.mjs`         |  1566 | The deterministic form filler. Executes a plan; makes no decisions; has no verb that clicks a button.               |
-| `scripts/apply/browser.mjs`             |   206 | Plumbing: launch Chromium, hand out a page, restrict where a browser may point, translate the engine for a sandbox. |
-| `scripts/apply/ats/index.mjs`           |    65 | The adapter registry and `detectAts(url)`.                                                                          |
-| `scripts/apply/ats/greenhouse.mjs`      |    74 | Greenhouse knowledge.                                                                                               |
-| `scripts/apply/ats/lever.mjs`           |    37 | Lever knowledge.                                                                                                    |
-| `scripts/apply/ats/ashby.mjs`           |    67 | Ashby knowledge.                                                                                                    |
-| `scripts/apply/ats/generic.mjs`         |    32 | The fallback for any board nobody has adapted.                                                                      |
-| `scripts/apply/capture-post-submit.mjs` |   533 | Stage → review → promote for real post-submit pages.                                                                |
-| `scripts/apply/auth-sync.mjs`           |   698 | One-directional copy of the browser profile (session data only).                                                    |
-| `scripts/apply/longform.mjs`            |   199 | Detects "write 500 words" prompts and checks a draft's length. **Imported by nothing today.**                       |
+| file                                | lines | one-line purpose                                                                                                    |
+| ----------------------------------- | ----: | ------------------------------------------------------------------------------------------------------------------- |
+| `src/apply/fill-engine.mjs`         |  1566 | The deterministic form filler. Executes a plan; makes no decisions; has no verb that clicks a button.               |
+| `src/apply/browser.mjs`             |   206 | Plumbing: launch Chromium, hand out a page, restrict where a browser may point, translate the engine for a sandbox. |
+| `src/apply/ats/index.mjs`           |    65 | The adapter registry and `detectAts(url)`.                                                                          |
+| `src/apply/ats/greenhouse.mjs`      |    74 | Greenhouse knowledge.                                                                                               |
+| `src/apply/ats/lever.mjs`           |    37 | Lever knowledge.                                                                                                    |
+| `src/apply/ats/ashby.mjs`           |    67 | Ashby knowledge.                                                                                                    |
+| `src/apply/ats/generic.mjs`         |    32 | The fallback for any board nobody has adapted.                                                                      |
+| `src/apply/capture-post-submit.mjs` |   533 | Stage → review → promote for real post-submit pages.                                                                |
+| `src/apply/auth-sync.mjs`           |   698 | One-directional copy of the browser profile (session data only).                                                    |
+| `src/apply/longform.mjs`            |   199 | Detects "write 500 words" prompts and checks a draft's length. **Imported by nothing today.**                       |
 
 ---
 
@@ -327,7 +327,7 @@ return "forbidden:" + tag
 A plan item aimed at a `<button>` produces
 `refusing to touch a <button> — not a form control`. So even a plan that had been
 tampered with cannot make this file press Submit. Submitting lives in
-`scripts/auto/submit.mjs` and advancing a page lives in `scripts/auto/advance.mjs`
+`src/auto/submit.mjs` and advancing a page lives in `src/auto/advance.mjs`
 — two files, pinned by `tests/auto/click-surface.test.mjs`.
 
 ---
@@ -369,7 +369,7 @@ An upload item carries `paths` (absolute paths to files on our own disk) and
 the plan is JSON) instead of `value`.
 
 The verbs, and which scanner field type produces each (the mapping lives in
-`VERB` in `scripts/apply/fill-plan.mjs`):
+`VERB` in `src/apply/fill-plan.mjs`):
 
 | scan type `t`                                                         | verb     | what the engine does                    |
 | --------------------------------------------------------------------- | -------- | --------------------------------------- |
@@ -1594,7 +1594,7 @@ The chain has three links.
 **Link 1 — the engine produces the evidence.** `failed`, `failures`, `verify.mismatch`,
 `verify.requiredEmpty`, `verify.errors`, `revealed`, `uploads`.
 
-**Link 2 — `mergePages` in `scripts/auto/multipage.mjs` combines one report per
+**Link 2 — `mergePages` in `src/auto/multipage.mjs` combines one report per
 page into one report for the whole form.** Until 2026-08-05 it rebuilt the report
 as `{ uploads, revealed }` and dropped everything else on the floor. The engine had
 just learned to demote an unattached upload to a fill failure — and that failure
@@ -1623,7 +1623,7 @@ worth naming because each is a distinct kind of forgery it prevents:
   walk where page 1 verified and page 2 did not is recorded as a failure —
   _"a partly-measured form is not a measured one"_.
 
-**Link 3 — `submitReadiness(plan, report)` in `scripts/apply/fill-plan.mjs`
+**Link 3 — `submitReadiness(plan, report)` in `src/apply/fill-plan.mjs`
 refuses on any of it.** In order: any label that tried to instruct the agent, any
 deferred field, any widget ticked from a banked answer, nothing to fill, an
 unreadable report, any `revealed` field, any fill failure, any verify
@@ -1657,7 +1657,7 @@ An **ATS** (Applicant Tracking System) is the software an employer uses to recei
 applications: Greenhouse, Lever, Ashby, Workday, Oracle Recruiting Cloud, and
 dozens more. Each renders its forms differently.
 
-An **adapter** in `scripts/apply/ats/` is a plain JavaScript object, exported as
+An **adapter** in `src/apply/ats/` is a plain JavaScript object, exported as
 the module's default, describing one board. There is no class, no interface file,
 no registration function. The registry's header states the rule the whole directory
 follows:
@@ -1801,7 +1801,7 @@ host, and that is load-bearing rather than tidy: an earlier version hardcoded
 you had allowlisted.
 
 > **Known defect (2026-08-05 audit).** The **attended** path never calls
-> `applicationUrl`. Its only caller is `scripts/auto/auto-apply.mjs`, the
+> `applicationUrl`. Its only caller is `src/auto/auto-apply.mjs`, the
 > unattended runner, which ships disabled. The `apply-job` skill navigates to
 > whatever URL you paste and scans it — so on Ashby and Lever the agent scans an ad
 > page with no fields and defers "nothing to fill", and on Greenhouse the board URL
@@ -1866,7 +1866,7 @@ nobody watching. So hand-off matching was narrowed to the parsed hostname.
 > because this repository's own fake-board fixture depends on the property to
 > select a real adapter at all — closing it means switching each `match` to the
 > parsed hostname and updating `tests/fixtures/boards/server.mjs` in the same
-> change. **Never use `detectAts` for a trust decision.** `scripts/auto/trust.mjs`
+> change. **Never use `detectAts` for a trust decision.** `src/auto/trust.mjs`
 > works around it by refusing to call `detectAts` at all; trust reads a
 > **user-declared** ATS id out of your own file instead.
 
@@ -1884,7 +1884,7 @@ Two structural points hide in that table.
 **`generic` is deliberately not in `ADAPTERS`.** `ADAPTERS` means "the boards this
 repository can fill". `automatability.mjs` builds a set of those ids and asks "is
 the detected id in it?" to mean "is this a **known** board", and
-`scripts/auto/trust.mjs` re-exports the same list as one of its trust checks. If
+`src/auto/trust.mjs` re-exports the same list as one of its trust checks. If
 `generic` were in the array, every unknown board would read as known. Its `match`
 is the never-matching regex `/.^/` — a dot followed by start-of-string, which
 nothing can satisfy — so the object is _shaped_ like an adapter and the loop stays
@@ -1925,7 +1925,7 @@ board because these facts expire.
 
 #### Step 2 — create the file
 
-`scripts/apply/ats/workable.mjs`:
+`src/apply/ats/workable.mjs`:
 
 ```js
 // Workable (apply.workable.com). Measured against <a real posting URL> on
@@ -1963,7 +1963,7 @@ Four things to get right in that snippet:
 
 #### Step 3 — register it
 
-In `scripts/apply/ats/index.mjs`:
+In `src/apply/ats/index.mjs`:
 
 ```js
 import workable from "./workable.mjs"
@@ -1974,7 +1974,7 @@ export const ADAPTERS = [greenhouse, lever, ashby, workable]
 Order matters only if two `match` regexes could both hit one URL. Keep the new
 entry last unless you have a reason.
 
-**Stop and notice what you just did:** `scripts/auto/trust.mjs` derives its list of
+**Stop and notice what you just did:** `src/auto/trust.mjs` derives its list of
 acceptable ATS ids from `ADAPTERS`, so `workable` is now an id you are allowed to
 put in `docs/application-limits.yaml`'s `board_allowlist`. Nothing is trusted yet —
 you still have to put it there yourself — but the door now exists.
@@ -2032,7 +2032,7 @@ Two at minimum, in the style of `tests/apply/fill-plan.test.mjs`:
 ```js
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { detectAts, ADAPTERS } from "../../scripts/apply/ats/index.mjs"
+import { detectAts, ADAPTERS } from "../../src/apply/ats/index.mjs"
 
 test("a real Workable posting selects the workable adapter", () => {
   assert.equal(
@@ -2081,7 +2081,7 @@ the three lawful routes. A model reading the field and deciding is not.
 
 Two things reach the engines with a `page` in hand, and this file serves both:
 
-1. **The local runner** — `scripts/auto/*` and the tests against the fake board
+1. **The local runner** — `src/auto/*` and the tests against the fake board
    under `tests/fixtures/boards/`. Ordinary Node, ordinary `import`:
    `launchBrowser()` here, then `fillPage(page, plan)` / `scanPage(page)`. No MCP,
    no model.
@@ -2172,7 +2172,7 @@ it matter here:
   exists for that guarantee.
 
 > **Known defect (2026-08-05 audit).** `withBrowser` has **no caller** anywhere in
-> `scripts/` or `tests/` — the only search hits are a same-named local variable in a
+> `src/` or `tests/` — the only search hits are a same-named local variable in a
 > bench test. It is a helper with no user, and a reader will look for a contract
 > that is not there. The same finding names two other dead parameters in this area.
 
@@ -2265,7 +2265,7 @@ the sandbox — a small, precise instance of hard rule 0.
 
 After you press Submit, the board shows you something. It might be a confirmation.
 It might be an identity check, a bot challenge, an "we emailed you a code" page, a
-"this posting is gone" page, or a plain error. `scripts/auto/classify.mjs` is the
+"this posting is gone" page, or a plain error. `src/auto/classify.mjs` is the
 component that types that page, and its verdict decides whether an application is
 recorded as sent.
 
@@ -2365,12 +2365,12 @@ directory's whole purpose is to be the thing that was safe to look at.
 ### H.4 The three commands
 
 ```bash
-node scripts/apply/capture-post-submit.mjs stage --url "<the post-submit url>" \
+node src/apply/capture-post-submit.mjs stage --url "<the post-submit url>" \
   --html-file <temp file> --board <greenhouse|lever|ashby> --slug <slug>
 
-node scripts/apply/capture-post-submit.mjs review <id>
+node src/apply/capture-post-submit.mjs review <id>
 
-node scripts/apply/capture-post-submit.mjs promote <id> --kind confirmation --user-approved
+node src/apply/capture-post-submit.mjs promote <id> --kind confirmation --user-approved
 ```
 
 `stage` does **not** take a `kind`, even when the caller thinks it knows one. What a
@@ -2466,8 +2466,8 @@ Three more guards worth naming:
   untouched.
 
 ```bash
-node scripts/apply/auth-sync.mjs --check   # probe liveness, copy nothing
-node scripts/apply/auth-sync.mjs           # do the copy
+node src/apply/auth-sync.mjs --check   # probe liveness, copy nothing
+node src/apply/auth-sync.mjs           # do the copy
 ```
 
 ### I.2 `longform.mjs` — written, argued, and wired to nothing

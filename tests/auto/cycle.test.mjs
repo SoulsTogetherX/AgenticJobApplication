@@ -20,9 +20,9 @@ import {
   CYCLE_FLAGS,
   CYCLE_VALUE_FLAGS,
   STDERR_TAIL_LINES,
-} from "../../scripts/auto/cycle.mjs"
-import { assertKnownFlags } from "../../scripts/lib/args.mjs"
-import { EXIT_NO_FIT } from "../../scripts/documents/assemble-resume.mjs"
+} from "../../src/auto/cycle.mjs"
+import { assertKnownFlags } from "../../src/lib/args.mjs"
+import { EXIT_NO_FIT } from "../../src/documents/assemble-resume.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")
@@ -226,10 +226,10 @@ test("prepareDocuments runs the stages in order and passes each the right argume
   assert.deepEqual(
     calls.map((c) => c.script),
     [
-      "scripts/documents/keyword-plan.mjs",
-      "scripts/documents/assemble-resume.mjs",
-      "scripts/documents/verify-claims.mjs",
-      "scripts/documents/render-pdf.mjs",
+      "src/documents/keyword-plan.mjs",
+      "src/documents/assemble-resume.mjs",
+      "src/documents/verify-claims.mjs",
+      "src/documents/render-pdf.mjs",
     ],
     "job.json exists so new-job is skipped; no cover-letter.md so no cover render",
   )
@@ -271,7 +271,7 @@ test("every flag the cycle actually reads is in CYCLE_FLAGS", () => {
   // not to the list would be refused, and one removed from runCycle but left in
   // the list would be silently ignored again.
   const src = fs.readFileSync(
-    path.join(ROOT, "scripts", "auto", "cycle.mjs"),
+    path.join(ROOT, "src", "auto", "cycle.mjs"),
     "utf8",
   )
   const read = new Set()

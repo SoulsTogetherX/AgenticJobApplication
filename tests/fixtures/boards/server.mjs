@@ -195,12 +195,12 @@ export function assertLoopback(host) {
 // --- the route table -------------------------------------------------------
 //
 // Paths are shaped like the real boards' so an adapter that sniffs the URL
-// (scripts/apply/ats/index.mjs detectAts) picks the right one. `ats` records
+// (src/apply/ats/index.mjs detectAts) picks the right one. `ats` records
 // which adapter a URL is MEANT to select, and a test asserts it does.
 
 // WHY THE REAL BOARD HOSTNAME IS IN THE PATH.
 //
-// detectAts() in scripts/apply/ats/index.mjs tests its regex against the WHOLE
+// detectAts() in src/apply/ats/index.mjs tests its regex against the WHOLE
 // URL STRING, not against the hostname:
 //
 //   match: /(^|\.)greenhouse\.io/i   ->  a.match.test(url)

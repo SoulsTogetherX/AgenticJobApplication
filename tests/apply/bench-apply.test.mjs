@@ -22,7 +22,7 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import fillPage from "../../scripts/apply/fill-engine.mjs"
+import fillPage from "../../src/apply/fill-engine.mjs"
 import {
   BROWSER_CLOSES,
   COVER_LETTER,
@@ -54,7 +54,7 @@ import {
   syntheticScan,
   unmeasuredList,
   writeBenchAnswers,
-} from "../../scripts/dev/bench-apply.mjs"
+} from "../../src/dev/bench-apply.mjs"
 import { start } from "../fixtures/boards/server.mjs"
 
 const ROOT = path.resolve(
@@ -318,7 +318,7 @@ test("the two scan twins are measured under identical conditions", async () => {
   const scan = syntheticScan("combo23", "http://127.0.0.1:1/x").scan
   const mk = () =>
     instrumentedPage({ scan, menuOptions: 5, ...PROFILES.typical })
-  const scanPage = (await import("../../scripts/apply/scan-engine.mjs")).default
+  const scanPage = (await import("../../src/apply/scan-engine.mjs")).default
 
   const a = mk()
   await scanPage(a.page)
@@ -383,7 +383,7 @@ test("the bench only ever fetches the loopback fixture board", async () => {
 
 test("the harness source names no remote host", () => {
   const src = fs.readFileSync(
-    path.join(ROOT, "scripts", "dev", "bench-apply.mjs"),
+    path.join(ROOT, "src", "dev", "bench-apply.mjs"),
     "utf8",
   )
   // Method: every http(s) URL literal in the file, checked for a non-loopback
@@ -437,7 +437,7 @@ test("the fill leg runs the GENERATED bootstrap, not the imported module", async
       "the bootstrap must stay a bare async function expression — that is " +
         "what browser_run_code_unsafe evals",
     )
-    const { benchFill } = await import("../../scripts/dev/bench-apply.mjs")
+    const { benchFill } = await import("../../src/dev/bench-apply.mjs")
     const filled = await benchFill({
       planFile: planned.planFile,
       plan: planned.plan,
@@ -458,7 +458,7 @@ test("every reported column carries a method, and unmeasured stays null", async 
   const board = await start()
   const dir = tmp("sum")
   try {
-    const { runOnce } = await import("../../scripts/dev/bench-apply.mjs")
+    const { runOnce } = await import("../../src/dev/bench-apply.mjs")
     const samples = []
     for (let i = 0; i < 2; i++) {
       samples.push(
@@ -500,7 +500,7 @@ test("the accounted columns are deterministic across samples", async () => {
   const board = await start()
   const dir = tmp("det")
   try {
-    const { runOnce } = await import("../../scripts/dev/bench-apply.mjs")
+    const { runOnce } = await import("../../src/dev/bench-apply.mjs")
     const runs = []
     for (let i = 0; i < 3; i++) {
       runs.push(
@@ -546,7 +546,7 @@ test("the ledger entry names the command and the method", async () => {
   const board = await start()
   const dir = tmp("ledger")
   try {
-    const { runOnce } = await import("../../scripts/dev/bench-apply.mjs")
+    const { runOnce } = await import("../../src/dev/bench-apply.mjs")
     const sum = summarize([
       await runOnce({
         boardName: "greenhouse",
@@ -558,7 +558,7 @@ test("the ledger entry names the command and the method", async () => {
     ])
     const prov = await provenance()
     const entry = ledgerEntry(sum, prov)
-    assert.match(entry, /- harness: {2}node scripts\/dev\/bench-apply\.mjs/)
+    assert.match(entry, /- harness: {2}node src\/dev\/bench-apply\.mjs/)
     assert.match(entry, /round_trips=\d+ sleep_ms=\d+ model_turns=\d+/)
     assert.match(entry, /unmeasured \(no browser leg in this run\)/)
     assert.equal(
@@ -1055,7 +1055,7 @@ test("the instrumented page can express both probe shapes and both verify outcom
 
 // --- 6. M6: a run whose fill did not complete is NOT a measurement ---------
 //
-// THE DEFECT. `node scripts/dev/bench-apply.mjs --board greenhouse` printed
+// THE DEFECT. `node src/dev/bench-apply.mjs --board greenhouse` printed
 //
 //   fill: ok=2 failed=1 deferred=3
 //
@@ -1201,9 +1201,9 @@ test("MEASURED_FILES hashes every file baseline B1 has to pin", () => {
   // answer-bank.mjs and field-cache.mjs, which were not hashed. A plan_ms that
   // moved because one of those changed was unattributable.
   for (const rel of [
-    "scripts/apply/fill-plan.mjs",
-    "scripts/apply/answer-bank.mjs",
-    "scripts/apply/field-cache.mjs",
+    "src/apply/fill-plan.mjs",
+    "src/apply/answer-bank.mjs",
+    "src/apply/field-cache.mjs",
   ]) {
     assert.ok(MEASURED_FILES.includes(rel), `B1 must pin ${rel}`)
   }

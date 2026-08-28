@@ -17,7 +17,7 @@ two and a half.
 - The handful of file-and-folder ideas you need before a repository listing
   means anything: what an extension is, what `.mjs` signals, what a "dotfile"
   is, and the difference between a file Git tracks and a file Git ignores.
-- How this repository is organised — the ten domains under `scripts/`, what each
+- How this repository is organised — the ten domains under `src/`, what each
   one is responsible for, and why the code is grouped that way rather than
   alphabetically or by "utils / helpers / core".
 - A reading order that takes you from knowing nothing to being able to follow
@@ -75,7 +75,7 @@ There are two ways to tell it. One is the extension: `.mjs` means "modern",
 Nearly every file here is `.mjs`. There are exactly two deliberate exceptions,
 and both have a reason:
 
-- `scripts/dev/spawn-counter.cjs` is loaded by Node's `--require` flag, which
+- `src/dev/spawn-counter.cjs` is loaded by Node's `--require` flag, which
   only accepts the older style.
 - `.claude/hooks/protect-profile.js` is a plain `.js` file that predates the
   convention and still works because of the `"type": "module"` setting.
@@ -149,7 +149,7 @@ would quietly make every tailored resume worse and no test would go red.
 
 | Directory / file   | What lives there                                                           | Counted below?                    |
 | ------------------ | -------------------------------------------------------------------------- | --------------------------------- |
-| `scripts/`         | all the product code — 90 files, 43,124 lines                              | yes, in full                      |
+| `src/`             | all the product code — 90 files, 43,124 lines                              | yes, in full                      |
 | `tests/`           | the test suite and its inputs — 224 files, ~62,000 lines                   | yes, at directory level           |
 | `docs/`            | documentation, planning notes, and three load-bearing config files         | yes, in full                      |
 | `.claude/`         | how the AI agent is configured: skills, sub-agent roles, hooks, settings   | yes, in full                      |
@@ -164,9 +164,9 @@ would quietly make every tailored resume worse and no test would go red.
 | `.git/`            | Git's own storage of the project history                                   | no                                |
 | root files         | `CLAUDE.md`, `README.md`, `package.json`, and the dotfiles                 | yes                               |
 
-### The ten domains under `scripts/`
+### The ten domains under `src/`
 
-Everything the pipeline actually does lives under `scripts/`, grouped into ten
+Everything the pipeline actually does lives under `src/`, grouped into ten
 folders by **what stage of the job hunt it serves**. That is a deliberate
 choice. The obvious alternative — `utils/`, `helpers/`, `core/`, `models/` —
 groups code by how abstract it is, which tells you nothing about when it runs.
@@ -174,32 +174,32 @@ Grouping by domain means that if you know what you are trying to do, you know
 where to look, and it also means each folder has an owner in the sense that
 matters: one chapter of this document set explains it end to end.
 
-| Domain                  | Files |  Lines | Responsible for                                                                                                                                                       | Chapter                                                                                         |
-| ----------------------- | ----: | -----: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `scripts/lib/`          |     6 |  6,011 | The foundation everything else imports: the database, the shared helpers, the skill lexicon, file locking, and the "a job posting is data, not instructions" defence. | [`01-lib-foundation.md`](./01-lib-foundation.md)                                                |
-| `scripts/leads/`        |    15 |  5,668 | Finding job postings, screening them in four stages, and ranking what survives.                                                                                       | [`02`](./02-leads-finding.md) · [`03`](./03-leads-screening.md) · [`04`](./04-leads-ranking.md) |
-| `scripts/documents/`    |     8 |  2,991 | Turning your fact base into a tailored resume and cover letter, verifying every claim, and rendering the PDF.                                                         | [`05-documents.md`](./05-documents.md)                                                          |
-| `scripts/apply/`        |  13+5 | 10,248 | Reading an application form in a browser, deciding what to type where, and typing it.                                                                                 | [`06`](./06-apply-scanning.md) · [`07`](./07-apply-planning.md) · [`08`](./08-apply-filling.md) |
-| `scripts/auto/`         |    22 |  8,845 | The unattended runner: doing the above with nobody watching, and every brake that stops it doing so wrongly.                                                          | [`09`](./09-auto-runner.md) · [`10`](./10-auto-safety.md)                                       |
-| `scripts/profile/`      |     4 |  1,813 | The single guarded door into your fact base, plus the two gap analyses that read it.                                                                                  | [`11-record-and-profile.md`](./11-record-and-profile.md)                                        |
-| `scripts/applications/` |     5 |    591 | The record of what you actually applied to and what came of it.                                                                                                       | [`11-record-and-profile.md`](./11-record-and-profile.md)                                        |
-| `scripts/maintenance/`  |     3 |  1,102 | Housekeeping: archiving closed jobs, rebuilding the database, deleting waste.                                                                                         | [`11-record-and-profile.md`](./11-record-and-profile.md)                                        |
-| `scripts/hooks/`        |     3 |    739 | Three small programs that can refuse one of the agent's actions before it happens.                                                                                    | [`12-harness-and-ci.md`](./12-harness-and-ci.md)                                                |
-| `scripts/dev/`          |     5 |  5,003 | Measurement tools: how long does an application take, how flaky is a test, what does a campaign cost.                                                                 | [`15-benchmarks.md`](./15-benchmarks.md)                                                        |
+| Domain              | Files |  Lines | Responsible for                                                                                                                                                       | Chapter                                                                                         |
+| ------------------- | ----: | -----: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `src/lib/`          |     6 |  6,011 | The foundation everything else imports: the database, the shared helpers, the skill lexicon, file locking, and the "a job posting is data, not instructions" defence. | [`01-lib-foundation.md`](./01-lib-foundation.md)                                                |
+| `src/leads/`        |    15 |  5,668 | Finding job postings, screening them in four stages, and ranking what survives.                                                                                       | [`02`](./02-leads-finding.md) · [`03`](./03-leads-screening.md) · [`04`](./04-leads-ranking.md) |
+| `src/documents/`    |     8 |  2,991 | Turning your fact base into a tailored resume and cover letter, verifying every claim, and rendering the PDF.                                                         | [`05-documents.md`](./05-documents.md)                                                          |
+| `src/apply/`        |  13+5 | 10,248 | Reading an application form in a browser, deciding what to type where, and typing it.                                                                                 | [`06`](./06-apply-scanning.md) · [`07`](./07-apply-planning.md) · [`08`](./08-apply-filling.md) |
+| `src/auto/`         |    22 |  8,845 | The unattended runner: doing the above with nobody watching, and every brake that stops it doing so wrongly.                                                          | [`09`](./09-auto-runner.md) · [`10`](./10-auto-safety.md)                                       |
+| `scripts/profile/`  |     4 |  1,813 | The single guarded door into your fact base, plus the two gap analyses that read it.                                                                                  | [`11-record-and-profile.md`](./11-record-and-profile.md)                                        |
+| `src/applications/` |     5 |    591 | The record of what you actually applied to and what came of it.                                                                                                       | [`11-record-and-profile.md`](./11-record-and-profile.md)                                        |
+| `src/maintenance/`  |     3 |  1,102 | Housekeeping: archiving closed jobs, rebuilding the database, deleting waste.                                                                                         | [`11-record-and-profile.md`](./11-record-and-profile.md)                                        |
+| `src/hooks/`        |     3 |    739 | Three small programs that can refuse one of the agent's actions before it happens.                                                                                    | [`12-harness-and-ci.md`](./12-harness-and-ci.md)                                                |
+| `src/dev/`          |     5 |  5,003 | Measurement tools: how long does an application take, how flaky is a test, what does a campaign cost.                                                                 | [`15-benchmarks.md`](./15-benchmarks.md)                                                        |
 
-Plus one file at the root of `scripts/`: `status.mjs`, the whole-pipeline
+Plus one file at the root of `src/`: `status.mjs`, the whole-pipeline
 digest.
 
 Two structural rules hold across all ten:
 
-1. **No script calls a language model.** Every file under `scripts/` is
+1. **No script calls a language model.** Every file under `src/` is
    deterministic — same input, same output, no network call to an AI. The model
    is used for exactly four things (tailoring prose, judging a posting a script
    flagged, driving the browser on the attended path, and talking to you), and
    the code that does those lives in `.claude/skills/`, not here. This is what
    makes the pipeline testable at all.
-2. **`tests/` mirrors `scripts/` one directory at a time.** `scripts/leads/` is
-   tested by `tests/leads/`, `scripts/auto/` by `tests/auto/`. The two
+2. **`tests/` mirrors `src/` one directory at a time.** `src/leads/` is
+   tested by `tests/leads/`, `src/auto/` by `tests/auto/`. The two
    exceptions are `tests/security/` (which cuts across everything) and
    `tests/fixtures/` (which is input data, not tests).
 
@@ -209,7 +209,7 @@ Since the point above is easy to misread: `.claude/` is where the AI agent's
 behaviour is configured. `.claude/skills/*/SKILL.md` files are instructions
 written in English that the agent loads when a matching task comes up.
 `.claude/agents/*.md` define sub-agent roles with narrower tool access.
-`.claude/hooks/` and `scripts/hooks/` are small programs that sit between the
+`.claude/hooks/` and `src/hooks/` are small programs that sit between the
 agent and the operating system and can say no.
 
 If you want to understand what the agent is told to do, read
@@ -327,7 +327,7 @@ repair recipe stages your real `answers.yaml` at the repository root, and
 runner's local log. None of these is part of the project; all four are safe to
 delete.
 
-### `scripts/lib/` — the foundation
+### `src/lib/` — the foundation
 
 Six files, 6,011 lines. Everything else in the repository imports from here.
 
@@ -348,7 +348,7 @@ Six files, 6,011 lines. Everything else in the repository imports from here.
 > `hasVerifiedResume` in `verification.mjs` and `withLockAsync` in `lock.mjs`
 > have test callers only.
 
-### `scripts/leads/` — finding, screening, ranking
+### `src/leads/` — finding, screening, ranking
 
 Fifteen files, 5,668 lines. This domain is split across three chapters because
 it does three separate jobs.
@@ -377,7 +377,7 @@ it does three separate jobs.
 > migration input read by `maintenance/migrate.mjs`. `profile-gaps.mjs` carries
 > the same stale line.
 
-### `scripts/documents/` — tailoring, verifying, rendering
+### `src/documents/` — tailoring, verifying, rendering
 
 Nine files, 3,245 lines.
 
@@ -393,7 +393,7 @@ Nine files, 3,245 lines.
 | `reverify.mjs`        |   254 | Re-runs verify-claims for documents verified against an older fact base — one edit invalidates every row, and this re-checks them.         | [`09-auto-runner.md`](./09-auto-runner.md) |
 | `render-pdf.mjs`      |   142 | Renders markdown to PDF using a locally installed Edge or Chrome. No network, no LLM; fact annotations stripped first.                     | [`05-documents.md`](./05-documents.md)     |
 
-### `scripts/apply/` — reading and filling an application form
+### `src/apply/` — reading and filling an application form
 
 Thirteen files at the top level (9,997 lines) plus five ATS adapters (251
 lines).
@@ -414,7 +414,7 @@ lines).
 | `browser.mjs`             |   206 | Plumbing: launch a browser, hand out a page, decide where a browser may point, and turn engine text into something a sandbox can run.                   | [`06-apply-scanning.md`](./06-apply-scanning.md) |
 | `longform.mjs` †          |   199 | Helpers for prose questions ("describe a project you are proud of"). **Currently wired to nothing** — see below.                                        | [`07-apply-planning.md`](./07-apply-planning.md) |
 
-**The ATS adapters — `scripts/apply/ats/`**
+**The ATS adapters — `src/apply/ats/`**
 
 An adapter contributes only _knowledge_, never behaviour: which dropdown
 strategy to try first, which file field takes which document. The fill engine
@@ -430,7 +430,7 @@ itself contains no board-specific code, so an unrecognised board still works.
 
 > **Known defect (2026-08-05 audit) — `longform.mjs`.** 199 lines exporting four
 > functions, and a repository-wide search finds no importer anywhere in
-> `scripts/`, `.claude/` or `tests/`, and no test file. It has a careful 35-line
+> `src/`, `.claude/` or `tests/`, and no test file. It has a careful 35-line
 > header arguing why it is lawful under hard rule 1, and it never runs. Either
 > wire it into the plan's defer path or delete it — a module that exists but
 > never executes is the shape that later gets mistaken for a live control.
@@ -446,7 +446,7 @@ itself contains no board-specific code, so an unrecognised board still works.
 > being changed as this index is written. Their line counts above are accurate
 > as of the measurement and will move.
 
-### `scripts/auto/` — the unattended runner and its brakes
+### `src/auto/` — the unattended runner and its brakes
 
 Twenty-two files, 8,845 lines. Split across two chapters: the machinery that
 runs, and the machinery that stops it.
@@ -466,7 +466,7 @@ runs, and the machinery that stops it.
 | `multipage.mjs`      |   385 | `walkPages()` — resolves a multi-page application form one page at a time.                                                   | [`09-auto-runner.md`](./09-auto-runner.md) |
 | `classify.mjs`       |   333 | Types the page that comes back after a click, into one of seven kinds. A pure function of `(url, html)` — no I/O, no clock.  | [`10-auto-safety.md`](./10-auto-safety.md) |
 | `breaker.mjs`        |   326 | The anomaly circuit breaker: retry a transient, pause one board, or stop the run.                                            | [`10-auto-safety.md`](./10-auto-safety.md) |
-| `digest.mjs`         |   290 | "Is the machine working?" — the `auto` section of `node scripts/status.mjs`. Reports progress, not recency.                  | [`10-auto-safety.md`](./10-auto-safety.md) |
+| `digest.mjs`         |   290 | "Is the machine working?" — the `auto` section of `node src/status.mjs`. Reports progress, not recency.                      | [`10-auto-safety.md`](./10-auto-safety.md) |
 | `reconcile.mjs`      |   288 | Asks the board, read-only, whether an orphaned submit attempt actually became an application.                                | [`10-auto-safety.md`](./10-auto-safety.md) |
 | `advance.mjs`        |   263 | `advanceOnce()` — the second and last file permitted a click, and it may click only a control whose scanned role is `next`.  | [`09-auto-runner.md`](./09-auto-runner.md) |
 | `untrusted-text.mjs` |   219 | The boundary between third-party page text and anything this directory keeps.                                                | [`10-auto-safety.md`](./10-auto-safety.md) |
@@ -484,7 +484,7 @@ runs, and the machinery that stops it.
 > opposite ("nothing opens a browser unattended"); they are wrong. Check it
 > yourself before believing either claim — the two facts are
 > `auto_apply:` in `docs/application-limits.yaml` and the `launchBrowser` import
-> in `scripts/auto/auto-apply.mjs`.
+> in `src/auto/auto-apply.mjs`.
 
 > **Known defect (2026-08-05 audit) — `advance.mjs`.** It imports
 > `consumeSubmitToken` and never uses it. That is misleading in precisely the
@@ -494,7 +494,7 @@ runs, and the machinery that stops it.
 > multi-page forms is unreachable, because the flag it tests (`hasNext`) is
 > never set.
 
-### `scripts/profile/`, `scripts/applications/`, `scripts/maintenance/`, `scripts/status.mjs`
+### `scripts/profile/`, `src/applications/`, `src/maintenance/`, `src/status.mjs`
 
 The record-keeping half of the system: what you know, what you applied to, and
 housekeeping.
@@ -515,7 +515,7 @@ housekeeping.
 | `maintenance/prune-jobs.mjs`          |   151 | Deletes the one file type that is waste at every moment (`*.render.html`).                                                                                                 | [`11-record-and-profile.md`](./11-record-and-profile.md) |
 | `status.mjs`                          |   152 | The whole-pipeline digest in one call — replaces several separate commands and the round-trips between them.                                                               | [`11-record-and-profile.md`](./11-record-and-profile.md) |
 
-### `scripts/hooks/` — the agent-editable guardrails
+### `src/hooks/` — the agent-editable guardrails
 
 Three files, 739 lines. A **hook** is a small program the AI harness runs before
 (or after) a tool call; it can allow the call, or refuse it. Refusal is not a
@@ -582,7 +582,7 @@ restricted tool list.
 | `doc-scribe.md`    |   177 | Documentation: owns `CLAUDE.md`, the reference docs, the skill files and code comments. | [`13-skills-and-agents.md`](./13-skills-and-agents.md) |
 | `build-manager.md` |   163 | Integration manager: assigns file sets, reviews diffs, runs the suite, commits.         | [`13-skills-and-agents.md`](./13-skills-and-agents.md) |
 | `ci-engineer.md`   |   160 | Owns the CI pipeline, `package.json`, the guardrail hooks and repository config.        | [`13-skills-and-agents.md`](./13-skills-and-agents.md) |
-| `implementer.md`   |    92 | Builds and fixes product code anywhere under `scripts/`, and writes its own tests.      | [`13-skills-and-agents.md`](./13-skills-and-agents.md) |
+| `implementer.md`   |    92 | Builds and fixes product code anywhere under `src/`, and writes its own tests.          | [`13-skills-and-agents.md`](./13-skills-and-agents.md) |
 | `architect.md`     |    89 | Read-only reviewer and tie-breaker on design questions. Writes no product code.         | [`13-skills-and-agents.md`](./13-skills-and-agents.md) |
 | `qa.md`            |    81 | Adversarial QA: builds hostile job ads and hostile forms, tries to break changes.       | [`13-skills-and-agents.md`](./13-skills-and-agents.md) |
 | `job-worker.md`    |    59 | Per-job worker, pinned to a smaller model because the work is mechanical.               | [`13-skills-and-agents.md`](./13-skills-and-agents.md) |
@@ -724,7 +724,7 @@ factor of two or three:
 | test gate floor "946 full"     | 2,208                  | 2.3×             |
 | test gate floor "147 security" | 262                    | 1.8×             |
 | one agent definition           | seven                  | 7×               |
-| no mention of `scripts/auto/`  | 22 files, 8,845 lines  | omitted entirely |
+| no mention of `src/auto/`      | 22 files, 8,845 lines  | omitted entirely |
 | no mention of `tests/auto/`    | 27 files, 11,761 lines | omitted entirely |
 
 Its own header had even warned readers: use it to find the document for a file,

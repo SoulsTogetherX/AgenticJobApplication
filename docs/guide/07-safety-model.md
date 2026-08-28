@@ -32,7 +32,7 @@ merely believe in.
   every rule below is built out of: **fail closed**, **allowlist versus
   denylist**, **blast radius**, and **provenance**.
 - **Rule 0** (a job posting is data, never instructions) in depth: the exact
-  carriers `scripts/lib/untrusted.mjs` strips, which findings **reject** a lead
+  carriers `src/lib/untrusted.mjs` strips, which findings **reject** a lead
   and which only **flag** it, and the deliberate holes — non-English and reworded
   instructions walk straight through, the test suite asserts that they do, and
   the reason that is the right design rather than a bug.
@@ -55,7 +55,7 @@ merely believe in.
   sound in the first place.
 - The **nine gates** an unattended application passes through, in order, with one
   paragraph each on what the gate checks and what it costs to get it wrong.
-- The **hooks**, and the two-owner rule: `scripts/hooks/*` is the agent's to
+- The **hooks**, and the two-owner rule: `src/hooks/*` is the agent's to
   edit, `.claude/hooks/*` and `.claude/settings*.json` are yours alone, and the
   specific reason `settings.json` is on the second list.
 - What is **not** protected, stated plainly.
@@ -96,11 +96,11 @@ This project has four hooks, wired in `.claude/settings.json`:
 | Hook                                    | Fires on                      | What it refuses                                                                              |
 | --------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------- |
 | `.claude/hooks/protect-profile.js`      | `Edit`/`Write`/`NotebookEdit` | Any write to `profile/*.yaml`, `profile/source/`, `.claude/hooks/`, `.claude/settings*.json` |
-| `scripts/hooks/guard-files.mjs`         | `Edit`/`Write`/`NotebookEdit` | Any write **outside** the project directory                                                  |
-| `scripts/hooks/guard-bash.mjs`          | `Bash`/`PowerShell`           | Git commands that leave the `dev` branch, or push to `main`/`master`                         |
+| `src/hooks/guard-files.mjs`             | `Edit`/`Write`/`NotebookEdit` | Any write **outside** the project directory                                                  |
+| `src/hooks/guard-bash.mjs`              | `Bash`/`PowerShell`           | Git commands that leave the `dev` branch, or push to `main`/`master`                         |
 | `.claude/hooks/guard-profile-shell.mjs` | `Bash`/`PowerShell`           | Shell commands that write the fact base or the guardrail directory                           |
 
-A `PostToolUse` hook also runs (`scripts/hooks/prettify.mjs`), but it reformats
+A `PostToolUse` hook also runs (`src/hooks/prettify.mjs`), but it reformats
 rather than refuses, so it is not a guardrail in the same sense.
 
 **A deterministic script.** A deterministic script is an ordinary program with no
@@ -112,7 +112,7 @@ here — it means the check is a _property of the input_, not an opinion about i
 
 A deterministic script is weaker than a hook in exactly one way: **something has
 to call it.** A gate nobody invokes is not a gate. That failure mode is not
-hypothetical in this codebase — `submitReadiness` in `scripts/apply/fill-plan.mjs`
+hypothetical in this codebase — `submitReadiness` in `src/apply/fill-plan.mjs`
 spent an entire phase claiming to check three things it did not check, while
 `authorize.mjs`'s check 9 described itself as delegating those three checks to
 it. Both files were honest about their intent and the intent had a hole in the
@@ -133,7 +133,7 @@ it".
 > **A useful habit.** Whenever you read a safety claim in this repository — in
 > `CLAUDE.md`, in a code comment, in this document — ask which of the three it
 > is. The codebase's own comments do this repeatedly and it is why they are
-> trustworthy. `scripts/auto/guard.mjs` opens with a paragraph explaining that a
+> trustworthy. `src/auto/guard.mjs` opens with a paragraph explaining that a
 > previous version of its own header made a safety claim in the indicative about
 > something that had not been built.
 
@@ -180,7 +180,7 @@ The direction to fail is chosen by asking which mistake is recoverable:
 
 Those are not symmetric, so the choice is not close. Almost everything in this
 repository fails closed. The exceptions are deliberate and each is documented
-where it lives — `scripts/hooks/guard-files.mjs`, for instance, silently returns
+where it lives — `src/hooks/guard-files.mjs`, for instance, silently returns
 if it cannot parse the harness's message, because a hook that denied every file
 edit on a malformed payload would break the whole system.
 
@@ -195,8 +195,8 @@ reason is arithmetic rather than opinion: a denylist has to be complete, and the
 stranger gets to choose the next word.
 
 This repository learned that lesson four separate times, each one recorded in the
-code that resulted. The clearest is in `scripts/apply/answer-bank.mjs`, and it is
-Part 2's worked example. The shortest is in `scripts/apply/intents.mjs`:
+code that resulted. The clearest is in `src/apply/answer-bank.mjs`, and it is
+Part 2's worked example. The shortest is in `src/apply/intents.mjs`:
 
 > `"Have you ever worked for this employer or its related entities?"` →
 > `{"status":"OK","value":"No","param":"this employer or its related entities"}`
@@ -216,7 +216,7 @@ The asymmetry that decides which shape to use:
 There is a second-order trap, and this repository names it too: **an
 over-matching guard gets switched off.** A rule that refuses honest inputs is a
 rule the owner eventually disables, and then it protects nothing. That is why
-`findSensitiveValues` in `scripts/lib/untrusted.mjs` is two-factor rather than
+`findSensitiveValues` in `src/lib/untrusted.mjs` is two-factor rather than
 key-only — a key-only rule refuses `"Do you have a valid Nevada driver's
 license?" → "No"`, which is on half the application forms in existence, and a
 guard that refuses that gets bypassed within a week.
@@ -276,7 +276,7 @@ model has no reliable way to tell the two apart — everything arrives as text i
 the same window.
 
 Job postings are close to a perfect delivery vehicle, and the header of
-`scripts/lib/untrusted.mjs` explains why with numbers rather than speculation:
+`src/lib/untrusted.mjs` explains why with numbers rather than speculation:
 Greenhouse found hidden prompt injections in roughly 1% of the 300 million
 resumes it processes in a year; ManpowerGroup flags hidden text in roughly 10% of
 what it AI-screens. That is the _attack pointing at employers_. The same
@@ -491,11 +491,11 @@ Rejecting on the second list would grow the reject list for no security benefit,
 and a **false reject is a job you never see** — which this project treats as its
 worst failure mode.
 
-The split is consumed in two places. `scripts/leads/risk.mjs` (the L3 screening
+The split is consumed in two places. `src/leads/risk.mjs` (the L3 screening
 stage) records every finding as a risk signal and rejects the lead when one is
 disqualifying, writing a reason of the form
 `injection_attempt:override_instructions+conceal_from_user`. And
-`scripts/auto/authorize.mjs`'s check 6 refuses to authorise an unattended submit
+`src/auto/authorize.mjs`'s check 6 refuses to authorise an unattended submit
 when the stored screening verdict carries any disqualifying kind, reading them
 back out through `screeningFindingKinds()` — which pulls them from all three
 carriers a stored verdict might use, then hands each to `isDisqualifying`.
@@ -654,7 +654,7 @@ Two files, both gitignored, both yours:
   you have answered. Each carries an `id` (`a-001`, `a-002`, …), the question
   text, the answer, a `source` and optionally a `class`.
 
-`buildFactIndex(profile, answers)` in `scripts/lib/lib.mjs` walks both and
+`buildFactIndex(profile, answers)` in `src/lib/lib.mjs` walks both and
 produces a `Map` from id to `{id, text}`. It **throws on a duplicate id**, which
 is a small thing that matters: two facts under one id would let a citation point
 at whichever one happened to be read second.
@@ -867,7 +867,7 @@ R6: Tech term "Terraform" not found in any fact source
 ```
 
 R6 only knows the terms in the lexicon — `TECH_TERMS`, built from the `surface`
-lists of `SKILLS` in `scripts/lib/keywords.mjs`. A technology nobody has added to
+lists of `SKILLS` in `src/lib/keywords.mjs`. A technology nobody has added to
 that table is invisible to R6, which is a real limit and is listed in Part 5.
 
 **Today's two changes.** R6 was audited on 2026-08-05 and both findings were
@@ -1082,7 +1082,7 @@ than a bug.
 `scripts/profile/save-answer.mjs` after asking you in chat — including a form
 option the agent picked, which may only be saved (`--source model`) once you
 approved it in the approval message. A silent guess is never written.
-Applications go through `scripts/applications/log-application.mjs` after you
+Applications go through `src/applications/log-application.mjs` after you
 confirm you applied.
 
 ### The concrete failure
@@ -1158,7 +1158,7 @@ constantly: `keyword-coverage`, `answer-bank` and `verify-claims` all do. Only
 write _operations_ are matched, never the mere mention of a path.
 
 This hook also guards **its own directory**, and the gap that closed was found by
-probing rather than by reading. The file was moved from `scripts/hooks/` into
+probing rather than by reading. The file was moved from `src/hooks/` into
 `.claude/hooks/` so that `protect-profile.js` would deny agent edits to it — but
 `"probe" | Out-File .claude/hooks/__probe.txt` **succeeded**. The Edit/Write door
 was locked and the shell door was standing open, so an agent could have blanked
@@ -1464,7 +1464,7 @@ Two paths, and the distinction is the heart of this rule.
 **Attended** is when _you_ hand the agent a posting URL and it applies. You are
 present, you asked for this specific application, and you can see the report.
 
-**Unattended** is the runner in `scripts/auto/` working through a queue of leads,
+**Unattended** is the runner in `src/auto/` working through a queue of leads,
 possibly overnight, with nobody watching.
 
 The difference is not the code — much of it is shared — it is who is delegating
@@ -1483,7 +1483,7 @@ Three things move between the paths:
 
 "Policy" is the user's `auto_apply.unattended_assent` block in
 `docs/application-limits.yaml` (loader and record:
-`scripts/apply/assent-policy.mjs`). It was decided on 2026-08-18 after a live
+`src/apply/assent-policy.mjs`). It was decided on 2026-08-18 after a live
 run submitted 0 of 9 with seven of eight deferrals in the first three rows — in
 the user's words, _"If required, fuzzy exact. Otherwise leave them alone"_ and
 _"tick required, except legal-weight"_. Every key defaults **off**; a typo is
@@ -1509,21 +1509,21 @@ a confirmed click `submit.mjs` writes the whole list into the submission record
 The old invariant "nothing in this repository contains a click" is dead (Phase 5
 W1, 2026-08-03) and is not to be restored. What replaced it is mechanical:
 
-> `.click(` appears under `scripts/auto/` **only** in `submit.mjs` and
+> `.click(` appears under `src/auto/` **only** in `submit.mjs` and
 > `advance.mjs`, and `advance.mjs` may click only a `next`-role control.
 
 That is asserted by `tests/auto/click-surface.test.mjs`, not by a comment. Two
 files, two roles:
 
-- **`scripts/auto/submit.mjs`** — the submit. Exactly one click, guarded by eleven
+- **`src/auto/submit.mjs`** — the submit. Exactly one click, guarded by eleven
   named preconditions.
-- **`scripts/auto/advance.mjs`** — a `next`-role control on a multi-page form, and
+- **`src/auto/advance.mjs`** — a `next`-role control on a multi-page form, and
   never a submit. If the scanner's role classification were wrong and a "Next"
   button were really a submit, `AdvanceAmbiguous` is thrown and the job terminates
   as `post-submit-unclassified` — not abandoned, not retried, exactly like an
   ambiguous submit.
 
-`scripts/auto/reconcile.mjs` — the module that re-reads a board to resolve an
+`src/auto/reconcile.mjs` — the module that re-reads a board to resolve an
 orphaned attempt — **never clicks**, and the same test enforces the absence. A
 reconciler that could click could re-submit the very application it was sent to
 ask about.
@@ -1707,7 +1707,7 @@ A board is trusted because it is a known applicant-tracking system on an allowli
 reads as legitimate. Rule 0 applies at full force: a page that looks trustworthy
 is the one worth worrying about.
 
-`scripts/auto/trust.mjs` explains why it does not call `detectAts()`, and the
+`src/auto/trust.mjs` explains why it does not call `detectAts()`, and the
 reasoning generalises. `detectAts` matches its adapter patterns against the
 **whole URL string**, deliberately. For picking a _fill strategy_ that is
 fail-safe: the wrong adapter defers more fields. For a **trust** decision it is
@@ -1761,11 +1761,11 @@ And:
 gap matters enough to mark.
 
 > **Known defect (2026-08-05 audit).** `CLAUDE.md`'s rule 6 states: _"the runner
-> in `scripts/auto/` ships `enabled: false, dry_run: true`"_, _"the user's file
+> in `src/auto/` ships `enabled: false, dry_run: true`"_, _"the user's file
 > has neither [`enabled: true` nor a `board_allowlist`], so the trust gate refuses
 > every board today"_, and _"nothing opens a browser unattended —
 > `auto-apply.mjs` does not launch Chromium"_. All three sentences are stale.
-> `scripts/auto/guard.mjs`'s header carries the same stale claim.
+> `src/auto/guard.mjs`'s header carries the same stale claim.
 
 Read directly from `docs/application-limits.yaml` today:
 
@@ -1794,7 +1794,7 @@ Working through what that means, check by check:
 - The trust gate's check 1 (`allowlist`) finds four entries. Check 2 (`adapter`)
   requires each declared id to be a shipped adapter; `ADAPTERS` is
   `[greenhouse, lever, ashby]`. **Both pass** for those four domains.
-- `scripts/auto/auto-apply.mjs` imports `launchBrowser` from
+- `src/auto/auto-apply.mjs` imports `launchBrowser` from
   `../apply/browser.mjs` and calls it. **The browser leg is wired.** Its own
   comment says so: _"W1-W3 built the runner and left this unwired […] the whole
   machine — state machine, trust gate, caps, breaker, pool, classifier — was
@@ -1821,7 +1821,7 @@ regex instead of capturing real pages is rule 0's forbidden guess with the model
 removed. It fails silently in the one direction that cannot be recovered: **a page
 misread as a confirmation records an application that was never sent, and nothing
 later corrects it.** The lawful source of evidence is your own attended applies,
-via `scripts/apply/capture-post-submit.mjs` (stage → review → promote).
+via `src/apply/capture-post-submit.mjs` (stage → review → promote).
 
 ### Strength verdict
 
@@ -1849,7 +1849,7 @@ would deploy from.
 
 ### Enforced by
 
-`scripts/hooks/guard-bash.mjs`, a `PreToolUse` hook on `Bash|PowerShell`.
+`src/hooks/guard-bash.mjs`, a `PreToolUse` hook on `Bash|PowerShell`.
 
 Its implementation history is a good lesson in how a guard fails in **both**
 directions at once. The original was a regular expression over the raw command
@@ -1903,7 +1903,7 @@ check.
 
 ### Enforced by
 
-`scripts/hooks/prettify.mjs`. It handles a fixed extension list (`.md`, `.json`,
+`src/hooks/prettify.mjs`. It handles a fixed extension list (`.md`, `.json`,
 `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.yaml`, `.yml`, `.css`, `.html`, and
 relatives) and is **non-blocking**: if prettier is not installed, or cannot parse
 the file, the edit still goes through and a message is reported. A formatting
@@ -1945,7 +1945,7 @@ config has left the task and is now making changes nobody reviewed.
 
 ### Enforced by
 
-The outer half by `scripts/hooks/guard-files.mjs`, a `PreToolUse` hook. It
+The outer half by `src/hooks/guard-files.mjs`, a `PreToolUse` hook. It
 resolves the target path against the project root and denies anything outside,
 with three exceptions: the OS temp directory, Claude's own session-memory
 directory (`~/.claude/projects/<id>/memory/`), and `~/.claude/plans/` (without
@@ -1960,7 +1960,7 @@ The inner half is **not enforced by the hook**. The hook's own comment says so:
 
 The unattended path re-establishes it in code, because a scheduled task is not an
 agent tool call — no hook runs, nothing inspects the arguments, and nobody is
-watching. `scripts/auto/guard.mjs`'s `assertInsideJobs` is that re-establishment,
+watching. `src/auto/guard.mjs`'s `assertInsideJobs` is that re-establishment,
 and its header states the principle: _every guarantee those hooks provide has to
 be re-established inside the process, or it simply is not there twice a day._
 
@@ -2000,9 +2000,9 @@ deciding to narrow it.
 
 ### Enforced by
 
-`scripts/leads/find-jobs.mjs` reads it mechanically at ingest. `screen.mjs`,
+`src/leads/find-jobs.mjs` reads it mechanically at ingest. `screen.mjs`,
 `fit.mjs` and `risk.mjs` read the stages' thresholds. `capCheck` in
-`scripts/auto/caps.mjs` reads the `auto_apply` caps. `trustBoard` reads
+`src/auto/caps.mjs` reads the `auto_apply` caps. `trustBoard` reads
 `auto_apply.board_allowlist`.
 
 Two design choices in the config deserve a mention because they encode the
@@ -2462,7 +2462,7 @@ adapter) rather than a mystery about your own file.
 
 ### The failure has to reach the gate
 
-Detecting it was only half. `mergePages` in `scripts/auto/multipage.mjs` — which
+Detecting it was only half. `mergePages` in `src/auto/multipage.mjs` — which
 combines per-page plans and reports into one for a multi-page form — used to
 rebuild the report as `{uploads, revealed}` and drop everything else. So the
 failure landed in `report.failures`, which **stopped existing one call before any
@@ -2530,7 +2530,7 @@ The three lawful ways to make fewer things defer, once more, because this is the
 rule the whole design rests on:
 
 1. **Write an adapter** — code that knows a specific board's shape.
-   `scripts/apply/ats/` holds three: `greenhouse`, `lever`, `ashby`.
+   `src/apply/ats/` holds three: `greenhouse`, `lever`, `ashby`.
 2. **Probe the live form** — read the actual option list off the page instead of
    guessing what it offers.
 3. **Bank an answer** — you answer the question once through `save-answer.mjs`,
@@ -2554,7 +2554,7 @@ Nine gates. Each one is a different question, and the order is a safety property
 rather than a style choice — everything that can refuse with **no side effect at
 all** runs before anything that writes.
 
-## Gate 1 — the trust gate (`scripts/auto/trust.mjs`)
+## Gate 1 — the trust gate (`src/auto/trust.mjs`)
 
 **Question:** may this board be submitted to unattended at all?
 
@@ -2585,7 +2585,7 @@ submitted"_ in one line at startup. A typo'd ATS id would otherwise show up only
 every job deferring `board-untrusted`, which reads as "the boards are untrusted"
 rather than "your file says `greenhosue`".
 
-## Gate 2 — preflight (`scripts/auto/preflight.mjs`)
+## Gate 2 — preflight (`src/auto/preflight.mjs`)
 
 **Question:** is the fact base safe to run unattended at all?
 
@@ -2614,7 +2614,7 @@ answers that you switch it off, at which point it protects nothing.
 
 This gate writes nothing. Its only side effects are stdout and the exit code.
 
-## Gate 3 — the caps (`scripts/auto/caps.mjs`)
+## Gate 3 — the caps (`src/auto/caps.mjs`)
 
 **Question:** how much can one run do?
 
@@ -2645,7 +2645,7 @@ and a cap that stops counting is worse than a cap whose report is ugly.
 **Cost of getting it wrong:** ten applications to one employer in one night. Not a
 security failure — a reputation failure, and one you cannot undo.
 
-## Gate 4 — the plan gate (`buildPlan` / `readiness`, `scripts/apply/fill-plan.mjs`)
+## Gate 4 — the plan gate (`buildPlan` / `readiness`, `src/apply/fill-plan.mjs`)
 
 **Question:** does the plan for this form contain anything a human has to decide?
 
@@ -2700,7 +2700,7 @@ list in this file and the 26th wording walks through it.
 already said is wrong. Or, in the case that shipped 7 runs out of 7, an application
 sent with no résumé and a report saying `ok`.
 
-## Gate 6 — `submitReadiness` (`scripts/apply/fill-plan.mjs`)
+## Gate 6 — `submitReadiness` (`src/apply/fill-plan.mjs`)
 
 **Question:** may an unattended click happen on this form?
 
@@ -2730,7 +2730,7 @@ still blocks.
 
 Between gate 6 and gate 7 sits the mechanism that makes all of this
 non-optional, and it is worth one paragraph because it is the architectural idea
-of `scripts/auto/authorize.mjs`.
+of `src/auto/authorize.mjs`.
 
 Every guard the directory had before was a function the runner was **trusted to
 call**. A runner that never called preflight would send real applications while
@@ -2759,7 +2759,7 @@ case of an already-set brake never writes an intent row), and again as the **fir
 statement** of the clicking function, where "immediately before the click" is
 literally true.
 
-## Gate 7 — the post-submit classifier (`scripts/auto/classify.mjs`)
+## Gate 7 — the post-submit classifier (`src/auto/classify.mjs`)
 
 **Question:** what does the page after the click actually say?
 
@@ -2802,7 +2802,7 @@ raw HTML would classify a successful submit as a bot challenge.
 an application recorded as sent that was never sent, and you never apply to that
 posting again.
 
-## Gate 8 — the breaker (`scripts/auto/breaker.mjs`)
+## Gate 8 — the breaker (`src/auto/breaker.mjs`)
 
 **Question:** is something systematically broken, as opposed to one job being
 awkward?
@@ -2849,7 +2849,7 @@ reporting the outcome as `ok`.
 **Cost of getting it wrong:** too eager and your volume quietly drops (a bug, per
 your explicit decision). Too slow and a broken board eats a whole night.
 
-## Gate 9 — reconcile (`scripts/auto/reconcile.mjs`)
+## Gate 9 — reconcile (`src/auto/reconcile.mjs`)
 
 **Question:** an attempt row exists and nothing resolved it — did that application
 go out or not?
@@ -2903,17 +2903,17 @@ All four are wired in `.claude/settings.json`:
   { "matcher": "Edit|Write|NotebookEdit",
     "hooks": [
       { "command": "node .claude/hooks/protect-profile.js" },
-      { "command": "node scripts/hooks/guard-files.mjs" }
+      { "command": "node src/hooks/guard-files.mjs" }
     ]},
   { "matcher": "Bash|PowerShell",
     "hooks": [
-      { "command": "node scripts/hooks/guard-bash.mjs" },
+      { "command": "node src/hooks/guard-bash.mjs" },
       { "command": "node .claude/hooks/guard-profile-shell.mjs" }
     ]}
 ],
 "PostToolUse": [
   { "matcher": "Edit|Write|NotebookEdit",
-    "hooks": [ { "command": "node scripts/hooks/prettify.mjs" } ]}
+    "hooks": [ { "command": "node src/hooks/prettify.mjs" } ]}
 ]
 ```
 
@@ -2930,7 +2930,7 @@ real before the second guard existed.
 
 ## 4.2 The two-owner rule
 
-**`scripts/hooks/*` belongs to the agent** and is agent-editable. `guard-files.mjs`,
+**`src/hooks/*` belongs to the agent** and is agent-editable. `guard-files.mjs`,
 `guard-bash.mjs` and `prettify.mjs` live there. The agent maintains them, tests
 them and improves them.
 
@@ -2981,7 +2981,7 @@ Four limits, all stated in the hooks themselves:
    `git commit -m "x" && rm .claude/hooks/y`, which is the whole attack.
 4. **It does not run at all on the unattended path.** A scheduled task is not an
    agent tool call: no hook runs, nothing inspects the arguments, and nobody is
-   watching. That is precisely why `scripts/auto/guard.mjs` exists and why its
+   watching. That is precisely why `src/auto/guard.mjs` exists and why its
    header says every guarantee the hooks provide has to be re-established inside
    the process.
 
@@ -2998,7 +2998,7 @@ cause the model to _waste a turn_ or to _propose_ something wrong; it cannot get
 unsupported claim past verification.
 
 **A technology outside the lexicon is invisible to R6.** `TECH_TERMS` is built from
-the `surface` lists in `scripts/lib/keywords.mjs`. A claim about a technology
+the `surface` lists in `src/lib/keywords.mjs`. A claim about a technology
 nobody has added to that table produces no violation. R4 (numbers) and R5 (dates)
 are unaffected, but a resume claiming fluency in something the lexicon does not
 know will pass R6.
@@ -3065,8 +3065,8 @@ account. Every orphan on those boards is `undecidable`.
 
 **`CLAUDE.md`'s description of rule 6's current status is stale.** It says
 `enabled: false`, `dry_run: true`, no allowlist and no browser. All four are
-wrong today. `scripts/auto/guard.mjs`'s header carries the same stale claim.
-Verify against `docs/application-limits.yaml` and `scripts/auto/auto-apply.mjs`,
+wrong today. `src/auto/guard.mjs`'s header carries the same stale claim.
+Verify against `docs/application-limits.yaml` and `src/auto/auto-apply.mjs`,
 never against the prose.
 
 **Nothing here defends against a compromised dependency.** `node_modules` is
@@ -3092,7 +3092,7 @@ are not encrypted. Anything with read access to the machine can read them.
   [`../code/08-apply-filling.md`](../code/08-apply-filling.md) — `answer-bank.mjs`,
   `fill-plan.mjs` and `fill-engine.mjs`, where Part 2's worked examples live.
 - [`../code/01-lib-foundation.md`](../code/01-lib-foundation.md) —
-  `scripts/lib/untrusted.mjs` and `scripts/lib/keywords.mjs` in full, including
+  `src/lib/untrusted.mjs` and `src/lib/keywords.mjs` in full, including
   every export this document quoted.
 - [`../code/11-record-and-profile.md`](../code/11-record-and-profile.md) —
   `save-answer.mjs`, `log-application.mjs` and the provenance rules.

@@ -151,21 +151,21 @@ went worker → manager → other worker → manager → back. One `isEvaluable`
 took four hops and two dispatches for what one agent holding both files does in
 a single edit.
 
-| Agent           | Role     | Model  | Owns (exclusive)                                                                                                                                |
-| --------------- | -------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `build-manager` | manager  | Opus   | Process only: this file, `agent-protocol.md`, the git history, the decision to ship                                                             |
-| `implementer`   | worker   | Opus   | **All of `scripts/**` except `hooks/` and `dev/bench-*`, plus the tests for the code it changes** (`tests/<domain>/<file>.test.mjs`)            |
-| `qa`            | QA       | Opus   | `tests/security/*`, `tests/fixtures/*`, `scripts/dev/bench-*.mjs`, `tests/dev/*`, **`docs/measurements.md`**                                    |
-| `architect`     | reviewer | Opus   | Nothing. Rulings, failure modes, structure, deletion candidates, outward-facing research. **Writes no product code**                            |
-| `doc-scribe`    | scribe   | Opus   | `CLAUDE.md`, `README.md`, `docs/reference/*`, most `docs/*.md`, `.claude/skills/*`, `schemas/*`                                                 |
-| `ci-engineer`   | cicd     | Opus   | `.github/workflows/*`, `package.json`, `scripts/hooks/*`, `.gitignore`, `.prettierignore`, `tests/hooks/*` — **never `.claude/settings*.json`** |
-| `job-worker`    | worker   | Sonnet | Pre-existing. Per-job runtime worker for `pipeline-jobs`; not part of this build                                                                |
+| Agent           | Role     | Model  | Owns (exclusive)                                                                                                                            |
+| --------------- | -------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build-manager` | manager  | Opus   | Process only: this file, `agent-protocol.md`, the git history, the decision to ship                                                         |
+| `implementer`   | worker   | Opus   | **All of `src/**` except `hooks/` and `dev/bench-*`, plus the tests for the code it changes** (`tests/<domain>/<file>.test.mjs`)            |
+| `qa`            | QA       | Opus   | `tests/security/*`, `tests/fixtures/*`, `src/dev/bench-*.mjs`, `tests/dev/*`, **`docs/measurements.md`**                                    |
+| `architect`     | reviewer | Opus   | Nothing. Rulings, failure modes, structure, deletion candidates, outward-facing research. **Writes no product code**                        |
+| `doc-scribe`    | scribe   | Opus   | `CLAUDE.md`, `README.md`, `docs/reference/*`, most `docs/*.md`, `.claude/skills/*`, `schemas/*`                                             |
+| `ci-engineer`   | cicd     | Opus   | `.github/workflows/*`, `package.json`, `src/hooks/*`, `.gitignore`, `.prettierignore`, `tests/hooks/*` — **never `.claude/settings*.json`** |
+| `job-worker`    | worker   | Sonnet | Pre-existing. Per-job runtime worker for `pipeline-jobs`; not part of this build                                                            |
 
 **Ruling 2026-08-02 — `docs/measurements.md` belongs to `qa`, not `architect`.**
 The plan assigns the measurement ledger to `innov-perf` (4.8, R-12), and the
 mechanical retirement mapping would send that to `architect`. That would be
 wrong: `architect` owns **nothing** by design and writes no product code, so an
-owned file contradicts its role, while `qa` already owns `scripts/dev/bench-*.mjs`
+owned file contradicts its role, while `qa` already owns `src/dev/bench-*.mjs`
 — the harnesses that produce the numbers the ledger records. Splitting a ledger
 from the harness that fills it is the same mistake that let `check-applied.mjs`
 drift from its schema. **The file-set table above is the authority on ownership;

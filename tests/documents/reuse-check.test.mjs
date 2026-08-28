@@ -15,7 +15,7 @@ const ROOT = path.resolve(
 function run(argsArr) {
   return spawnSync(
     process.execPath,
-    [path.join(ROOT, "scripts", "documents", "reuse-check.mjs"), ...argsArr],
+    [path.join(ROOT, "src", "documents", "reuse-check.mjs"), ...argsArr],
     { cwd: ROOT, encoding: "utf8" },
   )
 }

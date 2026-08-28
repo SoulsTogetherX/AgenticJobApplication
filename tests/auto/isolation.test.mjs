@@ -29,7 +29,7 @@
 // skips silently is indistinguishable from one that passes.
 import test from "node:test"
 import assert from "node:assert/strict"
-import { launchBrowser } from "../../scripts/apply/browser.mjs"
+import { launchBrowser } from "../../src/apply/browser.mjs"
 import { start } from "../fixtures/boards/server.mjs"
 
 const NO_BROWSER = await (async () => {

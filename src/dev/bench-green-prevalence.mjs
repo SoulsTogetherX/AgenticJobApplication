@@ -36,9 +36,9 @@
 //    otherwise, so a rule change cannot silently drop out of the tally.
 //
 // Usage:
-//   node scripts/dev/bench-green-prevalence.mjs            # human report
-//   node scripts/dev/bench-green-prevalence.mjs --json
-//   node scripts/dev/bench-green-prevalence.mjs --self-check
+//   node src/dev/bench-green-prevalence.mjs            # human report
+//   node src/dev/bench-green-prevalence.mjs --json
+//   node src/dev/bench-green-prevalence.mjs --self-check
 import fs from "node:fs"
 import path from "node:path"
 import crypto from "node:crypto"
@@ -250,7 +250,7 @@ export function bestCaseTier(url, cache, resolvedByKey, now, maxAgeDays) {
 
 // --- part C: the four workspace scans ------------------------------------
 //
-// Runs the SHIPPED CLI (`scripts/apply/fill-plan.mjs --json`) against a COPY of
+// Runs the SHIPPED CLI (`src/apply/fill-plan.mjs --json`) against a COPY of
 // the jobs tree in a temp dir, because that CLI writes fill-plan.json,
 // fill-plan.js, the cache and a shape-history sidecar. Nothing in the real
 // jobs/ tree is touched. Reading the CLI's own JSON rather than calling
@@ -300,7 +300,7 @@ export function analyseScans(tmpRoot, { pastCaptcha = false } = {}) {
       const stdout = execFileSync(
         process.execPath,
         [
-          path.join(ROOT, "scripts", "apply", "fill-plan.mjs"),
+          path.join(ROOT, "src", "apply", "fill-plan.mjs"),
           slug,
           "--jobs-dir",
           jobsDir,
@@ -557,17 +557,17 @@ function main() {
     scans_past_captcha_COUNTERFACTUAL: scansPastCaptcha,
     predicted_required_rows: predicted.length,
     sha1: {
-      "scripts/dev/bench-green-prevalence.mjs": sha1(
+      "src/dev/bench-green-prevalence.mjs": sha1(
         fileURLToPath(import.meta.url),
       ),
-      "scripts/apply/fill-plan.mjs": sha1(
-        path.join(ROOT, "scripts/apply/fill-plan.mjs"),
+      "src/apply/fill-plan.mjs": sha1(
+        path.join(ROOT, "src/apply/fill-plan.mjs"),
       ),
-      "scripts/apply/automatability.mjs": sha1(
-        path.join(ROOT, "scripts/apply/automatability.mjs"),
+      "src/apply/automatability.mjs": sha1(
+        path.join(ROOT, "src/apply/automatability.mjs"),
       ),
-      "scripts/apply/answer-bank.mjs": sha1(
-        path.join(ROOT, "scripts/apply/answer-bank.mjs"),
+      "src/apply/answer-bank.mjs": sha1(
+        path.join(ROOT, "src/apply/answer-bank.mjs"),
       ),
       "jobs/.field-cache.json": sha1(cacheFile),
     },

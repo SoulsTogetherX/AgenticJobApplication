@@ -1,4 +1,4 @@
-# `scripts/dev/` — measuring performance
+# `src/dev/` — measuring performance
 
 This document is about the four programs in this repository whose only job is to
 produce **numbers**: how long an application takes, how much of that time is the
@@ -61,16 +61,16 @@ You can read this document cold, but these help:
 
 **The files covered here**
 
-| file                                     | lines | one-line purpose                                                                 |
-| ---------------------------------------- | ----- | -------------------------------------------------------------------------------- |
-| `scripts/dev/bench-apply.mjs`            | 2,953 | times one application end to end: serve → scan → plan → fill                     |
-| `scripts/dev/bench-runner.mjs`           | 923   | times a **campaign** of N applications at concurrency C                          |
-| `scripts/dev/spawn-counter.cjs`          | 183   | the preload that counts child processes and outbound network requests            |
-| `scripts/dev/flake-rate.mjs`             | 292   | runs one test file N times and reports a failure rate with a confidence interval |
-| `scripts/dev/bench-green-prevalence.mjs` | 652   | a census: how many remembered real form shapes could be fully automated          |
-| `.github/workflows/perf-gate.mjs`        | 345   | the CI gate: compares a fresh run against `docs/perf-baseline.json`              |
-| `docs/perf-baseline.json`                | 32    | the committed "this is what good looks like" numbers                             |
-| `docs/measurements.md`                   | 1,236 | the append-only ledger where every measurement is written down                   |
+| file                                 | lines | one-line purpose                                                                 |
+| ------------------------------------ | ----- | -------------------------------------------------------------------------------- |
+| `src/dev/bench-apply.mjs`            | 2,953 | times one application end to end: serve → scan → plan → fill                     |
+| `src/dev/bench-runner.mjs`           | 923   | times a **campaign** of N applications at concurrency C                          |
+| `src/dev/spawn-counter.cjs`          | 183   | the preload that counts child processes and outbound network requests            |
+| `src/dev/flake-rate.mjs`             | 292   | runs one test file N times and reports a failure rate with a confidence interval |
+| `src/dev/bench-green-prevalence.mjs` | 652   | a census: how many remembered real form shapes could be fully automated          |
+| `tools/ci/perf-gate.mjs`             | 345   | the CI gate: compares a fresh run against `docs/perf-baseline.json`              |
+| `docs/perf-baseline.json`            | 32    | the committed "this is what good looks like" numbers                             |
+| `docs/measurements.md`               | 1,236 | the append-only ledger where every measurement is written down                   |
 
 ---
 
@@ -242,11 +242,11 @@ records three things:
 export const MEASURED_FILES = [
   ".claude/skills/apply-job/scan-page.js",
   ".claude/skills/apply-job/scan.driver.mjs",
-  "scripts/apply/scan-engine.mjs",
-  "scripts/apply/fill-engine.mjs",
-  "scripts/apply/fill-plan.mjs",
-  "scripts/apply/answer-bank.mjs",
-  "scripts/apply/field-cache.mjs",
+  "src/apply/scan-engine.mjs",
+  "src/apply/fill-engine.mjs",
+  "src/apply/fill-plan.mjs",
+  "src/apply/answer-bank.mjs",
+  "src/apply/field-cache.mjs",
 ]
 ```
 
@@ -263,8 +263,8 @@ This is not decorative. Running the benchmark twice a few minutes apart while
 other work was in flight produced these two fingerprints for the same file:
 
 ```
-scripts/apply/fill-engine.mjs   b9517e4782e8      (first run)
-scripts/apply/fill-engine.mjs   4a3ed5be610e      (second run, minutes later)
+src/apply/fill-engine.mjs   b9517e4782e8      (first run)
+src/apply/fill-engine.mjs   4a3ed5be610e      (second run, minutes later)
 ```
 
 Two different programs, two numbers, one label. Without `file_sha1` there would
@@ -351,19 +351,19 @@ and you can see which one to attack.
 
 ```bash
 # the default: the Greenhouse fixture, five samples, human-readable report
-node scripts/dev/bench-apply.mjs --board greenhouse
+node src/dev/bench-apply.mjs --board greenhouse
 
 # a synthetic 14-dropdown form under the worst-case widget behaviour
-node scripts/dev/bench-apply.mjs --shape combo14 --profile worst
+node src/dev/bench-apply.mjs --shape combo14 --profile worst
 
 # the full record as JSON, for a script to read
-node scripts/dev/bench-apply.mjs --board greenhouse --runs 7 --json
+node src/dev/bench-apply.mjs --board greenhouse --runs 7 --json
 
 # a paste-ready docs/measurements.md entry
-node scripts/dev/bench-apply.mjs --ledger
+node src/dev/bench-apply.mjs --ledger
 
 # open a real browser and close five of the six unmeasured entries
-node scripts/dev/bench-apply.mjs --board greenhouse --browser
+node src/dev/bench-apply.mjs --board greenhouse --browser
 ```
 
 Every flag:
@@ -394,17 +394,17 @@ which is the most interesting exit code in the file.
 A "leg" is one stage of the run, timed separately so you can see where the time
 went.
 
-| leg       | function       | what actually happens                                                               |
-| --------- | -------------- | ----------------------------------------------------------------------------------- |
-| **serve** | `benchServe()` | a real HTTP `fetch` of a real fixture page; records ms, bytes, status, CSP header   |
-| **scan**  | `benchScan()`  | runs **both** scanner twins against the instrumented page and reports the drift     |
-| **plan**  | `benchPlan()`  | starts `scripts/apply/fill-plan.mjs` as a **real subprocess** against a temp folder |
-| **fill**  | `benchFill()`  | loads the **generated** `jobs/<slug>/fill-plan.js` the way the browser tool does    |
+| leg       | function       | what actually happens                                                             |
+| --------- | -------------- | --------------------------------------------------------------------------------- |
+| **serve** | `benchServe()` | a real HTTP `fetch` of a real fixture page; records ms, bytes, status, CSP header |
+| **scan**  | `benchScan()`  | runs **both** scanner twins against the instrumented page and reports the drift   |
+| **plan**  | `benchPlan()`  | starts `src/apply/fill-plan.mjs` as a **real subprocess** against a temp folder   |
+| **fill**  | `benchFill()`  | loads the **generated** `jobs/<slug>/fill-plan.js` the way the browser tool does  |
 
 Three details in there are load-bearing.
 
 **The scan leg runs two twins on purpose.** There are two copies of the scanning
-logic: `scripts/apply/scan-engine.mjs`, which is an ordinary imported module, and
+logic: `src/apply/scan-engine.mjs`, which is an ordinary imported module, and
 `.claude/skills/apply-job/scan.driver.mjs`, which is the version that actually
 executes inside the browser today. `benchScan` runs both and reports
 `twin_drift`, the difference in their sleep costs. This is not paranoia:
@@ -420,7 +420,7 @@ sees a third shape, rather than reporting zeros for a leg that did not run.
 
 **The plan leg is a real subprocess.** `benchPlan` builds a temporary job folder,
 writes `scan-p1.json` into it, and runs the real
-`node scripts/apply/fill-plan.mjs <slug> --json` with `--jobs-dir`, `--url`,
+`node src/apply/fill-plan.mjs <slug> --json` with `--jobs-dir`, `--url`,
 `--profile`, `--answers` and `--no-cache`. Nothing is simulated; `plan_ms` is a
 clock reading of a real program. It points at `tests/fixtures/profile.yaml` and a
 generated answers file, never at the owner's real `profile/`.
@@ -623,7 +623,7 @@ kept measuring page 1's form — reporting page 1's numbers under page 2's label
 
 **Refusing to bank a truncated fill.** This one has a name, `M6`, and it is the
 most instructive failure in the area. For eleven days,
-`node scripts/dev/bench-apply.mjs --board greenhouse` printed
+`node src/dev/bench-apply.mjs --board greenhouse` printed
 `fill: ok=2 failed=1 deferred=3` and exited `0`. The single failure was the page
 guard aborting the _whole_ fill — so every field after the abort contributed
 nothing, and the harness reported the truncated wall time as the baseline.
@@ -791,7 +791,7 @@ Reading it top to bottom:
 The `--ledger` form of the same run:
 
 ```
-- harness:  node scripts/dev/bench-apply.mjs --board greenhouse --profile typical --runs 2
+- harness:  node src/dev/bench-apply.mjs --board greenhouse --profile typical --runs 2
 - baseline: 0a82d75 (+6 uncommitted measured file(s)) — round_trips=5 sleep_ms=450 model_turns=12 wall_ms=193.19
 - worst:    sleep_ms=2830 (unconditional 450 + conditional ceiling 2380) board=greenhouse
 - method:   round_trips/model_turns derived (PROTOCOL citations); sleep measured by executing the engines; conditional-wait actuals unmeasured (no browser leg in this run)
@@ -873,10 +873,10 @@ arguably documents the shapes; it is not dead code.
 > does this properly with `concurrency_ok` and `ledger.ok`.
 
 > **Known defect (2026-08-05 audit).** None of the four harnesses honours the
-> repo's terse-for-agents convention. `scripts/lib/lib.mjs` exports
+> repo's terse-for-agents convention. `src/lib/lib.mjs` exports
 > `outputMode()` / `isTerse()`, used everywhere else to print compact records
 > when the output is not a terminal — and `isTTY` appears nowhere under
-> `scripts/dev/`. An agent running `bench-apply` receives the full forty-line
+> `src/dev/`. An agent running `bench-apply` receives the full forty-line
 > prose report plus the six-entry unmeasured list plus seven hash lines.
 
 **Verdict on the size.** The file is large because it holds four genuinely
@@ -941,14 +941,14 @@ user must assert) must **not** shrink — that is the safety gate. A single
 
 ```bash
 # the CI gate's exact workload
-node scripts/dev/bench-runner.mjs --apps 50 --concurrency 8 \
+node src/dev/bench-runner.mjs --apps 50 --concurrency 8 \
   --board greenhouse,honest-greenhouse --runs 3 --json
 
 # a quick look while working
-node scripts/dev/bench-runner.mjs --apps 8 --concurrency 4
+node src/dev/bench-runner.mjs --apps 8 --concurrency 4
 
 # a paste-ready docs/measurements.md entry
-node scripts/dev/bench-runner.mjs --apps 50 --concurrency 8 --ledger
+node src/dev/bench-runner.mjs --apps 50 --concurrency 8 --ledger
 ```
 
 | flag                  | default      | what it does                                                        |
@@ -1003,12 +1003,12 @@ imported it.
 
 A `--require` **preload** is a file Node loads _before_ anything else, so the
 wrapping happens before any module can capture the original. That is
-`scripts/dev/spawn-counter.cjs`. It patches seven `child_process` functions,
+`src/dev/spawn-counter.cjs`. It patches seven `child_process` functions,
 `http.request`/`get`, `https.request`/`get`, and global `fetch`, incrementing
 counters. It never blocks, never rewrites arguments, and never fails a call.
 
 Then there is a second, worse trap. The plan leg **shells out** to
-`scripts/apply/fill-plan.mjs` once per application. A model call added _there_
+`src/apply/fill-plan.mjs` once per application. A model call added _there_
 happens in a process the parent cannot see, and parent-only counting scored that
 exact mutation as zero. So the preload follows the work down: the campaign sets
 `NODE_OPTIONS=--require <preload>` plus `AJ_COUNTER_FILE`, every descendant
@@ -1033,7 +1033,7 @@ never look alike.
 
 The specification for this column says "process spawns plus outbound HTTP to any
 non-loopback host". Taken literally that is red on every run **by construction**,
-because the harness spawns `node scripts/apply/fill-plan.mjs` once per
+because the harness spawns `node src/apply/fill-plan.mjs` once per
 application — a deterministic local script, and precisely the thing the design
 wants _more_ of.
 
@@ -1043,11 +1043,11 @@ within a week, which defeats the gate. So the counting is split:
 - **`spawns_per_app`** counts **every** spawn, unfiltered, as a column in its own
   right. A regression in process count shows up here.
 - **`model_turns`** counts a spawn only when it is **not** this repository's own
-  `node` running a file under `scripts/` — plus every non-loopback request.
+  `node` running a file under `src/` — plus every non-loopback request.
 
 `isRepoScript()` in the preload implements that test: same executable as
 `process.execPath`, and the first non-flag argument resolves inside
-`<repo>/scripts/`. A real model call cannot hide from this. Either it is an HTTPS
+`<repo>/src/`. A real model call cannot hide from this. Either it is an HTTPS
 request to a provider (counted), or it shells out to some other command-line tool
 (counted — not our node, or not a repo script). The only thing excluded is the
 case that is provably not a model.
@@ -1060,7 +1060,7 @@ model turn.
 
 **Concurrency** here means: how many applications are genuinely in flight at
 once. Asking for 8 does not make 8 happen. The pool this harness uses —
-`runPool()` from `scripts/auto/pool.mjs`, the **shipped** pool, not a copy —
+`runPool()` from `src/auto/pool.mjs`, the **shipped** pool, not a copy —
 enforces an **origin exclusion rule**: at most one job at a time per website,
 because two tabs on one site share upload and draft state. So a queue of 50 jobs
 all pointing at one site will run one at a time no matter what number you asked
@@ -1107,13 +1107,13 @@ sitting in an employer's system with nobody knowing.
 one:
 
 ```
-$ node .github/workflows/perf-gate.mjs
+$ node tools/ci/perf-gate.mjs
 refusing to bank a number from a dirty tree — uncommitted changes in:
   M .claude/skills/apply-job/scan-page.js
-   M scripts/apply/answer-bank.mjs
-   M scripts/apply/fill-engine.mjs
-   M scripts/apply/fill-plan.mjs
-   M scripts/apply/scan-engine.mjs
+   M src/apply/answer-bank.mjs
+   M src/apply/fill-engine.mjs
+   M src/apply/fill-plan.mjs
+   M src/apply/scan-engine.mjs
 Commit them, or pass --allow-dirty and say so wherever the number lands.
 ```
 
@@ -1177,7 +1177,7 @@ The `--ledger` form emits GitHub-flavoured Markdown ready to paste:
 ```markdown
 ## M? — bench-runner: 4 applications at concurrency 2
 
-**Command.** `node scripts/dev/bench-runner.mjs --apps 4 --concurrency 2 --board greenhouse,honest-greenhouse --runs 1 --json`
+**Command.** `node src/dev/bench-runner.mjs --apps 4 --concurrency 2 --board greenhouse,honest-greenhouse --runs 1 --json`
 
 **Legs.** loopback fixture, 2 origins, mode `dry_run`, profile `typical`, 1 run(s). Latency model: loopback.
 
@@ -1192,7 +1192,7 @@ The `--ledger` form emits GitHub-flavoured Markdown ready to paste:
 **Provenance.** `0a82d75`, 6 dirty measured file(s).
 
 - `.claude/skills/apply-job/scan-page.js` `64baaccab1e6`
-- `scripts/apply/fill-engine.mjs` `4a3ed5be610e`
+- `src/apply/fill-engine.mjs` `4a3ed5be610e`
   …
 
 **Concurrency assertion:** observed max-in-flight 2 vs requested 2 — PASS.
@@ -1219,7 +1219,7 @@ number in `docs/measurements.md`.)
 
 ## 4.1 What it is
 
-`.github/workflows/perf-gate.mjs` is one of five jobs in the continuous
+`tools/ci/perf-gate.mjs` is one of five jobs in the continuous
 integration pipeline (the full pipeline is described in
 [`12-harness-and-ci.md`](12-harness-and-ci.md) §3.4, which covers the same file
 from the CI side; this section covers it as the _consumer of the benchmark_).
@@ -1337,7 +1337,7 @@ proves nothing, and looks exactly like a broken gate.
 `docs/perf-baseline.json` is a committed file. It is written by one command:
 
 ```bash
-node .github/workflows/perf-gate.mjs --update
+node tools/ci/perf-gate.mjs --update
 ```
 
 That runs the same fixed workload, takes the median of the runs for each rule,
@@ -1346,7 +1346,7 @@ and writes:
 ```json
 {
   "taken_at": "2026-08-03T04:28:54.530Z",
-  "command": "node scripts/dev/bench-runner.mjs --apps 50 --concurrency 8 --board greenhouse,honest-greenhouse --runs 3 --json",
+  "command": "node src/dev/bench-runner.mjs --apps 50 --concurrency 8 --board greenhouse,honest-greenhouse --runs 3 --json",
   "runs": 3,
   "statistic": {
     "model_turns_per_app": "mean over the run",
@@ -1444,9 +1444,9 @@ once measured, six. At a rate of zero it correctly returns `Infinity`.
 ## 5.3 How to run it
 
 ```bash
-node scripts/dev/flake-rate.mjs tests/lib/db.test.mjs --runs 20
-node scripts/dev/flake-rate.mjs tests/lib/db.test.mjs --runs 12 --load 4
-node scripts/dev/flake-rate.mjs tests/documents/render-pdf.test.mjs --runs 6 --json
+node src/dev/flake-rate.mjs tests/lib/db.test.mjs --runs 20
+node src/dev/flake-rate.mjs tests/lib/db.test.mjs --runs 12 --load 4
+node src/dev/flake-rate.mjs tests/documents/render-pdf.test.mjs --runs 6 --json
 ```
 
 | flag              | default | meaning                                                            |
@@ -1514,7 +1514,7 @@ rather than invisible.
 > **Known defect (2026-08-05 audit).** The target file is chosen as
 > `argv.find((a) => !a.startsWith("--"))` — the first argument that is not a
 > flag. So any flag placed **before** the filename donates its value as the
-> target. `node scripts/dev/flake-rate.mjs --runs 20 tests/lib/db.test.mjs` runs
+> target. `node src/dev/flake-rate.mjs --runs 20 tests/lib/db.test.mjs` runs
 > `node --test --test-reporter=tap 20`, which fails every time, and the tool
 > confidently reports a **100% flake rate with a Wilson interval** for a file it
 > never executed. Every documented example puts the target first, so the bug
@@ -1573,10 +1573,10 @@ widget or consent rule. The entry refuses to turn seven into a percentage.
 ## 6.2 How to run it — and the fact that you currently cannot
 
 ```bash
-node scripts/dev/bench-green-prevalence.mjs              # human report
-node scripts/dev/bench-green-prevalence.mjs --json
-node scripts/dev/bench-green-prevalence.mjs --self-check # validates the bucketer
-node scripts/dev/bench-green-prevalence.mjs --no-scans   # undocumented; skips the scan legs
+node src/dev/bench-green-prevalence.mjs              # human report
+node src/dev/bench-green-prevalence.mjs --json
+node src/dev/bench-green-prevalence.mjs --self-check # validates the bucketer
+node src/dev/bench-green-prevalence.mjs --no-scans   # undocumented; skips the scan legs
 ```
 
 `--self-check` runs five synthetic cases through the real rules and confirms the
@@ -1592,7 +1592,7 @@ ok   stale shape blocks -> [stale-shape]
 
 The main report does not.
 
-> **Known defect (verified 2026-08-06).** `node scripts/dev/bench-green-prevalence.mjs --json`
+> **Known defect (verified 2026-08-06).** `node src/dev/bench-green-prevalence.mjs --json`
 > **crashes** before printing anything, at the deliberate throw in `bucket()`:
 >
 > ```

@@ -26,7 +26,7 @@ import {
   AUTO_DEFER_KINDS,
   AUTO_FAILURE_KINDS,
   AUTO_CHALLENGE_KINDS,
-} from "../../scripts/lib/db.mjs"
+} from "../../src/lib/db.mjs"
 import {
   STAGES,
   DEFER_PRIORITY,
@@ -38,7 +38,7 @@ import {
   kindForWhy,
   newlyChallengedBoards,
   TaxonomyError,
-} from "../../scripts/auto/taxonomy.mjs"
+} from "../../src/auto/taxonomy.mjs"
 
 // Close before removing: on Windows an open SQLite handle locks the file and
 // rmSync fails EPERM in the cleanup hook, which reads as a failure of a test

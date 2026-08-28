@@ -17,7 +17,7 @@ function resolve(fields) {
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "apply", "answer-bank.mjs"),
+      path.join(ROOT, "src", "apply", "answer-bank.mjs"),
       "--fields",
       JSON.stringify(fields),
       "--json",
@@ -74,7 +74,7 @@ test("a concept question is never answered from a different concept", () => {
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts", "apply", "answer-bank.mjs"),
+      path.join(ROOT, "src", "apply", "answer-bank.mjs"),
       "--fields",
       JSON.stringify([
         {

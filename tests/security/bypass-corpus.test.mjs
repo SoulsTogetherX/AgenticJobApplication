@@ -34,10 +34,10 @@ import {
   PLAIN_CONTROL,
   CLAIM,
 } from "../fixtures/hostile/bypasses.mjs"
-import { buildPlan } from "../../scripts/documents/keyword-plan.mjs"
-import { sanitizeUntrusted } from "../../scripts/lib/untrusted.mjs"
-import { textSnippet } from "../../scripts/lib/lib.mjs"
-import { scoreRisk } from "../../scripts/leads/risk.mjs"
+import { buildPlan } from "../../src/documents/keyword-plan.mjs"
+import { sanitizeUntrusted } from "../../src/lib/untrusted.mjs"
+import { textSnippet } from "../../src/lib/lib.mjs"
+import { scoreRisk } from "../../src/leads/risk.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")
@@ -238,7 +238,7 @@ test("FINDING (w1-security): new-job.mjs copies a hostile TITLE into job.json un
   // where posting text reaches a model: new-job.mjs writing job.json, the
   // --from-lead path, …".
   const src = fs.readFileSync(
-    path.join(ROOT, "scripts/documents/new-job.mjs"),
+    path.join(ROOT, "src/documents/new-job.mjs"),
     "utf8",
   )
   const wired = /sanitizeUntrusted/.test(src)
@@ -250,7 +250,7 @@ test("FINDING (w1-security): new-job.mjs copies a hostile TITLE into job.json un
     const res = spawnSync(
       process.execPath,
       [
-        path.join(ROOT, "scripts/documents/new-job.mjs"),
+        path.join(ROOT, "src/documents/new-job.mjs"),
         "hostile-co",
         "--company",
         "Fixture Co",

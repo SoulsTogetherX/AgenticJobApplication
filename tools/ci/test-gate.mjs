@@ -27,15 +27,15 @@
 // either 0 with the counts printed or 1 with the reason printed.
 //
 // Location note: this lives beside the workflow that calls it because
-// `ci-engineer` owns `.github/workflows/*` and `package.json` but not the rest
-// of `scripts/`. GitHub Actions only loads `*.yml`/`*.yaml` from this
+// `ci-engineer` owns `.github/workflows/*`, `tools/ci/*` and `package.json` but not the rest
+// of `src/`. GitHub Actions only loads `*.yml`/`*.yaml` from this
 // directory and ignores everything else, so a `.mjs` here is inert to Actions.
-// Moving it to `scripts/ci/` later is a two-line change (package.json + ci.yml).
+// Moving it to `src/ci/` later is a two-line change (package.json + ci.yml).
 //
 // Usage:
-//   node .github/workflows/test-gate.mjs <gate-name>      # config from package.json "testGate"
-//   node .github/workflows/test-gate.mjs --floor 10 --path tests/x [--require-dir d] [--quiet]
-//   node .github/workflows/test-gate.mjs full --require-ran "<substring of a test name>"
+//   node tools/ci/test-gate.mjs <gate-name>      # config from package.json "testGate"
+//   node tools/ci/test-gate.mjs --floor 10 --path tests/x [--require-dir d] [--quiet]
+//   node tools/ci/test-gate.mjs full --require-ran "<substring of a test name>"
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"

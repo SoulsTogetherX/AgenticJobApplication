@@ -25,7 +25,7 @@ and the two exit codes it will never let you override.
   what it is doing — and the two real accidents that made it necessary.
 - How closed job folders get folded into the database without losing a byte, and
   the one delete operation in this area that cannot be undone.
-- What `node scripts/status.mjs` prints, with its real output from this machine.
+- What `node src/status.mjs` prints, with its real output from this machine.
 
 **Before this**
 
@@ -40,26 +40,26 @@ These documents are written in parallel with this one; read whichever you need.
 - [../guide/07-safety-model.md](../guide/07-safety-model.md) — the hard rules
   these scripts enforce.
 - [../guide/08-glossary.md](../guide/08-glossary.md) — vocabulary.
-- [01-lib-foundation.md](01-lib-foundation.md) — `scripts/lib/db.mjs` and
-  `scripts/lib/untrusted.mjs`, which almost everything here calls into.
+- [01-lib-foundation.md](01-lib-foundation.md) — `src/lib/db.mjs` and
+  `src/lib/untrusted.mjs`, which almost everything here calls into.
 
 **The files covered here**
 
-| File                                          | Lines | One-line purpose                                                         |
-| --------------------------------------------- | ----: | ------------------------------------------------------------------------ |
-| `scripts/applications/log-application.mjs`    |    79 | Create one application record — the only sanctioned way                  |
-| `scripts/applications/update-application.mjs` |   142 | Record what happened to one — a status change or a follow-up sent        |
-| `scripts/applications/follow-ups.mjs`         |   100 | Which applications are due a nudge today (read-only)                     |
-| `scripts/applications/check-applied.mjs`      |    75 | "Have I already applied here?" as machine-readable JSON                  |
-| `scripts/applications/applications.mjs`       |   195 | List / search / count / delete-with-confirmation / re-export             |
-| `scripts/profile/save-answer.mjs`             |  1106 | **The only door into the fact base**, and every refusal that guards it   |
-| `scripts/profile/apply-profile.mjs`           |   117 | Install a reviewed profile update, proving nothing was silently lost     |
-| `scripts/profile/profile-gaps.mjs`            |   222 | What the jobs keep demanding that the profile does not evidence          |
-| `scripts/profile/keyword-coverage.mjs`        |   368 | What they demand that you probably _have_ but never wrote down           |
-| `scripts/maintenance/archive.mjs`             |   681 | Fold a closed job folder into the database, verified byte for byte       |
-| `scripts/maintenance/migrate.mjs`             |   270 | Build or top up `jobs/leads.db` from the on-disk sources, and prove it   |
-| `scripts/maintenance/prune-jobs.mjs`          |   151 | Delete the one file type that is waste at every moment (`*.render.html`) |
-| `scripts/status.mjs`                          |   152 | The whole-pipeline digest in one call                                    |
+| File                                      | Lines | One-line purpose                                                         |
+| ----------------------------------------- | ----: | ------------------------------------------------------------------------ |
+| `src/applications/log-application.mjs`    |    79 | Create one application record — the only sanctioned way                  |
+| `src/applications/update-application.mjs` |   142 | Record what happened to one — a status change or a follow-up sent        |
+| `src/applications/follow-ups.mjs`         |   100 | Which applications are due a nudge today (read-only)                     |
+| `src/applications/check-applied.mjs`      |    75 | "Have I already applied here?" as machine-readable JSON                  |
+| `src/applications/applications.mjs`       |   195 | List / search / count / delete-with-confirmation / re-export             |
+| `scripts/profile/save-answer.mjs`         |  1106 | **The only door into the fact base**, and every refusal that guards it   |
+| `scripts/profile/apply-profile.mjs`       |   117 | Install a reviewed profile update, proving nothing was silently lost     |
+| `src/profile/profile-gaps.mjs`            |   222 | What the jobs keep demanding that the profile does not evidence          |
+| `src/profile/keyword-coverage.mjs`        |   368 | What they demand that you probably _have_ but never wrote down           |
+| `src/maintenance/archive.mjs`             |   681 | Fold a closed job folder into the database, verified byte for byte       |
+| `src/maintenance/migrate.mjs`             |   270 | Build or top up `jobs/leads.db` from the on-disk sources, and prove it   |
+| `src/maintenance/prune-jobs.mjs`          |   151 | Delete the one file type that is waste at every moment (`*.render.html`) |
+| `src/status.mjs`                          |   152 | The whole-pipeline digest in one call                                    |
 
 One supporting file is documented here too, because nothing in this area makes
 sense without it: `.claude/hooks/guard-profile-shell.mjs` (239 lines), the shell
@@ -113,13 +113,13 @@ one named field.)
 `profile/applications.yaml` is a **YAML** file — a plain-text format for
 structured data, readable by a person. It is written out fresh from the table
 after every change, and it carries a header saying so, produced by
-`exportApplicationsYaml()` in `scripts/lib/db.mjs`:
+`exportApplicationsYaml()` in `src/lib/db.mjs`:
 
 ```yaml
 # APPLICATION LOG — GENERATED, do not edit.
 # Source of truth is the `applications` table in jobs/leads.db.
-# Regenerate: node scripts/applications/applications.mjs export
-# Entries are only ever created by scripts/applications/log-application.mjs, after the
+# Regenerate: node src/applications/applications.mjs export
+# Entries are only ever created by src/applications/log-application.mjs, after the
 # user confirms they submitted the application.
 ```
 
@@ -140,7 +140,7 @@ tables in `jobs/leads.db` have different recoverability, and they are not alike:
 
 `archive.mjs` folds `jobs/<slug>/` into the `documents` table and then **removes
 the directory**. From that moment, the row holds the only copy of those bytes.
-The schema comment in `scripts/lib/db.mjs` states the consequence:
+The schema comment in `src/lib/db.mjs` states the consequence:
 
 ```sql
 -- Nothing rebuilds this table. Unlike leads (re-derivable from a sweep) and
@@ -156,7 +156,7 @@ is writing, and it restores by being put back.
 
 ---
 
-## 1. `scripts/applications/log-application.mjs` — recording a submission
+## 1. `src/applications/log-application.mjs` — recording a submission
 
 ### 1.1 What it is and why it exists
 
@@ -176,7 +176,7 @@ follow-up cadence, gap-analysis weighting — would be reasoning about fiction.
 ### 1.2 How you run it
 
 ```bash
-node scripts/applications/log-application.mjs tebra-fullstack \
+node src/applications/log-application.mjs tebra-fullstack \
   --company "Tebra" --title "Full Stack Engineer" \
   --url "https://boards.greenhouse.io/tebra/jobs/1234567"
 ```
@@ -194,7 +194,7 @@ result), and exits with code 1:
 ```
 Already logged: applied to Tebra — Full Stack Engineer on 2026-08-05 (slug tebra-fullstack).
 Change it with update-application.mjs, or remove it with:
-  node scripts/applications/applications.mjs remove tebra-fullstack --confirm
+  node src/applications/applications.mjs remove tebra-fullstack --confirm
 ```
 
 ### 1.3 Everything it exposes
@@ -277,7 +277,7 @@ in front of it. A _flag_ is the `--name value` form.
    commands that can change it.
 
 7. **Write.** With `--file`, the whole YAML document is rewritten. Otherwise
-   `writeApplication(entry, dumpYaml)` from `scripts/lib/db.mjs` performs an
+   `writeApplication(entry, dumpYaml)` from `src/lib/db.mjs` performs an
    _upsert_ (insert-or-update: insert a new row, or overwrite the existing one
    with the same key) and then regenerates `profile/applications.yaml`.
 
@@ -349,8 +349,8 @@ of `writeApplication`.
 
 ### 1.7 Depends on / depended on by
 
-Imports `node:fs`, `loadYamlFile`/`dumpYaml` from `scripts/lib/lib.mjs`, and
-`readApplications`/`writeApplication` from `scripts/lib/db.mjs`.
+Imports `node:fs`, `loadYamlFile`/`dumpYaml` from `src/lib/lib.mjs`, and
+`readApplications`/`writeApplication` from `src/lib/db.mjs`.
 
 Nothing imports it. It is spawned as a command by the `check-applied`,
 `manage-applications` and `apply-job` skills, and by
@@ -358,7 +358,7 @@ Nothing imports it. It is spawned as a command by the `check-applied`,
 
 ---
 
-## 2. `scripts/applications/update-application.mjs` — recording what happened
+## 2. `src/applications/update-application.mjs` — recording what happened
 
 ### 2.1 What it is and why it exists
 
@@ -379,10 +379,10 @@ look permanently unanswered.
 
 ```bash
 # "Tebra rejected me."
-node scripts/applications/update-application.mjs tebra-fullstack --status rejected
+node src/applications/update-application.mjs tebra-fullstack --status rejected
 
 # "I sent the follow-up to Acme on the 3rd."
-node scripts/applications/update-application.mjs acme-frontend --followed-up --date 2026-08-03
+node src/applications/update-application.mjs acme-frontend --followed-up --date 2026-08-03
 ```
 
 Output is one line:
@@ -522,7 +522,7 @@ Invoked as a command by the `follow-up` and `manage-applications` skills.
 
 ---
 
-## 3. `scripts/applications/follow-ups.mjs` — the nudge cadence
+## 3. `src/applications/follow-ups.mjs` — the nudge cadence
 
 ### 3.1 What it is and why it exists
 
@@ -584,7 +584,7 @@ Rows are sorted **most overdue first**:
 ### 3.3 How you run it
 
 ```bash
-node scripts/applications/follow-ups.mjs [--days N] [--json] [--file <path>]
+node src/applications/follow-ups.mjs [--days N] [--json] [--file <path>]
 ```
 
 Real output from this machine (nothing is currently due):
@@ -595,7 +595,7 @@ due=0 threshold=10
 
 That is the **terse** form, which appears whenever output is going to a pipe or
 another program rather than to a person at a terminal (`isTerse()` in
-`scripts/lib/lib.mjs` makes that call). A person at a terminal gets
+`src/lib/lib.mjs` makes that call). A person at a terminal gets
 `Nothing due (threshold 10 days).` instead.
 
 With rows due, terse output is one line each plus a summary:
@@ -678,13 +678,13 @@ Imports `node:path`, `node:url`, `isTerse` from `lib.mjs`, and `readApplications
 from `db.mjs`. (It also imports `node:fs` and `loadYamlFile`, both unused — dead
 imports left over from the YAML era.)
 
-Imported as a library by **`scripts/status.mjs`**, which calls `dueFollowUps`
+Imported as a library by **`src/status.mjs`**, which calls `dueFollowUps`
 directly, and by `tests/applications/follow-ups.test.mjs`. Invoked as a command
 by the `follow-up` skill.
 
 ---
 
-## 4. `scripts/applications/check-applied.mjs` — the duplicate guard
+## 4. `src/applications/check-applied.mjs` — the duplicate guard
 
 ### 4.1 What it is and why it exists
 
@@ -696,7 +696,7 @@ as an early step; the `check-applied` skill runs it before anything else.
 ### 4.2 How you run it
 
 ```bash
-node scripts/applications/check-applied.mjs "Tebra" --today 2026-08-05
+node src/applications/check-applied.mjs "Tebra" --today 2026-08-05
 ```
 
 Output is **always JSON on stdout** — this script has no terse or prose mode and
@@ -800,7 +800,7 @@ Nothing imports it. Spawned by the `check-applied` and `apply-job` skills.
 
 ---
 
-## 5. `scripts/applications/applications.mjs` — the read/write surface
+## 5. `src/applications/applications.mjs` — the read/write surface
 
 ### 5.1 What it is and why it exists
 
@@ -823,17 +823,17 @@ This is a **sub-command** CLI — the first word after the script name chooses w
 it does.
 
 ```bash
-node scripts/applications/applications.mjs list [--status s] [--company X] [--json]
-node scripts/applications/applications.mjs find "<company|title|slug>" [--json]
-node scripts/applications/applications.mjs stats [--json]
-node scripts/applications/applications.mjs remove <slug> --confirm
-node scripts/applications/applications.mjs export
+node src/applications/applications.mjs list [--status s] [--company X] [--json]
+node src/applications/applications.mjs find "<company|title|slug>" [--json]
+node src/applications/applications.mjs stats [--json]
+node src/applications/applications.mjs remove <slug> --confirm
+node src/applications/applications.mjs export
 ```
 
 Real output from this machine:
 
 ```
-$ node scripts/applications/applications.mjs stats
+$ node src/applications/applications.mjs stats
 total=21 companies=14 first=2026-07-27 latest=2026-08-05 applied=21
 ```
 
@@ -1076,7 +1076,7 @@ The rule for this script, verbatim from the hook:
 
 ```js
 if (
-  /\bnode(?:\.exe)?\b[^|;&]*\bscripts\/profile\/(?:save-answer|apply-profile)\.mjs/i.test(c)
+  /\bnode(?:\.exe)?\b[^|;&]*\bsrc\/profile\/(?:save-answer|apply-profile)\.mjs/i.test(c)
 ) {
   const hasExplicitFile = /(?:^|\s)--file[\s=]/.test(c)
   const hasApproval = /(?:^|\s)--user-approved(?:[\s=]|$)/.test(c)
@@ -1197,7 +1197,7 @@ const scan = {
 const hostile = [...scan.q.findings, ...scan.a.findings].filter(isDisqualifying)
 ```
 
-`sanitizeUntrusted` (in `scripts/lib/untrusted.mjs`) returns cleaned text plus a
+`sanitizeUntrusted` (in `src/lib/untrusted.mjs`) returns cleaned text plus a
 list of _findings_ — things it noticed. Only eight kinds of finding count as
 disqualifying, listed in `DISQUALIFYING_KINDS`:
 
@@ -1525,7 +1525,7 @@ side:
 // of live writer processes. EPERM/EACCES/EBUSY belong on the poll path.
 ```
 
-That classification lives once, in `scripts/lib/lock.mjs` as
+That classification lives once, in `src/lib/lock.mjs` as
 `isRetryableCreateError`.
 
 **The deadline is checked before any branch that can loop.** _"It used to be
@@ -1701,7 +1701,7 @@ Nothing imports this script. It is guarded by
 `.claude/hooks/guard-profile-shell.mjs` and tested by
 `tests/profile/save-answer.test.mjs` and
 `tests/hooks/guard-profile-shell.test.mjs`. It is named as the command to run by
-`keyword-coverage.mjs`, `scripts/apply/pending-questions.mjs`, and the
+`keyword-coverage.mjs`, `src/apply/pending-questions.mjs`, and the
 `profile-gaps` and `apply-job` skills — none of which run it automatically.
 
 ---
@@ -1791,7 +1791,7 @@ No exported functions.
 7. Otherwise: copy the target to `profile/profile.backup.yaml`, copy the proposal
    over the target, **delete the proposal**, and print the JSON summary.
 
-**What counts as a "fact".** `buildFactIndex` in `scripts/lib/lib.mjs` walks the
+**What counts as a "fact".** `buildFactIndex` in `src/lib/lib.mjs` walks the
 profile and registers one entry per `id`. Using the checked-in template
 `profile/profile.example.yaml` for shape:
 
@@ -1844,9 +1844,9 @@ proposal.
 
 > **Known defect (2026-08-05 audit).** It never checks
 > `meta.approved_by_user`. That flag must be `true` before any real tailoring
-> happens, and it _is_ checked by `scripts/apply/automatability.mjs`,
-> `scripts/auto/preflight.mjs`, `scripts/auto/submit.mjs` and
-> `scripts/documents/assemble-resume.mjs` — but not by the script that installs
+> happens, and it _is_ checked by `src/apply/automatability.mjs`,
+> `src/auto/preflight.mjs`, `src/auto/submit.mjs` and
+> `src/documents/assemble-resume.mjs` — but not by the script that installs
 > the profile, so a proposal setting it back to `false` installs without comment.
 
 > **Known defect (2026-08-05 audit).** The shell guard denies the documented
@@ -1867,7 +1867,7 @@ Imports `node:fs`, `node:path`, and `loadYamlFile`/`buildFactIndex` from
 
 ---
 
-## 8. `scripts/profile/profile-gaps.mjs` — what you are missing
+## 8. `src/profile/profile-gaps.mjs` — what you are missing
 
 ### 8.1 What it is and why it exists
 
@@ -1887,7 +1887,7 @@ technology lexicon, which is why several other scripts import from it.
 ### 8.2 How you run it
 
 ```bash
-node scripts/profile/profile-gaps.mjs [--json] [--min-demand N] \
+node src/profile/profile-gaps.mjs [--json] [--min-demand N] \
   [--profile <path>] [--jobs-dir <path>] [--leads <path>] [--applications <path>]
 ```
 
@@ -1907,7 +1907,7 @@ export { TECH_LEXICON, extractTech } from "../lib/keywords.mjs"
 
 Re-exported rather than moved, and the comment records the history — there used
 to be two competing lists that had already drifted apart, so they were unified in
-`scripts/lib/keywords.mjs` and re-exported here so existing importers kept
+`src/lib/keywords.mjs` and re-exported here so existing importers kept
 working.
 
 ```js
@@ -1980,7 +1980,7 @@ Reads `profile/profile.yaml`, every `jobs/<slug>/job.json`, the `leads` and
 `lead_keywords` tables, and the `applications` table. **Writes nothing.**
 
 `jobs/<slug>/job.json` has this shape, as scaffolded by
-`scripts/documents/new-job.mjs`:
+`src/documents/new-job.mjs`:
 
 ```json
 {
@@ -2020,16 +2020,16 @@ Imports `node:fs`, `node:path`, `node:url`, `loadYamlFile`/`isTerse` from
 `lib.mjs`, several readers from `db.mjs`, and `TECH_LEXICON`/`extractTech` from
 `lib/keywords.mjs`.
 
-Imported by `scripts/maintenance/migrate.mjs` (`extractTech`),
-`scripts/leads/screen.mjs`, `scripts/leads/recommend.mjs`,
-`scripts/leads/prep-queue.mjs`, `scripts/leads/gate-audit.mjs`,
-`scripts/leads/find-jobs.mjs`, `scripts/documents/keyword-plan.mjs`,
-`scripts/documents/assemble-resume.mjs`,
-`scripts/profile/keyword-coverage.mjs`, and its own test.
+Imported by `src/maintenance/migrate.mjs` (`extractTech`),
+`src/leads/screen.mjs`, `src/leads/recommend.mjs`,
+`src/leads/prep-queue.mjs`, `src/leads/gate-audit.mjs`,
+`src/leads/find-jobs.mjs`, `src/documents/keyword-plan.mjs`,
+`src/documents/assemble-resume.mjs`,
+`src/profile/keyword-coverage.mjs`, and its own test.
 
 ---
 
-## 9. `scripts/profile/keyword-coverage.mjs` — what you have but never wrote down
+## 9. `src/profile/keyword-coverage.mjs` — what you have but never wrote down
 
 ### 9.1 What it is and why it exists
 
@@ -2073,7 +2073,7 @@ And the rule that keeps it inside hard rule 2:
 ### 9.2 How you run it
 
 ```bash
-node scripts/profile/keyword-coverage.mjs [--min-demand 2] [--top 40] \
+node src/profile/keyword-coverage.mjs [--min-demand 2] [--top 40] \
   [--include-dismissed] [--job jobs/<slug>/job.json] [--json] \
   [--profile <p>] [--answers <a>] [--leads <l>]
 ```
@@ -2197,14 +2197,14 @@ the `leads` and `lead_keywords` tables, and optionally one
 
 Imports `node:fs`, `node:path`, `node:url`, `loadYamlFile`/`isTerse`/`evidenceText`
 from `lib.mjs`, `extractTech`/`adjacentTo`/`SKILL_BY_NAME` from
-`lib/keywords.mjs`, `splitRequirements` from `scripts/leads/fit.mjs`,
+`lib/keywords.mjs`, `splitRequirements` from `src/leads/fit.mjs`,
 `profileText` from `profile-gaps.mjs`, and four readers from `db.mjs`. Imported
 by `tests/profile/keyword-coverage.test.mjs`. Invoked by the `profile-gaps`
 skill.
 
 ---
 
-## 10. `scripts/maintenance/archive.mjs` — folding closed work away
+## 10. `src/maintenance/archive.mjs` — folding closed work away
 
 ### 10.1 What it is and why it exists
 
@@ -2228,12 +2228,12 @@ a hundred folders to see what was going on, and the audit trail went with them".
 ### 10.2 How you run it
 
 ```bash
-node scripts/maintenance/archive.mjs list [--json]
-node scripts/maintenance/archive.mjs show <slug> [--json]
-node scripts/maintenance/archive.mjs archive <slug> [--force]
-node scripts/maintenance/archive.mjs archive --closed [--dry-run]
-node scripts/maintenance/archive.mjs restore <slug> [--to <dir>] [--force]
-node scripts/maintenance/archive.mjs purge [--days N] [--apply] [--json]
+node src/maintenance/archive.mjs list [--json]
+node src/maintenance/archive.mjs show <slug> [--json]
+node src/maintenance/archive.mjs archive <slug> [--force]
+node src/maintenance/archive.mjs archive --closed [--dry-run]
+node src/maintenance/archive.mjs restore <slug> [--to <dir>] [--force]
+node src/maintenance/archive.mjs purge [--days N] [--apply] [--json]
 # plus [--jobs-dir <path>] [--db <path>] [--applications <path>] [--limits <path>]
 ```
 
@@ -2457,12 +2457,12 @@ archive never pulls megabytes into memory), and `deleteDocuments`.
 
 Imports `node:fs`, `node:path`, `node:crypto`, `node:url`, `isTerse` from
 `lib.mjs`, seven functions from `db.mjs`, and `loadLimits` from
-`scripts/leads/find-jobs.mjs`. Imported by `tests/maintenance/archive.test.mjs`.
+`src/leads/find-jobs.mjs`. Imported by `tests/maintenance/archive.test.mjs`.
 Invoked by the `manage-applications` skill.
 
 ---
 
-## 11. `scripts/maintenance/migrate.mjs` — build the store, and prove it
+## 11. `src/maintenance/migrate.mjs` — build the store, and prove it
 
 ### 11.1 What it is and why it exists
 
@@ -2475,7 +2475,7 @@ It is deliberately **not** a migration framework:
 
 ```js
 // FLAT, NOT VERSIONED. There is no migration chain and no schema_version
-// table: scripts/lib/db.mjs declares the whole schema with CREATE TABLE IF NOT
+// table: src/lib/db.mjs declares the whole schema with CREATE TABLE IF NOT
 // EXISTS, and this script re-imports from the files that are still the
 // user-owned source of truth. Running it twice is a no-op … A single-user tool
 // whose inputs are all re-derivable does not need incremental migrations — it
@@ -2487,10 +2487,10 @@ _Idempotent_ means running it twice has the same effect as running it once.
 ### 11.2 How you run it
 
 ```bash
-node scripts/maintenance/migrate.mjs [--dry-run] [--db <path>] \
+node src/maintenance/migrate.mjs [--dry-run] [--db <path>] \
   [--leads-json <path>] [--applications <path>] [--reset-queue]
 
-node scripts/maintenance/migrate.mjs --export <file>   # point-in-time lead snapshot
+node src/maintenance/migrate.mjs --export <file>   # point-in-time lead snapshot
 ```
 
 Output:
@@ -2638,7 +2638,7 @@ it. Tested by `tests/maintenance/migrate.test.mjs`. Invoked by the
 
 ---
 
-## 12. `scripts/maintenance/prune-jobs.mjs` — the one safe deletion
+## 12. `src/maintenance/prune-jobs.mjs` — the one safe deletion
 
 ### 12.1 What it is and why it exists — and why it does so little
 
@@ -2646,7 +2646,7 @@ The header is a good example of a script being deliberately shrunk:
 
 ```js
 // This used to also drop PDFs once an application was closed and old.
-// scripts/maintenance/archive.mjs supersedes that … Two rules competing to
+// src/maintenance/archive.mjs supersedes that … Two rules competing to
 // delete the same files, on different triggers, is how a workspace loses a PDF
 // that its archive row then records as regenerable-but-never-stored.
 //
@@ -2665,13 +2665,13 @@ The header is a good example of a script being deliberately shrunk:
 ### 12.2 How you run it
 
 ```bash
-node scripts/maintenance/prune-jobs.mjs [--apply] [--jobs-dir <path>] [--json]
+node src/maintenance/prune-jobs.mjs [--apply] [--jobs-dir <path>] [--json]
 ```
 
 Dry run by default. Real output from this machine (truncated):
 
 ```
-$ node scripts/maintenance/prune-jobs.mjs
+$ node src/maintenance/prune-jobs.mjs
 render-valkey-product-engineer/resume.render.html|regenerable intermediate
 runpod-software-engineer-full-stack/resume.render.html|regenerable intermediate
 prune=29 bytes=165636 applied=no
@@ -2726,7 +2726,7 @@ by `tests/maintenance/prune-jobs.test.mjs`.
 
 ---
 
-## 13. `scripts/status.mjs` — the whole-pipeline digest
+## 13. `src/status.mjs` — the whole-pipeline digest
 
 ### 13.1 What it is and why it exists
 
@@ -2737,13 +2737,13 @@ by `tests/maintenance/prune-jobs.test.mjs`.
 ```
 
 It is the one cross-cutting script, which is why it sits at the root of
-`scripts/` rather than in a domain folder. It is read-only.
+`src/` rather than in a domain folder. It is read-only.
 
 ### 13.2 How you run it, and its real output
 
 ```bash
-node scripts/status.mjs [--json] [--days N] [--cadence-hours H]
-node scripts/status.mjs --db <path> --stop-path <path>   # fixtures
+node src/status.mjs [--json] [--days N] [--cadence-hours H]
+node src/status.mjs --db <path> --stop-path <path>   # fixtures
 ```
 
 Run on this machine on 2026-08-05, output going to a pipe (so, terse form):
@@ -2864,11 +2864,11 @@ declaration.
 
 > **Known defect (2026-08-05 audit).** `ROOT` is computed as
 > `path.resolve(dirname(import.meta.url), "..", "..")`. For a file at
-> `scripts/status.mjs` that resolves **one directory above the repository**. It
+> `src/status.mjs` that resolves **one directory above the repository**. It
 > is harmless only because nothing uses it: `ROOT`, the `readJson` helper, and
 > the `loadYamlFile` import are all dead code here. (The identical line in
-> `scripts/profile/profile-gaps.mjs`, `scripts/maintenance/prune-jobs.mjs` and
-> `scripts/maintenance/archive.mjs` is correct, because those files are one level
+> `src/profile/profile-gaps.mjs`, `src/maintenance/prune-jobs.mjs` and
+> `src/maintenance/archive.mjs` is correct, because those files are one level
 > deeper.)
 
 > **Known defect (2026-08-05 audit), currently harmless.** `tally` defaults a

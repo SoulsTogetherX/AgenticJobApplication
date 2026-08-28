@@ -39,8 +39,8 @@
 // the row is the record of it.
 //
 // Usage:
-//   node scripts/auto/requeue.mjs --list
-//   node scripts/auto/requeue.mjs <slug> [--reason "why"] [--db <file>]
+//   node src/auto/requeue.mjs --list
+//   node src/auto/requeue.mjs <slug> [--reason "why"] [--db <file>]
 //
 // Exit codes: 0 ok, 1 nothing matched, 2 usage.
 import path from "node:path"

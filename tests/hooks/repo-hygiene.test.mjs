@@ -61,7 +61,7 @@ test("nothing under tests/ is gitignored", (t) => {
 
 // Every hook wired in .claude/settings.json must actually exist on disk.
 //
-// Written on 2026-07-31, when guard-profile-shell.mjs moved from scripts/hooks/
+// Written on 2026-07-31, when guard-profile-shell.mjs moved from src/hooks/
 // to .claude/hooks/ and settings.json was repointed by hand. If that edit had
 // been missed, or a later reorg moves a hook again, the guard is simply GONE:
 // Claude Code cannot run a file that is not there, and nothing else in the
@@ -138,7 +138,7 @@ test("both fact-base guards are wired, and the shell guard covers Bash AND Power
     commandsFor("Bash"),
     /\.claude\/hooks\/guard-profile-shell\.mjs/,
     "the shell guard must be wired from .claude/hooks/ (agent-unwritable), " +
-      "not from scripts/hooks/ where the agents it constrains could edit it",
+      "not from src/hooks/ where the agents it constrains could edit it",
   )
   // The git branch policy still has to be there too.
   assert.match(commandsFor("Bash"), /guard-bash\.mjs/)

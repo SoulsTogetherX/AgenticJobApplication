@@ -4,7 +4,7 @@
 // This is the Playwright-side half of scanning. The scanner itself
 // (.claude/skills/apply-job/scan-page.js) is the single source of truth and
 // genuinely runs PAGE-side; this file never does. Everything here is a
-// Playwright call, and it is an ordinary ES module: scripts/apply/browser.mjs
+// Playwright call, and it is an ordinary ES module: src/apply/browser.mjs
 // imports it. Nothing is ever read back out of the page except DATA (the scan
 // result), which is never eval'd.
 //

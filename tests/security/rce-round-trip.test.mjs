@@ -30,8 +30,8 @@ import path from "node:path"
 import vm from "node:vm"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { buildPlan, buildDriverSource } from "../../scripts/apply/fill-plan.mjs"
-import { untrustScan } from "../../scripts/apply/scan-engine.mjs"
+import { buildPlan, buildDriverSource } from "../../src/apply/fill-plan.mjs"
+import { untrustScan } from "../../src/apply/scan-engine.mjs"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..", "..")
@@ -179,7 +179,7 @@ test("THE ARTIFACT ON DISK: the real jobs/<slug>/fill-plan.js is inert against t
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts/apply/fill-plan.mjs"),
+      path.join(ROOT, "src/apply/fill-plan.mjs"),
       slug,
       "--jobs-dir",
       dir,
@@ -242,14 +242,14 @@ test("THE ARTIFACT ON DISK: the real jobs/<slug>/fill-plan.js is inert against t
 })
 
 test("no product code reads an engine source back out of a page", () => {
-  // "Nothing found" needs a method. This walks every .mjs under scripts/apply
+  // "Nothing found" needs a method. This walks every .mjs under src/apply
   // plus the two MCP-side scripts, strips comments (the incident record
   // legitimately NAMES __ajFillSrc), and asserts no live read remains.
   const files = [
     ...fs
-      .readdirSync(path.join(ROOT, "scripts/apply"))
+      .readdirSync(path.join(ROOT, "src/apply"))
       .filter((f) => f.endsWith(".mjs"))
-      .map((f) => path.join(ROOT, "scripts/apply", f)),
+      .map((f) => path.join(ROOT, "src/apply", f)),
     path.join(ROOT, ".claude/skills/apply-job/scan.driver.mjs"),
   ]
   assert.ok(
@@ -270,7 +270,7 @@ test("no product code reads an engine source back out of a page", () => {
 })
 
 test("FINDING (w2-engine): .claude/skills/apply-job/fill-page.js still publishes window.__ajFillSrc", () => {
-  // The file is dead — engineSandboxSource() reads scripts/apply/fill-engine.mjs
+  // The file is dead — engineSandboxSource() reads src/apply/fill-engine.mjs
   // and nothing loads fill-page.js. But it is still on disk, still assigns the
   // global the RCE turned on, and its own header still describes the round trip
   // as current behaviour. A dead file that documents a live exploit is how the
@@ -299,7 +299,7 @@ test("FINDING (w2-engine): .claude/skills/apply-job/fill-page.js still publishes
       }
     }
   }
-  scan(path.join(ROOT, "scripts"))
+  scan(path.join(ROOT, "src"))
   assert.deepEqual(
     referrers,
     [],
@@ -416,7 +416,7 @@ test("FINDING (w3-resolution): CARRIER 1 — a scan FILE on disk asserts its own
   const res = spawnSync(
     process.execPath,
     [
-      path.join(ROOT, "scripts/apply/fill-plan.mjs"),
+      path.join(ROOT, "src/apply/fill-plan.mjs"),
       slug,
       "--jobs-dir",
       dir,

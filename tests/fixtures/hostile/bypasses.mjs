@@ -1,5 +1,5 @@
 // The bypass corpus: 25 ways a job posting can carry an instruction past
-// scripts/lib/untrusted.mjs.
+// src/lib/untrusted.mjs.
 //
 // THESE ARE FIXTURES, NOT TOOLS. Nothing here runs against anything real. Each
 // entry is a string a hostile board could put in a posting body, plus the HTML

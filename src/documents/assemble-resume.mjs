@@ -25,11 +25,11 @@
 // and sanitizeUntrusted removes the payload before extractTech sees it.
 //
 // Usage:
-//   node scripts/documents/assemble-resume.mjs <slug> [--jobs-dir jobs]
+//   node src/documents/assemble-resume.mjs <slug> [--jobs-dir jobs]
 //        [--profile profile/profile.yaml] [--answers profile/answers.yaml]
 //        [--limits docs/application-limits.yaml] [--budget 3800]
 //        [--out <file>] [--stdout] [--json] [--diff] [--no-selection-file]
-//   node scripts/documents/assemble-resume.mjs <slug> --audit-rephrase <file.md>
+//   node src/documents/assemble-resume.mjs <slug> --audit-rephrase <file.md>
 //
 // WHAT THE POSTING SELECTS. Bullets, by keyword coverage — and, since
 // 2026-08-17, WHICH summary variant and WHICH skills groups. A profile may bank
@@ -966,7 +966,7 @@ export function main(argv = process.argv.slice(2)) {
 // swallowed whatever followed it, and the documented
 // `assemble-resume.mjs --json <slug>` died on "usage:". It also used
 // `indexOf`, which finds the FIRST occurrence of a repeated token rather than
-// the one being asked about. positionals() in scripts/lib/args.mjs exists for
+// the one being asked about. positionals() in src/lib/args.mjs exists for
 // exactly this and handles `--flag=value` and the `--` terminator besides.
 const ASSEMBLE_VALUE_FLAGS = [
   "--answers",

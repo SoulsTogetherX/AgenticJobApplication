@@ -5,7 +5,7 @@
 // Deterministic similarity only — it recommends, it never reuses anything by
 // itself, and the user always approves a reuse.
 //
-// Usage: node scripts/documents/reuse-check.mjs <slug> [--dir jobs] [--top 3]
+// Usage: node src/documents/reuse-check.mjs <slug> [--dir jobs] [--top 3]
 //        [--threshold 0.75] [--json] [--cache auto|on|off] [--db <path>]
 //
 // Score = 0.5 * title similarity + 0.5 * tech-stack overlap, against every

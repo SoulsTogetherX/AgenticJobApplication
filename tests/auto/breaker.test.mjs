@@ -17,7 +17,7 @@ import {
   makeBreaker,
   movesBreaker,
   isTransient,
-} from "../../scripts/auto/breaker.mjs"
+} from "../../src/auto/breaker.mjs"
 
 // A clock the tests own. A timed backoff tested against the real clock is a
 // test that sleeps, and a test that sleeps is one people delete.

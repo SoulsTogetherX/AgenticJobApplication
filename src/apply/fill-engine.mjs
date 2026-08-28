@@ -1,4 +1,4 @@
-// Deterministic form filler. Executes a plan built by scripts/apply/fill-plan.mjs;
+// Deterministic form filler. Executes a plan built by src/apply/fill-plan.mjs;
 // makes no decisions of its own, so the model is not in this loop.
 //
 // It is an ordinary ES module with one default export, and it runs
@@ -17,8 +17,8 @@
 // property at the bottom of this comment was not structural while the code path
 // round-tripped through the page. Nothing is read back out of the page any
 // more: the two consumers are
-//   - scripts/apply/browser.mjs, which simply `import`s this module, and
-//   - scripts/apply/fill-plan.mjs, which reads this file's TEXT off its own
+//   - src/apply/browser.mjs, which simply `import`s this module, and
+//   - src/apply/fill-plan.mjs, which reads this file's TEXT off its own
 //     disk (an ordinary Node process, outside any sandbox) and embeds it as a
 //     string in the generated jobs/<slug>/fill-plan.js bootstrap, because the
 //     Playwright MCP vm has no working `import` (see the sandbox notes below).
@@ -42,8 +42,8 @@
 // a CSP-locked page. Verified live: this loads on both Greenhouse (addScriptTag
 // happened to work there too) and Ashby (addScriptTag fails outright; this
 // does not). Do not "fix" the loading path back to addScriptTag/addInitScript
-// — see scripts/apply/fill-plan.mjs's buildDriverSource() and
-// scripts/apply/scan-engine.mjs for the other half.
+// — see src/apply/fill-plan.mjs's buildDriverSource() and
+// src/apply/scan-engine.mjs for the other half.
 //
 // Sandbox notes: the Playwright MCP vm context (browser_run_code_unsafe) has
 // `page` and the standard built-ins, but NO setTimeout, console, or require.
@@ -693,7 +693,7 @@ export default async function fillPage(page, plan, opts = {}) {
   // every fill.
   //
   // `ajFocusedOptionProbe` names this evaluate for the instrumented page in
-  // scripts/dev/bench-apply.mjs, exactly as `ajSettleProbe` names the settle
+  // src/dev/bench-apply.mjs, exactly as `ajSettleProbe` names the settle
   // probe: the double must be able to answer it in its own terms.
   const focusedOptionShown = () =>
     page

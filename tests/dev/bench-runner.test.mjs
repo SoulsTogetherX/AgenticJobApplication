@@ -20,14 +20,14 @@ import {
   COUNTER_PRELOAD,
   ledgerEntry,
   aggregate,
-} from "../../scripts/dev/bench-runner.mjs"
+} from "../../src/dev/bench-runner.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
 )
-const RUNNER = path.join(ROOT, "scripts", "dev", "bench-runner.mjs")
+const RUNNER = path.join(ROOT, "src", "dev", "bench-runner.mjs")
 
 function tmp(t, name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `aj-${name}-`))
@@ -79,7 +79,7 @@ test("the counter does NOT fire on this repo's own deterministic scripts", (t) =
   const c = underCounter(
     t,
     `import { execFileSync } from "node:child_process"
-     execFileSync(process.execPath, [${JSON.stringify(path.join(ROOT, "scripts", "status.mjs"))}, "--json"], { encoding: "utf8" })`,
+     execFileSync(process.execPath, [${JSON.stringify(path.join(ROOT, "src", "status.mjs"))}, "--json"], { encoding: "utf8" })`,
   )
   assert.equal(c.spawns, 1, "it is still a spawn, and spawns_per_app counts it")
   assert.equal(
@@ -239,7 +239,7 @@ test("the CLI installs its own counter, so the gate's command needs no extra fla
 
 test("--json refuses to bank a number from a dirty measured tree", (t) => {
   // Dirty the tree by touching a measured file, then put it back byte-for-byte.
-  const target = path.join(ROOT, "scripts", "apply", "fill-plan.mjs")
+  const target = path.join(ROOT, "src", "apply", "fill-plan.mjs")
   const original = fs.readFileSync(target)
   t.after(() => fs.writeFileSync(target, original))
   fs.appendFileSync(target, "\n// bench-runner dirty-tree probe\n")

@@ -2,7 +2,7 @@
 // Render a tailored markdown document to PDF via local Edge/Chrome headless.
 // Deterministic, no LLM, no network. Fact annotations are stripped first.
 //
-// Usage: node scripts/documents/render-pdf.mjs <input.md> <output.pdf> [--letter] [--css templates/document.css]
+// Usage: node src/documents/render-pdf.mjs <input.md> <output.pdf> [--letter] [--css templates/document.css]
 // Env:   PDF_BROWSER=<path to msedge.exe/chrome.exe> overrides browser discovery.
 import fs from "node:fs"
 import os from "node:os"
@@ -13,7 +13,7 @@ import { assertKnownFlags } from "../lib/args.mjs"
 
 const args = process.argv.slice(2)
 // STRICT. this command renders a PDF and spawns a browser, so an unrecognised flag must not
-// be ignored. See scripts/lib/args.mjs.
+// be ignored. See src/lib/args.mjs.
 try {
   assertKnownFlags(args, {
     known: ["--css", "--letter", "--help"],

@@ -24,7 +24,7 @@
 // input catches them; a font-level regression inside Chrome would not be caught.
 //
 // Usage:
-//   node scripts/documents/ats-lint.mjs <resume.md> [--html <f.render.html>]
+//   node src/documents/ats-lint.mjs <resume.md> [--html <f.render.html>]
 //        [--pdf <f.pdf>] [--plan jobs/<slug>/keywords.json] [--json]
 // Exit: 0 clean (warnings allowed), 1 problems found, 2 usage error.
 import fs from "node:fs"

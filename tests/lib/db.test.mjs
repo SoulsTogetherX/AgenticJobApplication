@@ -25,7 +25,7 @@ import {
   upsertApplications,
   updateApplication,
   readApplications,
-} from "../../scripts/lib/db.mjs"
+} from "../../src/lib/db.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -156,7 +156,7 @@ test("four processes writing the same store at once all get their rows in", asyn
   fs.writeFileSync(
     worker,
     `import { openDb, upsertLeads, setLeadStatus } from ${JSON.stringify(
-      pathToFileURL(path.join(ROOT, "scripts", "lib", "db.mjs")).href,
+      pathToFileURL(path.join(ROOT, "src", "lib", "db.mjs")).href,
     )}
 const [file, tag] = process.argv.slice(2)
 const db = openDb(file)
@@ -567,7 +567,7 @@ test("two concurrent writers both keep their patch", async (t) => {
   ])
   db.close()
 
-  const dbUrl = pathToFileURL(path.join(ROOT, "scripts", "lib", "db.mjs")).href
+  const dbUrl = pathToFileURL(path.join(ROOT, "src", "lib", "db.mjs")).href
   const body = `
     import { workerData, parentPort } from "node:worker_threads"
     const { openDb, updateApplication } = await import(${JSON.stringify(dbUrl)})

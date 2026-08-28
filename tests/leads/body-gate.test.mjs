@@ -10,7 +10,7 @@ import assert from "node:assert/strict"
 import {
   bodyDisqualifiers,
   excludeBodyPattern,
-} from "../../scripts/leads/find-jobs.mjs"
+} from "../../src/leads/find-jobs.mjs"
 
 const LIMITS = {
   location: {

@@ -122,14 +122,14 @@ containing guesses is broken, even though it looks more productive.
 
 ### 2.1 FIND — get postings into the store
 
-**Entry point (script):** `scripts/leads/find-jobs.mjs`
+**Entry point (script):** `src/leads/find-jobs.mjs`
 **Entry point (conversation):** the `find-jobs` skill, `.claude/skills/find-jobs/SKILL.md`
 
 A _script_ here means a file of ordinary program code that you run from the
 command line and that finishes and exits. Running one looks like this:
 
 ```bash
-node scripts/leads/find-jobs.mjs search --source all --query "full stack"
+node src/leads/find-jobs.mjs search --source all --query "full stack"
 ```
 
 `node` is the program that runs JavaScript files outside a browser. The rest is
@@ -168,7 +168,7 @@ To see the best of what is stored, ranked by an ordinary scoring formula rather
 than by anyone's opinion:
 
 ```bash
-node scripts/leads/recommend.mjs --top 10
+node src/leads/recommend.mjs --top 10
 ```
 
 **Where it stops:** finding never applies to anything. It only fills the store.
@@ -177,7 +177,7 @@ node scripts/leads/recommend.mjs --top 10
 
 **Entry point (conversation):** the `tailor-resume` and `tailor-cover-letter`
 skills
-**Entry point (script chain):** `scripts/documents/new-job.mjs` →
+**Entry point (script chain):** `src/documents/new-job.mjs` →
 `keyword-plan.mjs` → `assemble-resume.mjs` → `verify-claims.mjs` → `render-pdf.mjs`
 
 Each job gets its own folder, `jobs/<slug>/`. A **slug** is a short, safe
@@ -236,7 +236,7 @@ of calls rather than dozens:
   slot — including opening each dropdown to read its real options. It stamps
   every control with an attribute like `data-aj="f7"` so the fill step can find
   it again precisely.
-- **One plan.** `scripts/apply/fill-plan.mjs` takes that inventory plus your fact
+- **One plan.** `src/apply/fill-plan.mjs` takes that inventory plus your fact
   base and decides, per field, one of three things: fill it, skip it, or defer it
   to you with a reason.
 - **One approval message.** Everything needing a human decision is bundled into a
@@ -252,10 +252,10 @@ The measured baseline before this design existed was roughly 30 browser calls an
 eight minutes for a single Greenhouse form.
 
 **The unattended path — it runs on its own.**
-**Entry point:** `scripts/auto/cycle.mjs`, which calls `scripts/auto/auto-apply.mjs`
+**Entry point:** `src/auto/cycle.mjs`, which calls `src/auto/auto-apply.mjs`
 
 ```bash
-node scripts/auto/cycle.mjs --top 10
+node src/auto/cycle.mjs --top 10
 ```
 
 One cycle: search, screen, pick the top leads, prepare documents for each, then
@@ -420,7 +420,7 @@ rather than _guard the field_.
 ### 3.5 The checker: `verify-claims.mjs`
 
 ```bash
-node scripts/documents/verify-claims.mjs resume jobs/<slug>/resume.md --job jobs/<slug>/job.json
+node src/documents/verify-claims.mjs resume jobs/<slug>/resume.md --job jobs/<slug>/job.json
 ```
 
 It reads the finished markdown, builds an index of every fact from your two YAML
@@ -525,7 +525,7 @@ out on a document with your name on it.
 ### 4.2 What actually happens to it, step by step
 
 **Step 1 — it is scrubbed at ingest, before the HTML is flattened.**
-`scripts/lib/untrusted.mjs` runs over the raw markup. The ordering is
+`src/lib/untrusted.mjs` runs over the raw markup. The ordering is
 load-bearing and was a real bug once: an older version ran _after_ the HTML had
 been flattened into plain text, by which point `display:none` no longer existed
 and the hidden payload had already been promoted to ordinary visible prose.
@@ -543,7 +543,7 @@ was there and roughly how big it was, never what it said — so reading the
 findings can never re-expose an agent to the attack.
 
 **Step 3 — eight kinds mean "hostile", the rest mean "messy".** The distinction
-is in `DISQUALIFYING_KINDS` in `scripts/lib/untrusted.mjs`:
+is in `DISQUALIFYING_KINDS` in `src/lib/untrusted.mjs`:
 
 ```
 override_instructions      role_reassignment
@@ -585,7 +585,7 @@ for coverage. The guarantee is rule 1 plus R6: **a claim your fact base cannot
 back never survives verification, however it was proposed.**
 
 > **Known defect (2026-08-05 audit).** The L3 rejection path in
-> `scripts/leads/risk.mjs` cannot currently fire on a _stored_ lead. `scoreRisk`
+> `src/leads/risk.mjs` cannot currently fire on a _stored_ lead. `scoreRisk`
 > re-scans `lead.description` — but that text has already been through the ingest
 > scrubber, so the payload has been replaced by `[redacted: …]` and there is
 > nothing left to match. The evidence survives on the lead as
@@ -615,7 +615,7 @@ Here is one realistic session, with the actual thing that runs at each step.
 **9:00 — "What's the state of things?"**
 
 ```bash
-node scripts/status.mjs
+node src/status.mjs
 ```
 
 One deterministic digest of the whole pipeline: how many leads by status, how
@@ -678,13 +678,13 @@ row into `applications`. There are 21 such rows today, the earliest dated
 
 **Later — the follow-up.**
 
-`node scripts/applications/follow-ups.mjs` lists what is due a nudge. If you hear
+`node src/applications/follow-ups.mjs` lists what is due a nudge. If you hear
 back, the `follow-up` skill records the outcome — always because _you_ reported
 it, never because anything inferred it.
 
 **Overnight (if you schedule it).**
 
-`node scripts/auto/cycle.mjs --top 10` runs the whole thing unattended: search,
+`node src/auto/cycle.mjs --top 10` runs the whole thing unattended: search,
 screen, prepare documents for the top ten, then `auto-apply.mjs` opens a browser
 and works the queue. Every job it cannot resolve is deferred with a typed reason
 into the `auto_queue` table, where the morning `status.mjs` will show it to you.
@@ -705,12 +705,12 @@ is confidently wrong.
 
 ### 6.2 The boundary, drawn precisely
 
-**`scripts/` contains no LLM calls at all.** Not "few" — none. There is no
+**`src/` contains no LLM calls at all.** Not "few" — none. There is no
 Anthropic SDK import, no OpenAI import, no `messages.create`, no
-`chat.completions` anywhere under `scripts/`. Verified by search on 2026-08-05.
+`chat.completions` anywhere under `src/`. Verified by search on 2026-08-05.
 The only three files that make any network request at all are
-`scripts/lib/lib.mjs` (the shared fetch helpers), `scripts/leads/find-boards.mjs`
-(probing whether a company has a board), and `scripts/dev/bench-apply.mjs` (a
+`src/lib/lib.mjs` (the shared fetch helpers), `src/leads/find-boards.mjs`
+(probing whether a company has a board), and `src/dev/bench-apply.mjs` (a
 benchmark harness) — and every one of those is talking to a job board, not to a
 model.
 
@@ -766,7 +766,7 @@ system correctly reporting that nothing deterministic understood the page.
 ### 6.4 Where the boundary is currently blurrier than intended
 
 > **Known defect (2026-08-05 audit).** The _unattended_ path assembles résumés
-> deterministically — `scripts/auto/cycle.mjs` runs `assemble-resume.mjs`, which
+> deterministically — `src/auto/cycle.mjs` runs `assemble-resume.mjs`, which
 > emits your facts verbatim, so rules R1–R7 hold by construction rather than by
 > inspection. That property is what makes scheduling the whole pipeline possible
 > at all. The **attended** path does not use it. Step 6 of
@@ -798,7 +798,7 @@ terraform")` returns an empty list, so a lowercase invention passes R6 and
 
 | Measure                            | Today                                                      |
 | ---------------------------------- | ---------------------------------------------------------- |
-| Program files under `scripts/`     | 88 `.mjs` files across 9 domains                           |
+| Program files under `src/`         | 88 `.mjs` files across 9 domains                           |
 | Test files                         | 123, with a required floor of 2,208 individual assertions  |
 | Skills                             | 11                                                         |
 | Agents                             | 7 (1 runs during job applications; 6 build the repository) |
@@ -808,7 +808,7 @@ terraform")` returns an empty list, so a lowercase invention passes R6 and
 | Documents archived in the database | 84                                                         |
 | Verification receipts              | 35                                                         |
 
-`npm test` is not a bare test run. It is `node .github/workflows/test-gate.mjs
+`npm test` is not a bare test run. It is `node tools/ci/test-gate.mjs
 full`, which expands the test directories itself and asserts the count against a
 floor, because a plain `node --test` exits 0 on an empty run — an exit code alone
 is not evidence that anything ran.
@@ -883,7 +883,7 @@ rather than a value.
 ### 7.5 What is half-built
 
 - **The post-submit classifier is deliberately blind on every real board.** After
-  a submit, `scripts/auto/classify.mjs` must read the resulting page and decide
+  a submit, `src/auto/classify.mjs` must read the resulting page and decide
   what it was: a confirmation, an error, a CAPTCHA, a dead posting. Each of its
   rules carries the evidence that justified it, and a rule justified only by a
   test fixture may fire **only on a loopback address**. So a real Greenhouse or
@@ -893,7 +893,7 @@ rather than a value.
 
   This is not a gap to route around. The only lawful way to fix it is a corpus of
   real post-submit pages, and the only lawful source for those is your own
-  attended applications — `scripts/apply/capture-post-submit.mjs` stages one, you
+  attended applications — `src/apply/capture-post-submit.mjs` stages one, you
   review it, and it gets promoted. **Writing a plausible-looking pattern instead
   would be exactly rule 0's forbidden guess with the model removed**, and it
   fails in the one direction that cannot be recovered: a page misread as a
@@ -910,7 +910,7 @@ rather than a value.
   back to you because it needs an account. Everything else runs through a
   `generic` path, which defers far more.
 
-> **Known defect (2026-08-05 audit).** In `scripts/lib/db.mjs`, `setAutoJobState`
+> **Known defect (2026-08-05 audit).** In `src/lib/db.mjs`, `setAutoJobState`
 > guards on `AND ($run_id IS NULL OR run_id = $run_id)`. When the queue row's own
 > `run_id` is NULL — which it is for every freshly enqueued job, because jobs are
 > enqueued before the run record is opened — the comparison evaluates to NULL,

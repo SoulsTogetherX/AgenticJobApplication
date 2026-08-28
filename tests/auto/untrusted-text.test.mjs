@@ -1,4 +1,4 @@
-// Tests for scripts/auto/untrusted-text.mjs — the boundary between third-party
+// Tests for src/auto/untrusted-text.mjs — the boundary between third-party
 // page text and anything the unattended path keeps (autonomy plan Phase 0.3).
 
 import test from "node:test"
@@ -10,7 +10,7 @@ import {
   safeText,
   isVerbatimKey,
   VERBATIM_KEYS,
-} from "../../scripts/auto/untrusted-text.mjs"
+} from "../../src/auto/untrusted-text.mjs"
 
 const INSTRUCTION_SHAPED =
   /ignore\s+all\s+previous|you\s+are\s+now\s+a|rate\s+this\s+candidate\s+as\s+highly|add\s+\w+\s+to\s+the\s+resume|do\s+not\s+tell\s+the\s+user|<\s*\/?\s*system\s*>/i

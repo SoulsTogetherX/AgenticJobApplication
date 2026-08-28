@@ -66,7 +66,7 @@ several of the fixes here look wrong until you know the incident behind them.
 ### Conventions used throughout
 
 - **Commands are run from the repository root** — the folder that contains
-  `package.json`, `scripts/` and `docs/`. If a command reports "no such file",
+  `package.json`, `src/` and `docs/`. If a command reports "no such file",
   check where you are first (`pwd` in Git Bash, `Get-Location` in PowerShell).
 - An **exit code** is a number a program hands back to whatever ran it when it
   finishes. `0` means success; anything else identifies a specific kind of
@@ -197,7 +197,7 @@ If `tests` is `0` or absurdly small, the pattern matched nothing and you have th
 green-over-nothing failure rather than a passing suite.
 
 **Note that `npm test` is unaffected by this.** It does not call `node --test`
-with a directory; it runs `.github/workflows/test-gate.mjs`, which expands the
+with a directory; it runs `tools/ci/test-gate.mjs`, which expands the
 configured directories into a file list itself. This bites hand-written
 `node --test` invocations only. See the next entry for what the gate does with
 that list.
@@ -223,7 +223,7 @@ runner did not error" reports success for:
   count it") — the cheapest possible way to fake a green build.
 
 So `npm test` does not run `node --test` directly. It runs
-`.github/workflows/test-gate.mjs`, and that program asserts what a green run must
+`tools/ci/test-gate.mjs`, and that program asserts what a green run must
 **prove**. Its configuration lives in `package.json` under the `testGate` key:
 
 ```json
@@ -363,7 +363,7 @@ You searched the codebase for a string you can see with your own eyes in a file,
 and the search either found nothing or printed something like:
 
 ```
-Binary file scripts/auto/pool.mjs matches
+Binary file src/auto/pool.mjs matches
 ```
 
 — a hit with no line and no detail.
@@ -383,7 +383,7 @@ What it breaks is **search**. ripgrep (the tool behind the `Grep` facility and
 skips its contents. So a codebase-wide search silently stops covering that file,
 and the message it prints reads like a match rather than a warning.
 
-This has happened twice in this repository. Two files under `scripts/` —
+This has happened twice in this repository. Two files under `src/` —
 `pool.mjs` and `untrusted.mjs` — carried a raw NUL inside a string sentinel
 (`origin ?? "\0no-origin"` written with the literal byte instead of the escape).
 The second cost was worse than the search one: the same invisible sentinel was
@@ -396,7 +396,7 @@ review**, because the thing they have to agree on cannot be seen.
 **Detect it.** A byte scan is the only thing that finds it:
 
 ```bash
-node -e "console.log(require('fs').readFileSync(process.argv[1]).includes(0))" scripts/lib/db.mjs
+node -e "console.log(require('fs').readFileSync(process.argv[1]).includes(0))" src/lib/db.mjs
 ```
 
 Prints `true` if the file contains a NUL, `false` otherwise. (The `-e` flag runs
@@ -413,7 +413,7 @@ fails on those is one people learn to ignore.
 **escape** — `\u0000`, `\x00`, `\0` — which is legible, searchable and
 reviewable. Never as a raw byte.
 
-**Related trap, same family.** The `SCHEMA` constant in `scripts/lib/db.mjs` is a
+**Related trap, same family.** The `SCHEMA` constant in `src/lib/db.mjs` is a
 **template literal** — a string delimited by backtick characters. A backtick
 anywhere inside its SQL, including inside a comment, ends the string early and
 the file stops parsing. When you write comments in that SQL, quote identifiers
@@ -428,7 +428,7 @@ indentation, line breaks, quote style, a semicolon at the start of a line.
 
 #### Cause
 
-`scripts/hooks/prettify.mjs` is a **PostToolUse hook**: a small program the AI
+`src/hooks/prettify.mjs` is a **PostToolUse hook**: a small program the AI
 harness runs automatically after any file is written or edited. It runs prettier
 (a code formatter) on the file. This is deliberate — hard rule 8 in `CLAUDE.md` —
 and it keeps formatting from becoming something anybody argues about.
@@ -444,17 +444,17 @@ housekeeping (`node_modules/`, `package-lock.json`, `profile/`, `jobs/*/*.pdf`,
 `.playwright-mcp/`). **Three entries are deliberate contracts** and each carries
 its reason as a comment in the file:
 
-| Path                                       | Why prettier must not touch it                                                                                                                                                                                                                                                                                                          |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.claude/skills/apply-job/scan-page.js`    | Loaded and evaluated as a **bare function expression**, not as a module. Prettier's leading-semicolon guard — the `;` it inserts at the start of certain lines to protect against a real ambiguity — makes the file unparseable in that context.                                                                                        |
-| `.claude/skills/apply-job/scan.driver.mjs` | Same reason. It loads `scan-page.js` off disk; `scan-page.js` is the single source of truth for the page scanner.                                                                                                                                                                                                                       |
-| `docs/job-sources.yaml`                    | `scripts/leads/manage-sources.mjs` edits this file **line by line**, so that the explanatory comments survive an add or a remove. That only works while every board is one flow-style entry on one line. Prettier reflows the longer `workday` and `oracle_cloud` entries into multi-line block style and silently breaks the contract. |
+| Path                                       | Why prettier must not touch it                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.claude/skills/apply-job/scan-page.js`    | Loaded and evaluated as a **bare function expression**, not as a module. Prettier's leading-semicolon guard — the `;` it inserts at the start of certain lines to protect against a real ambiguity — makes the file unparseable in that context.                                                                                    |
+| `.claude/skills/apply-job/scan.driver.mjs` | Same reason. It loads `scan-page.js` off disk; `scan-page.js` is the single source of truth for the page scanner.                                                                                                                                                                                                                   |
+| `docs/job-sources.yaml`                    | `src/leads/manage-sources.mjs` edits this file **line by line**, so that the explanatory comments survive an add or a remove. That only works while every board is one flow-style entry on one line. Prettier reflows the longer `workday` and `oracle_cloud` entries into multi-line block style and silently breaks the contract. |
 
 #### Fix
 
 - **If the file is one of those three and it got reformatted anyway**, check
   whether `.prettierignore` still lists it, and check the exact path — the two
-  scanner files live under `.claude/skills/apply-job/`, not under `scripts/`.
+  scanner files live under `.claude/skills/apply-job/`, not under `src/`.
 - **If it is a normal source file**, do not fight the formatting. Hard rule 8
   exists because formatting arguments are pure cost. Change the content, let the
   hook shape it.
@@ -481,7 +481,7 @@ you ran the verifier yourself and it printed a list of violations and exited `1`
 
 #### Cause
 
-`scripts/documents/verify-claims.mjs` is the deterministic truthfulness checker,
+`src/documents/verify-claims.mjs` is the deterministic truthfulness checker,
 and hard rule 4 says it must pass before any document is rendered or shown as
 final. "Deterministic" here means it is an ordinary program with no AI in it: the
 same document and the same fact base produce the same verdict every time.
@@ -495,7 +495,7 @@ introducing a fact the profile does not contain is not.
 It runs eight rules. Seven of them block. The eighth reports and does not block.
 
 ```bash
-node scripts/documents/verify-claims.mjs resume jobs/<slug>/resume.md \
+node src/documents/verify-claims.mjs resume jobs/<slug>/resume.md \
   --job jobs/<slug>/job.json
 ```
 
@@ -523,7 +523,7 @@ There is one more thing the verifier does that matters later: **it writes a
 durable row**. Passing leaves a record in the `verifications` table in
 `jobs/leads.db` holding two hashes — `doc_sha256`, the exact bytes that were
 checked, and `profile_sha256`, the exact fact base they were checked against (see
-`scripts/lib/verification.mjs`). Editing the document invalidates its own
+`src/lib/verification.mjs`). Editing the document invalidates its own
 verification. The user editing `profile.yaml` invalidates **every** outstanding
 verification at once, because the corpus the rules compared against no longer
 exists. Before this row existed, the only evidence a document had been checked
@@ -671,7 +671,7 @@ a known technology, it is not in your fact base, and the document is refused.
 That is the guarantee — _a claim the fact base cannot back never survives
 verification, however it was proposed._
 
-"Known technology term" means a name in `scripts/lib/keywords.mjs`, the project's
+"Known technology term" means a name in `src/lib/keywords.mjs`, the project's
 single lexicon of technologies. Ordinary English words are not technology claims.
 
 _Real violation:_
@@ -692,7 +692,7 @@ audit, R6 compared text case-sensitively, so a document claiming `kubernetes` an
 `terraform` in lowercase produced **zero violations and exited `0`** — the gate
 could be walked past by pressing the shift key less. Matching now folds case,
 with an exception list (`CASE_SENSITIVE_SURFACE` in
-`scripts/documents/verify-claims.mjs`) for technology names that are also
+`src/documents/verify-claims.mjs`) for technology names that are also
 ordinary English words — `Go`, `R`, `C`. So "go to the store", "react to
 feedback", "a spring internship" and "rust on my laurels" still produce no
 violations, which was verified by running them.
@@ -748,7 +748,7 @@ _How to see it._ R8 only appears when a keyword plan exists. Pass `--job` and th
 verifier looks for `jobs/<slug>/keywords.json` beside `job.json`:
 
 ```bash
-node scripts/documents/verify-claims.mjs resume jobs/<slug>/resume.md \
+node src/documents/verify-claims.mjs resume jobs/<slug>/resume.md \
   --job jobs/<slug>/job.json
 ```
 
@@ -768,7 +768,7 @@ the corpus independently, and R8 lists them again so the message names the plan.
 there are no annotated bullets in a letter, so R1, R2, R3 and R7 do not apply:
 
 ```bash
-node scripts/documents/verify-claims.mjs cover-letter jobs/<slug>/cover-letter.md \
+node src/documents/verify-claims.mjs cover-letter jobs/<slug>/cover-letter.md \
   --job jobs/<slug>/job.json
 ```
 
@@ -874,7 +874,7 @@ yourself, in the browser, on the page you are looking at.
 **After saving, re-verify:**
 
 ```bash
-node scripts/documents/verify-claims.mjs resume jobs/<slug>/resume.md --job jobs/<slug>/job.json
+node src/documents/verify-claims.mjs resume jobs/<slug>/resume.md --job jobs/<slug>/job.json
 ```
 
 Note that adding to the fact base **invalidates every outstanding verification**,
@@ -919,7 +919,7 @@ different fixes. In order of how often they occur:
 4. **The board's list endpoint returns no description**, so the posting could not
    be examined. Four board types do this — `oracle_cloud`, `smartrecruiters`,
    `successfactors` and `workday` — and Adzuna returns only a ~500-character
-   teaser. Those need a per-posting detail fetch (`scripts/leads/enrich.mjs`,
+   teaser. Those need a per-posting detail fetch (`src/leads/enrich.mjs`,
    one fetcher per system). This matters more than the count suggests: those four
    types are the **local Las Vegas employers** — casinos, gaming, a large
    pharmacy chain — which are the highest-value leads precisely because on-site
@@ -931,7 +931,7 @@ different fixes. In order of how often they occur:
 `docs/job-sources.yaml`:
 
 ```bash
-node scripts/leads/manage-sources.mjs verify
+node src/leads/manage-sources.mjs verify
 ```
 
 A board that answers with an HTTP error or an unparseable body is the case 1
@@ -944,7 +944,7 @@ keeps its exact one-entry-per-line format.
 many of its postings survive the cheap gate:
 
 ```bash
-node scripts/leads/board-yield.mjs --query "full stack" --json
+node src/leads/board-yield.mjs --query "full stack" --json
 ```
 
 A board with a healthy API and zero qualifying postings is case 2 or case 3, and
@@ -1008,7 +1008,7 @@ Run these in order. Each one answers a different question.
 **1. Is the company's board even in your list?**
 
 ```bash
-node scripts/leads/manage-sources.mjs list
+node src/leads/manage-sources.mjs list
 ```
 
 If the company is absent, that is your answer. Add it — but add it properly:
@@ -1023,7 +1023,7 @@ auto-adds.
 **2. Is it in the store at all?**
 
 ```bash
-node scripts/leads/recommend.mjs --status all --top 50
+node src/leads/recommend.mjs --status all --top 50
 ```
 
 `--status all` includes leads already dismissed or recommended. If the job is
@@ -1033,7 +1033,7 @@ to step 5.
 **3. Which stage rejected it?** This is the command the whole entry exists for:
 
 ```bash
-node scripts/leads/gate-audit.mjs
+node src/leads/gate-audit.mjs
 ```
 
 `gate-audit.mjs` re-runs every stage over every stored lead and **diffs the
@@ -1078,7 +1078,7 @@ ingest before any stage ran.
 **5. If it is stored and ranked low**, look at the `gap:` list:
 
 ```bash
-node scripts/leads/recommend.mjs --status all --top 20
+node src/leads/recommend.mjs --status all --top 20
 ```
 
 ```
@@ -1093,7 +1093,7 @@ work around.
 **6. Check you have not already applied.**
 
 ```bash
-node scripts/applications/check-applied.mjs "Northwind Logistics"
+node src/applications/check-applied.mjs "Northwind Logistics"
 ```
 
 Prints JSON with `job_already_applied` and matching records with `days_ago`.
@@ -1131,7 +1131,7 @@ answer truthfully is deferred, because the failure being prevented is a **wrong*
 application, not a missing one.
 
 Defers fall into five classes, and the class tells you whether the defer is
-yours to remove. `scripts/auto/taxonomy.mjs` defines them:
+yours to remove. `src/auto/taxonomy.mjs` defines them:
 
 | Class             | Meaning                                                                | Can engineering shrink it?                                                                               |
 | ----------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -1180,7 +1180,7 @@ Plan written to jobs/<slug>/fill-plan.js
 of questions:
 
 ```bash
-node scripts/apply/pending-questions.mjs
+node src/apply/pending-questions.mjs
 ```
 
 `profile/answers.yaml` is **global** — "Do you require sponsorship?" answered once
@@ -1266,13 +1266,13 @@ offers. Rescan with probing enabled and rebuild the plan. If the plan is being
 served a **stale** remembered option list, drop it:
 
 ```bash
-node scripts/apply/fill-plan.mjs <slug> --invalidate
+node src/apply/fill-plan.mjs <slug> --invalidate
 ```
 
 `--invalidate` drops the remembered shape of this form. Use it when the fill
 engine reports a verify mismatch on a field whose options came from the cache.
 
-**3. An adapter.** A small module in `scripts/apply/ats/` that knows a specific
+**3. An adapter.** A small module in `src/apply/ats/` that knows a specific
 board's shape. Five exist today: `ashby.mjs`, `greenhouse.mjs`, `lever.mjs`,
 `generic.mjs` and the dispatcher `index.mjs`. An adapter is the right fix when a
 board's markup is unusual in a way that repeats — a label that starts
@@ -1404,7 +1404,7 @@ reorders its inputs, and it is exactly the case that produced the Ashby incident
 
 ```bash
 # The plan, including which files it intends to route where:
-node scripts/apply/fill-plan.mjs <slug> --json
+node src/apply/fill-plan.mjs <slug> --json
 
 # After a fill, read the engine's report — the uploads array is the evidence:
 #   jobs/<slug>/fill-report.json   (written by the caller)
@@ -1453,7 +1453,7 @@ measured the cost at **1.5 to 2.5 seconds per dropdown, up to 18 per form**, pai
 on every single application.
 
 The cache file is `jobs/.field-cache.json` and it carries a version number.
-`CACHE_VERSION` in `scripts/apply/field-cache.mjs` is currently `4`. When the
+`CACHE_VERSION` in `src/apply/field-cache.mjs` is currently `4`. When the
 number on disk does not match the number in the build, **every remembered form is
 discarded** — which is correct, because the shape of the data changed and
 re-serving it would mean serving wrong data, not merely stale data.
@@ -1513,7 +1513,7 @@ field-cache: could not read jobs/.field-cache.json — starting clean
    trade-off is named rather than taken quietly.
 4. **To drop one form's remembered shape deliberately**:
    ```bash
-   node scripts/apply/fill-plan.mjs <slug> --invalidate
+   node src/apply/fill-plan.mjs <slug> --invalidate
    ```
    Use it when the fill engine reports a verify mismatch on a field whose options
    came from the cache.
@@ -1593,7 +1593,7 @@ the recovery path cause the bug it recovers from.
 
 #### Fix
 
-**The defaults** (in `scripts/lib/lock.mjs`):
+**The defaults** (in `src/lib/lock.mjs`):
 
 | Constant             | Value    | Meaning                                     |
 | -------------------- | -------- | ------------------------------------------- |
@@ -1654,7 +1654,7 @@ that company's jobs will not run.
 This is an **orphaned submit attempt**, and the machinery around it is one of the
 more carefully reasoned parts of the system.
 
-`scripts/auto/submit.mjs` writes the durable "I am about to click" row **before**
+`src/auto/submit.mjs` writes the durable "I am about to click" row **before**
 the click, because _an attempt is a submission until proven otherwise_. So a
 process killed between the click returning and the acknowledgement being written
 leaves a row saying an application **may** exist at an employer, with nothing able
@@ -1668,7 +1668,7 @@ applied" and apply again. **Carpet-bombing one employer is the reputational
 damage that actually costs you something**, and it would arrive through a crash
 rather than through a bug in the caps.
 
-`assertNoOrphanAttempts()` in `scripts/auto/audit.mjs` runs at the **start** of
+`assertNoOrphanAttempts()` in `src/auto/audit.mjs` runs at the **start** of
 every run and files a brake. Two outcomes:
 
 - **The orphan names a company.** A **company-scoped** STOP is filed at
@@ -1696,7 +1696,7 @@ deleting the file. Code that can clear its own brake does not have one.
 **Step 1 — find out what is braked.**
 
 ```bash
-node scripts/status.mjs
+node src/status.mjs
 ```
 
 The digest reports active board pauses, active stops and queue depth. Or look
@@ -1728,7 +1728,7 @@ program can do for you, and the reason is in the next section.
 - **The application went through:** log it, so the caps and the already-applied
   check know about it.
   ```bash
-  node scripts/applications/log-application.mjs <slug>
+  node src/applications/log-application.mjs <slug>
   ```
 - **It did not:** nothing to log.
 
@@ -1746,7 +1746,7 @@ places and mean different things.
 
 #### Why a program cannot do step 3 for you
 
-`scripts/auto/reconcile.mjs` exists to resolve an orphan by re-reading the
+`src/auto/reconcile.mjs` exists to resolve an orphan by re-reading the
 board — and it ships **descoped to the boards that can answer**, which on the
 recommended allowlist is **none of them**:
 
@@ -1800,7 +1800,7 @@ A submit went through, the page came back, and the classifier said
 
 #### Cause — this is correct, and it is the one remaining hard stop
 
-`scripts/auto/classify.mjs` types the page that comes back after a submit click.
+`src/auto/classify.mjs` types the page that comes back after a submit click.
 It is a **pure function** over `(url, html)`: no network, no database, no model,
 no clock. Same bytes in, same answer out, forever.
 
@@ -1833,7 +1833,7 @@ the model removed and this repository's imagination left in — and it fails
 **silently** instead of expensively.
 
 So every rule declares where its evidence came from, and that provenance **bounds
-where it may fire** (`ruleApplies` in `scripts/auto/classify.mjs`):
+where it may fire** (`ruleApplies` in `src/auto/classify.mjs`):
 
 - `evidence.source === "fixture"` — justified by a page in `tests/fixtures/`,
   which this repository wrote. It may fire **only on loopback** (`127.0.0.1`,
@@ -1876,7 +1876,7 @@ what a confirmation says — could decide a page served by a stranger.
 
 The only lawful source is **your own attended applies**. You are on the submit
 button for every application today, so the pages exist; they are simply not being
-kept. `scripts/apply/capture-post-submit.mjs` keeps them.
+kept. `src/apply/capture-post-submit.mjs` keeps them.
 
 **It is three steps, and one step would be simpler and wrong.** A confirmation
 page carries your name, your email, often your phone and address, and an
@@ -1890,7 +1890,7 @@ directory under `jobs/`, and **refuses** if any known identifier survived the
 redaction:
 
 ```bash
-node scripts/apply/capture-post-submit.mjs stage \
+node src/apply/capture-post-submit.mjs stage \
   --url "https://boards.greenhouse.io/northwind/confirmation" \
   --html-file /path/to/saved-page.html \
   --board greenhouse --slug northwind-fullstack
@@ -1902,7 +1902,7 @@ staged 2026-08-07T16-24-32-c99c45 (48210 bytes, redacted)
   1x phone
 
 Read it before promoting:
-  node scripts/apply/capture-post-submit.mjs review 2026-08-07T16-24-32-c99c45
+  node src/apply/capture-post-submit.mjs review 2026-08-07T16-24-32-c99c45
 ```
 
 Redaction is **checked, not assumed**: the script re-reads its own output and
@@ -1914,7 +1914,7 @@ directory's whole purpose is to be the thing that was safe to look at.
 what you are about to publish rather than trusting a summary of it:
 
 ```bash
-node scripts/apply/capture-post-submit.mjs review <id>
+node src/apply/capture-post-submit.mjs review <id>
 ```
 
 With no id, it lists everything staged.
@@ -1924,7 +1924,7 @@ explicit flag. **You say which kind it is** — "what does this page mean" is
 exactly the judgement that is kept away from anything automatic:
 
 ```bash
-node scripts/apply/capture-post-submit.mjs promote <id> \
+node src/apply/capture-post-submit.mjs promote <id> \
   --kind confirmation --user-approved
 ```
 
@@ -1967,7 +1967,7 @@ sent, and **nothing later corrects it**.
 
 ### Symptom: a queued job deferred `board-untrusted` — "the lead carries no apply_url" — and the lead in the store has one
 
-**Where it comes from.** `scripts/auto/auto-apply.mjs` `runCampaign()`, on a
+**Where it comes from.** `src/auto/auto-apply.mjs` `runCampaign()`, on a
 row that was already in `auto_queue` before this invocation selected anything —
 enqueued by an earlier `--enqueue`, beyond this run's `--limit` in a
 differently ordered list, or left by a crash.
@@ -1988,14 +1988,14 @@ the row when this run did not select it, re-reading the screening verdict from
 the `screens` table by `lead_id`. `tests/auto/resume-identity.test.mjs` pins it.
 
 **If you still see it.** The row predates the columns AND nothing has
-re-enqueued it since: `node scripts/auto/auto-apply.mjs --enqueue` backfills the
+re-enqueued it since: `node src/auto/auto-apply.mjs --enqueue` backfills the
 identity of every row it selects. A row that is not selectable any more (lead
 dismissed, PDF missing) is refused with that reason instead — see the next
 entry.
 
 ### Symptom: a job you expected in the queue was rejected at selection with "dismissed" or "resume.pdf is not rendered"
 
-**Where it comes from.** `selectEligible()` in `scripts/auto/auto-apply.mjs`,
+**Where it comes from.** `selectEligible()` in `src/auto/auto-apply.mjs`,
 2026-08-18. Both refusals are reported in `rejected[]` with their reason and
 never silently dropped.
 
@@ -2006,7 +2006,7 @@ written up as `plan-error`), and a workspace whose `resume.md` had passed
 verification but was never rendered spent a browser lane to defer "no rendered
 resume". Both are now refused before a page loads.
 
-**What to do.** For a PDF: `node scripts/documents/render-pdf.mjs
+**What to do.** For a PDF: `node src/documents/render-pdf.mjs
 jobs/<slug>/resume.md jobs/<slug>/resume.pdf`, then re-enqueue. For a dismissed
 lead: that is the store's verdict; un-dismiss it deliberately if it was wrong.
 
@@ -2016,7 +2016,7 @@ lead: that is the store's verdict; un-dismiss it deliberately if it was wrong.
 
 **What it means.** Ashby's "Autofill from resume" helper is a selector-less
 `<input type=file>` that borrows the next field's label. The
-`scripts/apply/ats/ashby.mjs` adapter now declares it (`helperFileInput`) and
+`src/apply/ats/ashby.mjs` adapter now declares it (`helperFileInput`) and
 buildPlan skips it — nothing is uploaded to it and it consumes no file slot. If
 it defers again, the scan changed shape: check that the field still has no
 `sel`, still borrows a non-file field's label, and that a real résumé slot with
@@ -2051,7 +2051,7 @@ its own ledger row" pins it.
 
 ### Symptom: a live run defers `board-unsighted` on an allowlisted board
 
-**Where it comes from.** `scripts/auto/job.mjs`, after navigation and before
+**Where it comes from.** `src/auto/job.mjs`, after navigation and before
 the walk, since 2026-08-18. `classify.mjs` `isHostSighted(liveUrl)` is false:
 no capture-sourced `confirmation` rule names that host.
 
@@ -2063,15 +2063,15 @@ clicked, and then hard-STOPped at `unclassified` with the application possibly
 sent and unrecorded. Now it defers, cheaply, before anything is typed.
 
 **What to do.** Apply once **attended** on that host with
-`scripts/apply/capture-post-submit.mjs` (stage → review → promote), which adds
+`src/apply/capture-post-submit.mjs` (stage → review → promote), which adds
 the host to the rule's `evidence.hosts`; then re-enqueue (the kind is
-requeueable). `node -e "import('./scripts/auto/classify.mjs').then(m=>console.log(m.sightedHosts()))"`
+requeueable). `node -e "import('./src/auto/classify.mjs').then(m=>console.log(m.sightedHosts()))"`
 prints the hosts that are sighted today. Never add a host without a capture —
 that is the plausible-regex guess rule 6 forbids.
 
 ### Symptom: every combo on a Greenhouse embed form reads `probe_error: locator.click: Timeout 6000ms exceeded`, and the scan takes a minute
 
-**Where it comes from.** `scripts/apply/scan-engine.mjs`'s probe, on
+**Where it comes from.** `src/apply/scan-engine.mjs`'s probe, on
 `job-boards.greenhouse.io/embed/job_app` (measured 2026-08-18 on Attentive and
 Torc; it is what "13 of 19 required combos failed to probe" still meant on that
 host after the 2026-08-07 aria/portal fix).
@@ -2152,7 +2152,7 @@ before. `tests/apply/scan-page.test.mjs` pins both.
 
 ### Symptom: after a fill, the board shows "First Name is required." on fields the fill never touched — or an application went out that submit.mjs never clicked
 
-**Where it comes from.** `scripts/apply/fill-engine.mjs`'s `type-enter` strategy,
+**Where it comes from.** `src/apply/fill-engine.mjs`'s `type-enter` strategy,
 before 2026-08-18. Measured on Torc's Greenhouse embed form: it typed the
 location into react-select's input, waited its 500 ms and pressed Enter before
 the server-queried suggestions arrived. react-select handles Enter only while a
@@ -2372,7 +2372,7 @@ false` a **checkable claim** rather than an assurance. Nothing on this path
   a token minted for one plan cannot authorise a different one.
 
 **Every string in this file has been scrubbed of instruction-shaped text before
-being written** (`scripts/auto/untrusted-text.mjs`). The reason is hard rule 0:
+being written** (`src/auto/untrusted-text.mjs`). The reason is hard rule 0:
 this record is the one artefact of an unattended run that a human later hands to
 a model, and rule 0 does not stop applying because the page text has been through
 a database.
@@ -2380,8 +2380,8 @@ a database.
 ### The whole-pipeline digest
 
 ```bash
-node scripts/status.mjs
-node scripts/status.mjs --json --days 7
+node src/status.mjs
+node src/status.mjs --json --days 7
 ```
 
 `status.mjs` reports **progress, not recency**, and the distinction is the whole
@@ -2398,14 +2398,14 @@ and the trust gate live elsewhere and are not consulted.
 
 | Question                                   | Command                                                                                 |
 | ------------------------------------------ | --------------------------------------------------------------------------------------- |
-| Is anything broken right now?              | `node scripts/status.mjs`                                                               |
-| Did my change lose me any jobs?            | `node scripts/leads/gate-audit.mjs`                                                     |
-| Are my job boards alive?                   | `node scripts/leads/manage-sources.mjs verify`                                          |
-| Is this board worth keeping?               | `node scripts/leads/board-yield.mjs --json`                                             |
-| Is this document truthful?                 | `node scripts/documents/verify-claims.mjs resume <file> --job <job.json>`               |
-| What will be filled, and what defers?      | `node scripts/apply/fill-plan.mjs <slug> --json`                                        |
-| What questions am I owed, across all jobs? | `node scripts/apply/pending-questions.mjs`                                              |
-| Did I already apply here?                  | `node scripts/applications/check-applied.mjs "<company>"`                               |
+| Is anything broken right now?              | `node src/status.mjs`                                                                   |
+| Did my change lose me any jobs?            | `node src/leads/gate-audit.mjs`                                                         |
+| Are my job boards alive?                   | `node src/leads/manage-sources.mjs verify`                                              |
+| Is this board worth keeping?               | `node src/leads/board-yield.mjs --json`                                                 |
+| Is this document truthful?                 | `node src/documents/verify-claims.mjs resume <file> --job <job.json>`                   |
+| What will be filled, and what defers?      | `node src/apply/fill-plan.mjs <slug> --json`                                            |
+| What questions am I owed, across all jobs? | `node src/apply/pending-questions.mjs`                                                  |
+| Did I already apply here?                  | `node src/applications/check-applied.mjs "<company>"`                                   |
 | Does the suite actually prove anything?    | `npm test`                                                                              |
 | Does this file contain an invisible byte?  | `node -e "console.log(require('fs').readFileSync(process.argv[1]).includes(0))" <file>` |
 

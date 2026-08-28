@@ -2,7 +2,7 @@
 // Retention for jobs/<slug>/ workspaces. Deterministic, no LLM.
 //
 // This used to also drop PDFs once an application was closed and old.
-// scripts/maintenance/archive.mjs supersedes that: a closed application's whole
+// src/maintenance/archive.mjs supersedes that: a closed application's whole
 // workspace is folded into the `documents` table, and PDFs are deterministic
 // output of render-pdf.mjs, so the markdown is archived and a PDF is rebuilt
 // only if one is ever needed again. Two rules competing to delete the same
@@ -23,7 +23,7 @@
 // Dry run by default: it prints what it would remove and removes nothing
 // unless --apply is passed.
 //
-// Usage: node scripts/maintenance/prune-jobs.mjs [--apply] [--jobs-dir <path>] [--json]
+// Usage: node src/maintenance/prune-jobs.mjs [--apply] [--jobs-dir <path>] [--json]
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"

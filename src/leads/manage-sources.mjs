@@ -4,12 +4,12 @@
 // the daily sweep only ever hits boards that are known to work.
 //
 // Usage:
-//   node scripts/leads/manage-sources.mjs add --type <ats> --slug <slug> --company "Name"
-//   node scripts/leads/manage-sources.mjs add --type workday --company "Name" \
+//   node src/leads/manage-sources.mjs add --type <ats> --slug <slug> --company "Name"
+//   node src/leads/manage-sources.mjs add --type workday --company "Name" \
 //     --host x.wd5.myworkdayjobs.com --tenant x --site SiteName
-//   node scripts/leads/manage-sources.mjs remove "<company or slug>"
-//   node scripts/leads/manage-sources.mjs verify            # live-check every board
-//   node scripts/leads/manage-sources.mjs list
+//   node src/leads/manage-sources.mjs remove "<company or slug>"
+//   node src/leads/manage-sources.mjs verify            # live-check every board
+//   node src/leads/manage-sources.mjs list
 //
 // docs/job-sources.yaml is edited line-by-line (entries are single-line flow
 // maps) so the file's comments survive every add/remove.

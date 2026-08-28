@@ -12,7 +12,7 @@
 // runs under PowerShell on the windows-latest legs.
 //
 // Keep the candidate list in sync with findBrowser() in
-// scripts/documents/render-pdf.mjs (owned by w6-documents).
+// src/documents/render-pdf.mjs (owned by w6-documents).
 import fs from "node:fs"
 
 const candidates = [

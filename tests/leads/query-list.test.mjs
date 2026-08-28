@@ -18,7 +18,7 @@ import {
   fetchBoard,
   parseQueries,
   DEFAULT_SEARCH_QUERY,
-} from "../../scripts/leads/find-jobs.mjs"
+} from "../../src/leads/find-jobs.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
@@ -200,7 +200,7 @@ test("HN and Adzuna receive the primary query, never the list", () => {
   // Adzuna is credentialed and rate-limited; a list must not silently multiply
   // billed calls as a side effect of unblocking Workday.
   const src = fs.readFileSync(
-    path.join(ROOT, "scripts", "leads", "find-jobs.mjs"),
+    path.join(ROOT, "src", "leads", "find-jobs.mjs"),
     "utf8",
   )
   assert.match(src, /fetchHackerNews\(primaryQuery\)/)
@@ -212,7 +212,7 @@ test("workday is the only server-filtered type", () => {
   // If a second fetcher ever gains a server-side query, it must be added to
   // SERVER_FILTERED_TYPES or a list will silently under-read it.
   const src = fs.readFileSync(
-    path.join(ROOT, "scripts", "leads", "find-jobs.mjs"),
+    path.join(ROOT, "src", "leads", "find-jobs.mjs"),
     "utf8",
   )
   const m = src.match(/const SERVER_FILTERED_TYPES = new Set\(\[([^\]]*)\]\)/)

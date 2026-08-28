@@ -1,4 +1,4 @@
-# Board candidates discovered by scripts/leads/find-boards.mjs.
+# Board candidates discovered by src/leads/find-boards.mjs.
 # NOT swept yet — run discover-boards.mjs to yield-gate these, then add
 # the survivors with manage-sources. Nothing here touches job-sources.yaml.
 candidates:

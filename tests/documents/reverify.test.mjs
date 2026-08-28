@@ -12,20 +12,20 @@ import path from "node:path"
 import {
   reverifySweep,
   newestVerifications,
-} from "../../scripts/documents/reverify.mjs"
+} from "../../src/documents/reverify.mjs"
 import {
   factBaseSha256,
   verificationIdentity,
   hasVerifiedResume,
   verifiedResumeUrls,
-} from "../../scripts/lib/verification.mjs"
+} from "../../src/lib/verification.mjs"
 import {
   openDb,
   recordVerification,
   hasPassingVerification,
   readVerifications,
-} from "../../scripts/lib/db.mjs"
-import { classify } from "../../scripts/apply/automatability.mjs"
+} from "../../src/lib/db.mjs"
+import { classify } from "../../src/apply/automatability.mjs"
 
 // A fact base one real claim can pass against, and one edit can break.
 const PROFILE_GO =

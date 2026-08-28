@@ -6,8 +6,8 @@ import {
   evaluateStages,
   STAGE_IDS,
   STAGE_LABELS,
-} from "../../scripts/leads/stages.mjs"
-import { buildHistory } from "../../scripts/leads/risk.mjs"
+} from "../../src/leads/stages.mjs"
+import { buildHistory } from "../../src/leads/risk.mjs"
 
 const LIMITS = {
   location: {

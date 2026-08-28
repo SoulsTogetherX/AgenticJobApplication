@@ -10,8 +10,8 @@ import {
   profileText,
   computeGaps,
   jobWeight,
-} from "../../scripts/profile/profile-gaps.mjs"
-import { loadYamlFile } from "../../scripts/lib/lib.mjs"
+} from "../../src/profile/profile-gaps.mjs"
+import { loadYamlFile } from "../../src/lib/lib.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 
@@ -135,7 +135,7 @@ test("profile-gaps CLI produces a json report from fixtures", () => {
     const res = spawnSync(
       process.execPath,
       [
-        path.join(ROOT, "scripts", "profile", "profile-gaps.mjs"),
+        path.join(ROOT, "src", "profile", "profile-gaps.mjs"),
         "--json",
         "--profile",
         path.join(ROOT, "tests", "fixtures", "profile.yaml"),
@@ -164,7 +164,7 @@ test("profile-gaps CLI errors cleanly with no profile or no jobs", () => {
     const missingProfile = spawnSync(
       process.execPath,
       [
-        path.join(ROOT, "scripts", "profile", "profile-gaps.mjs"),
+        path.join(ROOT, "src", "profile", "profile-gaps.mjs"),
         "--profile",
         path.join(dir, "nope.yaml"),
       ],
@@ -175,7 +175,7 @@ test("profile-gaps CLI errors cleanly with no profile or no jobs", () => {
     const noJobs = spawnSync(
       process.execPath,
       [
-        path.join(ROOT, "scripts", "profile", "profile-gaps.mjs"),
+        path.join(ROOT, "src", "profile", "profile-gaps.mjs"),
         "--profile",
         path.join(ROOT, "tests", "fixtures", "profile.yaml"),
         "--jobs-dir",

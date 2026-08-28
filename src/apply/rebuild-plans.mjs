@@ -14,7 +14,7 @@
 // on a schedule. It changes no answers and makes no decisions: every defer it
 // clears is one current code resolves on its own.
 //
-// Usage: node scripts/apply/rebuild-plans.mjs [<slug> ...] [--all] [--dry-run]
+// Usage: node src/apply/rebuild-plans.mjs [<slug> ...] [--all] [--dry-run]
 //        [--jobs-dir jobs]
 //
 // Exit codes: 0 ok (including nothing to do), 1 one or more rebuilds failed,
@@ -132,12 +132,7 @@ export function rebuildPlans({
     }
     const r = spawnSync(
       process.execPath,
-      [
-        path.join(ROOT, "scripts", "apply", "fill-plan.mjs"),
-        slug,
-        "--scan",
-        scan,
-      ],
+      [path.join(ROOT, "src", "apply", "fill-plan.mjs"), slug, "--scan", scan],
       { cwd: ROOT, encoding: "utf8" },
     )
     // The FIRST line only. fill-plan prints the plan body and a bootstrap

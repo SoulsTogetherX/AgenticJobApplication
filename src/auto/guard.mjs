@@ -26,7 +26,7 @@
 // currently happening — there is none.
 //
 // This paragraph previously claimed the guards were "structurally impossible
-// for the runner to skip on the submit path, because scripts/auto/audit.mjs
+// for the runner to skip on the submit path, because src/auto/audit.mjs
 // performs them before it will record anything". That was written in the
 // indicative about something that had not been built, which is the exact
 // failure autonomy-plan §3.4 records twice: a control stated as fact gets
@@ -39,7 +39,7 @@
 // What is actually true now:
 //
 //   * These functions are checks. They enforce nothing by existing.
-//   * scripts/auto/authorize.mjs is the only place that reads every
+//   * src/auto/authorize.mjs is the only place that reads every
 //     precondition together — auto_apply.enabled, the run mode, this file's
 //     STOP switch, the caps, submitReadiness plus its own zero-defer
 //     assertion, the stored L3 verdict, and the board trust verdict — and it
@@ -64,7 +64,7 @@
 //
 // So: the token makes the guards unskippable BY CONSTRUCTION for the code that
 // clicks. What keeps that from being merely a design commitment is
-// tests/auto/click-surface.test.mjs — `.click(` appears under scripts/auto/
+// tests/auto/click-surface.test.mjs — `.click(` appears under src/auto/
 // only in submit.mjs and advance.mjs — not this comment. (Two files, not one:
 // advance.mjs joined the surface in Phase 5 W3 and may click only a
 // `next`-role control, never a submit. The test is what holds it at two.)

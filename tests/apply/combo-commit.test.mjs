@@ -28,8 +28,8 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import fillPage from "../../scripts/apply/fill-engine.mjs"
-import { launchBrowser } from "../../scripts/apply/browser.mjs"
+import fillPage from "../../src/apply/fill-engine.mjs"
+import { launchBrowser } from "../../src/apply/browser.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

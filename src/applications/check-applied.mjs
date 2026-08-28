@@ -2,7 +2,7 @@
 // Check the application log: has this job (slug) or company already been
 // applied to, and how long ago?
 //
-// Usage: node scripts/applications/check-applied.mjs "<company, title, or slug>"
+// Usage: node src/applications/check-applied.mjs "<company, title, or slug>"
 //        [--file profile/applications.yaml] [--today YYYY-MM-DD]
 //
 // Output: JSON { query, job_already_applied, matches: [{... days_ago}] }

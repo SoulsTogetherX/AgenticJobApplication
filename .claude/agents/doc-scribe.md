@@ -28,7 +28,7 @@ you change what it says, and you may never do the first while doing the second.
 - `.claude/skills/*`
 - `schemas/*`
 
-`scripts/documents/*` and `templates/*` belong to **`w6-documents`** — that
+`src/documents/*` and `templates/*` belong to **`w6-documents`** — that
 agent owns the user's résumé and cover letter; you own the project's
 documentation. Different things that share a word.
 

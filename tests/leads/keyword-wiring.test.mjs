@@ -9,8 +9,8 @@
 // signal fell from 81 of 102 to 28, and the top-ranked lead changed.
 import test from "node:test"
 import assert from "node:assert/strict"
-import { scoreLead, rankLeads } from "../../scripts/leads/recommend.mjs"
-import { computeGaps } from "../../scripts/profile/profile-gaps.mjs"
+import { scoreLead, rankLeads } from "../../src/leads/recommend.mjs"
+import { computeGaps } from "../../src/profile/profile-gaps.mjs"
 
 const PROFILE_TECH = new Set(["React", "Node.js", "TypeScript", "AWS"])
 

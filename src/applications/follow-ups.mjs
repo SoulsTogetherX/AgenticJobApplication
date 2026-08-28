@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // List applications that are due a follow-up (deterministic, no LLM calls).
 // Reads profile/applications.yaml; never writes anything — recording a sent
-// follow-up or an outcome goes through scripts/applications/update-application.mjs.
+// follow-up or an outcome goes through src/applications/update-application.mjs.
 //
 // Policy: a follow-up is due N days (default 10) after the application (or
 // after the previous follow-up). At most 2 follow-ups per application — after
@@ -9,7 +9,7 @@
 // whose status shows a response (interviewing/offer/rejected/withdrawn) never
 // appear.
 //
-// Usage: node scripts/applications/follow-ups.mjs [--days N] [--json] [--file <path>]
+// Usage: node src/applications/follow-ups.mjs [--days N] [--json] [--file <path>]
 import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"

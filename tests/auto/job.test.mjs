@@ -11,8 +11,8 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-import { runJob, NOT_CLAIMED } from "../../scripts/auto/job.mjs"
-import { startRun } from "../../scripts/auto/audit.mjs"
+import { runJob, NOT_CLAIMED } from "../../src/auto/job.mjs"
+import { startRun } from "../../src/auto/audit.mjs"
 import {
   openDb,
   recordVerification,
@@ -20,7 +20,7 @@ import {
   claimAutoJob,
   AUTO_DEFER_KINDS,
   AUTO_FAILURE_KINDS,
-} from "../../scripts/lib/db.mjs"
+} from "../../src/lib/db.mjs"
 
 const SLUG = "acme-fullstack"
 const APPLY_URL = "http://127.0.0.1:4599/boards.greenhouse.io/e/jobs/1"
@@ -617,10 +617,10 @@ test("CHECK_TO_KIND covers every SUBMIT_CHECKS entry", async () => {
   //
   // The fallback stays, because a crash is worse than a wrong label. This test
   // is what keeps the fallback from being how new checks are reported.
-  const { CHECK_TO_KIND } = await import("../../scripts/auto/job.mjs")
-  const { SUBMIT_CHECKS } = await import("../../scripts/auto/authorize.mjs")
+  const { CHECK_TO_KIND } = await import("../../src/auto/job.mjs")
+  const { SUBMIT_CHECKS } = await import("../../src/auto/authorize.mjs")
   const { AUTO_DEFER_KINDS, AUTO_FAILURE_KINDS } =
-    await import("../../scripts/lib/db.mjs")
+    await import("../../src/lib/db.mjs")
 
   const unmapped = SUBMIT_CHECKS.filter((c) => !CHECK_TO_KIND.has(c))
   assert.deepEqual(
@@ -641,8 +641,8 @@ test("CHECK_TO_KIND covers every SUBMIT_CHECKS entry", async () => {
 })
 
 test("a duplicate refusal is reported as already-applied, not a malfunction", async () => {
-  const { CHECK_TO_KIND } = await import("../../scripts/auto/job.mjs")
-  const { reasonClass } = await import("../../scripts/auto/taxonomy.mjs")
+  const { CHECK_TO_KIND } = await import("../../src/auto/job.mjs")
+  const { reasonClass } = await import("../../src/auto/taxonomy.mjs")
   const kind = CHECK_TO_KIND.get("not_already_applied")
   assert.equal(kind, "already-applied")
   assert.equal(
@@ -662,8 +662,7 @@ test("a duplicate refusal is reported as already-applied, not a malfunction", as
 // boundary; global scope still throws, because that STOP means stop.
 
 test("a company-scoped STOP defers the job as company-stopped, throwing nothing", async (t) => {
-  const { StopError, scopedStopPath } =
-    await import("../../scripts/auto/guard.mjs")
+  const { StopError, scopedStopPath } = await import("../../src/auto/guard.mjs")
   const r = rig(t)
   const stopPath = path.join(r.dir, "jobs", ".auto", "STOP")
   const brake = scopedStopPath("company", "Acme", { stopPath })
@@ -691,7 +690,7 @@ test("a company-scoped STOP defers the job as company-stopped, throwing nothing"
 })
 
 test("a board-scoped STOP defers the job as board-stopped", async (t) => {
-  const { scopedStopPath } = await import("../../scripts/auto/guard.mjs")
+  const { scopedStopPath } = await import("../../src/auto/guard.mjs")
   const r = rig(t)
   const stopPath = path.join(r.dir, "jobs", ".auto", "STOP")
   const brake = scopedStopPath("board", "greenhouse:e", { stopPath })
@@ -709,7 +708,7 @@ test("a board-scoped STOP defers the job as board-stopped", async (t) => {
 })
 
 test("a global STOP still throws StopError out of runJob — it means stop", async (t) => {
-  const { StopError } = await import("../../scripts/auto/guard.mjs")
+  const { StopError } = await import("../../src/auto/guard.mjs")
   const r = rig(t)
   // Written AFTER startRun (the rig already passed the run-start checkpoint),
   // so the between-jobs checkpoint inside runJob is what reads it.

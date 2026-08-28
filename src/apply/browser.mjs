@@ -3,11 +3,11 @@
 //
 // There are two ways the engines reach a `page`, and this file serves both:
 //
-//   1. The LOCAL RUNNER (scripts/auto/*, tests against the fake board under
+//   1. The LOCAL RUNNER (src/auto/*, tests against the fake board under
 //      tests/fixtures/boards/). Ordinary Node, ordinary `import` — launchBrowser()
 //      here, then fillPage(page, plan) / scanPage(page). No MCP, no model.
 //   2. The MCP path (`browser_run_code_unsafe { filename }`), whose vm has no
-//      working `import` and no fs. scripts/apply/fill-plan.mjs reads the engine
+//      working `import` and no fs. src/apply/fill-plan.mjs reads the engine
 //      text off OUR OWN DISK with engineSandboxSource() below and embeds it in
 //      the generated jobs/<slug>/fill-plan.js, which eval's that one string.
 //
@@ -15,7 +15,7 @@
 // inject the engine, read window.__ajFillSrc back, eval it Playwright-side —
 // was the hole: a board defining that getter chose what ran with a live `page`
 // handle, up to and including clicking Submit. See the header of
-// scripts/apply/fill-engine.mjs.
+// src/apply/fill-engine.mjs.
 //
 // SAFETY: nothing in this file clicks a button, and neither engine has a verb
 // for it. Do not add a submit helper here to "complete" the API.
@@ -35,12 +35,7 @@ const ROOT = path.resolve(
 
 // Resolved from this file, never from the cwd: a scheduled task's working
 // directory is not ours to assume.
-export const ENGINE_PATH = path.join(
-  ROOT,
-  "scripts",
-  "apply",
-  "fill-engine.mjs",
-)
+export const ENGINE_PATH = path.join(ROOT, "src", "apply", "fill-engine.mjs")
 
 export function readEngineSource(file = ENGINE_PATH) {
   return fs.readFileSync(file, "utf8")
@@ -109,7 +104,7 @@ export function engineSandboxSource(src = readEngineSource()) {
 // Loopback and file: only, unless the caller explicitly opts out. This build's
 // runners and tests never touch a real employer's board, and that is enforced
 // here rather than remembered: a fixture server on 127.0.0.1 passes, a real
-// ATS host does not. Production callers (scripts/auto/*) pass
+// ATS host does not. Production callers (src/auto/*) pass
 // { localOnly: false } deliberately, or set AJ_BROWSER_ALLOW_REMOTE=1.
 const LOOPBACK = /^(localhost|127(\.\d+){1,3}|\[?::1\]?|0\.0\.0\.0)$/i
 

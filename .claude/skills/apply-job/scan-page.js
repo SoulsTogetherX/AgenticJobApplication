@@ -2438,7 +2438,7 @@ window.__ajScan = async (PROBE = true) => {
   // --- probe custom dropdowns (batched) -----------------------------------
   if (PROBE) {
     // WHAT THE PROBE IS ALLOWED TO CLICK. Mirrored from
-    // scripts/apply/scan-engine.mjs's probeRefusal(), the canonical copy, which
+    // src/apply/scan-engine.mjs's probeRefusal(), the canonical copy, which
     // carries the full reasoning; this file runs in page context and cannot
     // import it. tests/apply/fill-page.test.mjs pins the copies identical.
     // Shape alone cannot tell a country picker from a button a board decorated

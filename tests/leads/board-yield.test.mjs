@@ -4,7 +4,7 @@ import {
   scoreBoard,
   mapPool,
   proposeRemovals,
-} from "../../scripts/leads/board-yield.mjs"
+} from "../../src/leads/board-yield.mjs"
 
 const NOW = new Date("2026-07-28T12:00:00Z")
 

@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { loadYamlFile } from "../../scripts/lib/lib.mjs"
+import { loadYamlFile } from "../../src/lib/lib.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -16,20 +16,14 @@ const ROOT = path.resolve(
 function log(argsArr) {
   return spawnSync(
     process.execPath,
-    [
-      path.join(ROOT, "scripts", "applications", "log-application.mjs"),
-      ...argsArr,
-    ],
+    [path.join(ROOT, "src", "applications", "log-application.mjs"), ...argsArr],
     { cwd: ROOT, encoding: "utf8" },
   )
 }
 function check(argsArr) {
   const res = spawnSync(
     process.execPath,
-    [
-      path.join(ROOT, "scripts", "applications", "check-applied.mjs"),
-      ...argsArr,
-    ],
+    [path.join(ROOT, "src", "applications", "check-applied.mjs"), ...argsArr],
     { cwd: ROOT, encoding: "utf8" },
   )
   let report = null

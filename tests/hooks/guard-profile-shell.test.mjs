@@ -2,7 +2,7 @@
 //
 // WHY THIS FILE EXISTS. The guard was written on 2026-07-31 after two real
 // incidents wrote fabricated answers into the REAL profile/answers.yaml, and it
-// shipped with NO test at all. It was then MOVED from scripts/hooks/ to
+// shipped with NO test at all. It was then MOVED from src/hooks/ to
 // .claude/hooks/ so that no agent can edit it (protect-profile.js denies writes
 // under .claude/hooks/). The move was correct — but a guard nothing asserts is
 // indistinguishable from a guard that silently stopped working, and this one is
@@ -49,7 +49,7 @@ test("the shell guard is inside the directory protect-profile.js defends", () =>
   assert.match(
     rel,
     /^\.claude\/hooks\//,
-    "moving this guard back under scripts/hooks/ would make it editable by the " +
+    "moving this guard back under src/hooks/ would make it editable by the " +
       "very agents it constrains",
   )
   const protector = fs.readFileSync(
@@ -148,8 +148,8 @@ test("allows READS of the fact base, which agents do constantly", () => {
     "cat profile/answers.yaml",
     "grep -n 'Phone' profile/answers.yaml",
     "head -n 20 profile/profile.yaml",
-    "node scripts/profile/keyword-coverage.mjs --json",
-    "node scripts/apply/answer-bank.mjs < jobs/x/scan-p1.json",
+    "node src/profile/keyword-coverage.mjs --json",
+    "node src/apply/answer-bank.mjs < jobs/x/scan-p1.json",
     // Reading the WRITER script is not writing the fact base. This exact
     // command was denied within a minute of the hook being written.
     "grep -n 'user-approved' scripts/profile/save-answer.mjs",
@@ -179,7 +179,7 @@ test("allows writes to paths that merely look like profile paths", () => {
     "echo x > tests/fixtures/profile/answers.yaml".replace("profile/", "prof/"),
     "rm docs/profile-gaps.md",
     "echo x > my-profile.yaml",
-    "node scripts/profile/profile-gaps.mjs --json",
+    "node src/profile/profile-gaps.mjs --json",
   ]
   for (const c of commands) {
     assert.equal(runGuard(shell(c)).decision, null, `should allow: ${c}`)

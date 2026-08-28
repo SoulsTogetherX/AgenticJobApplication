@@ -2,9 +2,9 @@
 // Deterministic truthfulness verifier — the core guardrail.
 //
 // Usage:
-//   node scripts/documents/verify-claims.mjs resume <file.md> [--job jobs/<slug>/job.json]
+//   node src/documents/verify-claims.mjs resume <file.md> [--job jobs/<slug>/job.json]
 //        [--profile profile/profile.yaml] [--answers profile/answers.yaml]
-//   node scripts/documents/verify-claims.mjs cover-letter <file.md> [same flags]
+//   node src/documents/verify-claims.mjs cover-letter <file.md> [same flags]
 //
 // Resume mode:
 //   R1 every bullet line must carry <!-- fact:ID[,ID2] -->

@@ -77,7 +77,7 @@ caps).
 name-to-value pairs — in a way a human can read. All three configuration files
 here are YAML. The file extension is `.yaml`, and the program that reads it is
 the `js-yaml` library, called from `loadLimits()` and `loadSources()` in
-`scripts/leads/find-jobs.mjs`.
+`src/leads/find-jobs.mjs`.
 
 Four ideas cover everything these files use.
 
@@ -179,11 +179,11 @@ different mechanisms.
 | `profile/profile.yaml`, `profile/answers.yaml` | You, absolutely    | A **PreToolUse hook** blocks the agent from writing them at all. The only sanctioned write path is `scripts/profile/save-answer.mjs`.                    |
 | `.claude/hooks/*`, `.claude/settings*.json`    | You, absolutely    | Sealed on both the file-editing and the shell path.                                                                                                      |
 | `docs/application-limits.yaml`                 | You, by discipline | **No hook stops an edit.** The rule lives in `CLAUDE.md` and is repeated in the code's own comments; the agent proposes values and asks you to set them. |
-| `docs/job-sources.yaml`                        | You, with tooling  | `scripts/leads/manage-sources.mjs` exists so add/remove is a command, not a hand edit.                                                                   |
+| `docs/job-sources.yaml`                        | You, with tooling  | `src/leads/manage-sources.mjs` exists so add/remove is a command, not a hand edit.                                                                       |
 
 > **State this at the top of any conversation about limits:**
 > `docs/application-limits.yaml` is the owner's file. The agent reads it,
-> proposes values in chat, and does not edit it. `scripts/auto/preflight.mjs`
+> proposes values in chat, and does not edit it. `src/auto/preflight.mjs`
 > puts that sentence into its own refusal text — when the `auto_apply` block is
 > missing, the remedy it prints is _"the user adds the block; no agent edits
 > docs/application-limits.yaml. Propose values, never write them."_
@@ -206,7 +206,7 @@ the order explains most surprises.
 Concretely, for posting age:
 
 ```js
-// scripts/leads/find-jobs.mjs, passesLimits()
+// src/leads/find-jobs.mjs, passesLimits()
 const maxAge = limits.freshness?.max_age_days ?? 30
 ```
 
@@ -215,7 +215,7 @@ the right". So:
 
 - Delete the `freshness` block entirely → the gate uses **30 days**.
 - Write `max_age_days: 14` → the gate uses **14 days**.
-- Run `node scripts/leads/find-jobs.mjs search --max-age 7` → **7 days**, just
+- Run `node src/leads/find-jobs.mjs search --max-age 7` → **7 days**, just
   for that run. (`cmdSearch` writes the flag value into the in-memory limits
   object before the gates run; your file on disk is untouched.)
 
@@ -226,7 +226,7 @@ because they behave differently from each other:
 of defaults and your keys are laid over it one at a time:
 
 ```js
-// scripts/leads/fit.mjs, scoreFit()
+// src/leads/fit.mjs, scoreFit()
 const cfg = { ...FIT_DEFAULTS, ...(opts.limits?.fit ?? {}) }
 ```
 
@@ -238,7 +238,7 @@ you set the key, your list takes over completely and the built-in list is not
 consulted at all:
 
 ```js
-// scripts/leads/find-jobs.mjs, passesLimits()
+// src/leads/find-jobs.mjs, passesLimits()
 matchesAny(loc, limits.location?.remote_synonyms ?? US_WIDE_LOCATION)
 ```
 
@@ -270,7 +270,7 @@ node -e "const y=require('js-yaml'),f=require('fs');const d=y.load(f.readFileSyn
 
 ```bash
 # 2. Did the change reject any job that used to pass? THIS is the real check.
-node scripts/leads/gate-audit.mjs
+node src/leads/gate-audit.mjs
 ```
 
 `gate-audit.mjs` re-runs every screening stage over every lead you have ever
@@ -285,7 +285,7 @@ This is the policy file: what counts as a job worth pursuing. It is loaded by a
 single function,
 
 ```js
-// scripts/leads/find-jobs.mjs
+// src/leads/find-jobs.mjs
 export function loadLimits(file = LIMITS_PATH) {
   return yaml.load(fs.readFileSync(file, "utf8")) ?? {}
 }
@@ -348,7 +348,7 @@ things read it, and each uses it differently:
 
 > **Known defect (2026-08-05 audit).** No code reads `location.relocation` or
 > `location.travel_ok`. A repository-wide search for `location?.relocation` and
-> `travel_ok` under `scripts/` and `.claude/` returns nothing. Both keys are read
+> `travel_ok` under `src/` and `.claude/` returns nothing. Both keys are read
 > by humans and by the model when a skill quotes the file, and by no script.
 > Relocation is actually enforced two other ways — by `onsite_allowed` in
 > `passesLimits`, and by the `RELOCATION_REQUIRED` regular expression in
@@ -438,7 +438,7 @@ posted 47 days ago (max 30)`. A posting whose date cannot be parsed is **kept
    again.
 2. `fetchAdzuna` sends it to Adzuna's API as `max_days_old`, so for that one
    source the filtering happens on their server before anything is downloaded.
-3. `scripts/maintenance/archive.mjs` uses it as the default age for pruning old
+3. `src/maintenance/archive.mjs` uses it as the default age for pruning old
    leads out of the store, on the reasoning that the number you reject at ingest
    is the number worth pruning at.
 
@@ -494,7 +494,7 @@ experience:
   # max_years_required: 5
 ```
 
-Read by `scripts/leads/screen.mjs` — the L1 screening stage — not by the sweep.
+Read by `src/leads/screen.mjs` — the L1 screening stage — not by the sweep.
 
 **`stretch_years`** — number. Default when absent: `DEFAULT_STRETCH_YEARS = 2` in
 `screen.mjs`. The ceiling is computed as your tenure plus this:
@@ -534,7 +534,7 @@ fit:
   senior_phrase_reject: 3
 ```
 
-Read by `scripts/leads/fit.mjs` — the L2 "can I actually do this job?" stage —
+Read by `src/leads/fit.mjs` — the L2 "can I actually do this job?" stage —
 merged over `FIT_DEFAULTS` in both `scoreFit()` and `isEvaluable()`.
 
 L2 splits a posting into required / preferred / general sections and compares
@@ -578,12 +578,12 @@ ghost_signals:
 A **ghost job** is a posting for a role that is not actually being filled — a
 pipeline-warming advertisement. Industry research puts them at 18–40% of live
 listings and names repeated reposting as the strongest indicator. L3
-(`scripts/leads/risk.mjs`) is the stage that looks for them.
+(`src/leads/risk.mjs`) is the stage that looks for them.
 
 **`repost_age_days`** — number, currently `30`. It is read in exactly one place:
 
 ```js
-// scripts/leads/screen.mjs
+// src/leads/screen.mjs
 const ghostAge = limits.ghost_signals?.repost_age_days ?? 45
 if (days >= ghostAge) {
   signals.push(`stale_${days}d`)
@@ -604,7 +604,7 @@ currently the stricter of the two.
 
 > **Known defect (2026-08-05 audit).** The five numbers that actually decide
 > whether a repost rejects or merely flags exist **only as code defaults** and are
-> invisible from the file you own. `scripts/leads/risk.mjs` exports:
+> invisible from the file you own. `src/leads/risk.mjs` exports:
 >
 > ```js
 > export const RISK_DEFAULTS = {
@@ -728,12 +728,12 @@ Three consequences:
 
 **Who else reads it.** Three scripts beyond the sweep:
 
-- `scripts/documents/keyword-plan.mjs` — `limits.roles?.title_keywords ?? []`
+- `src/documents/keyword-plan.mjs` — `limits.roles?.title_keywords ?? []`
   becomes the `targets` used when planning which keywords a tailored résumé
   should cover.
-- `scripts/documents/assemble-resume.mjs` — the same, for deterministic
+- `src/documents/assemble-resume.mjs` — the same, for deterministic
   résumé assembly.
-- `scripts/leads/find-jobs.mjs` `bodyDisqualifiers` — a posting whose title
+- `src/leads/find-jobs.mjs` `bodyDisqualifiers` — a posting whose title
   matches none of these entries counts as a "loose arrival" and gets the extra
   body scrutiny described below.
 
@@ -878,7 +878,7 @@ of this string is why a board's prescreen count agrees with what the daily sweep
 later finds for it.
 
 **`roles.title_rank`** — a list of groups, used for ranking rather than
-filtering. Read by `titleScore()` in `scripts/leads/recommend.mjs`. Default:
+filtering. Read by `titleScore()` in `src/leads/recommend.mjs`. Default:
 
 ```js
 const DEFAULT_TITLE_RANK = [
@@ -959,17 +959,17 @@ agent a posting URL and asking it to apply, which is governed by `CLAUDE.md` har
 rule 6 and not by this block.
 
 **No defaults are supplied for any of these.** That is unusual in this codebase
-and it is deliberate. `scripts/auto/caps.mjs` says it plainly: a missing cap reads
+and it is deliberate. `src/auto/caps.mjs` says it plainly: a missing cap reads
 as "not configured" and the check returns a refusal, "because an unattended
 process inventing its own blast radius is precisely the failure the block exists
 to prevent."
 
 **`enabled`** — boolean. Must be **strictly** `true`. Absent, `null`, `"yes"`
-and `1` all fail (`scripts/auto/authorize.mjs`, check `enabled`). It answers "may
+and `1` all fail (`src/auto/authorize.mjs`, check `enabled`). It answers "may
 this machine run at all".
 
 **`dry_run`** — boolean. It answers a different question: "does it click".
-`scripts/auto/auto-apply.mjs` resolves the run mode with
+`src/auto/auto-apply.mjs` resolves the run mode with
 
 ```js
 const mode = auto?.dry_run === false ? "live" : "dry_run"
@@ -1012,11 +1012,11 @@ keys.
 > for `cache_max_age_days` finds it in your file, in a test fixture that copies
 > your file's shape (`tests/auto/preflight.test.mjs`), and in documentation —
 > and in no script. The form-field cache it appears to describe
-> (`scripts/apply/field-cache.mjs`) invalidates entries by a `CACHE_VERSION`
+> (`src/apply/field-cache.mjs`) invalidates entries by a `CACHE_VERSION`
 > mismatch, not by age. Setting this to any value changes nothing.
 
 **`board_allowlist`** — a map of `domain: ats-id`. Read by
-`scripts/auto/trust.mjs` (`normalizeAllowlist`, `allowlistProblems`,
+`src/auto/trust.mjs` (`normalizeAllowlist`, `allowlistProblems`,
 `allowlistEntry`) and by `auto-apply.mjs` at startup.
 
 It is **nested under `auto_apply` on purpose**. Both readers look for
@@ -1026,7 +1026,7 @@ made once and fixed on 2026-08-03.
 
 The value is an **ATS identifier**, and it must name an adapter this repository
 actually ships. Today those are exactly three: `greenhouse`, `lever`, `ashby`
-(`ADAPTERS` in `scripts/apply/ats/index.mjs`). A typo — `greenhosue` — is
+(`ADAPTERS` in `src/apply/ats/index.mjs`). A typo — `greenhosue` — is
 reported at startup by `allowlistProblems()` as a plain sentence rather than
 showing up as every job mysteriously deferring `board-untrusted`.
 
@@ -1067,7 +1067,7 @@ cookie, and nothing is read back out of the page.
 > is armed in configuration.**
 >
 > What still stops a live unattended submit is not this block. It is the
-> **post-submit classifier** in `scripts/auto/classify.mjs`. Every rule there
+> **post-submit classifier** in `src/auto/classify.mjs`. Every rule there
 > declares where its evidence came from, and a rule justified by a fixture page
 > in this repository may fire **only on loopback** (`127.0.0.1`, `localhost`).
 > Every rule today is fixture-sourced, so a real employer's page classifies as
@@ -1082,7 +1082,7 @@ cookie, and nothing is read back out of the page.
 
 ### 2.1 What it is
 
-The list of company job boards swept by `node scripts/leads/find-jobs.mjs
+The list of company job boards swept by `node src/leads/find-jobs.mjs
 search`. Forty-four entries at present: 24 Greenhouse, 8 Ashby and 2 Lever
 boards (mostly technology companies), then a block of Las Vegas gaming and
 hospitality employers — 3 Workday, 2 Oracle, 2 SmartRecruiters, 1 Jobvite,
@@ -1238,20 +1238,20 @@ it is that the command does three things a hand edit cannot.
 
 ```bash
 # add a board
-node scripts/leads/manage-sources.mjs add --type greenhouse --slug figma --company "Figma"
+node src/leads/manage-sources.mjs add --type greenhouse --slug figma --company "Figma"
 
 # a Workday board
-node scripts/leads/manage-sources.mjs add --type workday --company "Acme Corp" \
+node src/leads/manage-sources.mjs add --type workday --company "Acme Corp" \
   --host acme.wd1.myworkdayjobs.com --tenant acme --site AcmeCareers
 
 # remove one, by company name or by slug
-node scripts/leads/manage-sources.mjs remove "Figma"
+node src/leads/manage-sources.mjs remove "Figma"
 
 # live-check every board in the file
-node scripts/leads/manage-sources.mjs verify
+node src/leads/manage-sources.mjs verify
 
 # list what is tracked
-node scripts/leads/manage-sources.mjs list
+node src/leads/manage-sources.mjs list
 ```
 
 What `add` does that you cannot do by hand:
@@ -1352,7 +1352,7 @@ not a reformatted one.
 
 ### 3.1 `docs/board-candidates.yaml` — a work queue, not configuration
 
-Boards discovered by `scripts/leads/find-boards.mjs` and **not yet swept**. 872
+Boards discovered by `src/leads/find-boards.mjs` and **not yet swept**. 872
 lines, 217 candidates, each `{type, slug, company, pool}`. Its header says
 plainly: run `discover-boards.mjs` to yield-gate these, then add the survivors
 with `manage-sources`. Nothing here touches `job-sources.yaml`.
@@ -1401,7 +1401,7 @@ benchmark run looked like when the numbers were last accepted as good:
 ```json
 {
   "taken_at": "2026-08-03T04:28:54.530Z",
-  "command": "node scripts/dev/bench-runner.mjs --apps 50 --concurrency 8 --board greenhouse,honest-greenhouse --runs 3 --json",
+  "command": "node src/dev/bench-runner.mjs --apps 50 --concurrency 8 --board greenhouse,honest-greenhouse --runs 3 --json",
   "columns": {
     "model_turns_per_app": 0,
     "sleep_ms_per_app": 450,
@@ -1413,7 +1413,7 @@ benchmark run looked like when the numbers were last accepted as good:
 }
 ```
 
-Read by `.github/workflows/perf-gate.mjs` (`BASELINE_PATH`), which runs a fresh
+Read by `tools/ci/perf-gate.mjs` (`BASELINE_PATH`), which runs a fresh
 benchmark and fails the build on a regression, and by
 `tests/hooks/perf-gate.test.mjs`. `model_turns_per_app: 0` is the number worth
 noticing: the fill path is meant to cost **zero** AI model turns per application,
@@ -1438,7 +1438,7 @@ strengthening quantifiers, claiming tech mentioned only in the posting), and the
 rule that unknown information means stopping and asking rather than guessing.
 
 Editing it changes how the model writes. That is real leverage and also real
-risk: the deterministic verifier `scripts/documents/verify-claims.mjs` is what
+risk: the deterministic verifier `src/documents/verify-claims.mjs` is what
 actually enforces truthfulness, and this file only guides the model toward
 passing it. Loosening a rule here does not loosen the verifier.
 
@@ -1505,7 +1505,7 @@ are not symmetric._
 `application-limits.yaml`. Not "after a big change" — after **any** change.
 
 ```bash
-node scripts/leads/gate-audit.mjs
+node src/leads/gate-audit.mjs
 ```
 
 It re-runs every screening stage over your entire stored lead set and diffs the

@@ -8,14 +8,14 @@ import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { clusterLeads, coveredBy } from "../../scripts/leads/cluster.mjs"
+import { clusterLeads, coveredBy } from "../../src/leads/cluster.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
 )
-const SCRIPT = path.join(ROOT, "scripts", "leads", "cluster.mjs")
+const SCRIPT = path.join(ROOT, "src", "leads", "cluster.mjs")
 
 const lead = (id, title, over = {}) => ({
   id,

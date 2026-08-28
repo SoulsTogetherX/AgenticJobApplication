@@ -14,8 +14,8 @@
 // user's call, via manage-sources.
 //
 // Usage:
-//   node scripts/leads/discover-boards.mjs --candidates <file.yaml|file.json>
-//   node scripts/leads/discover-boards.mjs --type greenhouse --slug acme --company "Acme"
+//   node src/leads/discover-boards.mjs --candidates <file.yaml|file.json>
+//   node src/leads/discover-boards.mjs --type greenhouse --slug acme --company "Acme"
 //   [--min-solid 1] [--concurrency 6] [--query "full stack"] [--json]
 import fs from "node:fs"
 import { pathToFileURL } from "node:url"
@@ -163,7 +163,7 @@ async function main() {
           `    ${r.live} live, ${r.solid} reachable (${r.yield}%)` +
           `${r.posts_below_senior ? ", posts below Senior" : ", NEVER posts below Senior"}\n` +
           (r.samples.length ? `    e.g. ${r.samples[0]}\n` : "") +
-          `    node scripts/leads/manage-sources.mjs add --type ${r.type} --slug ${r.label.split(":")[1]} --company "${r.company}"\n`,
+          `    node src/leads/manage-sources.mjs add --type ${r.type} --slug ${r.label.split(":")[1]} --company "${r.company}"\n`,
       )
     }
   } else {

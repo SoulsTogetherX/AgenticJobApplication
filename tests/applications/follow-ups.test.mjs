@@ -8,11 +8,11 @@ import { fileURLToPath } from "node:url"
 import {
   dueFollowUps,
   MAX_FOLLOW_UPS,
-} from "../../scripts/applications/follow-ups.mjs"
+} from "../../src/applications/follow-ups.mjs"
 import {
   applyUpdate,
   STATUSES,
-} from "../../scripts/applications/update-application.mjs"
+} from "../../src/applications/update-application.mjs"
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -158,7 +158,7 @@ test("update-application and follow-ups CLIs round-trip a real yaml store", () =
     const run = (script, argsArr) =>
       spawnSync(
         process.execPath,
-        [path.join(ROOT, "scripts", script), ...argsArr],
+        [path.join(ROOT, "src", script), ...argsArr],
         {
           cwd: ROOT,
           encoding: "utf8",

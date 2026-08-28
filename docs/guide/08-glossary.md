@@ -188,11 +188,11 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
   →
   [`./07-safety-model.md`](./07-safety-model.md)
 
-- **audit (the)** — `docs/audit-2026-08-05.md`, a full read of every source file
+- **audit (the)** — the 2026-08-05 audit report (deleted 2026-08-06; git history), a full read of every source file
   by seventeen independent readers, each finding carrying the code or executed
   output that proves it. Every `> **Known defect (2026-08-05 audit).**` note in
-  this documentation traces back to it. →
-  [`../audit-2026-08-05.md`](../audit-2026-08-05.md)
+  this documentation traces back to it. The report itself is **not in the tree**:
+  it was deleted 2026-08-06 and lives in git history at `3d4a18e`.
 
 - **automatability** — `src/apply/automatability.mjs`: a judgement about
   whether the deterministic pipeline could fill a given posting's form without a
@@ -418,8 +418,7 @@ they are spoken as: `L0` under L, `R6` under R, `.env` under E.
 - **dead code** — Code that exists, is tested, and is called by nothing. The
   audit's single largest theme: dropdown probe-skipping, the option cache, the
   cluster letter plan and the race-safe application merge are all built and all
-  unreachable from the code that would benefit. →
-  [`../audit-2026-08-05.md`](../audit-2026-08-05.md)
+  unreachable from the code that would benefit. → git history, `3d4a18e`.
 
 - **defence in depth** — Putting several independent controls in front of the
   same risk, so no single failure is fatal. Here: the sanitiser strips injection
@@ -1442,7 +1441,7 @@ IMMEDIATE` takes the write lock at once, which is what stops two concurrent
   catalogue, with flags and exit codes.
 - **[`../operate/03-troubleshooting.md`](../operate/03-troubleshooting.md)** — what
   to do when one of the gates above refuses and you need to know why.
-- **[`../audit-2026-08-05.md`](../audit-2026-08-05.md)** — the full audit behind
+- **The 2026-08-05 audit** (report not in the tree; git history, `3d4a18e`) — the full audit behind
   every `Known defect` note here, with the evidence for each.
 - **[`../../CLAUDE.md`](../../CLAUDE.md)** — the hard rules in their authoritative
   form. Where any entry above disagrees with that file, that file is right.

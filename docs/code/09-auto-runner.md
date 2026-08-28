@@ -454,7 +454,7 @@ refusals apart by number alone):
 7. **`preflight(...)`** — the "would a run start right now?" check, which reads
    your fact base as well as your caps. If it refuses _and_ this is not an
    `--enqueue` invocation, each failing check is printed as
-   `  - <id>: <detail>` and its exit code is returned.
+   `- <id>: <detail>` and its exit code is returned.
 8. **`allowlistProblems(...)`** — each problem in the board allowlist printed
    once as `allowlist: <problem>`. The comment explains why this is worth a
    dedicated message: "A misconfigured allowlist reads as 'every board is

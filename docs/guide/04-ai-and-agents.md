@@ -1830,7 +1830,7 @@ result rather than from you.
   every real board.
 - **[`../code/14-tests.md`](../code/14-tests.md)** — the test suite, including
   `tests/security/` and the hostile corpora.
-- **[`../audit-2026-08-05.md`](../audit-2026-08-05.md)** — the full audit these
+- **The 2026-08-05 audit** (report not in the tree; git history, `3d4a18e`) — the full audit these
   "Known defect" notes are drawn from.
 - **[`./08-glossary.md`](./08-glossary.md)** — every term in this document in one
   place, for when you meet one cold.

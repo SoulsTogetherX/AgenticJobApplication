@@ -102,7 +102,7 @@ Here `freshness` is a block containing one key. In the code this is read as
 characters** — a tab is a parse error in YAML, and because a tab is invisible
 this is the single most common way to break one of these files by hand.
 
-**Lists.** A line starting with `- ` is one item in a list:
+**Lists.** A line starting with `-` is one item in a list:
 
 ```yaml
 onsite_allowed:

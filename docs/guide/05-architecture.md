@@ -35,7 +35,7 @@ file at all. That is the level of understanding you need to rebuild this.
 
 Throughout, anything that is broken or unwired today is marked
 `> **Known defect (2026-08-05 audit).**` — those come from the full audit in
-[`../audit-2026-08-05.md`](../audit-2026-08-05.md), and they are here because an
+the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`), and they are here because an
 architecture document that only describes the intended shape teaches you the
 wrong thing.
 
@@ -565,7 +565,7 @@ decides whether a cover letter is needed, whether PDFs are needed at all, and wh
 unknown questions exist, and all of that belongs in one approval message rather
 than three.
 
-4. **The scan.** One MCP call:
+1. **The scan.** One MCP call:
    `browser_run_code_unsafe { filename: ".claude/skills/apply-job/scan.driver.mjs" }`.
    That installs `.claude/skills/apply-job/scan-page.js` as `window.__ajScan` for
    the whole session and returns a page inventory: every field with its label and
@@ -584,11 +584,11 @@ than three.
    DevTools-protocol evaluation is not subject to that check. This looks like a
    pointless indirection and is load-bearing.
 
-5. The scan's `kind` is acted on first: `ad` → click the start button and re-scan;
+2. The scan's `kind` is acted on first: `ad` → click the start button and re-scan;
    `form` → continue; `login` → stop and ask you to log in; `confirm` → the
    application is already in; `unknown` → read the heading and ask.
 
-6. **`node src/apply/fill-plan.mjs <slug>`** — the single most important
+3. **`node src/apply/fill-plan.mjs <slug>`** — the single most important
    command on this path. It:
    - reads `jobs/<slug>/scan-p<N>.json`,
    - runs `detectAts(url)` from `src/apply/ats/index.mjs` to pick an adapter
@@ -627,7 +627,7 @@ than three.
 > `SKILL.md` do not match the set `fill-plan.mjs` actually prints, and two records
 > it emits for rule-0 and rule-6 purposes are undocumented entirely.
 
-7. **Phase 4 — one approval message.** The tailoring summary, the numbered unknown
+1. **Phase 4 — one approval message.** The tailoring summary, the numbered unknown
    questions with their options, every pick the model made for a
    `NEEDS-CHOICE`/`MAYBE` field, and a statement of what the plan **intends** to
    fill. That last part must read as intent — "will attach", never "attached" —
@@ -642,7 +642,7 @@ than three.
 
 **Phase 5 — fill.**
 
-8. The bootstrap is loaded into the page and `fillPage(page, plan)` from
+1. The bootstrap is loaded into the page and `fillPage(page, plan)` from
    `src/apply/fill-engine.mjs` runs **inside the browser**. It executes each
    item's verb, then runs a verify pass and returns a report:
    `report.uploads` (one entry per attachment, with `{k, tag, file, match, how,
@@ -656,21 +656,21 @@ target, attached, seen, seenFile}`), `verify.mismatch`, `verify.requiredEmpty`,
    other way on Greenhouse — cover letter attached on top of the résumé — while
    the plan said what it always says.
 
-9. **Advance or submit.** If a `r: "next"` button exists, the agent clicks it and
+2. **Advance or submit.** If a `r: "next"` button exists, the agent clicks it and
    goes back to step 4 for the next page. If only `r: "submit"` remains, the agent
    writes the summary **first** and then clicks it. Every consent tickbox and
    `confirm-widget` it actuated on your behalf is named in that summary with its
    label quoted — you are delegating assent, not waiving the record of it.
 
-10. `node src/applications/log-application.mjs <slug> --company "…" --title "…" --url "…"`
-    once you confirm.
+3. `node src/applications/log-application.mjs <slug> --company "…" --title "…" --url "…"`
+   once you confirm.
 
-11. `node src/apply/capture-post-submit.mjs stage --url … --html-file … --board … --slug …`
-    on the page that comes back. This is the **only lawful source** for the
-    unattended classifier's corpus, and §2.4 explains why that matters so much.
-    It redacts against `profile/` plus generic identifier patterns and refuses to
-    write anything if an identifier survives. Promotion into the corpus requires
-    `--user-approved` and is your decision, not the agent's.
+4. `node src/apply/capture-post-submit.mjs stage --url … --html-file … --board … --slug …`
+   on the page that comes back. This is the **only lawful source** for the
+   unattended classifier's corpus, and §2.4 explains why that matters so much.
+   It redacts against `profile/` plus generic identifier patterns and refuses to
+   write anything if an identifier survives. Promotion into the corpus requires
+   `--user-approved` and is your decision, not the agent's.
 
 **Where it can stop:** Workday (`fill-plan.mjs` exit 3), a login wall, a CAPTCHA
 signal, any `UNKNOWN` field, an unprobed dropdown, a failed fill, a
@@ -890,37 +890,50 @@ AgenticJobApplication/
 │   ├── hooks/          YOURS ALONE — protect-profile.js, guard-profile-shell.mjs
 │   ├── skills/         11 skills, each a directory with a SKILL.md
 │   └── settings.json   YOURS ALONE — wires every hook
-├── .github/workflows/  ci.yml + test-gate.mjs, perf-gate.mjs, scaffolding-reaper.mjs
+├── .github/workflows/  ci.yml (the four helper programs live in tools/ci/)
 ├── docs/               configuration you own + documentation
 ├── jobs/               ALL GENERATED, gitignored — the store and the workspaces
 ├── logs/               machine-local cycle logs, gitignored
 ├── profile/            YOUR FACTS, gitignored except the example
 ├── schemas/            context.schema.json, job.schema.json
-├── src/            all the deterministic code — no LLM calls anywhere
+├── scripts/            SIX files only — externally-pinned paths, see its README
+├── src/                all the deterministic code — no LLM calls anywhere
 ├── templates/          document.css, the print stylesheet for rendered PDFs
-├── tests/              mirrors src/ one for one
+├── tests/              mirrors src/ one for one, plus tests/quality/
+├── tools/ci/           test-gate.mjs, perf-gate.mjs, scaffolding-reaper.mjs, report-browsers.mjs
 ├── CLAUDE.md           the hard rules, loaded into every session
 └── package.json        two runtime dependencies: js-yaml and marked
 ```
+
+**The layout changed on 2026-08-27.** What was `scripts/<domain>/` is now
+`src/<domain>/`, and the four CI helper programs moved from
+`.github/workflows/` to `tools/ci/` (same depth, so their `ROOT` arithmetic is
+unchanged). Each `src/` domain now carries its own `README.md` — one screen of
+orientation, then a pointer into this set.
+
+`tests/quality/structure.test.mjs` asserts this shape: the root entry
+allowlist, the `src/` domain allowlist, the six-file `scripts/` list, kebab-case
+filenames, and the tests-mirror. Drift is a build failure rather than a
+discovery.
 
 ### 3.1 `src/` — the deterministic core
 
 Grouped by domain. Nothing in here calls a language model; that is the definition
 of the directory.
 
-| Directory           | What lives there                                                                                                                                                                                                                                                                                                                                                  |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/lib/`          | The foundation everything imports: `db.mjs` (schema and every accessor), `lib.mjs` (output mode, `mapPool`, HTTP), `lock.mjs` (the file lock), `untrusted.mjs` (the rule-0 sanitiser), `keywords.mjs`, `verification.mjs`                                                                                                                                         |
-| `src/leads/`        | Finding and judging postings: `find-jobs.mjs`, `enrich.mjs`, `screen.mjs`, `stages.mjs`, `fit.mjs`, `risk.mjs`, `recommend.mjs`, `prep-queue.mjs`, `cluster.mjs`, `canonical.mjs`, `gate-audit.mjs`, `manage-sources.mjs`, `find-boards.mjs`, `discover-boards.mjs`, `board-yield.mjs`                                                                            |
-| `src/documents/`    | Producing and checking documents: `new-job.mjs`, `keyword-plan.mjs`, `letter-plan.mjs`, `assemble-resume.mjs`, `verify-claims.mjs`, `render-pdf.mjs`, `reuse-check.mjs`, `ats-lint.mjs`                                                                                                                                                                           |
-| `src/apply/`        | Reading and filling a live form: `scan-engine.mjs`, `fill-plan.mjs`, `fill-engine.mjs`, `answer-bank.mjs`, `field-cache.mjs`, `intents.mjs`, `disclosure.mjs`, `longform.mjs`, `browser.mjs`, `auth-sync.mjs`, `pending-questions.mjs`, `capture-post-submit.mjs`, `automatability.mjs`, and `ats/` (one adapter per board)                                       |
-| `src/auto/`         | The unattended runner and its guardrails: `cycle.mjs`, `auto-apply.mjs`, `job.mjs`, `pool.mjs`, `stages.mjs`, `multipage.mjs`, `advance.mjs`, `submit.mjs`, `authorize.mjs`, `trust.mjs`, `caps.mjs`, `breaker.mjs`, `guard.mjs`, `classify.mjs`, `taxonomy.mjs`, `audit.mjs`, `digest.mjs`, `reconcile.mjs`, `preflight.mjs`, `notify.mjs`, `untrusted-text.mjs` |
-| `src/applications/` | The record: `log-application.mjs`, `update-application.mjs`, `applications.mjs`, `check-applied.mjs`, `follow-ups.mjs`                                                                                                                                                                                                                                            |
-| `scripts/profile/`  | The fact base's only doors: `save-answer.mjs`, `apply-profile.mjs`, `profile-gaps.mjs`, `keyword-coverage.mjs`                                                                                                                                                                                                                                                    |
-| `src/maintenance/`  | `archive.mjs`, `migrate.mjs`, `prune-jobs.mjs`                                                                                                                                                                                                                                                                                                                    |
-| `src/dev/`          | Benchmarks and measurement, never on any application path: `bench-apply.mjs`, `bench-runner.mjs`, `bench-green-prevalence.mjs`, `flake-rate.mjs`                                                                                                                                                                                                                  |
-| `src/hooks/`        | Agent-editable guardrails: `guard-bash.mjs`, `guard-files.mjs`, `prettify.mjs`                                                                                                                                                                                                                                                                                    |
-| `src/status.mjs`    | The whole-pipeline digest, at the root because it belongs to no one domain                                                                                                                                                                                                                                                                                        |
+| Directory           | What lives there                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/lib/`          | The foundation everything imports: `db.mjs` (schema and every accessor), `lib.mjs` (output mode, `mapPool`, HTTP), `lock.mjs` (the file lock), `untrusted.mjs` (the rule-0 sanitiser), `keywords.mjs`, `verification.mjs`                                                                                                                                                                                                 |
+| `src/leads/`        | Finding and judging postings: `find-jobs.mjs`, `enrich.mjs`, `screen.mjs`, `stages.mjs`, `fit.mjs`, `risk.mjs`, `recommend.mjs`, `prep-queue.mjs`, `cluster.mjs`, `canonical.mjs`, `gate-audit.mjs`, `manage-sources.mjs`, `find-boards.mjs`, `discover-boards.mjs`, `board-yield.mjs`                                                                                                                                    |
+| `src/documents/`    | Producing and checking documents: `new-job.mjs`, `keyword-plan.mjs`, `letter-plan.mjs`, `assemble-resume.mjs`, `verify-claims.mjs`, `render-pdf.mjs`, `reuse-check.mjs`, `ats-lint.mjs`                                                                                                                                                                                                                                   |
+| `src/apply/`        | Reading and filling a live form: `scan-engine.mjs`, `fill-plan.mjs`, `fill-engine.mjs`, `answer-bank.mjs`, `field-cache.mjs`, `intents.mjs`, `disclosure.mjs`, `longform.mjs`, `browser.mjs`, `auth-sync.mjs`, `pending-questions.mjs`, `capture-post-submit.mjs`, `automatability.mjs`, and `ats/` (one adapter per board)                                                                                               |
+| `src/auto/`         | The unattended runner and its guardrails: `cycle.mjs`, `auto-apply.mjs`, `job.mjs`, `pool.mjs`, `stages.mjs`, `multipage.mjs`, `advance.mjs`, `submit.mjs`, `authorize.mjs`, `trust.mjs`, `caps.mjs`, `breaker.mjs`, `guard.mjs`, `classify.mjs`, `taxonomy.mjs`, `audit.mjs`, `digest.mjs`, `reconcile.mjs`, `preflight.mjs`, `requeue.mjs`, `notify.mjs`, `untrusted-text.mjs`, and `cycle.cmd` (the scheduler wrapper) |
+| `src/applications/` | The record: `log-application.mjs`, `update-application.mjs`, `applications.mjs`, `check-applied.mjs`, `follow-ups.mjs`                                                                                                                                                                                                                                                                                                    |
+| `src/profile/`      | Read-only analyses of the fact base: `profile-gaps.mjs`, `keyword-coverage.mjs`. **The two writers are not here** — `save-answer.mjs` and `apply-profile.mjs` are real files at `scripts/profile/`, because the sealed `guard-profile-shell.mjs` hook matches that literal path to decide whether a shell command is a sanctioned fact-base write                                                                         |
+| `src/maintenance/`  | `archive.mjs`, `migrate.mjs`, `prune-jobs.mjs`                                                                                                                                                                                                                                                                                                                                                                            |
+| `src/dev/`          | Benchmarks, measurement and audit, never on any application path: `bench-apply.mjs`, `bench-runner.mjs`, `bench-green-prevalence.mjs`, `flake-rate.mjs`, `scorecard.mjs`, `audit-submissions.mjs`, `spawn-counter.cjs`                                                                                                                                                                                                    |
+| `src/hooks/`        | Agent-editable guardrails: `guard-bash.mjs`, `guard-files.mjs`, `prettify.mjs`                                                                                                                                                                                                                                                                                                                                            |
+| `src/status.mjs`    | The whole-pipeline digest, at the root because it belongs to no one domain                                                                                                                                                                                                                                                                                                                                                |
 
 The grouping is not filing — it is a dependency direction. `lib/` imports nothing
 from the others. Everything imports `lib/`. `auto/` imports `apply/` (it reuses
@@ -966,23 +979,32 @@ agent proposes values and never edits them.
 > user-owned by policy and guarded by neither hook. Nothing mechanically stops an
 > agent editing it; only the written rule does.
 
-The rest is documentation, and most of it is being replaced by the set you are
-reading. `docs/reference/`, `docs/autonomy/`, the two `autonomy-plan*.md` files
-and the old `README.md` are stale — treat them as leads to verify, never as
-sources of truth.
+The rest is documentation: the three tracks indexed by
+[`../README.md`](../README.md), plus three dated archives that are never swept
+(`measurements.md`, `roster-log.md` and `plans/`). The stale reference sets those
+tracks replaced — `docs/reference/`, `docs/autonomy/` and the `autonomy-plan*.md`
+files — were deleted on 2026-08-06 and are gone from the tree; if a code comment
+still cites one, the citation is to git history.
 
 ### 3.4 `tests/` — mirrors `src/` one for one
 
-124 test files across twelve directories: `applications` (3), `apply` (24),
-`auto` (27), `dev` (4), `documents` (12), `hooks` (7), `leads` (22), `lib` (6),
-`maintenance` (3), `profile` (5), `security` (11), plus `fixtures/` (data, not
-tests).
+159 test files across twelve directories plus `fixtures/` (data, not tests):
+`applications`, `apply`, `auto`, `dev`, `documents`, `hooks`, `leads`, `lib`,
+`maintenance`, `profile`, `quality` and `security`. The counts move every week;
+`node --test "tests/**/*.test.mjs"` is the honest way to ask.
 
-`npm test` runs `node tools/ci/test-gate.mjs full`, not a bare
-`node --test`. The difference matters: `node --test` exits `0` on an empty run, so
-an exit code alone is not evidence that anything ran. The gate expands the
-directories itself and asserts the count against a floor in `package.json` —
-currently 2314 for the full suite and 262 for the security suite.
+`tests/quality/` is the newest of these and is different in kind: it does not
+test the product, it asserts the **conventions** — formatting, lint,
+doc-path truth, structure, shim parity. See
+[`09-conventions.md`](09-conventions.md).
+
+`npm test` runs `node tools/ci/test-gate.mjs full`, not a bare `node --test`. The
+difference matters: `node --test` exits `0` on an empty run, so an exit code alone
+is not evidence that anything ran. The gate expands the directories itself and
+asserts the count against the `testGate` floors in `package.json`. Read the
+current floors there rather than from this sentence — they are raised as tests
+land, and the ledger of raises is in
+[`../measurements.md`](../measurements.md) under "Test-floor ledger".
 
 ---
 
@@ -1621,5 +1643,5 @@ present-tense observation if it does not.
   to do when a pipeline stops where this document says it can stop.
 - **[`../operate/04-config-reference.md`](../operate/04-config-reference.md)** —
   every key in `docs/application-limits.yaml` and `docs/job-sources.yaml`.
-- **[`../audit-2026-08-05.md`](../audit-2026-08-05.md)** — the full audit every
+- **The 2026-08-05 audit** (report not in the tree; git history, `3d4a18e`) — the full audit every
   "Known defect" note above is drawn from.

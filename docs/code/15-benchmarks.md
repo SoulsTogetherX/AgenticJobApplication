@@ -1692,7 +1692,7 @@ belongs in the ledger.
 # Part 8 — The defect list, in one place
 
 Everything marked above, collected so you can see the shape of the area's health.
-Full evidence for each is in [`../audit-2026-08-05.md`](../audit-2026-08-05.md).
+Full evidence for each is in the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`).
 
 | where                                | defect                                                                             | severity                       |
 | ------------------------------------ | ---------------------------------------------------------------------------------- | ------------------------------ |
@@ -1748,5 +1748,5 @@ area is built to prevent, and it still got in twice.
   performance preference.
 - [`../operate/03-troubleshooting.md`](../operate/03-troubleshooting.md) — what
   to do when the gate goes red on your pull request.
-- [`../audit-2026-08-05.md`](../audit-2026-08-05.md) — the full audit, with
+- the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`) — the full audit, with
   evidence for every defect listed in Part 8.

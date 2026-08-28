@@ -1464,9 +1464,22 @@ does **not** change the exit code — the cycle's job is to get as far as it can
 say exactly where each lead stopped.
 
 **`src/auto/cycle.cmd`** is a Windows Task Scheduler wrapper around the same
-thing. It pins the working directory to the repository root and appends a
-timestamped log to `logs/cycle.log`. Registering it with Task Scheduler is your
-act, not the agent's — it changes a system setting.
+thing, and it is the **canonical** path. It pins the working directory to the
+repository root and appends a timestamped log to `logs/cycle.log`. Registering it
+with Task Scheduler is your act, not the agent's — it changes a system setting.
+
+> **The registered task still points at the old path, and that is fine.** Read on
+> 2026-08-27, the `AgenticJobApplication` task's action is
+> `…\scripts\auto\cycle.cmd --skip-apply`. `scripts\auto\cycle.cmd` is a
+> forwarding shim: it `call`s `src\auto\cycle.cmd` and exits with its
+> `%ERRORLEVEL%`, so the scheduled run works unmodified. The shim is deleted only
+> after **you** repoint the task — re-run the `Register-ScheduledTask` block
+> below with the `src\auto\cycle.cmd` path, or
+> `schtasks /Change /TN AgenticJobApplication /TR "<repo>\src\auto\cycle.cmd --skip-apply"`.
+> Re-registering is a system change and stays yours.
+> ([`../../scripts/README.md`](../../scripts/README.md) explains the six pinned
+> paths.) Check the current action with
+> `(Get-ScheduledTask AgenticJobApplication).Actions`.
 
 **Registering it (the 2026-08-13 split: the 7:00 task is prepare-only).** From
 an elevated PowerShell, with the repository path adjusted if yours differs:
@@ -1527,6 +1540,36 @@ before touching `auto-apply.mjs`.
 
 **Exit codes:** `0` clear to run, `1` refused, `2` usage, `3` something in the
 answer bank is instruction-shaped, `4` something in it is a sensitive identifier.
+
+### 6.9 `requeue.mjs` — put one stranded queue row back to work
+
+**WRITES `auto_queue`. Refuses the two states that may already have sent something.**
+
+```
+node src/auto/requeue.mjs --list
+node src/auto/requeue.mjs <slug> [--reason "why"] [--db <file>]
+```
+
+`auto_queue` had terminal states with no way back, and four populations were
+stranded behind that (measured 2026-08-24): a dry run's terminal row written
+before `job.mjs` started recording rehearsals as `deferred/rehearsed`; `deferred`
+rows whose kind is deliberately not requeueable; `deferred` rows with a
+requeueable kind whose lead was since dismissed, which the digest reports as
+`requeueable` while selection permanently turns them away; and `attempted` rows,
+which this command **refuses**.
+
+**Why it refuses.** `attempted` means a click went out and nothing recorded what
+came back — an application may already exist at that employer, and re-queuing
+invites a second one. No flag overrides that; it is `reconcile.mjs`'s problem and,
+on today's boards, a human's. `submitted` is refused for the mirror reason: the
+application went out and the row is the record of it.
+
+Before reaching for this, the alternative to know about is
+`migrate.mjs --reset-queue`, which deletes the **entire** queue including every
+legitimate `submitted` row — the `posted_at` half of the latency statistic and
+the whole `wall_ms` sample.
+
+**Exit codes:** `0` ok, `1` nothing matched, `2` usage.
 
 ---
 
@@ -2159,6 +2202,29 @@ to the export published at bootstrap, not to the property being reassigned. A
 counter that silently reports 0 is worse than no counter, because the CI gate's one
 hard rule is `model_turns > 0`.
 
+### 12.6 `audit-submissions.mjs` — did the recorded submissions actually submit?
+
+**READ-ONLY. It never touches the ledger, and that is the design.**
+
+```
+node src/dev/audit-submissions.mjs [--json]
+```
+
+Every live click this pipeline has made is consistent with two very different
+worlds: the board confirmed and the classifier could not read the page, or the
+submit never completed. On 2026-08-24 one staged capture settled it for one job —
+the post-click page was the application form, unchanged, with "Submit Application"
+still on it. So at least one recorded submission sent nothing.
+
+This lays the ledger beside the staged post-click pages and prints a table with an
+explicit `needs inbox check` column. **Following up on a job you never applied to
+is a real cost**, which is why it runs before any follow-up rather than after.
+
+It will not promote a capture or amend a row. A staged capture is a candidate, not
+evidence — the same rule that governs promotion into the classifier's corpus. Your
+confirmation emails are the only authority here, and corrections go through
+`applications.mjs remove <slug> --confirm`, which is hard rule 2's sanctioned path.
+
 ---
 
 ## Part 13 — The complete index
@@ -2225,14 +2291,20 @@ Everything runnable, alphabetically within its folder, with what it changes.
 | `log-application.mjs`    | Record an application | `applications` + the YAML export           |
 | `update-application.mjs` | Follow up             | `applications` + the YAML export           |
 
-### `scripts/profile/`
+### `src/profile/` and `scripts/profile/`
 
-| Command                | Task               | Changes                                         |
-| ---------------------- | ------------------ | ----------------------------------------------- |
-| `apply-profile.mjs`    | Know where I stand | `profile/profile.yaml` + `profile.backup.yaml`  |
-| `keyword-coverage.mjs` | Know where I stand | **READ-ONLY**                                   |
-| `profile-gaps.mjs`     | Know where I stand | **READ-ONLY**                                   |
-| `save-answer.mjs`      | **The fact base**  | `profile/answers.yaml` (never under `--rescan`) |
+The two **readers** live in `src/profile/`. The two **writers** are real files in
+`scripts/profile/`, because the sealed `guard-profile-shell.mjs` hook matches
+that literal path to decide whether a shell command is a sanctioned fact-base
+write. Type the paths as written here; a different path is a different guard
+outcome. Why: [`../../scripts/README.md`](../../scripts/README.md).
+
+| Command                             | Task               | Changes                                         |
+| ----------------------------------- | ------------------ | ----------------------------------------------- |
+| `src/profile/keyword-coverage.mjs`  | Know where I stand | **READ-ONLY**                                   |
+| `src/profile/profile-gaps.mjs`      | Know where I stand | **READ-ONLY**                                   |
+| `scripts/profile/save-answer.mjs`   | **The fact base**  | `profile/answers.yaml` (never under `--rescan`) |
+| `scripts/profile/apply-profile.mjs` | Know where I stand | `profile/profile.yaml` + `profile.backup.yaml`  |
 
 ### `src/auto/`
 
@@ -2242,6 +2314,7 @@ Everything runnable, alphabetically within its folder, with what it changes.
 | `cycle.cmd`      | Apply | Windows scheduler wrapper around `cycle.mjs`; writes `logs/cycle.log`                            |
 | `cycle.mjs`      | Apply | **CAN SEND A REAL APPLICATION.** Everything the tailoring chain writes, plus the runner's tables |
 | `preflight.mjs`  | Apply | **READ-ONLY** — states so in its own usage text                                                  |
+| `requeue.mjs`    | Apply | One `auto_queue` row back to `queued` — see §6.9. **Refuses `attempted` and `submitted`**        |
 
 Every other file under `src/auto/` (`advance`, `audit`, `authorize`,
 `breaker`, `caps`, `classify`, `digest`, `guard`, `job`, `multipage`, `notify`,
@@ -2266,7 +2339,14 @@ a library with no command line. So is everything under `src/lib/`,
 | `bench-runner.mjs`           | Measure performance | Fixture rows; a ledger entry with `--ledger`                                                    |
 | `flake-rate.mjs`             | Measure performance | **READ-ONLY**                                                                                   |
 | `scorecard.mjs`              | Measure performance | Appends a row to `docs/scorecard.jsonl` **by default** — pass `--no-record` for a read-only run |
+| `audit-submissions.mjs`      | Apply               | **READ-ONLY** — see §12.6. Never touches the ledger                                             |
 | `spawn-counter.cjs`          | Measure performance | Not a command — a `--require` preload                                                           |
+
+### `tools/ci/`
+
+Build helpers rather than pipeline commands: `test-gate.mjs` (run it as
+`npm test`), `scaffolding-reaper.mjs` (`npm run reap`), `perf-gate.mjs` and
+`report-browsers.mjs`. See [`../../tools/ci/README.md`](../../tools/ci/README.md).
 
 ---
 

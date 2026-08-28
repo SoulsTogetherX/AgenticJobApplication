@@ -213,7 +213,7 @@ why `risk.mjs`'s injection reason keeps its raw machine-readable form
 parses that raw form.
 
 > **Trap.** Adding or removing a colon from a reason string silently changes
-> whether it gets an `l<N>: ` prefix. It looks like a wording tweak. It is a
+> whether it gets an `l<N>:` prefix. It looks like a wording tweak. It is a
 > change to a string another file parses.
 
 ### The return shape
@@ -316,7 +316,7 @@ It does three separate jobs:
 That last point is the part people misread. The cache is not for this script.
 From the header:
 
-> `// Verdicts are cached in the `screens` table, keyed by who produced them. This`
+> `// Verdicts are cached in the`screens`table, keyed by who produced them. This`
 > `// pass is cheap (~125 ms for the whole store) so its own cache saves nothing —`
 > `// it is recorded for history. What the cache is FOR is the model's judgment`
 > `// pass in the pipeline-jobs skill, which fetches the live posting and used to be`
@@ -1713,7 +1713,7 @@ Compared against 159 lead(s) in the baseline.
 
 (The doubled `l2: l2:` on the reason line is real, not a typo in this document.
 The prose printer writes `${r.stage}: ${r.reasons.join("; ")}` and the reason
-string from L2 already begins with its own `l2: ` prefix.)
+string from L2 already begins with its own `l2:` prefix.)
 
 **How to read that.** The histogram tells you where your filtering is actually
 happening — here L0, the free title/location/date check, is doing 76 of the 95
@@ -1939,7 +1939,7 @@ three rules, and none of them may be relaxed for convenience:
 > `//   2. HOSTNAMES ARE MATCHED ANCHORED, ON THE PARSED HOST. Never a substring of`
 > `//      the whole URL. This file deliberately does NOT reuse detectAts() from`
 > `//      apply/ats/index.mjs: that function matches ADAPTERS against the entire`
-> `//      URL string ... so `evil.com/?x=jobs.lever.co` selects the Lever adapter.`
+> `//      URL string ... so`evil.com/?x=jobs.lever.co`selects the Lever adapter.`
 > `//      Harmless when it only picks a fill strategy; not harmless when it picks`
 > `//      who to trust.`
 > `//   3. AMBIGUITY IS A REFUSAL. A careers page linking three different ATS`

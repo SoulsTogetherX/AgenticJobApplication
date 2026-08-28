@@ -24,7 +24,7 @@ something nobody looked at.
   sealed.
 - Why `npm test` is not `node --test`, what the `testGate` floors in
   `package.json` mean, and how to raise a floor honestly.
-- What each of the five CI jobs does, including the scaffolding reaper's
+- What each of the six CI jobs does, including the scaffolding reaper's
   `scaffolding: true` / `remove_after` contract and the performance gate's
   five rules.
 - What every dotfile is for, and which three lines in them are load-bearing
@@ -48,26 +48,35 @@ You do not need any of these to follow this document, but they help:
 
 **The files covered here**
 
-| file                                    | lines | one-line purpose                                                             |
-| --------------------------------------- | ----- | ---------------------------------------------------------------------------- |
-| `.claude/hooks/protect-profile.js`      | 55    | denies Edit/Write to the fact base and to the guardrail machinery            |
-| `.claude/hooks/guard-profile-shell.mjs` | 239   | denies the same targets when reached through a shell command instead         |
-| `src/hooks/guard-bash.mjs`              | 608   | denies any git command that leaves, or acts outside, the `dev` branch        |
-| `src/hooks/guard-files.mjs`             | 60    | denies any write whose path lands outside the project directory              |
-| `src/hooks/prettify.mjs`                | 71    | runs prettier on every file the agent edits (never blocks)                   |
-| `.claude/settings.json`                 | 54    | wires all five hooks and holds the permission allowlist                      |
-| `package.json`                          | 59    | npm manifest, the `testGate` floors, and the phase list the reaper reads     |
-| `tools/ci/test-gate.mjs`                | 505   | runs the suite and asserts the run _proves_ tests executed                   |
-| `.github/workflows/ci.yml`              | 267   | the GitHub Actions pipeline: five jobs, one required check                   |
-| `tools/ci/scaffolding-reaper.mjs`       | 592   | fails the build when temporary dev-only code outlives its declared phase     |
-| `tools/ci/perf-gate.mjs`                | 345   | fails the build on a measured performance or model-usage regression          |
-| `tools/ci/report-browsers.mjs`          | 41    | prints which browser this machine has, so a skipped PDF test is attributable |
-| `.gitignore`                            | 61    | keeps personal data and cookies out of git — and keeps test inputs in        |
-| `.gitattributes`                        | 5     | forces LF line endings in every working tree, on every platform              |
-| `.prettierrc`                           | 3     | one setting: no semicolons                                                   |
-| `.prettierignore`                       | 16    | five housekeeping entries plus three that are contracts                      |
-| `.mcp.json`                             | 17    | declares the Playwright browser server and its persistent profile            |
-| `.env.example`                          | 12    | the committed template for the never-committed `.env`                        |
+| file                                            | lines | one-line purpose                                                                |
+| ----------------------------------------------- | ----- | ------------------------------------------------------------------------------- |
+| `.claude/hooks/protect-profile.js`              | 55    | denies Edit/Write to the fact base and to the guardrail machinery               |
+| `.claude/hooks/guard-profile-shell.mjs`         | 239   | denies the same targets when reached through a shell command instead            |
+| `src/hooks/guard-bash.mjs`                      | 608   | denies any git command that leaves, or acts outside, the `dev` branch           |
+| `src/hooks/guard-files.mjs`                     | 60    | denies any write whose path lands outside the project directory                 |
+| `src/hooks/prettify.mjs`                        | 71    | runs prettier on every file the agent edits (never blocks)                      |
+| `.claude/settings.json`                         | 54    | wires all five hooks and holds the permission allowlist                         |
+| `package.json`                                  | 74    | npm manifest, the `testGate` floors, and the phase list the reaper reads        |
+| `tools/ci/test-gate.mjs`                        | 505   | runs the suite and asserts the run _proves_ tests executed                      |
+| `.github/workflows/ci.yml`                      | 324   | the GitHub Actions pipeline: six jobs, one required check                       |
+| `tools/ci/scaffolding-reaper.mjs`               | 592   | fails the build when temporary dev-only code outlives its declared phase        |
+| `tools/ci/perf-gate.mjs`                        | 345   | fails the build on a measured performance or model-usage regression             |
+| `tools/ci/report-browsers.mjs`                  | 41    | prints which browser this machine has, so a skipped PDF test is attributable    |
+| `.gitignore`                                    | 61    | keeps personal data and cookies out of git — and keeps test inputs in           |
+| `.gitattributes`                                | 5     | forces LF line endings in every working tree, on every platform                 |
+| `.prettierrc`                                   | 4     | two settings: no semicolons, LF line endings                                    |
+| `.prettierignore`                               | 37    | five housekeeping entries plus the rest, each a contract with its reason        |
+| `.mcp.json`                                     | 17    | declares the Playwright browser server and its persistent profile               |
+| `.env.example`                                  | 12    | the committed template for the never-committed `.env`                           |
+| `eslint.config.mjs`                             | 309   | ESLint 10, hand-picked rules only — never a preset, and never `no-process-exit` |
+| `eslint-suppressions.json`                      | —     | the frozen ratchet baseline: 128 files, shrink-only, never widened              |
+| `.markdownlint-cli2.jsonc`                      | —     | the markdown rule set and corpus, tuned with the measured counts recorded       |
+| `scripts/hooks/*.mjs`, `scripts/auto/cycle.cmd` | 10–14 | forwarding shims for the paths the user's sealed config pins                    |
+
+The `tests/quality/*` gates that assert all of this — formatting, lint, doc-path
+truth, structure, shim parity, YAML validity, markdown — are a decision record in
+their own right: [`../guide/09-conventions.md`](../guide/09-conventions.md) says
+what each enforces, what was rejected, and what cannot be mechanised at all.
 
 ---
 
@@ -300,6 +309,43 @@ Two doors, both now locked: the Edit/Write tool path and the shell path. That
 pairing is the design idea to carry away — **a protected resource has as many
 doors as there are tools that can reach it**, and locking one is locking none.
 
+### The consequence for the 2026-08-27 re-layout: four shims and two carve-outs
+
+Sealing `settings.json` has a cost that only showed up when the code moved.
+`settings.json` invokes the three hooks as `node scripts/hooks/<name>.mjs`, and
+an agent cannot repoint it. So the hooks live at `src/hooks/` and
+`scripts/hooks/` holds three **forwarding shims**:
+
+```js
+process.argv[1] = fileURLToPath(target) // BEFORE the import
+await import(target.href)
+```
+
+**A bare re-export shim silently no-ops and exits 0** — measured 2026-08-27.
+`export * from "../../src/hooks/guard-bash.mjs"` runs nothing, because the
+target's entry-point guard compares `process.argv[1]` against its own path and
+concludes it was merely imported. Exit 0 is what a PreToolUse hook returns to
+mean "allowed", so that shape would disarm branch protection while every run
+looked normal. Rewriting `process.argv[1]` first is what makes the forward
+indistinguishable from direct invocation. The deprecation notice goes to
+**stderr**, never stdout — stdout is the hook protocol channel.
+
+`scripts/auto/cycle.cmd` is the same idea for the Windows Scheduled Task, which
+invokes that absolute path daily at 07:00.
+
+The two `scripts/profile/*.mjs` files are **not** shims. `guard-profile-shell.mjs`
+matches the literal path `scripts/profile/(save-answer|apply-profile).mjs` to
+decide that a shell command is a sanctioned fact-base write and then demands
+`--file`, `--user-approved` or `--rescan`. A moved file does not match that
+regex, does not match the hook's second stage either (which looks for
+`profile/answers.yaml` as an operand, not `save-answer.mjs`), and the hook
+returns **without denying**. So moving them would not relocate the guard, it
+would remove it.
+
+`tests/quality/shims.test.mjs` asserts exit-code and stdout parity for as long as
+the shims live; `tests/quality/structure.test.mjs` asserts `scripts/` holds
+exactly that set. Full account: [`../../scripts/README.md`](../../scripts/README.md).
+
 ---
 
 ## 1.4 `.claude/hooks/protect-profile.js`
@@ -478,11 +524,11 @@ scripts that are allowed to write `profile/`:
 
 then it must carry at least one of these three flags, or it is denied:
 
-| flag              | pattern | means                      |
-| ----------------- | ------- | -------------------------- |
-| `--file <path>`   | `/(?:^  | \s)--file[\s=]/`           | "this is a test; write somewhere else" |
-| `--user-approved` | `/(?:^  | \s)--user-approved(?:[\s=] | $)/`                                   | "the user approved this answer in chat" |
-| `--rescan`        | `/(?:^  | \s)--rescan(?:[\s=]        | $)/`                                   | "read-only audit of the existing bank"  |
+| flag              | pattern                                       | means                                   |
+| ----------------- | --------------------------------------------- | --------------------------------------- |
+| `--file <path>`   | `/(?:^  \| \s)--file[\s=]/`                   | "this is a test; write somewhere else"  |
+| `--user-approved` | `/(?:^  \| \s)--user-approved(?:[\s=] \| $)/` | "the user approved this answer in chat" |
+| `--rescan`        | `/(?:^  \| \s)--rescan(?:[\s=]        \| $)/` | "read-only audit of the existing bank"  |
 
 **Section 2 — raw shell writes.** First it decides whether the command names a
 protected path at all, using a leading _boundary class_ `(?:^|[\s"'=(,;|&>])` —
@@ -1278,13 +1324,22 @@ days. `tests/hooks/test-gate.test.mjs` now asserts every script names a file tha
 exists, and asserts specifically that `verify` names
 `src/documents/verify-claims.mjs`.
 
-### The `measured` field — a changelog inside a JSON string
+### The `measured` field — a changelog that outgrew its JSON string
 
-`testGate.full.measured` is a single JSON string containing roughly 9,500
-characters of prose. It is about **84% of the whole file**, and it is not a
-comment — it is an audit trail. Each entry records who raised a floor, when, on
-what machine, over how many files, how many runs agreed, and what caveats
-applied. A representative fragment:
+**Moved 2026-08-27.** `testGate.full.measured` used to be a single JSON string of
+roughly 9,500 characters of prose — about **84% of `package.json`** — and it is
+now one sentence pointing at
+[`../measurements.md`](../measurements.md), section "Test-floor ledger", where
+the entries live in markdown. `test-gate.mjs` never read the field, which is what
+made the move safe; verify that before ever putting prose back in there.
+
+The **rule** did not move with it: raise a floor only to a number two consecutive
+honest gate runs produced on a quiescent tree, record those runs, and never lower
+one to make a change green.
+
+What the ledger is for: each entry records who raised a floor, when, on what
+machine, over how many files, how many runs agreed, and what caveats applied. A
+representative fragment:
 
 > _"RAISED 1549 → 1610 by build-manager 2026-08-02, and this one carries NO
 > caveat: the tree was fully committed and every agent had retired, so for the
@@ -1307,9 +1362,9 @@ nowhere else:
   such a tree has no `jobs/` folder yet, and passes on every later run once some
   earlier test has created one.
 
-The most recent clean measurement recorded there: **119 files, 2186 tests, 2183
-pass, 0 fail, 3 documented skips, 119.6 seconds**, with the security gate at 262
-in about 6–7 seconds.
+Numbers move every week, so read the latest entry in the ledger rather than a
+figure quoted here. `package.json`'s `testGate` floors are the current contract;
+the ledger says how each one was earned.
 
 ### Traps and known defects
 
@@ -1442,17 +1497,17 @@ rule: _"It never hides a failure: there is no `|| true` path."_
 
 Internal functions, by name:
 
-| function                            | returns                  | role                                                                           |
-| ----------------------------------- | ------------------------ | ------------------------------------------------------------------------------ |
-| `die(msg)`                          | never                    | writes `test-gate: <msg>` to standard error and exits 1                        |
-| `parseArgs(argv)`                   | options object           | the flag table above                                                           |
-| `loadGateConfig(name)`              | the gate config          | reads `package.json`; `die`s listing the gates that do exist                   |
-| `findTestFiles(dir)`                | `string[]`               | recursive walk matching `/\.test\.(c                                           | m)?js$/`, sorted with `localeCompare` |
-| `expandPaths(paths, cwd, problems)` | `string[]`               | resolves each path; records a problem for a missing path or an empty directory |
-| `tapCount(tap, key)`                | `number \| null`         | pulls `# tests 2186`-style summary lines out of the TAP text                   |
-| `collectDirectives(tap)`            | `{name, kind, reason}[]` | every `# SKIP` / `# TODO`                                                      |
-| `collectNames(tap)`                 | `string[]`               | every reported test name (used only by `--require-ran`)                        |
-| `collectFailures(tap)`              | `{name, owner}[]`        | every `not ok`, deduplicated, with any `FINDING (owner)` parsed out            |
+| function                            | returns                  | role                                                                                                                   |
+| ----------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `die(msg)`                          | never                    | writes `test-gate: <msg>` to standard error and exits 1                                                                |
+| `parseArgs(argv)`                   | options object           | the flag table above                                                                                                   |
+| `loadGateConfig(name)`              | the gate config          | reads `package.json`; `die`s listing the gates that do exist                                                           |
+| `findTestFiles(dir)`                | `string[]`               | recursive walk matching `/\.test\.(c                                           \| m)?js$/`, sorted with`localeCompare` |
+| `expandPaths(paths, cwd, problems)` | `string[]`               | resolves each path; records a problem for a missing path or an empty directory                                         |
+| `tapCount(tap, key)`                | `number \| null`         | pulls `# tests 2186`-style summary lines out of the TAP text                                                           |
+| `collectDirectives(tap)`            | `{name, kind, reason}[]` | every `# SKIP` / `# TODO`                                                                                              |
+| `collectNames(tap)`                 | `string[]`               | every reported test name (used only by `--require-ran`)                                                                |
+| `collectFailures(tap)`              | `{name, owner}[]`        | every `not ok`, deduplicated, with any `FINDING (owner)` parsed out                                                    |
 
 ### How it works, step by step
 
@@ -1694,7 +1749,7 @@ concurrency:
 - `concurrency` with `cancel-in-progress` means a new push cancels the run
   already in flight for the same branch, so you are not paying for stale runs.
 
-### The five jobs
+### The six jobs
 
 **1. `security-gate`** — Ubuntu, Node 22, 15-minute timeout.
 
@@ -1734,7 +1789,20 @@ failure on this leg only, are:
 All three exist today in `tests/security/browser-vouch.test.mjs`, and
 `tests/hooks/test-gate.test.mjs` asserts they still do.
 
-**2. `test`** — the matrix: `os: [ubuntu-latest, windows-latest]` ×
+**2. `lint`** — Ubuntu, Node 22, 10-minute timeout, added 2026-08-27 with the
+enforcement layer. Three steps after `npm ci`: `npm run lint` (ESLint 10 with
+`--pass-on-unpruned-suppressions`, so **fixing** a suppressed violation never
+reddens the build), `npm run format:check` (prettier over the whole repo), and
+`npm run lint:md` (markdownlint-cli2, invoked with **no arguments** so its corpus
+has exactly one definition — `.markdownlint-cli2.jsonc`).
+
+Where prettier and markdownlint disagree about the same bytes, **prettier wins**
+and the conflicting markdownlint rule is off with its reason recorded in that
+config. Every one of these also runs as a counted test under `tests/quality/`, so
+a local `npm test` catches them before the push; the reasoning for each rule is
+in [`../guide/09-conventions.md`](../guide/09-conventions.md).
+
+**3. `test`** — the matrix: `os: [ubuntu-latest, windows-latest]` ×
 `node: [20, 22]`, so four legs, `fail-fast: false` (one red leg does not cancel
 the others), 20-minute timeout. Steps: checkout → set up Node → `npm ci` →
 `node tools/ci/report-browsers.mjs` → `npm test`.
@@ -1873,11 +1941,11 @@ stub. The promise is always "we'll delete it later". The reaper turns that
 promise into something the build can check.
 
 > ```
-> // docs/team-roster.md ("Skills and scaffolding") and docs/autonomy-plan.md
-> // both say ci-engineer **fails the build** when a scaffolding artifact
-> // outlives its phase. Until 2026-07-31 that was a comment in ci.yml and
-> // nothing else — a documented capability that did not exist… This is the
-> // capability.
+> // docs/team-roster.md ("Skills and scaffolding") says ci-engineer **fails
+> // the build** when a scaffolding artifact outlives its phase (so did the
+> // autonomy plan doc, deleted 2026-08-06). Until 2026-07-31 that was a
+> // comment in ci.yml and nothing else — a documented capability that did
+> // not exist… This is the capability.
 > ```
 
 ### The declaration contract
@@ -1909,11 +1977,11 @@ owner: qa-adversary
 
 > ```
 > // Anything further down is prose ABOUT the convention, not a declaration.
-> // That distinction is load-bearing here: docs/team-roster.md,
-> // docs/autonomy-plan.md and .claude/agents/*.md all contain the literal text
-> // scaffolding: true inside fenced examples. A reaper that grepped the whole
-> // file would fail the build on its own documentation, get muted within a day,
-> // and protect nothing.
+> // That distinction is load-bearing here: docs/team-roster.md and
+> // .claude/agents/*.md contain the literal text scaffolding: true inside
+> // fenced examples (so did the deleted autonomy plan doc). A reaper that
+> // grepped the whole file would fail the build on its own documentation, get
+> // muted within a day, and protect nothing.
 > ```
 
 And the keys must sit at **column 0**, with no leading spaces. That rule has its
@@ -2009,15 +2077,16 @@ export function loadPhases(root, override)         // → {order, current}
    | 3    | `remove_after` names a phase not in `order` | _"a phase that does not exist can never pass, so this artifact would live forever"_ |
    | 1    | `nowIdx > idx` — the declared phase is past | the point of the whole check                                                        |
 
-Worked example. Suppose `tests/fixtures/fake-board.md` declares
+Worked example, with a file that does not exist. Suppose a `fake-board.md`
+under `tests/fixtures/` declared
 `scaffolding: true`, `remove_after: phase-2`, `owner: qa-adversary`, and the
 project is at `phase-3` with `order` containing all four phases. Then
 `order.indexOf("phase-3")` is 2, `order.indexOf("phase-2")` is 1, `2 > 1`, and
 the build fails with:
 
 ```
-[MUST GO] tests/fixtures/fake-board.md — remove_after phase-2 (owner: qa-adversary)
-ERROR: tests/fixtures/fake-board.md was to be REMOVED AFTER phase-2; the project is
+[MUST GO] tests/fixtures/<name>.md — remove_after phase-2 (owner: qa-adversary)
+ERROR: tests/fixtures/<name>.md was to be REMOVED AFTER phase-2; the project is
 now at phase-3. Delete it, or move remove_after forward on purpose and in writing.
 Owner: qa-adversary.
 ```
@@ -2461,9 +2530,29 @@ jobs/*/*.pdf
 .playwright-mcp/
 ```
 
-The other three are **contracts**. `CLAUDE.md` names them as such:
-_"`.prettierignore` entries are contracts: `scan-page.js`, `scan.driver.mjs`,
-`docs/job-sources.yaml`."_
+The rest are **contracts** — each entry carries its reason as a comment, and
+`tests/quality/format.test.mjs` asserts the entries are present, so deleting
+one fails the build. The original three (below) got company on 2026-08-27; the
+newer entries share one shape: **bytes something else depends on staying
+exactly as written**.
+
+```
+tests/fixtures/post-submit/captures/   # the classifier's evidence corpus
+jobs/.auto/                            # staged captures awaiting review
+tests/fixtures/hostile/                # byte-precise attack fixtures
+.claude/worktrees/                     # other sessions' checkouts
+tests/fixtures/post-submit/corpus.json # machine-written capture manifest
+docs/candidates/                       # machine-written board exports
+eslint-suppressions.json               # eslint rewrites it in ITS formatting
+```
+
+The captures and hostile fixtures are evidence: a classifier rule is justified
+by the bytes of a captured page, and a hostile-form test by the exact shape of
+its attack — formatting either rewrites what the rule was justified by. The
+machine-written files (the manifest, the candidate exports, the suppressions
+ledger) would be reformatted by prettier and then rewritten by their owning
+script on the next run, putting the format gate in a churn war with the
+tooling. The three originals:
 
 ### The two skill files
 

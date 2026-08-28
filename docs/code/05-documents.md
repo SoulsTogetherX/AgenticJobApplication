@@ -397,7 +397,7 @@ deterministic replacement sitting unused in this folder.
 > Step 9 has the same shape: `formatSelectionDiff()` builds the approval message
 > from fact ids, and the skill instead asks the model to describe its own work —
 > which is the one source that cannot be independently checked. See
-> [`../audit-2026-08-05.md`](../audit-2026-08-05.md), "Deterministic resume
+> the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`), "Deterministic resume
 > assembler exists but no skill calls it" and "The attended skill drafts the
 > resume by hand".
 
@@ -1633,12 +1633,14 @@ user-owned file; propose values, never edit it.
 - `--json` → the whole plan, pretty-printed.
 - **Terse** (non-TTY, i.e. an agent is running it) → one summary line then one
   line per term:
+
   ```
   must_use=7 required_matched=3/5 blocked=4 mirror=yes file=jobs/acme/keywords.json
   use|React|SUMMARY+SKILLS|React
   use|AWS|SKILLS|AWS
   blocked|Kubernetes|required-by-posting
   ```
+
 - **Human/TTY** → prose, including the exact `save-answer.mjs` command for the
   first blocked term.
 
@@ -2426,14 +2428,17 @@ When a flag is omitted the script guesses: `--html` becomes
 **Warnings** — these do not fail the run:
 
 - A missing standard section heading, one warning per entry of `EXPECTED_SECTIONS`:
+
   ```js
   { name: "SUMMARY",    re: /^#+\s*(summary|profile|objective)\b/im },
   { name: "EXPERIENCE", re: /^#+\s*(experience|employment|work history)\b/im },
   { name: "SKILLS",     re: /^#+\s*(technical\s+)?skills\b/im },
   { name: "EDUCATION",  re: /^#+\s*education\b/im },
   ```
+
   _"A parser segments a resume by these; inventing creative ones ('Where I've
   Been') is a common way to lose an entire work history."_
+
 - `"no bullet lines found"`.
 - Every issue from `checkWrittenForm(md)` — see H.4.
 
@@ -2826,7 +2831,7 @@ direction:
 ## Part L — every known defect in this folder, in one table
 
 Each of these is verified against the code as it stands today. Full evidence lives
-in [`../audit-2026-08-05.md`](../audit-2026-08-05.md).
+in the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`).
 
 | Where                                   | What                                                                     | Impact | Effect                                                                  |
 | --------------------------------------- | ------------------------------------------------------------------------ | ------ | ----------------------------------------------------------------------- |
@@ -2950,6 +2955,6 @@ application form:
   [`../operate/04-config-reference.md`](../operate/04-config-reference.md)
 
 **For the full list of what is broken:**
-[`../audit-2026-08-05.md`](../audit-2026-08-05.md) — 247 findings with evidence.
+the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`) — 247 findings with evidence.
 The defect notes in this document are the ones that touch these twelve files, not
 a summary of the whole report.

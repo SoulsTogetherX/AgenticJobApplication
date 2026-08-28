@@ -1185,7 +1185,7 @@ flag L0 raised. Stages are independent functions but they are not blind to each
 other.
 
 **Reasons are labelled with their stage.**
-`reasons.map((r) => (r.includes(":") ? r : `${id}: ${r}`))` prefixes each reason
+`reasons.map((r) => (r.includes(":") ? r :`${id}: ${r}`))` prefixes each reason
 with the stage id, unless it already carries one. So a stored verdict reads
 `l1: requires active clearance` — the reason _and_ who decided it.
 
@@ -2017,7 +2017,7 @@ That is good practice, and it is not quite enough:
 > 3,908-character posting takes 0.25 ms — so this is a crafted-input latency risk,
 > not something you will hit by accident. The suggested fixes are to cap the input
 > size before the tag walk, or lower the `{0,4000}` bound to a realistic attribute
-> length. See [../audit-2026-08-05.md](../audit-2026-08-05.md).
+> length. See the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`).
 
 The lesson to keep: **a regular expression has a cost, and the cost depends on the
 input, and an attacker may choose the input.** When you write one that runs on
@@ -2681,7 +2681,7 @@ properties are none. The patterns are gone.
 > the two write sites, and no reader at all. The fix is to serialise each pattern as
 > its `source` string and rebuild it with `new RegExp` on the far side, or to delete
 > the key from all four adapters and both write sites. Full detail in
-> [../audit-2026-08-05.md](../audit-2026-08-05.md).
+> the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`).
 >
 > Two files involved here — `src/apply/fill-plan.mjs` and `src/apply/ats/greenhouse.mjs`
 > — are under active repair as of this writing, so check their current state before
@@ -2862,5 +2862,5 @@ And two references for when you are working rather than learning:
 
 - **[../operate/01-commands.md](../operate/01-commands.md)** — the command
   catalogue.
-- **[../audit-2026-08-05.md](../audit-2026-08-05.md)** — the full audit, including
+- **The 2026-08-05 audit** (report not in the tree; git history, `3d4a18e`) — the full audit, including
   every "Known defect" flagged in this document.

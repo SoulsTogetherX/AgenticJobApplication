@@ -905,11 +905,14 @@ different fixes. In order of how often they occur:
    renamed its board slug, or the API URL changed. The sweep is deliberately
    tolerant here — one dead board must never lose you the other forty — so it
    prints a warning on the error channel and keeps going:
+
    ```
    warn: source failed: greenhouse:northwind — HTTP 404
    ```
+
    That line goes to standard **error**, not standard output, so it is easy to
    miss if you are only reading the summary.
+
 2. **The board is fine and everything it returned was filtered out.** This is by
    far the most common case and it is not a failure. `docs/application-limits.yaml`
    is a cheap gate applied to every result: your title keywords, your location
@@ -1512,12 +1515,27 @@ field-cache: could not read jobs/.field-cache.json — starting clean
    never hits, which is the same silent-amber failure described above. That
    trade-off is named rather than taken quietly.
 4. **To drop one form's remembered shape deliberately**:
+
    ```bash
    node src/apply/fill-plan.mjs <slug> --invalidate
    ```
+
    Use it when the fill engine reports a verify mismatch on a field whose options
    came from the cache.
+
 5. **To skip the cache for one run** without dropping anything: `--no-cache`.
+
+**The residual trap, one layer out — a general one, not a field-cache one.**
+`src/auto/cycle.mjs` records each stage's stderr only when the stage FAILS: on
+a step that succeeds it stores `stderr: ""` (the comment beside it says so).
+So any warning that travels **only** on stderr from a succeeding step is
+discarded by the code that captured it, on exactly the path that runs
+unattended. For the field-cache discard specifically that hole is closed by a
+different route — the count rides the return value as `cache_discarded` and
+`auto-apply.mjs` prints its own `WARN` — but the mechanism remains: a new
+stderr-only warning added to any cycle stage will vanish from the unattended
+log until it is also carried on a return value. Put warnings in the value, not
+just the stream.
 
 **Reading the cache statistics.** The plan's summary line carries them:
 
@@ -1626,9 +1644,11 @@ path that could not run.
 3. **If nothing is running and the file persists**, you may delete it yourself.
    You are the one mechanism that is allowed to judge a lock dead on evidence
    other than age, because you can look:
+
    ```bash
    rm jobs/leads.db.lock
    ```
+
 4. **If `save-answer.mjs` exits `5`**, that is the lock timing out and **nothing
    was written**. It is retryable and safe to repeat.
 
@@ -1727,9 +1747,11 @@ program can do for you, and the reason is in the next section.
 
 - **The application went through:** log it, so the caps and the already-applied
   check know about it.
+
   ```bash
   node src/applications/log-application.mjs <slug>
   ```
+
 - **It did not:** nothing to log.
 
 **Step 5 — delete the brake file.** That is the only way it clears.
@@ -2235,6 +2257,92 @@ click), release the dead run's `claimed` row with `releaseStaleAutoClaims`
 queue row back to `queued` yourself — that state is never reclaimed
 automatically, on purpose, and here it is the crash's residue rather than a
 click.
+
+---
+
+## Part 7 — Four rules that look like bugs, and the reasoning behind them
+
+These are indexed in `CLAUDE.md` §6 as one-liners. The reasoning is here, because
+the reasoning is what stops the "fix" being re-applied.
+
+### The answer-bank stemmer is suffix-only, and never gains a prefix rule
+
+**Symptom that tempts the change:** an answered question defers because the form
+worded it differently. Measured 2026-08-19 on a live Torc Robotics Greenhouse
+form: the bank held _"What is your earliest available start date / notice
+period?"_, the form asked _"What is your availability or desired start date?"_.
+Three content tokens matched literally and one only in meaning
+(`available`/`availability`), scoring **0.54** against a 0.7 gate. On the
+unattended path a deferred required field is a whole application not sent.
+
+**The fix was a suffix-only stemmer**, and suffix-only is the safety property,
+not an implementation detail. English negates with **prefixes** — un-, non-, in-,
+dis-, ir- — so a rule set that only ever rewrites the END of a word cannot fold a
+word into its own negation: `unable`/`able`, `unwilling`/`willing`,
+`nonexempt`/`exempt` stay distinct stems by construction. The polarity guard
+downstream **assumes** this. Add a prefix rule and you silently remove the
+assumption it rests on.
+
+Two guards landed with the stemmer and are part of the same decision:
+
+- The **containment shortcut** divides by the shorter side, so one shared token
+  between a one-word label and a long question scores 0.90. Folding makes such
+  coincidences common — measured, the label "State" folded onto the "States" of an
+  unrelated banked question. It now needs two shared stems or one token shared
+  **literally**.
+- The **polarity guard** caps a match at `MAYBE` when the label and the banked
+  question disagree in negation parity — but only for a **bare** yes/no banked
+  answer, because a bag of words has no truth value and that answer is nothing
+  but one. An unscoped parity check demoted four correct matches on 2026-08-19.
+
+Pinned by `tests/apply/answer-bank-rewording.test.mjs` and
+`tests/apply/answer-bank-prefix-guard.test.mjs`.
+
+### The EEO tier is exempt from the far-coverage floor
+
+The token-overlap shortcut normally requires the **longer** side to be at least
+30% explained by the overlap (`FAR_COVERAGE_MIN`). That floor exists because
+without it, "Application" and a bare "Yes" were filled from unrelated banked
+answers — a wrong claim on a document going out over the user's name.
+
+`requireFarCoverage: false` is passed by the **EEO tier and nowhere else**, and
+it is a different failure cost rather than a convenience:
+
+- Everywhere else, a lost fuzzy match falls through to a **defer**, which asks
+  the user. A defer is strictly safer than a wrong fill.
+- In the EEO tier, a lost match falls through to an **auto-decline**, which asks
+  nobody and silently overwrites an answer the user actually gave with "prefer
+  not to say".
+
+**Measured: applying the floor there cost seven correct self-ID answers**,
+including a banked "Hispanic or Latino" reached from the label "Race". Raising
+precision there lowers correctness. These labels also carry their whole option
+list in their text on several boards ("Gender Select … Male Female Decline to
+self-identify"), so the far side is long by construction and the floor could
+never be met anyway.
+
+### SQLite permits NULLs in a non-INTEGER primary key
+
+A `PRIMARY KEY` on anything other than a single INTEGER column does **not** imply
+`NOT NULL` in SQLite. A nullable column in a composite key therefore silently
+un-enforces the whole key: two rows with a NULL in that column do not collide.
+
+This bit `auto_submissions`, whose key is `(slug, mode)`. A NULL `mode` would let
+the same slug be submitted twice — the one failure the submission ledger exists
+to prevent. Declare every key column `NOT NULL` explicitly; do not rely on
+`PRIMARY KEY` to do it.
+
+### `.playwright-mcp/profile` holds real cookies
+
+That directory is a live browser profile with real session cookies for boards you
+have logged into. It is gitignored and it never leaves the machine. Two
+consequences worth knowing before you touch it:
+
+- Deleting it logs you out of every board, and the next attended apply starts
+  from a login page.
+- `.mcp.json` is read when a Claude Code session **starts**. Editing it mid-session
+  changes nothing until you restart; a "the MCP server ignored my change" report
+  is almost always this.
 
 ---
 

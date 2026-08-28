@@ -719,7 +719,7 @@ that the timeout covers the body rather than only the headers, and one asserts
 that a healthy request is untouched and an HTTP error keeps its own message.
 
 > **Note on the audit.** The 2026-08-05 audit
-> ([`../audit-2026-08-05.md`](../audit-2026-08-05.md)) recorded "fetchJson and
+> (the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`)) recorded "fetchJson and
 > fetchText have no timeout" as a high-impact performance finding, listing about
 > twenty call sites and noting that two other modules had hand-rolled their own
 > timeouts rather than getting one from the shared helper. **That finding has
@@ -1937,6 +1937,7 @@ real false positive somebody hit:
   and read 'deliver express service to every guest' as backend experience."_
   Its alias list is correspondingly elaborate — the dotted form, an explicit
   noun, or a neighbour in a stack list:
+
   ```js
   aliases: [
     "express\\.js",
@@ -1946,6 +1947,7 @@ real false positive somebody hit:
     "express\\s*[/,+&]\\s*(?:node|mongo|react|postgres)",
   ]
   ```
+
 - **Bun** does not match a bare `"bun"`: _"that reads a catered-lunch perk as a
   JS runtime."_
 - **HTML/CSS** keeps `tailwind`, `sass` and `scss` as aliases even though each is
@@ -2666,13 +2668,16 @@ Four construction decisions, each stated in the header:
   invalidate just as a change to `profile.yaml` does.
 - **Named and ordered, not concatenated.** The string fed to SHA-256 is
   literally:
+
   ```
   profile.yaml:a1b2c3…
   answers.yaml:d4e5f6…
   ```
+
   If the two hashes were glued together, a byte moving from one file to
   the other could leave the combined digest unchanged. Naming and fixing the
   order removes that.
+
 - **A missing file contributes the literal `"-"`.** An absent `answers.yaml` is a
   legitimate state, and it must produce a different digest from an _empty_
   `answers.yaml`. The moment an empty file is created, the second line becomes
@@ -5810,7 +5815,7 @@ claim on a document signed with the owner's name.
 
 **The findings quoted in this document**
 
-- [`../audit-2026-08-05.md`](../audit-2026-08-05.md) — the full audit. Fourteen of
+- the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`) — the full audit. Fourteen of
   its findings against these six files are folded into the "Known defect" callouts
   above, each re-checked against the code as it stands today. One further finding
   — the missing fetch timeout — has since been fixed, and Part 1.5 documents the

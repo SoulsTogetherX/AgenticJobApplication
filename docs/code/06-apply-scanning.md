@@ -1764,7 +1764,8 @@ one click, and it is the correct trade.
 > fixed the way the engine fixes it, because the fix needs the scanner's text and
 > this sandbox has no filesystem. What it does instead is record the fact and
 > fail closed on the thing that matters: every vouch is stripped and a signal is
-> appended. `docs/reference/09-gotchas.md` makes the point that reading the
+> appended. The gotcha index (then `docs/reference/09-gotchas.md`, deleted 2026-08-06;
+> now `CLAUDE.md` §6 and `docs/operate/03-troubleshooting.md`) makes the point that reading the
 > unconditional-install rule as covering both files is the mistake — **only
 > `scan-engine.mjs` gets the strong version.**
 
@@ -1923,7 +1924,7 @@ export function engineSandboxSource(src = readEngineSource()) {
 ```
 
 Worked: given a file beginning `export default async function fillPage(page, plan) {`,
-this strips `export default `, leaving a plain function declaration, and appends a
+this strips `export default`, leaving a plain function declaration, and appends a
 final line containing just `fillPage`. Evaluating the whole string therefore
 _produces_ the function. (That last-expression value is JavaScript's **completion
 value**: `eval("const a = 1\na")` returns `1`.)

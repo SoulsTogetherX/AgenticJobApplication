@@ -292,7 +292,7 @@ const DEFAULT_EXPORT =
 
 It requires a named default-exported function declaration, strips
 `export default`, appends the function's name so that `eval`'s result **is** the
-function, and throws if any line in the file looks like `import `, `export ` or
+function, and throws if any line in the file looks like `import`, `export` or
 `import(`. Break that rule and you get a module that compiles fine in Node and
 throws only in the browser, only in production. `tests/apply/fill-page.test.mjs`
 pins all of it.
@@ -1836,13 +1836,13 @@ Five steps:
 
 **Worked examples.**
 
-| input                                                    | result                                                                                                                  |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `https://job-boards.greenhouse.io/coinbase/jobs/8022068` | the greenhouse adapter                                                                                                  |
-| `https://jobs.ashbyhq.com/render/2f0a…`                  | the ashby adapter                                                                                                       |
-| `https://myworkdayjobs.com/en-US/acme/job/123`           | `{ id: "workday", handoff: true, reason: "Workday requires creating an account to apply — the agent cannot do that…" }` |
-| `https://notgreenhouse.io.evil.test/apply`               | `generic` — the `(^                                                                                                     | \.)` anchor is what makes this true |
-| `https://jobs.example.com/careers/42`                    | `generic`                                                                                                               |
+| input                                                    | result                                                                                                                                                         |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `https://job-boards.greenhouse.io/coinbase/jobs/8022068` | the greenhouse adapter                                                                                                                                         |
+| `https://jobs.ashbyhq.com/render/2f0a…`                  | the ashby adapter                                                                                                                                              |
+| `https://myworkdayjobs.com/en-US/acme/job/123`           | `{ id: "workday", handoff: true, reason: "Workday requires creating an account to apply — the agent cannot do that…" }`                                        |
+| `https://notgreenhouse.io.evil.test/apply`               | `generic` — the `(^                                                                                                     \| \.)` anchor is what makes this true |
+| `https://jobs.example.com/careers/42`                    | `generic`                                                                                                                                                      |
 
 **Workday is detected and deliberately not adapted.** Applying there requires
 creating an account, which the agent is not permitted to do (that is one of the
@@ -1900,6 +1900,12 @@ of a five-minute edit, and it belongs in your head before you make one.
 Suppose a board keeps coming up in your leads — call it **Workable**, served from
 `apply.workable.com`. Here is the whole job.
 
+> **This adapter is not in the repository.** `src/apply/ats/` ships exactly four:
+> `greenhouse.mjs`, `lever.mjs`, `ashby.mjs` and `generic.mjs`, wired in
+> `index.mjs`. Everything below is the file you would write, not a file you can
+> open — which is the point of a walkthrough, but worth stating before you go
+> looking for it.
+
 #### Step 0 — decide whether you need one at all
 
 You do not need an adapter for a board to work. `generic` fills unknown boards
@@ -1925,7 +1931,7 @@ board because these facts expire.
 
 #### Step 2 — create the file
 
-`src/apply/ats/workable.mjs`:
+Create `workable.mjs` in `src/apply/ats/`:
 
 ```js
 // Workable (apply.workable.com). Measured against <a real posting URL> on
@@ -2522,8 +2528,11 @@ a human can see it.
 > 35-line header arguing carefully why it is lawful under hard rule 1, and is
 > **imported by nothing**. A repository-wide search for `longform`,
 > `longFormPrompt`, `draftShortfall` and `parseLengthDemand` returns only the file
-> itself and documentation. There is no `tests/apply/longform.test.mjs`, so
-> `CLAUDE.md`'s "new features need tests" is unmet. Either wire it — `fill-plan.mjs`
+> itself and documentation. **No test file was ever written for it** — not
+> renamed, not moved: it does not exist, and `src/apply/longform.mjs` sits on the
+> frozen tests-mirror exemption list in `tests/quality/structure.test.mjs` for
+> exactly that reason, which is the independent corroboration. So `CLAUDE.md`'s
+> "new features need tests" is unmet. Either wire it — `fill-plan.mjs`
 > emits a `compose` defer carrying the parsed length demand, the skill drafts,
 > `verify-claims` and `draftShortfall` gate the draft, you approve it — or delete it.
 > Leaving it is the worst option, because a reader assumes prose prompts are handled
@@ -2757,6 +2766,6 @@ are exactly the ones the benchmark names as removable.
 security suites.
 
 **For the full list of what is broken:**
-[`../audit-2026-08-05.md`](../audit-2026-08-05.md) — 247 findings with evidence. The
+the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`) — 247 findings with evidence. The
 defect notes in this document are the ones that touch these ten files, not a summary
 of the whole report.

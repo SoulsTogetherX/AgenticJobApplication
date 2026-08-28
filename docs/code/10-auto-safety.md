@@ -227,17 +227,17 @@ by:
 
 ### 1.3 Everything it exposes
 
-| Export                          | Signature / value                                                    | What it is                                                                                                 |
-| ------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `TRUST_CHECKS`                  | frozen `["allowlist","adapter","screening","https","origin_stable"]` | The closed list of check names. A sixth check must be added **here**, not smuggled in as an early return.  |
-| `ADAPTER_IDS`                   | frozen array — today `["greenhouse","lever","ashby"]`                | The job-board adapters this repository actually ships, taken from `ADAPTERS` in `src/apply/ats/index.mjs`. |
-| `isLoopbackHost(host)`          | `-> boolean`                                                         | Literal membership of `{"127.0.0.1", "[::1]", "::1", "localhost"}`, lowercased.                            |
-| `domainMatches(host, domain)`   | `-> boolean`                                                         | `h === d                                                                                                   |     | h.endsWith("." + d)`. |
-| `normalizeAllowlist(raw)`       | `-> [{domain, ats}]`                                                 | Accepts a YAML map or a list of objects. A bare list of domain strings is refused on purpose.              |
-| `allowlistProblems(raw)`        | `-> string[]`                                                        | Human-actionable complaints about the user's allowlist.                                                    |
-| `allowlistEntry(host, entries)` | `-> {domain, ats} \| null`                                           | The longest matching domain wins, so a specific entry beats a broad one.                                   |
-| `trustBoard({...})`             | `-> frozen {ok, reason, kind, checks, failed, entry, origin}`        | The gate itself.                                                                                           |
-| `readLimits(file)`              | `-> parsed YAML \| null`                                             | Absent file gives `null`. A **malformed** file throws, deliberately.                                       |
+| Export                          | Signature / value                                                    | What it is                                                                                                                                 |
+| ------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TRUST_CHECKS`                  | frozen `["allowlist","adapter","screening","https","origin_stable"]` | The closed list of check names. A sixth check must be added **here**, not smuggled in as an early return.                                  |
+| `ADAPTER_IDS`                   | frozen array — today `["greenhouse","lever","ashby"]`                | The job-board adapters this repository actually ships, taken from `ADAPTERS` in `src/apply/ats/index.mjs`.                                 |
+| `isLoopbackHost(host)`          | `-> boolean`                                                         | Literal membership of `{"127.0.0.1", "[::1]", "::1", "localhost"}`, lowercased.                                                            |
+| `domainMatches(host, domain)`   | `-> boolean`                                                         | `h === d                                                                                                   \|     \| h.endsWith("." + d)`. |
+| `normalizeAllowlist(raw)`       | `-> [{domain, ats}]`                                                 | Accepts a YAML map or a list of objects. A bare list of domain strings is refused on purpose.                                              |
+| `allowlistProblems(raw)`        | `-> string[]`                                                        | Human-actionable complaints about the user's allowlist.                                                                                    |
+| `allowlistEntry(host, entries)` | `-> {domain, ats} \| null`                                           | The longest matching domain wins, so a specific entry beats a broad one.                                                                   |
+| `trustBoard({...})`             | `-> frozen {ok, reason, kind, checks, failed, entry, origin}`        | The gate itself.                                                                                                                           |
+| `readLimits(file)`              | `-> parsed YAML \| null`                                             | Absent file gives `null`. A **malformed** file throws, deliberately.                                                                       |
 
 `trustBoard` takes one options object:
 
@@ -2850,7 +2850,7 @@ rows."_ Command-line flags that reach it: `--cadence-hours`, `--stop-path`,
 `--db`.
 
 ```console
-$ node src/status.mjs
+node src/status.mjs
 ```
 
 ### 10.3 Everything it exposes

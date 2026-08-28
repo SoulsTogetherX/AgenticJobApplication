@@ -1342,3 +1342,26 @@ lived when the entry was written.
 ### security gate
 
 2026-07-31 on win32/node24: 236 over 11 files, 3 identical samples. Was 224; the +12 is qa-adversary's tests/security/honest-board.test.mjs plus the hostile-forms.test.mjs rewrite (net +/-0 top-level tests vs HEAD, checked with a path-scoped git diff). Every file in this path set is tracked, so unlike the full gate this number does not depend on uncommitted work. RAISED 262 -> 291 2026-08-24: +29, being the 14 cases of the new tests/security/mutating-cli-flags.test.mjs plus work landed between measurements. Two runs both at 291, 0 fail, 19.1s. That file spawns each dangerous command with a NEAR-MISS of one of its real flags (--skip-aply, --enqeue, --fixtur, --dryrun, --prune-orphan, --no-sav, --no-recrd) and asserts exit 2, a did-you-mean, and an explicit statement that nothing ran. Spawned rather than imported on purpose: the property is what the PROCESS does with argv, and for migrate.mjs the import used to BE the dangerous act.
+
+### 2026-08-27 — floor 2857 -> 2870 (the enforcement layer lands)
+
+TWO consecutive full-gate runs on a QUIESCENT tree (every build agent retired,
+no other session writing) both reported exactly 2870, 2867 pass, 0 fail, the
+same 3 documented skips, 162 files (347.5s and 268.1s). Attribution: +59 over
+the 2811 the re-layout verified at - 46 cases in the new tests/quality/ gates
+(ci-engineer), 2 source-shape pins in tests/lib/db.test.mjs (the pragma order
+and the composite-PK NOT NULL rule, added when the I8 review found the
+CLAUDE.md row citing db.test.mjs promised enforcement the file did not carry),
+5 in tests/quality/claude-md.test.mjs and 2 in entry-index.test.mjs (the two
+gates that had to wait for the P4 rewrite), and 4 from the adversarial QA pass
+(two exemption-list growth pins, the config-resolution canary, the
+rule-to-enforcer pairing test). The QA pass also REWROTE the shim gate after
+proving its allow-payload parity vacuous - a no-op shim that kept the "[shim]"
+banner passed while branch protection was gone; the probes now demand a real
+DENY (guard-bash on a main checkout, guard-files on an outside write) and a
+real side effect (prettify must change bytes), and the escaped attack was
+re-run and now fails the gate. Cost, stated because latency is a tracked
+priority: the counted gate went from 234-246s (pre-layer baseline, 2811) to
+268-348s across four post-layer runs - the new gates spawn eslint (~15s),
+prettier --check (~28s) and markdownlint (~8s) inside the counted suite, which
+is the price of a floor that also asserts the linters ran.

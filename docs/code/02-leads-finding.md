@@ -178,7 +178,7 @@ enriched=4/6
 
 The `+` line is `+id|company|title|location|flags`. `enriched=4/6` means six
 surviving postings had no description in the board's list response and four
-detail fetches succeeded (see [Part 2](#part-2--scriptsleadsenrichmjs)).
+detail fetches succeeded (see [Part 2](#part-2--srcleadsenrichmjs)).
 
 For a human at a terminal the same run reads:
 
@@ -273,7 +273,7 @@ This file is the list of companies swept every day. It is **yours**: the code
 reads it and never rewrites it behind your back, and the tooling that does edit
 it (`manage-sources.mjs`) is something you run on purpose.
 
-> **YAML** is a text format for configuration. `key: value` pairs, `- ` for list
+> **YAML** is a text format for configuration. `key: value` pairs, `-` for list
 > items, `#` for comments. `{ type: greenhouse, slug: anthropic }` is "flow
 > style" — a whole object written on one line, which matters here for a reason
 > given below.
@@ -2391,7 +2391,7 @@ Four details that matter:
 3. **Reason prefixing is conditional** —
    ``reasons.map((r) => (r.includes(":") ? r : `${id}: ${r}`))``. L0 and L1
    reasons already contain a colon (`"title: …"`, `"body: …"`) so they are left
-   alone; a bare reason from L2 or L3 gets `l2: ` / `l3: ` prepended.
+   alone; a bare reason from L2 or L3 gets `l2:` / `l3:` prepended.
 4. **`...rest` is spread twice** — once into `stages[id]`, once into the flat
    `extra`. That is how `fit_score` and `repost_count` end up at the top level of
    the result, where `screen.mjs` reads them as `staged.fit_score` and

@@ -1650,17 +1650,17 @@ something on the page was not understood:
 
 Plus, from `submitReadiness` and `authorizeSubmit` reading the fill report:
 
-7. **Any `labelFlag`** — a field label that carried instruction-shaped text of a
+1. **Any `labelFlag`** — a field label that carried instruction-shaped text of a
    disqualifying kind, on _any_ item, defer or skip.
-8. **Any `plan.actuated` entry** — a widget ticked from a banked answer.
-9. **Any `report.revealed` field** — a control the fill created that no scan and
+2. **Any `plan.actuated` entry** — a widget ticked from a banked answer.
+3. **Any `report.revealed` field** — a control the fill created that no scan and
    no plan could have seen coming (a conditional "if yes, explain").
-10. **Any fill failure** — including an upload the DOM shows present and holding
-    zero files.
-11. **Any `verify.mismatch`** — a field that does not hold what was typed.
-12. **Any `verify.requiredEmpty`** — a required field still empty.
-13. **Any `verify.errors`** — validation text the form itself rendered.
-14. **An unreadable report or verify result** — present and not a plain object.
+4. **Any fill failure** — including an upload the DOM shows present and holding
+   zero files.
+5. **Any `verify.mismatch`** — a field that does not hold what was typed.
+6. **Any `verify.requiredEmpty`** — a required field still empty.
+7. **Any `verify.errors`** — validation text the form itself rendered.
+8. **An unreadable report or verify result** — present and not a plain object.
 
 `UNKNOWN` blocks on **both** paths. It is the one entry that is not about assent:
 it means nothing deterministic understood the field, and filling it would require
@@ -1755,19 +1755,28 @@ And:
 > and the answer is to teach it deterministically or to defer — never to guess
 > fluently.
 
-### The current status — verified
+### The current status — how to ask, and one worked reading
 
-`CLAUDE.md` says the unattended path is off. **That is no longer true**, and the
-gap matters enough to mark.
+**This section dates.** It was written on 2026-08-06 and it is a _worked example_
+of reading the configuration, not a standing claim about what a live run will do.
+Six capability sentences in `CLAUDE.md` were found false by reading the code, and
+the fix was to stop asserting and start pointing. The same applies here.
 
-> **Known defect (2026-08-05 audit).** `CLAUDE.md`'s rule 6 states: _"the runner
-> in `src/auto/` ships `enabled: false, dry_run: true`"_, _"the user's file
-> has neither [`enabled: true` nor a `board_allowlist`], so the trust gate refuses
-> every board today"_, and _"nothing opens a browser unattended —
-> `auto-apply.mjs` does not launch Chromium"_. All three sentences are stale.
-> `src/auto/guard.mjs`'s header carries the same stale claim.
+The three commands that answer the question today:
 
-Read directly from `docs/application-limits.yaml` today:
+- `node src/auto/preflight.mjs` — would an unattended run be allowed to start?
+- `sightedHosts()` in `src/auto/classify.mjs`, and
+  `node --test tests/auto/classify.test.mjs` — which hosts have a
+  `capture`-sourced confirmation rule, i.e. whose post-submit page this repo can
+  read. **Being on `board_allowlist` and being sighted are different lists**, and
+  neither implies the other.
+- `node src/dev/audit-submissions.mjs` — what every recorded submission actually
+  did, per slug, including a `needs inbox check` column for the ones only the
+  owner's confirmation email can settle.
+
+The worked reading below is kept because the _method_ is what transfers. The
+values are read directly from `docs/application-limits.yaml`; re-read the file
+rather than trusting the block.
 
 ```yaml
 auto_apply:
@@ -1805,16 +1814,27 @@ reachable**, on those four domains, for a lead that has cleared screening, whose
 document has a passing verification against the current fact base, and whose plan
 and fill report are clean by every check in the list above.
 
-**One thing still stops it short of a completed application, and it stops it after
-the click.** The post-submit classifier's shipped rules are all
-`evidence: { source: "fixture" }`, and `ruleApplies()` restricts a fixture-sourced
-rule to loopback addresses only. The capture corpus is empty —
-`tests/fixtures/post-submit/corpus.json` is literally `{"samples": []}`. So on a
-real board `classify()` returns `unclassified`, `job.mjs` terminates the job as
-`post-submit-unclassified`, and the `(slug, mode)` row in `auto_submissions` stays
-`attempted` — an **orphan**. The next run's `assertNoOrphanAttempts` raises a
-company-scoped STOP, which brakes that one employer and lets every other job run,
-and a human adjudicates one slug.
+**What can still stop it after the click is the classifier, and that is a
+per-host question.** Each shipped rule carries its `evidence`. A rule justified
+by a fixture page may fire only on loopback (`ruleApplies()` enforces this); a
+rule justified by a **captured** real post-submit page fires only on the hosts it
+was captured from. A host with no capture-sourced confirmation rule classifies as
+`unclassified`, `job.mjs` terminates the job as `post-submit-unclassified`, and
+the `(slug, mode)` row in `auto_submissions` stays `attempted` — an **orphan**.
+The next run's `assertNoOrphanAttempts` raises a company-scoped STOP, which
+brakes that one employer, lets every other job run, and leaves a human to
+adjudicate one slug.
+
+Since 2026-08-18 the runner asks this **before** the click: `job.mjs` calls
+`isHostSighted(liveUrl)` after navigation and defers `board-unsighted` on a live
+run, rather than filling, clicking, and hard-stopping at `unclassified` with the
+application possibly sent and unrecorded.
+
+**Which hosts are sighted is a fact about `src/auto/classify.mjs`, not about this
+document.** Read its `evidence.source === "capture"` entries, or call
+`sightedHosts()`. This paragraph asserted an empty corpus until 2026-08-27, which
+was false by then and false in the direction that under-states what a live run
+does.
 
 That is deliberate and is not a gap to route around. Writing a plausible-looking
 regex instead of capturing real pages is rule 0's forbidden guess with the model
@@ -1825,12 +1845,15 @@ via `src/apply/capture-post-submit.mjs` (stage → review → promote).
 
 ### Strength verdict
 
-**Deterministic and unusually strong, with one documented stale claim in the
-prose.** The click surface is two files and a test enforces it. The submit is
-gated by a frozen, single-use, origin-bound token that no caller can manufacture.
-Eleven named preconditions, a closed list. The defer rules are deterministic
-scripts. What is a convention is the _prose in `CLAUDE.md`_, and it is currently
-wrong about the configuration.
+**Deterministic and unusually strong.** The click surface is two files and a test
+enforces it. The submit is gated by a frozen, single-use, origin-bound token that
+no caller can manufacture. Eleven named preconditions, a closed list. The defer
+rules are deterministic scripts.
+
+The weak point is **prose about capability**, wherever it is written. `CLAUDE.md`
+now refuses to make such claims and points at the commands above instead; this
+document should be read the same way. A sentence stating what a live run can do
+is stale from the day it is written.
 
 ---
 

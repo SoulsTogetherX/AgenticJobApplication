@@ -1435,5 +1435,5 @@ dependency on an untracked directory.
   one-line description, if you are trying to find where something lives.
 - [`../operate/03-troubleshooting.md`](../operate/03-troubleshooting.md) — what
   to do when a run goes wrong in ordinary use rather than in the suite.
-- [`../audit-2026-08-05.md`](../audit-2026-08-05.md) — the full audit these
+- the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`) — the full audit these
   "Known defect" boxes are drawn from, with 247 findings and their evidence.

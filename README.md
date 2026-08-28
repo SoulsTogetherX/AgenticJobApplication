@@ -9,6 +9,19 @@ fills and submits the application in a real browser.
 The documentation assumes no programming background and builds one:
 [docs/README.md](docs/README.md) is the map.
 
+## Start here
+
+| If you want to…                | Read                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| understand what this is        | [docs/guide/01-what-this-is.md](docs/guide/01-what-this-is.md)           |
+| run the pipeline               | [docs/operate/01-commands.md](docs/operate/01-commands.md)               |
+| follow a task end to end       | [docs/operate/02-recipes.md](docs/operate/02-recipes.md)                 |
+| see how it fits together       | [docs/guide/05-architecture.md](docs/guide/05-architecture.md)           |
+| know the rules and the gates   | [docs/guide/07-safety-model.md](docs/guide/07-safety-model.md)           |
+| know why the conventions exist | [docs/guide/09-conventions.md](docs/guide/09-conventions.md)             |
+| fix something that broke       | [docs/operate/03-troubleshooting.md](docs/operate/03-troubleshooting.md) |
+| work on the code as an agent   | [CLAUDE.md](CLAUDE.md), then the `README.md` in the directory you are in |
+
 ## The one idea worth understanding first
 
 An AI language model predicts likely text. That makes it good at rephrasing and
@@ -62,6 +75,16 @@ Anything the fact base cannot answer truthfully is **deferred** with a stated
 reason rather than guessed. That is the design, not a limitation: the failure
 being prevented is a _wrong_ application, not a missing one.
 
+## Layout
+
+`src/<domain>/` holds all the deterministic code, one directory per domain, each
+with its own `README.md`. `tests/` mirrors it one for one. `tools/ci/` holds the
+build helpers. `scripts/` is **not** a source directory: it holds exactly six
+files whose paths are pinned by something outside this repository — see
+[scripts/README.md](scripts/README.md). `docs/`, `jobs/`, `profile/`, `schemas/`
+and `templates/` are documentation, generated data, your facts, JSON schemas and
+the print stylesheet respectively.
+
 ## Setup
 
 ```bash
@@ -86,14 +109,18 @@ starts in this folder.
 - The find, tailor and attended-apply paths work end to end.
 - The **unattended runner is switched on** — `docs/application-limits.yaml` has
   `auto_apply.enabled: true`, `dry_run: false`, and four allowlisted boards.
-  It has recorded no application, because the post-submit classifier reads every
-  real board as `unclassified`, which is a hard stop. Teaching it requires a
-  corpus of real post-submit pages, and the only legitimate source is the
-  owner's own attended applies (`src/apply/capture-post-submit.mjs`).
-- A full audit on 2026-08-05 read every source file and found 77 correctness
-  defects and 121 improvement opportunities:
-  [docs/audit-2026-08-05.md](docs/audit-2026-08-05.md). The six that put wrong
-  information on a real application were fixed; the rest are open and ranked.
+  That is the owner's setting, in the owner's file.
+- **What a live run can actually complete changes week to week, so this file does
+  not claim it.** Ask the code instead: `node src/dev/audit-submissions.mjs`
+  reports what every recorded submission actually did;
+  `sightedHosts()` in `src/auto/classify.mjs` lists the hosts whose confirmation
+  page this repo can read. A host with no capture-sourced rule classifies as
+  `unclassified`, which is a hard stop — and the only legitimate way to teach one
+  is the owner's own attended applies, staged and promoted through
+  `src/apply/capture-post-submit.mjs`. Writing a plausible-looking regex instead
+  would record applications that were never sent.
+- Being on the board allowlist and having a readable confirmation page are two
+  different lists, and neither implies the other.
 
 ## Privacy
 

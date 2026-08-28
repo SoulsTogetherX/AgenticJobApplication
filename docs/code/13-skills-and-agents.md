@@ -2584,7 +2584,7 @@ look like the cheapest item on the list.
   [`../operate/04-config-reference.md`](../operate/04-config-reference.md)
 
 **For the full list of what is broken:**
-[`../audit-2026-08-05.md`](../audit-2026-08-05.md) — 247 findings with evidence.
+the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`) — 247 findings with evidence.
 The defect notes in this document are the ones that touch `.claude/`, not a
 summary of the whole report; the audit's Part 3 groups the "model doing work a
 script already does" findings under their own axis.

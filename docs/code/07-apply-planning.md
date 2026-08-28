@@ -2360,18 +2360,18 @@ stricter. In order, it refuses when:
 Then — and this is **new as of 2026-08-05/06** — the gate reads what the fill
 itself reported:
 
-7. **`report.failed` / `report.failures`.** Both are checked, not either: they
+1. **`report.failed` / `report.failures`.** Both are checked, not either: they
    agree in everything `fillPage` emits, so a report where they _disagree_ refuses
    rather than being quietly resolved in favour of the clean one. A count that is
    present and not countable (`NaN`, `-1`, a string) refuses with the offending
    value named.
-8. **`report.verify.mismatch`** — a control did not hold the value that was typed.
-9. **`report.verify.requiredEmpty`** — a required control is still empty.
-10. **`report.verify.errors`** — the **board's own validation text**, swept off the
-    settled page (`[class*='error-message']`, `[role='alert']`, `[id$='-error']`
-    and friends). This is at least as strong as a mismatch: a mismatch is our
-    readback disagreeing with our plan; this is the form telling us, in its own
-    words, that it will not accept what is on it.
+2. **`report.verify.mismatch`** — a control did not hold the value that was typed.
+3. **`report.verify.requiredEmpty`** — a required control is still empty.
+4. **`report.verify.errors`** — the **board's own validation text**, swept off the
+   settled page (`[class*='error-message']`, `[role='alert']`, `[id$='-error']`
+   and friends). This is at least as strong as a mismatch: a mismatch is our
+   readback disagreeing with our plan; this is the form telling us, in its own
+   words, that it will not accept what is on it.
 
 > **This closed a real gap.** Until 2026-08-05, `report.failed`, `report.failures`
 > and `report.verify` reached **no gate anywhere in this repository**. The engine

@@ -571,7 +571,7 @@ What it does in each output mode:
 - **human** — prints a multi-line `NOTE:` beginning _"every lead below scored
   identically ... this is NOT a ranking, it fell through to alphabetical order
   by company"_, and appends `— UNRANKED (all tied)` to the summary line.
-- **terse** — appends ` flat=true` to the `ranked=N of=M` summary.
+- **terse** — appends `flat=true` to the `ranked=N of=M` summary.
 - **`--json`** — deliberately skipped, with the reason stated in the code:
   _"a raw data dump for a caller who has the scores themselves and can compute
   this the same way."_
@@ -829,6 +829,7 @@ Three things call it by name:
    a table mapping each row's `reason` to what the subagent should do.
 2. `src/auto/cycle.mjs` — the unattended cycle runs it as stage 3 and parses
    its JSON:
+
    ```js
    const prep = step("src/leads/prep-queue.mjs", [
      "--top",
@@ -839,6 +840,7 @@ Three things call it by name:
    // ...
    queue = JSON.parse(prep.stdout || "[]")
    ```
+
 3. `.claude/skills/apply-job/SKILL.md` — cited as what keeps apply-time latency
    down.
 
@@ -927,6 +929,7 @@ checked first here, the profile second.
 2. Existence checks → exit 2 on failure.
 3. `readLeadStore(leadsPath).leads ?? []`, filtered by `status`.
 4. **Rank generously, then filter:**
+
    ```js
    // Rank generously, then filter — the top few by score are often already
    // tailored, and we still want a full queue underneath them.
@@ -934,24 +937,31 @@ checked first here, the profile second.
      top: Math.max(top * 4, 20),
    })
    ```
+
    With `--top 5` this ranks the best **20**. (What is missing from that call is
    a live defect — §2.6(a).)
+
 5. Read the application history via `readApplications`.
 6. Optionally cluster:
+
    ```js
    // Clustering runs over the RANKED list so the best-scoring posting of each
    // group leads it — that is the one worth tailoring for.
    covered = coveredBy(clusterLeads(ranked, { threshold, keywords }))
    ```
+
 7. `buildQueue(ranked, { workspaces, applied, top, covered })`.
 8. Compute the reporting numbers:
+
    ```js
    const attached = queue.reduce((n, q) => n + q.covers.length, 0)
    const suppressed = covered.size - attached
    ```
+
    with the comment: _"Cluster members whose leader did not make the queue
    (already applied to, already tailored, or below the cut-off) are served by an
    existing resume and are not silently gone — they are counted here."_
+
 9. Emit in one of the three output modes.
 
 **About the clustering** (`src/leads/cluster.mjs`, documented fully
@@ -1006,6 +1016,7 @@ Five things to take from this loop:
    already in the queue.
 3. **The "already applied" check uses a normalized company+title key**, not a
    URL:
+
    ```js
    const norm = (s) =>
      String(s ?? "")
@@ -1013,19 +1024,24 @@ Five things to take from this loop:
        .toLowerCase()
    const companyTitleKey = (x) => `${norm(x.company)}::${norm(x.title)}`
    ```
+
    So `"  co1 "` + `"FULL STACK ENGINEER"` matches `"Co1"` +
    `"Full Stack Engineer"`. The `::` separator prevents `"ab" + "c"` colliding
    with `"a" + "bc"`.
+
 4. **`DONE_STATUSES` is what "already tailored" means:**
+
    ```js
    // "verified" is the status verify-claims sets once a tailored doc passes; only
    // then is there nothing left to pre-compute. "rendered"/"approved" are later
    // states and equally done.
    const DONE_STATUSES = new Set(["verified", "approved", "rendered"])
    ```
+
    The full status ladder in `src/lib/lib.mjs` is
    `["pending", "drafted", "verified", "approved", "rendered"]`, so `pending`
    and `drafted` are **not** done and stay queued.
+
 5. **`--top` is applied after filtering, not before** — two already-verified
    leads are skipped without consuming slots.
 
@@ -1359,6 +1375,7 @@ Exit: `0` normally; `2` with a usage line when no names were supplied; `1` if
    neither is present, which triggers the usage error and exit 2.
 2. Build a `known` set from `loadSources()`, so a board already in the sweep list
    is never re-proposed:
+
    ```js
    const known = new Set(
      loadSources().map(
@@ -1366,6 +1383,7 @@ Exit: `0` normally; `2` with a usage line when no names were supplied; `1` if
      ),
    )
    ```
+
 3. `mapPool(names.slice(0, limit), concurrency, (n) => findBoard(n))` — six
    companies in flight at once, each doing its own sequential slug × probe walk.
    `mapPool` is the shared bounded-concurrency helper; see §4.4.
@@ -1656,6 +1674,7 @@ is free speed, and exactly when an unbounded fan-out becomes rude.
 2. `loadLimits()` and `loadSources()`.
 3. Time the audit with `Date.now()` either side of `auditBoards`.
 4. Sort with a three-level tiebreak:
+
    ```js
    // Ranked on confirmed-reachable postings, not on raw qualifying: a board
    // whose only "hits" are unverified-remote is not a productive board.
@@ -1663,6 +1682,7 @@ is free speed, and exactly when an unbounded fan-out becomes rude.
      (a, b) => b.solid - a.solid || b.yield - a.yield || b.live - a.live,
    )
    ```
+
 5. Partition: `dead = rows.filter(r => !r.error && r.solid <= minQualifying)`,
    `broken = rows.filter(r => r.error)`. A board with an `error` has `solid = 0`
    and sinks to the bottom next to the genuinely dead ones, but is reported
@@ -1944,6 +1964,7 @@ if (!Array.isArray(list) || !list.length)
 
 1. Parse flags; build `candidates` from `--candidates` or from `--type`/`--slug`.
 2. **De-duplicate against what is already swept:**
+
    ```js
    const boardId = (b) =>
      `${b.type}:${b.slug ?? b.tenant ?? b.host ?? ""}`.toLowerCase()
@@ -1952,18 +1973,23 @@ if (!Array.isArray(list) || !list.length)
    const fresh = candidates.filter((c) => !known.has(boardId(c)))
    const dupes = candidates.length - fresh.length
    ```
+
    Note the `.toLowerCase()` here, which `board-yield`'s `label` does not do.
+
 3. `mapPool(fresh, concurrency, ...)` — fetch and evaluate each, converting a
    fetch exception into a row with `error` set, the same "errors as values"
    pattern as `auditBoards`.
 4. Partition and sort:
+
    ```js
    const accepted = rows.filter((r) => !r.error && r.solid >= minSolid)
    const rejected = rows.filter((r) => !r.error && r.solid < minSolid)
    const broken = rows.filter((r) => r.error)
    accepted.sort((a, b) => b.solid - a.solid || b.yield - a.yield)
    ```
+
 5. Emit. **Rejects are printed too**, and the comment says why:
+
    ```js
    // Rejects are printed too: a silent cap reads as "nothing was out there".
    ```
@@ -2231,11 +2257,13 @@ Two load-bearing details:
 1. **Field order is per-ATS and fixed**, so the file stays visually consistent.
 2. **Absent fields are omitted, never written as the string "undefined"**, with a
    comment recording the incident:
+
    ```js
    // Host-based boards carry no slug, and a missing field
    // must be omitted rather than written as the string "undefined" — that is what
    // silently produced two dead entries that still prescreened OK.
    ```
+
    That is a nasty failure mode: the entry looked fine, the prescreen passed
    because the fetcher never read the bogus field, and the board simply produced
    nothing forever after. The test asserts that no `"undefined"` appears in an
@@ -2400,7 +2428,7 @@ No terse variant; the output is identical either way.
 ### 6.6 Worked example — adding Databricks
 
 ```console
-$ node src/leads/manage-sources.mjs add --type greenhouse --slug databricks --company "Databricks"
+node src/leads/manage-sources.mjs add --type greenhouse --slug databricks --company "Databricks"
 ```
 
 1. `entry = { type: "greenhouse", company: "Databricks", slug: "databricks",
@@ -2411,7 +2439,7 @@ eid/host/tenant/site: undefined }`.
    no `greenhouse` board with identity `"databricks"` → `null`.
 4. `fetchBoard(entry, "full stack")` hits `boards-api.greenhouse.io` and returns
    an array of 180 normalized postings. Prescreen passes.
-5. `formatEntry` → `  - { type: greenhouse, slug: databricks, company: Databricks }`
+5. `formatEntry` → `- { type: greenhouse, slug: databricks, company: Databricks }`
    (no quoting needed — no special characters).
 6. `addEntryToText` appends it after the file's final newline.
 7. `writeSourcesText` parses the whole result; `doc.boards` is an array of 45, so

@@ -238,35 +238,35 @@ gap, read in this order. Each step assumes the one before it.
 
 **Stage 2 — the shape of the system (about 2 hours)**
 
-5. [`../guide/07-safety-model.md`](../guide/07-safety-model.md) — the ten hard
+1. [`../guide/07-safety-model.md`](../guide/07-safety-model.md) — the ten hard
    rules. Read this before the architecture, not after: most of the
    architecture is a consequence of the rules.
-6. [`../guide/05-architecture.md`](../guide/05-architecture.md) — how the pieces
+2. [`../guide/05-architecture.md`](../guide/05-architecture.md) — how the pieces
    fit and what flows between them.
-7. [`../guide/06-data-model.md`](../guide/06-data-model.md) — the database
+3. [`../guide/06-data-model.md`](../guide/06-data-model.md) — the database
    tables, the per-job folder, the fact base.
 
 **Stage 3 — the code, in dependency order**
 
-8. This page, Part D — skim it. You are not memorising it; you are learning
+1. This page, Part D — skim it. You are not memorising it; you are learning
    which names exist.
-9. [`01-lib-foundation.md`](./01-lib-foundation.md) — everything else imports
+2. [`01-lib-foundation.md`](./01-lib-foundation.md) — everything else imports
    this. Do not skip it.
-10. Then pick the lane you care about and read it front to back:
-    - the job hunt: [`02`](./02-leads-finding.md) → [`03`](./03-leads-screening.md) → [`04`](./04-leads-ranking.md)
-    - the documents: [`05-documents.md`](./05-documents.md)
-    - the form filling: [`06`](./06-apply-scanning.md) → [`07`](./07-apply-planning.md) → [`08`](./08-apply-filling.md)
-    - the unattended runner: [`09`](./09-auto-runner.md) → [`10`](./10-auto-safety.md)
-11. [`11-record-and-profile.md`](./11-record-and-profile.md) — the fact base and
-    the application record. Read this before you ever run `save-answer.mjs`.
+3. Then pick the lane you care about and read it front to back:
+   - the job hunt: [`02`](./02-leads-finding.md) → [`03`](./03-leads-screening.md) → [`04`](./04-leads-ranking.md)
+   - the documents: [`05-documents.md`](./05-documents.md)
+   - the form filling: [`06`](./06-apply-scanning.md) → [`07`](./07-apply-planning.md) → [`08`](./08-apply-filling.md)
+   - the unattended runner: [`09`](./09-auto-runner.md) → [`10`](./10-auto-safety.md)
+4. [`11-record-and-profile.md`](./11-record-and-profile.md) — the fact base and
+   the application record. Read this before you ever run `save-answer.mjs`.
 
 **Stage 4 — running it and proving it**
 
-12. [`../operate/01-commands.md`](../operate/01-commands.md) and
+1.  [`../operate/01-commands.md`](../operate/01-commands.md) and
     [`../operate/02-recipes.md`](../operate/02-recipes.md) — how to actually use it.
-13. [`12-harness-and-ci.md`](./12-harness-and-ci.md) and
+2.  [`12-harness-and-ci.md`](./12-harness-and-ci.md) and
     [`14-tests.md`](./14-tests.md) — the guardrails and the suite.
-14. [`../audit-2026-08-05.md`](../audit-2026-08-05.md) — the honest list of what
+3.  the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`) — the honest list of what
     is currently broken. Read it last, when you have enough context for it to
     mean something.
 
@@ -590,7 +590,7 @@ restricted tool list.
 > **Known defect (2026-08-05 audit).** Nine of the audit's findings are in
 > `apply-job/SKILL.md` and five in `tailor-resume/SKILL.md` — skill files carry
 > the highest concentration of stale instructions in the repository, because
-> nothing tests prose. See [`../audit-2026-08-05.md`](../audit-2026-08-05.md).
+> nothing tests prose. See the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`).
 
 ### `.github/workflows/` — the automated checks
 
@@ -618,46 +618,52 @@ These run on GitHub's computers, not yours, every time you push. Five jobs:
 The three files at the top of this table are **read by running code**. Everything
 below them is text.
 
-| File                         | Lines | Class                      | What it does                                                                                                             | Explained in                                                             |
-| ---------------------------- | ----: | -------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| `application-limits.yaml`    |   342 | load-bearing               | **Yours.** Location rules, title keywords, staleness limits, and the `auto_apply` block. Read at runtime by ten scripts. | [`../operate/04-config-reference.md`](../operate/04-config-reference.md) |
-| `job-sources.yaml`           |    81 | load-bearing               | The swept board list. Edited line-by-line by `manage-sources.mjs`; excluded from the formatter for that reason.          | [`../operate/04-config-reference.md`](../operate/04-config-reference.md) |
-| `perf-baseline.json`         |    32 | load-bearing               | The committed performance baseline the CI gate compares each run against.                                                | [`15-benchmarks.md`](./15-benchmarks.md)                                 |
-| `tailoring-rules.md`         |   153 | load-bearing at model time | Loaded by three skill files with an `@` reference. Deleting it degrades every tailored document and no test goes red.    | [`05-documents.md`](./05-documents.md)                                   |
-| `audit-2026-08-05.md`        | 1,865 | prose                      | The finished audit report — 247 findings with evidence. The honest list of what is broken.                               | [itself](../audit-2026-08-05.md)                                         |
-| `measurements.md`            | 1,236 | working notes              | The append-only measurement ledger. No runtime reader; cited in comments by four benchmark scripts and the CI file.      | [`15-benchmarks.md`](./15-benchmarks.md)                                 |
-| `board-candidates.yaml`      |   872 | generated                  | Output of board discovery — written, never read back.                                                                    | [`04-leads-ranking.md`](./04-leads-ranking.md)                           |
-| `candidates/yc.yaml`         |   637 | input data                 | Company list from the public Y Combinator directory, fed to `find-boards.mjs` on demand.                                 | [`04-leads-ranking.md`](./04-leads-ranking.md)                           |
-| `candidates/fortune500.yaml` |   146 | input data                 | Fortune 500 company list, same use.                                                                                      | [`04-leads-ranking.md`](./04-leads-ranking.md)                           |
-| `candidates/local-lv.yaml`   |    64 | input data                 | Las Vegas metro employer list, same use.                                                                                 | [`04-leads-ranking.md`](./04-leads-ranking.md)                           |
-| `agent-protocol.md`          |   288 | working notes              | How the multi-agent development process is meant to run.                                                                 | [`13-skills-and-agents.md`](./13-skills-and-agents.md)                   |
-| `team-roster.md`             |   256 | working notes              | Which development role owns which paths.                                                                                 | [`13-skills-and-agents.md`](./13-skills-and-agents.md)                   |
-| `roster-log.md`              |   217 | working notes              | Every hire, fire and ownership ruling, with its reason.                                                                  | [`13-skills-and-agents.md`](./13-skills-and-agents.md)                   |
-| `research/` (4 files)        |   445 | working notes              | Outside-world research from 2026-07-31: how ATS systems rank resumes, comparable services, market demand.                | —                                                                        |
+| File                                | Lines | Class                      | What it does                                                                                                               | Explained in                                                             |
+| ----------------------------------- | ----: | -------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `application-limits.yaml`           |   342 | load-bearing               | **Yours.** Location rules, title keywords, staleness limits, and the `auto_apply` block. Read at runtime by ten scripts.   | [`../operate/04-config-reference.md`](../operate/04-config-reference.md) |
+| `job-sources.yaml`                  |    81 | load-bearing               | The swept board list. Edited line-by-line by `manage-sources.mjs`; excluded from the formatter for that reason.            | [`../operate/04-config-reference.md`](../operate/04-config-reference.md) |
+| `perf-baseline.json`                |    32 | load-bearing               | The committed performance baseline the CI gate compares each run against.                                                  | [`15-benchmarks.md`](./15-benchmarks.md)                                 |
+| `tailoring-rules.md`                |   153 | load-bearing at model time | Loaded by three skill files with an `@` reference. Deleting it degrades every tailored document and no test goes red.      | [`05-documents.md`](./05-documents.md)                                   |
+| `audit-2026-08-05.md` (**deleted**) | 1,865 | prose                      | The finished audit report — 247 findings with evidence. Removed from the tree on 2026-08-06; recoverable from git history. | git history, `3d4a18e`                                                   |
+| `measurements.md`                   | 1,236 | working notes              | The append-only measurement ledger. No runtime reader; cited in comments by four benchmark scripts and the CI file.        | [`15-benchmarks.md`](./15-benchmarks.md)                                 |
+| `board-candidates.yaml`             |   872 | generated                  | Output of board discovery — written, never read back.                                                                      | [`04-leads-ranking.md`](./04-leads-ranking.md)                           |
+| `candidates/yc.yaml`                |   637 | input data                 | Company list from the public Y Combinator directory, fed to `find-boards.mjs` on demand.                                   | [`04-leads-ranking.md`](./04-leads-ranking.md)                           |
+| `candidates/fortune500.yaml`        |   146 | input data                 | Fortune 500 company list, same use.                                                                                        | [`04-leads-ranking.md`](./04-leads-ranking.md)                           |
+| `candidates/local-lv.yaml`          |    64 | input data                 | Las Vegas metro employer list, same use.                                                                                   | [`04-leads-ranking.md`](./04-leads-ranking.md)                           |
+| `agent-protocol.md`                 |   288 | working notes              | How the multi-agent development process is meant to run.                                                                   | [`13-skills-and-agents.md`](./13-skills-and-agents.md)                   |
+| `team-roster.md`                    |   256 | working notes              | Which development role owns which paths.                                                                                   | [`13-skills-and-agents.md`](./13-skills-and-agents.md)                   |
+| `roster-log.md`                     |   217 | working notes              | Every hire, fire and ownership ruling, with its reason.                                                                    | [`13-skills-and-agents.md`](./13-skills-and-agents.md)                   |
+| `research/` (4 files)               |   445 | working notes              | Outside-world research from 2026-07-31: how ATS systems rank resumes, comparable services, market demand.                  | —                                                                        |
 
 **The stale set.** These 33 files describe the system as it was planned or as it
 was weeks ago, and several assert in the present tense things the code now
 contradicts. They are being replaced by the document set this page belongs to.
-Mine them for history if you are curious why something is the way it is; do not
-read them as a description of the code.
+**Every group below was deleted from the tree on 2026-08-06** and lives only in
+git history (commits `3d4a18e` and `fed2778`). Mine them for history if you are
+curious why something is the way it is; do not read them as a description of the
+code, and do not expect the paths to resolve.
 
-| Group                                             | Files | Lines | Status                                                                                                             |
-| ------------------------------------------------- | ----: | ----: | ------------------------------------------------------------------------------------------------------------------ |
-| `docs/reference/` (`README`, `00`–`10`, `AUDIT`)  |    13 | 6,085 | The previous documentation set. Superseded by `docs/guide/`, `docs/code/`, `docs/operate/`.                        |
-| `docs/autonomy/` (`00`–`08`, `phase-0`–`phase-6`) |    15 | 1,955 | Planning documents. `04-runner-spec.md` is the most stale file in the tree — it asserts the runner does not exist. |
-| `docs/autonomy-plan.md`, `-v2.md`                 |     2 | 1,292 | The v1 plan and the v2 index. v1 is superseded in seven decisions by v2.                                           |
-| `docs/improvement-plan.md`                        |     1 |   429 | A completed plan, marked implemented 2026-07-29.                                                                   |
-| `docs/next-session-plan.md`, `-prompt.md`         |     2 |   398 | Session hand-off notes, superseded by the very change one of them warns about.                                     |
+| Group                                        | Files | Lines | Status                                                                                                                                      |
+| -------------------------------------------- | ----: | ----: | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reference/` (`README`, `00`–`10`, `AUDIT`)  |    13 | 6,085 | The previous documentation set, **deleted 2026-08-06**. Superseded by `docs/guide/`, `docs/code/`, `docs/operate/`.                         |
+| `autonomy/` (`00`–`08`, `phase-0`–`phase-6`) |    15 | 1,955 | Planning documents, **deleted 2026-08-06**. `04-runner-spec.md` was the most stale file in the tree — it asserted the runner did not exist. |
+| `autonomy-plan.md`, `-v2.md`                 |     2 | 1,292 | The v1 plan and the v2 index, **deleted 2026-08-06**. v1 was superseded in seven decisions by v2.                                           |
+| `improvement-plan.md`                        |     1 |   429 | A completed plan, marked implemented 2026-07-29. **Deleted 2026-08-06.**                                                                    |
+| `next-session-plan.md`, `-prompt.md`         |     2 |   398 | Session hand-off notes, **deleted 2026-08-06**, superseded by the very change one of them warned about.                                     |
 
-**The new set** — 28 documents in three directories: `docs/guide/` (8),
-`docs/code/` (16, including this one) and `docs/operate/` (4). Written from the
-code as it stands on 2026-08-05/06. They are being produced in parallel, so if a
-link in the "Where to go next" section below does not resolve yet, that document
-is still being written rather than missing.
+**The new set** — 29 documents in three directories: `docs/guide/` (9, including
+`09-conventions.md` added 2026-08-27), `docs/code/` (16, including this one) and
+`docs/operate/` (4). Written from the code as it stood on 2026-08-05/06 and swept
+since. Each `src/` domain also carries its own short `README.md`.
+`tests/quality/docs-links.test.mjs` now fails the build on a doc path that does
+not resolve, so a broken link here is a bug rather than work in progress.
 
 ### `tests/` — counted at directory level
 
-224 files, 123 of them tests, roughly 62,000 lines. The whole suite is explained
+Counted 2026-08-27: 159 `*.test.mjs` files plus fixtures. The counts move every
+week — `git ls-files tests | wc -l` and
+`node --test "tests/**/*.test.mjs"` are the honest way to ask, and
+`package.json`'s `testGate` floors are the contract. The whole suite is explained
 in [`14-tests.md`](./14-tests.md); this table exists so a directory name is never
 a mystery.
 
@@ -713,7 +719,7 @@ this document and 11,761 fifty minutes later, because another agent was
 repairing `multipage.mjs` and its test at the same time.
 
 That is not a small caveat. The **previous** manifest in this repository —
-`docs/reference/README.md` — was a table exactly like these, written with care,
+the deleted `reference/README.md` — was a table exactly like these, written with care,
 and by the 2026-08-05 audit it was wrong on 24 separate entries, several by a
 factor of two or three:
 
@@ -824,6 +830,6 @@ The full document set:
   [`02-recipes`](../operate/02-recipes.md) ·
   [`03-troubleshooting`](../operate/03-troubleshooting.md) ·
   [`04-config-reference`](../operate/04-config-reference.md)
-- **What is broken** — [`../audit-2026-08-05.md`](../audit-2026-08-05.md), 247
+- **What is broken** — the 2026-08-05 audit report (**not in the tree** — deleted 2026-08-06; recoverable from git history at `3d4a18e`), 247
   findings with evidence. The defect notes scattered through Part D are a
   selection from it, not a summary of it.

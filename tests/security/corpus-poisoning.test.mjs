@@ -35,6 +35,16 @@ const ROOT = path.resolve(HERE, "..", "..")
 const FIXTURES = path.join(ROOT, "tests/fixtures")
 const HOSTILE = path.join(FIXTURES, "hostile")
 const PROFILE = path.join(FIXTURES, "profile.yaml")
+// PINNED, for the same reason PROFILE is. Until 2026-08-29 this harness passed
+// --profile but left --answers off unless a caller supplied one, so
+// verify-claims fell back to the REAL profile/answers.yaml and these security
+// verdicts depended on the user's live, private fact base. It went red the day
+// a banked answer happened to mention Kubernetes: `ok` became true, the R6
+// assertion failed, and it read exactly like a guard regression. It was not —
+// with a pinned corpus the same claim still fails. The dangerous direction is
+// the other one: a fact base that happens to lack a token would let a real R6
+// regression pass unnoticed. A security test may not read mutable user data.
+const ANSWERS = path.join(FIXTURES, "answers.yaml")
 
 // The document under test. Two bullets: one truthful and cited, one claiming a
 // technology the fact base cannot back. R7 needs at least one annotated
@@ -56,7 +66,7 @@ function verify(resumeText, { job, answers } = {}) {
     fs.writeFileSync(file, resumeText)
     const args = ["resume", file, "--profile", PROFILE]
     if (job) args.push("--job", job)
-    if (answers) args.push("--answers", answers)
+    args.push("--answers", answers || ANSWERS)
     const res = spawnSync(
       process.execPath,
       [path.join(ROOT, "src/documents/verify-claims.mjs"), ...args],

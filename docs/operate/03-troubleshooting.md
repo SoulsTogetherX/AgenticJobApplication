@@ -2344,6 +2344,39 @@ consequences worth knowing before you touch it:
   changes nothing until you restart; a "the MCP server ignored my change" report
   is almost always this.
 
+### A clean `git status` does not mean the format gate will pass
+
+Measured twice on 2026-08-28, both times on `docs/measurements.md`. The shape is
+worth knowing because it looks impossible:
+
+```
+git status --porcelain   ->  (nothing; the tree is clean)
+npm test                 ->  FAIL: prettier --check . passes over the whole repo
+```
+
+Both are telling the truth. `.gitattributes` normalises text files to LF **in
+the index**, so a working file with CRLF endings still matches its committed
+blob and git reports nothing to commit. Prettier does not read the index — it
+reads the file on disk, sees CRLF against `endOfLine: "lf"`, and fails. The
+committed state was fine the whole time; only the working copy disagreed.
+
+It is written by any Windows tool that appends with CRLF — PowerShell's
+`Add-Content` and `Out-File` are the usual culprits, and appending to a ledger
+is exactly when you reach for them.
+
+Diagnose it with git's own view, which names both sides:
+
+```bash
+git ls-files --eol docs/measurements.md
+```
+
+`i/lf w/mixed` is the fingerprint (`i/` index, `w/` working tree). The fix is a
+re-checkout, never a rewrite — the bytes in the repository were always correct:
+
+```bash
+rm docs/measurements.md && git checkout -- docs/measurements.md
+```
+
 ---
 
 ## How to get more detail

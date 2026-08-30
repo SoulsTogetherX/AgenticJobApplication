@@ -2377,6 +2377,42 @@ re-checkout, never a rewrite — the bytes in the repository were always correct
 rm docs/measurements.md && git checkout -- docs/measurements.md
 ```
 
+### A green local suite does not mean CI will be green
+
+Three separate bugs have now shipped green from a developer machine and gone red
+on the first clean checkout — `ec5ebc2`, `30a6697`, `bacaeb5`. All three were the
+same shape: a test reached the **real `profile/`**, which exists here and does
+not exist anywhere else. `profile/` is gitignored, so CI has only
+`profile.example.yaml`, and a test that silently depends on a banked answer
+passes here forever and fails there immediately.
+
+`bacaeb5` closed the mechanism (a fact base that is not a path now throws
+instead of coercing to the standard location). What it cannot close is the
+NEXT test that simply omits the argument — absence still means the real file,
+deliberately, because every documented CLI invocation relies on it.
+
+So check the way CI sees it, before pushing. `git worktree` is refused by the
+branch guard (a worktree is another way to check out a non-`dev` branch), so
+export the tracked tree instead:
+
+```bash
+D=.claude/worktrees/verify-pristine && rm -rf $D && mkdir -p $D && git archive HEAD | tar -x -C $D && (cd $D && npm run test:security)
+```
+
+The export contains only tracked files, so there is no `profile/answers.yaml` —
+the CI condition exactly. Keep it **inside** the repo: Node finds
+`node_modules` by walking up, and an export somewhere else has no dependencies.
+Delete it when you are done, and expect the delete to need a second attempt
+while Node still holds a handle.
+
+**Its one limit, so nobody reads too much into a red run.** The export is not a
+tracked git tree — `git ls-files` returns nothing inside it — so every gate that
+enumerates files through git reports an empty tree and fails: all of
+`tests/quality/`, plus the repo-hygiene and bench-provenance tests. That is an
+artifact of the method, not a finding. Run the SECURITY suite there, which does
+not use git and is where this class of bug lands; run the quality gates from the
+normal checkout, where they have a real index to read.
+
 ---
 
 ## How to get more detail

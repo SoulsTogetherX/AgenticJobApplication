@@ -25,6 +25,22 @@ import { decodeEntities } from "#lib/lib.mjs"
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SCANS = path.resolve(HERE, "..", "fixtures", "boards", "scans")
 
+// THE FACT BASE IS THE HARNESS'S, NEVER THE USER'S — and it is passed as a
+// PATH. answer-bank.mjs's factBasePath() coerces anything that is not a
+// non-empty string to the STANDARD LOCATION, so an object literal did not
+// mean "this bank", it meant `profile/answers.yaml` — the user's real,
+// gitignored one. The sponsorship test below passed such a literal and was
+// therefore green here and red on every clean checkout, where that file does
+// not exist; CI found it on 2026-08-30 merging dev to main. It was silent
+// twice over, because fill-plan.mjs's loadBankById() took the same argument
+// and turned `fs.existsSync(<object>)` into an empty map — so the
+// assertion-class gate did not run either, and the row read OK where a
+// correctly-wired bank makes it CONFIRM. Both halves now throw
+// (answer-bank.mjs's factBasePath). Same defect class as ec5ebc2 and 30a6697:
+// the harness owns every input it measures.
+const PROFILE = path.resolve(HERE, "..", "fixtures", "profile.yaml")
+const ANSWERS = path.resolve(HERE, "..", "fixtures", "answers-bank.yaml")
+
 // scan-page.js's txt(), reproduced. Copied deliberately rather than imported:
 // scan-page.js is a bare function expression that installs itself on `window`
 // and cannot be imported into Node. If it ever changes, this comment is the
@@ -375,22 +391,38 @@ test("Lever's sponsorship question reaches the user as the question, not as the 
   const question =
     "Will you now or in the future require sponsorship for employment visa status?"
   // The user HAS answered this question, so a fact base that holds the answer
-  // must now supply it.
-  const answers = {
-    answers: [{ id: "a-1", question, answer: "No", added: "2026-08-01" }],
-  }
-  const resolved = resolveFields(s.fields, { profile: {}, answers })
+  // must supply it. The harness's own bank carries it as a-003 — asserted from
+  // the file so that removing it fails as "the premise is gone" rather than as
+  // an unexplained UNKNOWN three assertions later.
+  const bankSrc = fs.readFileSync(ANSWERS, "utf8")
+  assert.ok(
+    bankSrc.includes(`id: a-003`) && bankSrc.includes(question),
+    "tests/fixtures/answers-bank.yaml must still answer this question as a-003",
+  )
+  const resolved = resolveFields(s.fields, {
+    profile: PROFILE,
+    answers: ANSWERS,
+  })
   const g1 = resolved.find((r) => r.k === "g1")
   assert.equal(g1.label, question, "the group is labelled with the question")
-  assert.equal(g1.status, "OK", `resolved from the bank: ${JSON.stringify(g1)}`)
+  // RESOLVED FROM THE BANK, and the source shape is the load-bearing half:
+  // `a-003@` is what fill-plan.mjs's BANK_ID_RE keys on, which is what routes
+  // an assertion-class entry through the class gate. So the status here is
+  // CONFIRM rather than OK — a sponsorship answer is never filled silently.
+  assert.match(
+    g1.source,
+    /^a-003@/,
+    `resolved from the bank: ${JSON.stringify(g1)}`,
+  )
+  assert.equal(g1.status, "CONFIRM", JSON.stringify(g1))
   assert.equal(g1.value, "No")
 
   const plan = buildPlan({ scan: s, resolved, adapter: detectAts(url), url })
   // A sponsorship answer is assertion-class, so it is a CONFIRM defer with the
   // question on it — the user reads the question, not an answer to it.
-  const entry =
-    plan.defer.find((d) => d.k === "g1") ?? plan.items.find((i) => i.k === "g1")
-  assert.ok(entry, "g1 is in the plan")
+  const entry = plan.defer.find((d) => d.k === "g1")
+  assert.ok(entry, "g1 is deferred in the plan")
+  assert.equal(entry.why, "confirm")
   assert.equal(entry.label, question)
   assert.notEqual(entry.label, "Yes")
 

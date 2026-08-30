@@ -140,23 +140,38 @@ test("BOUNDARY: a path that IS given and does not exist still yields an empty fa
   for (const r of results) assert.equal(r.status, "UNKNOWN", r.k)
 })
 
-test("BOUNDARY: a non-string path is treated as 'not specified', not coerced to a filename", () => {
-  // 0, false and {} are all falsy-or-odd shapes a caller could produce from a
-  // bad flag parse. None of them may become a path, and none may become "no
-  // fact base" either.
+test("BOUNDARY: a non-string fact base is a caller bug, and throws instead of guessing", () => {
+  // THE BOUNDARY MOVED ON 2026-08-30, and this is why. 0, false, {} and []
+  // are shapes a caller could produce from a bad flag parse — or, as it turned
+  // out, from believing this function takes the fact base ITSELF. They used to
+  // be coerced to "not specified", which reads as harmless and is not: "not
+  // specified" means the STANDARD LOCATION, and the standard location is the
+  // user's real, gitignored profile/answers.yaml. So a test that passed a
+  // document silently measured the owner's private data — green on his
+  // machine, red on every clean checkout, which is where CI found it while
+  // merging dev to main (tests/security/board-fidelity.test.mjs).
+  //
+  // The old rule said none of them may become a path and none may become "no
+  // fact base". Both still hold; what is added is that none may quietly become
+  // the REAL one either. There is no reading of such a call anyone wants, so
+  // it is an error rather than a guess.
   withFactBase(() => {
-    const want = statuses(resolveFieldsFromFiles(FIELDS, {}).results)
     for (const bad of [0, false, {}, []]) {
-      assert.deepEqual(
-        statuses(
+      assert.throws(
+        () =>
           resolveFieldsFromFiles(FIELDS, {
             profileFile: bad,
             answersFile: bad,
-          }).results,
-        ),
-        want,
-        String(bad),
+          }),
+        /must be a path/,
+        `${typeof bad} ${String(bad)}`,
       )
     }
+    // ABSENCE IS UNTOUCHED, asserted in the same breath so the two halves can
+    // never drift apart: an omitted path still means the standard location,
+    // which is the whole subject of QA-0.12-1 above and what every documented
+    // CLI invocation relies on.
+    const want = statuses(resolveFieldsFromFiles(FIELDS, {}).results)
+    assert.equal(want.f1, "OK:jane@example.com")
   })
 })

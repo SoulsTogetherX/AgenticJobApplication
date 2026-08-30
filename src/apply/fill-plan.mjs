@@ -71,7 +71,11 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { isTerse, loadYamlFile } from "#lib/lib.mjs"
 import { positionals, assertKnownFlags } from "#lib/args.mjs"
 import { detectAts } from "./ats/index.mjs"
-import { resolveFieldsFromFiles, normalizeQuestion } from "./answer-bank.mjs"
+import {
+  resolveFieldsFromFiles,
+  normalizeQuestion,
+  factBasePath,
+} from "./answer-bank.mjs"
 // Read-only reuse of scan-engine.mjs's own "is this control safe to click"
 // rule -- not a mirror, an import. combosNeedingProbe() decides what fill-plan
 // tells a rescan is "worth probing"; scan-engine.mjs's probeRefusal() is what
@@ -480,7 +484,13 @@ export function isUnprobedButAnswered(field, resolution) {
 // answer-bank.mjs's own createResolver does for a missing bank.
 function loadBankById(answersFile) {
   const map = new Map()
-  const file = answersFile || "profile/answers.yaml"
+  // answer-bank.mjs's own coercion, imported rather than re-implemented, so
+  // the class gate can never end up reading a DIFFERENT bank from the one that
+  // answered the field. The `||` this replaces let an object through to
+  // `fs.existsSync(<object>)`, which returns false: the map came back empty and
+  // every assertion-class row silently kept its OK instead of becoming a
+  // CONFIRM. See factBasePath's header for the day that cost.
+  const file = factBasePath(answersFile, "profile/answers.yaml")
   if (!fs.existsSync(file)) return map
   let doc
   try {

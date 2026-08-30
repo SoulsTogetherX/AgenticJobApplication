@@ -2226,8 +2226,25 @@ export function createResolver(profile = {}, answersDoc = {}, { now } = {}) {
 // ABSENCE of an argument. A path that is given and does not exist still
 // yields `{}` — that case is a real answer to a real question ("this fixture
 // has no bank"), and tests depend on it.
-const factBasePath = (given, dflt) =>
-  typeof given === "string" && given.trim() ? given : dflt
+//
+// A DOCUMENT WHERE A PATH BELONGS IS A CALLER BUG, NOT A DEFAULT (2026-08-30).
+// Everything above is about ABSENCE. An object is not absence — it is a caller
+// that believes this function takes the fact base itself — and coercing it to
+// the default silently swaps the harness's bank for the USER'S REAL ONE. That
+// is not hypothetical: tests/security/board-fidelity.test.mjs passed an object
+// literal, read `profile/answers.yaml`, and so was green on the owner's
+// machine and red on every clean checkout, where the gitignored file does not
+// exist. CI found it merging dev to main. No caller wants either reading of
+// that call, so it throws instead of choosing one.
+export const factBasePath = (given, dflt) => {
+  if (given != null && typeof given !== "string") {
+    throw new TypeError(
+      `fact base must be a path, got ${typeof given} — ` +
+        "resolveFields()/resolveFieldsFromFiles() take FILE PATHS, not documents",
+    )
+  }
+  return typeof given === "string" && given.trim() ? given : dflt
+}
 
 export function resolveFieldsFromFiles(
   fields,

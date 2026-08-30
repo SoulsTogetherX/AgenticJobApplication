@@ -474,8 +474,15 @@ export function openDb(file = DB_PATH) {
   // any timeout they set afterwards could apply. Every write here is one short
   // statement or a small transaction, so waiting is the right answer and 5s is
   // far beyond what any of them need.
+  //
+  // BUT THE TIMEOUT DOES NOT COVER THE MODE SWITCH, which this comment used to
+  // claim it did. SQLite does not run the busy handler for a journal-mode
+  // change: it would risk deadlock, so it returns SQLITE_BUSY at once instead.
+  // Proven on CI 2026-08-30 (windows, node 24) — busy_timeout was 5000 and a
+  // worker still died with "database is locked" inside 768ms, having waited
+  // for nothing. setWalMode below is the part that actually waits.
   db.exec("PRAGMA busy_timeout = 5000")
-  db.exec("PRAGMA journal_mode = WAL")
+  setWalMode(db)
   // Each `mark` is its own process, so per-call fsync cost is what the user
   // feels: at full durability 57 sequential updates cost ~246 ms, almost all
   // of it waiting on the disk. NORMAL is the documented companion to WAL —
@@ -498,6 +505,57 @@ export function openDb(file = DB_PATH) {
     throw e
   }
   return db
+}
+
+// How many times to attempt the WAL switch, and how long to wait between
+// attempts. Four workers is the real fan-out (pipeline-jobs), so a handful of
+// attempts over ~350ms covers the contention that actually happens while still
+// failing fast if something is genuinely wedged.
+const WAL_ATTEMPTS = 6
+const WAL_BACKOFF_MS = 20
+
+/** A synchronous pause. openDb is sync, so setTimeout is not available to it. */
+function napSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * Put the connection into WAL, tolerating the one lock `busy_timeout` does not
+ * cover.
+ *
+ * TWO PARTS, and the first is what makes the second rare. A connection that is
+ * ALREADY in WAL needs no switch and takes no exclusive lock, so every
+ * connection after the first one reads the mode and returns. Only the process
+ * that finds the store in `delete` mode attempts the write, which is the
+ * genuine first-open race — and that one retries rather than dying, because
+ * SQLite hands back SQLITE_BUSY immediately instead of waiting.
+ *
+ * Failing after the attempts is deliberate: a store that cannot reach WAL is
+ * one where writers do not serialise the way every caller below assumes, and
+ * proceeding in `delete` mode would trade a loud open for silent lost writes.
+ */
+function setWalMode(db) {
+  try {
+    const mode = db.prepare("PRAGMA journal_mode").get()?.journal_mode
+    if (String(mode).toLowerCase() === "wal") return
+  } catch {
+    // Unreadable mode is not evidence of anything; fall through and switch.
+  }
+  let last = null
+  for (let attempt = 0; attempt < WAL_ATTEMPTS; attempt++) {
+    try {
+      db.exec("PRAGMA journal_mode = WAL")
+      return
+    } catch (err) {
+      const busy =
+        err?.errcode === 5 ||
+        /database is locked|busy/i.test(err?.message ?? "")
+      if (!busy) throw err
+      last = err
+      napSync(WAL_BACKOFF_MS * (attempt + 1))
+    }
+  }
+  throw last
 }
 
 // The flat CREATE TABLE IF NOT EXISTS schema has exactly one blind spot: a

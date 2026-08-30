@@ -718,12 +718,17 @@ NOTE: 84 tests above the floor. Raise "testGate.full.floor" in package.json to
 > blocks on first. The `measured` field flags this twice and declines to act on
 > it unilaterally; it is still open.
 
-> **Known defect (2026-08-05 audit).** CI's matrix is `node: [20, 22]` on Ubuntu
-> and Windows, and there is no `engines` field in `package.json` — but this
-> machine runs Node v24.13.1, and the `expandPaths()` workaround in section 2.4
-> exists **only** because Node 24 diverges from 20 and 22. The code path that
-> keeps the security suite from silently running zero tests is therefore
-> exercised by no CI leg. Adding `24` to the matrix is a one-token change.
+> **Known defect (2026-08-05 audit) — CLOSED 2026-08-30.** The matrix was
+> `node: [20, 22]` with no `engines` field, while this machine runs Node
+> v24.13.1 and the `expandPaths()` workaround in section 2.4 exists **only**
+> because Node 24 diverges from 20 and 22 — so the code path that keeps the
+> security suite from silently running zero tests was exercised by no CI leg.
+> The matrix is now `[22, 24]` and `engines` says `>=22.5.0`. The audit called
+> adding 24 "a one-token change"; removing 20 turned out to be the load-bearing
+> half. `src/lib/db.mjs` imports `node:sqlite`, which exists from 22.5, so the
+> Node 20 legs were testing a runtime this product cannot run on — visible as
+> four `import-x/no-unresolved` errors, because that rule asks the RUNNING node
+> what its core modules are. Found by CI on the dev-to-main merge.
 
 ## 2.6 The gate tests itself
 

@@ -1400,8 +1400,10 @@ Other things not to change:
   that can never be crossed downward.
 - **`testGate.security.paths` is pinned to its exact three entries** by the same
   test, so nobody can quietly narrow the security gate.
-- **There is no `engines` field**, so nothing declares which Node versions are
-  supported. CI tests Node 20 and 22; the development machine runs Node 24.
+- **`engines` is `>=22.5.0`** (added 2026-08-30). Not a preference:
+  `src/lib/db.mjs` imports `node:sqlite`, which exists from 22.5, so anything
+  older cannot open the lead store at all. CI's matrix tests 22 and 24 — the
+  latter being the development machine's version — from the same day.
 
 ---
 
@@ -1810,7 +1812,7 @@ a local `npm test` catches them before the push; the reasoning for each rule is
 in [`../guide/09-conventions.md`](../guide/09-conventions.md).
 
 **3. `test`** — the matrix: `os: [ubuntu-latest, windows-latest]` ×
-`node: [20, 22]`, so four legs, `fail-fast: false` (one red leg does not cancel
+`node: [22, 24]`, so four legs, `fail-fast: false` (one red leg does not cancel
 the others), 20-minute timeout. Steps: checkout → set up Node → `npm ci` →
 `node tools/ci/report-browsers.mjs` → `npm test`.
 

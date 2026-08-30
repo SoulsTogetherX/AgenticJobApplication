@@ -6,6 +6,9 @@
   "imports": {
     "#lib/*": "./src/lib/*"
   },
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "description": "Claude Code-driven job application pipeline: tailor resume & cover letter from an approved fact profile, verify truthfulness, render PDFs.",
   "scripts": {
     "test": "node tools/ci/test-gate.mjs full",

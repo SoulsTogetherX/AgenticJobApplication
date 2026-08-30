@@ -147,6 +147,23 @@ jobs:
   # The whole suite, on both platforms. Windows is the primary platform (the
   # user's machine) and PDF rendering shells out to a local Edge/Chrome, so a
   # Linux-only pipeline would prove very little about the shipped path.
+  #
+  # WHICH NODE VERSIONS, AND WHY THEY CHANGED (2026-08-30). Was `[20, 22]`.
+  #
+  #   20 is GONE because this project cannot run on it at all. src/lib/db.mjs
+  #   imports `node:sqlite`, which exists from 22.5 — so on a Node 20 leg the
+  #   lead store cannot load, tests/lib/db.test.mjs cannot import, and even
+  #   ESLint went red there (`import-x/no-unresolved`, four files) because
+  #   the resolver asks the RUNNING node what its core modules are. Those
+  #   errors were the visible half of a leg that was testing a runtime the
+  #   product does not support. `engines` in package.json now says so.
+  #
+  #   24 is IN because it is the development machine's version and because
+  #   test-gate.mjs's expandPaths() exists ONLY to paper over Node 24's
+  #   divergence from 20/22 on `node --test <directory>` — the code path that
+  #   keeps the security suite from silently running zero tests was, until
+  #   now, exercised by no CI leg at all. Named as a known defect by the
+  #   2026-08-05 audit (docs/code/14-tests.md) and closed here.
   # ---------------------------------------------------------------------
   test:
     name: npm test (${{ matrix.os }}, node ${{ matrix.node }})
@@ -154,7 +171,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: [20, 22]
+        node: [22, 24]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:

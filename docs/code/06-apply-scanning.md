@@ -180,7 +180,10 @@ Two consequences run through this whole area:
    forty things costs one round trip; forty small calls cost forty. That is why
    the scanner is one big function that returns one big object, rather than a
    collection of small queries. The performance baseline in
-   `docs/perf-baseline.json` counts `round_trips_per_app: 60`.
+   `docs/perf-baseline.json` counts `round_trips_per_app: 70` — 60 until
+   2026-08-30, when the ten the Oracle Recruiting Cloud fix had been costing
+   since `df32347` were finally banked rather than left as a red gate. See M12
+   in [`../measurements.md`](../measurements.md).
 2. **A single `page.evaluate` is atomic with respect to the page.** All of it runs
    in one turn of the page's own event loop, so the page cannot re-render halfway
    through it. That property is used deliberately elsewhere in the fill engine.

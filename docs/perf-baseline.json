@@ -1,6 +1,6 @@
 {
-  "taken_at": "2026-08-03T04:28:54.530Z",
-  "command": "node scripts/dev/bench-runner.mjs --apps 50 --concurrency 8 --board greenhouse,honest-greenhouse --runs 3 --json",
+  "taken_at": "2026-08-30T19:14:00.710Z",
+  "command": "node src/dev/bench-runner.mjs --apps 50 --concurrency 8 --board greenhouse,honest-greenhouse --runs 3 --json",
   "runs": 3,
   "statistic": {
     "model_turns_per_app": "mean over the run",
@@ -12,21 +12,21 @@
   "columns": {
     "model_turns_per_app": 0,
     "sleep_ms_per_app": 450,
-    "round_trips_per_app": 60,
+    "round_trips_per_app": 70,
     "defer_rate": 0.5,
-    "wall_ms_p95": 1565.31
+    "wall_ms_p95": 1638.73
   },
   "provenance": {
-    "sha": "9905681",
+    "sha": "fcd359b",
     "dirty_measured_files": [],
     "file_sha1": {
-      ".claude/skills/apply-job/scan-page.js": "eb26f79696a8",
-      ".claude/skills/apply-job/scan.driver.mjs": "548909071e69",
-      "scripts/apply/scan-engine.mjs": "35da2d57dc72",
-      "scripts/apply/fill-engine.mjs": "be3f14913628",
-      "scripts/apply/fill-plan.mjs": "0c948d57fbc4",
-      "scripts/apply/answer-bank.mjs": "893801e95d8d",
-      "scripts/apply/field-cache.mjs": "3f7055894985"
+      ".claude/skills/apply-job/scan-page.js": "0fd8ccc0fcc4",
+      ".claude/skills/apply-job/scan.driver.mjs": "8748ffb6b49f",
+      "src/apply/scan-engine.mjs": "e69e7ed30a88",
+      "src/apply/fill-engine.mjs": "302d228e2635",
+      "src/apply/fill-plan.mjs": "8eb5cebe2a9a",
+      "src/apply/answer-bank.mjs": "e4d536943735",
+      "src/apply/field-cache.mjs": "a8ac55a9ce7f"
     }
   }
 }

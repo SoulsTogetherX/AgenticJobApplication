@@ -1325,6 +1325,54 @@ click and answers a different question. No sample is claimed for it here: the
 number is a per-run measurement of the machine, and this ledger entry is a
 fixture measurement of the fill.
 
+## M12 — the perf gate had been red for 26 days: `round_trips` 60 → 70, and whose ten they are
+
+- agent: session of 2026-08-30, triggered by CI on the dev-to-main merge
+- harness: `node tools/ci/perf-gate.mjs` (50 apps, concurrency 8, three runs)
+- baseline: `9905681` (2026-08-03) — `round_trips_per_app` **60**
+- after: `fcd359b` (2026-08-30) — `round_trips_per_app` **70**, `dirty=0`
+- budget: none declared; the rise is banked into the baseline instead
+- verdict: not a regression to roll back. A declared correctness cost, attributed by bisect and re-baselined
+- note: only one of the five columns moved. `model_turns_per_app` is still 0, and that is the column with no override.
+
+**The gate was not failing today; it had been failing since 2026-08-04.** The
+perf-gate job and its baseline both landed in `5d5da52` on 2026-08-02, and
+nothing has rewritten `docs/perf-baseline.json` since. Seventy commits later CI
+reported `round_trips_per_app 70 exceeds 60` on a merge — the first time anyone
+read the job's output. A gate nobody reads is a gate nobody has, and the 26-day
+gap is the finding here rather than the ten round trips.
+
+**Whose ten they are, measured rather than argued.** The column is deterministic
+— `cdp_calls` off the instrumented page, identical on Windows and on CI's
+ubuntu, and identical at 10 apps × 1 run as at 50 × 3. That makes it bisectable,
+so it was bisected: `git bisect run` over the 70 commits from `5d5da52` to the
+dev tip, probe exiting 1 above 60, five steps. First bad commit:
+
+    df32347  2026-08-04  Fix five Oracle Recruiting Cloud defects in the generic ATS path
+
+which is the change that taught the scanner to read and set comboboxes whose
+options a live ORC apply could not reach, to see a required consent checkbox
+that was reported nowhere, and to stop reporting one element as two fields.
+Reading an option list costs round trips; that is what the ten are.
+
+**Why the baseline moved instead of a budget line.** The gate offers
+`perf-budget: round_trips +N` in a PR body, and that is the right instrument for
+a one-off — it clears one PR and leaves the baseline where it was. This cost is
+permanent, so a budget line would have to be retyped into every PR body forever
+and the gate would keep comparing against a number no tree has produced since
+August 4th. The regression protocol above names the rule that decides it:
+_correctness outranks speed, and a declared security cost is never rolled back
+on performance grounds alone._ Both numbers stay visible — M9's table still
+reads 60 at `9905681`, this entry reads 70 at `fcd359b`.
+
+**Not established here.** Nobody has asked whether the ten can be fewer. The
+bisect attributes them to a commit and that commit's own subject says what they
+bought; no per-leg split of scan versus fill was taken, and no attempt was made
+to reduce them. `wall_ms_p95` also moved, 1565.31 → 1638.73, and that number
+means nothing across machines: both baselines were taken on this Windows laptop,
+CI's ubuntu leg reads ~910 for the same workload, and the column is warn-only
+for exactly this reason.
+
 ## Test-floor ledger (moved out of package.json, 2026-08-27)
 
 Until 2026-08-27 the two `testGate.*.measured` fields in package.json held

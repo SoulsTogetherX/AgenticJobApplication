@@ -2305,18 +2305,25 @@ The current baseline:
 
 ```json
 {
-  "taken_at": "2026-08-03T04:28:54.530Z",
+  "taken_at": "2026-08-30T19:14:00.710Z",
   "runs": 3,
   "columns": {
     "model_turns_per_app": 0,
     "sleep_ms_per_app": 450,
-    "round_trips_per_app": 60,
+    "round_trips_per_app": 70,
     "defer_rate": 0.5,
-    "wall_ms_p95": 1565.31
+    "wall_ms_p95": 1638.73
   },
-  "provenance": { "sha": "9905681", "dirty_measured_files": [], "file_sha1": { … } }
+  "provenance": { "sha": "fcd359b", "dirty_measured_files": [], "file_sha1": { … } }
 }
 ```
+
+Re-taken on 2026-08-30. The first one stood at `9905681` from 2026-08-03 with
+`round_trips_per_app: 60`, and `df32347` moved that column to 70 the next day —
+so the gate had been red on every push for 26 days and nobody was reading it.
+One column moved, for a stated reason, and `model_turns_per_app` is still 0,
+which is the column that may never move at all. M12 in
+[`../measurements.md`](../measurements.md) carries the attribution.
 
 `toBaseline` records the statistic name beside every number, because _"'sleep
 went up' is not a claim until you know whether that is a mean, a min or a p50."_

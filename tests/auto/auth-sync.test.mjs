@@ -563,6 +563,14 @@ test("a symlink inside the profile is never followed out of it", async () => {
   s.ignoreAll()
   const outside = path.join(s.root, "outside.txt")
   fs.writeFileSync(outside, "should not travel")
+  // Age it out of the freshness window. probeLiveness stats through a
+  // symlink, so the LINK it is about to sit behind reports the TARGET's
+  // mtime — freshly written, therefore 'a browser is live', therefore the
+  // sync refuses and the symlink is never exercised. Invisible on Windows,
+  // where symlinkSync throws EPERM without developer mode and this test
+  // returns early; it only ever really runs on CI (2026-08-30).
+  const aged = new Date(Date.now() - 10 * RECENT_MS)
+  fs.utimesSync(outside, aged, aged)
   // Placed at an ALLOWLISTED path on purpose. A symlink at some arbitrary name
   // is now refused by the allowlist anyway, so the test would pass without the
   // symlink check ever running — green for the wrong reason.

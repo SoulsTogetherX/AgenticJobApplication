@@ -1333,6 +1333,18 @@ const EPERM_RUNS = 5
 const EPERM_TIMEOUT_MS = "800"
 
 test("a writer polls through a lock that is mid-release instead of crashing", async (t) => {
+  // WINDOWS ONLY, and the skip is the honest outcome rather than a weaker
+  // assertion. `delete-pending` is a Windows filesystem state: unlink on a
+  // handle still held marks the entry, and an O_CREAT|O_EXCL open against it
+  // returns EPERM/EACCES/EBUSY until the last handle closes. POSIX unlink is
+  // immediate, so the window this polls for cannot open at all and the
+  // vacuity guard below correctly fires — which is what CI saw on ubuntu
+  // (2026-08-30). The behaviour under test is real, and is real only here.
+  if (process.platform !== "win32") {
+    return t.skip(
+      "delete-pending is a Windows filesystem state; POSIX unlink is immediate, so the window this test polls for never opens",
+    )
+  }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "answers-eperm-"))
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
   const file = path.join(dir, "answers.yaml")

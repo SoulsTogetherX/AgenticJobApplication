@@ -54,7 +54,19 @@ const DENY_PROBES = {
   "guard-files": {
     input: JSON.stringify({
       tool_name: "Write",
-      tool_input: { file_path: "C:\\Windows\\shim-parity-probe.txt" },
+      // OUTSIDE THE PROJECT, ON WHATEVER PLATFORM THIS RUNS. The filesystem
+      // root is the one place guaranteed to be outside both the repo and
+      // os.tmpdir(), which guard-files exempts on purpose.
+      //
+      // This was a literal C: path, which is a WINDOWS-ONLY absolute path:
+      // on Linux it is a RELATIVE filename, so resolving it against cwd
+      // lands INSIDE the project, guard-files correctly does not deny, and
+      // the test failed on CI while passing on the machine that wrote it
+      // (2026-08-30). A cross-platform probe must never hardcode one
+      // platform's idea of "absolute".
+      tool_input: {
+        file_path: path.join(path.parse(ROOT).root, "aj-shim-parity-probe.txt"),
+      },
       cwd: ROOT,
     }),
     expectWhy:

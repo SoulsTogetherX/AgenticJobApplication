@@ -16,6 +16,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import {
   reconcileOne,
   reconcileAll,
@@ -130,7 +131,12 @@ test("a confirmation on the board resolves the orphan to submitted", async () =>
   const o = orphan(s, { board: "fixture" })
   const html = fs.readFileSync(
     path.resolve(
-      path.dirname(new URL(import.meta.url).pathname.slice(1)),
+      // fileURLToPath, never new URL(...).pathname.slice(1): that idiom
+      // strips the leading slash to turn /C:/x into C:/x on Windows, and on
+      // Linux turns the ABSOLUTE /home/x into the RELATIVE home/x, which then
+      // resolves against cwd. It read the fixture fine here and produced a
+      // doubled path on CI (2026-08-30).
+      path.dirname(fileURLToPath(import.meta.url)),
       "..",
       "fixtures",
       "boards",

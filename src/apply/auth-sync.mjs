@@ -407,6 +407,34 @@ export function isIgnored(gitignoreText, relDir) {
   return ignored
 }
 
+/**
+ * copyFile, then carry the source's timestamps onto the copy.
+ *
+ * WHY, MEASURED 2026-08-30. `fs.copyFile` preserves mtime on Windows (it goes
+ * through CopyFileEx, which copies file times) and does NOT on Linux, where the
+ * destination is stamped with the time of the copy. That difference is visible
+ * to probeLiveness: it reads mtimes off HELD_CANDIDATES, so on Linux a profile
+ * we had JUST written looked like a browser actively using it, and a second
+ * sync refused with "the auto browser looks live" — about files nobody had
+ * opened. CI caught it; the Windows dev machine never could.
+ *
+ * Preserving the timestamps is also the more truthful record: the auto profile's
+ * files carry the age of the SESSION DATA they hold, not the age of the copy. A
+ * genuinely live browser still writes recent mtimes, so the heuristic keeps
+ * exactly the signal it was built to read.
+ */
+async function copyPreservingMtime(from, to) {
+  await fsp.copyFile(from, to)
+  const st = await fsp.stat(from)
+  try {
+    await fsp.utimes(to, st.atime, st.mtime)
+  } catch {
+    // Non-fatal: a copy with a fresh mtime is still a correct copy. The cost is
+    // only that the liveness probe may read it as recent.
+  }
+  return st.size
+}
+
 async function writeMinimalPreferences(from, to) {
   let source = null
   try {
@@ -461,7 +489,7 @@ async function copyTree(src, dst, { onFile = null, rel = "", excluded } = {}) {
       bytes +=
         decision.transform === "preferences"
           ? await writeMinimalPreferences(from, to)
-          : (await fsp.copyFile(from, to), (await fsp.stat(to)).size)
+          : await copyPreservingMtime(from, to)
       files += 1
     } catch (err) {
       // A file that vanished or is locked mid-copy is reported, not fatal: the

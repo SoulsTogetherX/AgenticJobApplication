@@ -12,7 +12,9 @@ import {
   assertFixtureIsolation,
   selectEligible,
   defaultDocuments,
+  runCampaign,
 } from "../../src/auto/auto-apply.mjs"
+import { AUTO_DIR } from "../../src/auto/guard.mjs"
 import {
   openDb,
   recordVerification,
@@ -670,4 +672,86 @@ test("the no-lead-row reason is distinguishable from an unscreened lead", () => 
 
 test("an empty rejection list renders as nothing, not as a header", () => {
   assert.equal(formatRejections([]), "")
+})
+
+// --- the tree the harness owns ----------------------------------------------
+//
+// `jobsDir` and `autoDir` name ONE tree, and until 2026-08-30 they defaulted
+// independently: a caller could redirect the workspace and go on writing the
+// audit trail into the real jobs/.auto. browser-leg.test.mjs did exactly that,
+// and 165 of the 234 files then sitting in the user's own jobs/.auto/runs were
+// its rehearsals — the run JSONL in one tree, the database rows it must agree
+// with in another. These two tests are why it cannot come back: the first pins
+// the derivation, the second pins the refusal.
+
+function campaignSandbox(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-tree-"))
+  const jobsDir = path.join(dir, "jobs")
+  fs.mkdirSync(jobsDir, { recursive: true })
+  const dbFile = path.join(dir, "leads.db")
+  openDb(dbFile).close()
+  t.after(() => {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true })
+    } catch {
+      /* a leaked handle must not fail an assertion that already passed */
+    }
+  })
+  return { dir, jobsDir, dbFile }
+}
+
+const TREE_LIMITS = { auto_apply: { enabled: true, dry_run: true } }
+
+test("a campaign writes its audit trail into the jobsDir it was given", async (t) => {
+  const s = campaignSandbox(t)
+  // No `autoDir`, deliberately — this is the exact call shape every leaking
+  // caller had. An empty queue is enough: startRun writes run.start before any
+  // job exists, and that is the write that used to land in the wrong tree.
+  const out = await runCampaign({
+    dbFile: s.dbFile,
+    limits: TREE_LIMITS,
+    mode: "dry_run",
+    jobs: [],
+    jobsDir: s.jobsDir,
+  })
+
+  assert.ok(out.run_id, "the run opened")
+  assert.ok(
+    fs.existsSync(path.join(s.jobsDir, ".auto", "runs", out.run_id + ".jsonl")),
+    "the run's JSONL belongs in the workspace the caller named",
+  )
+  // And nowhere else. Keyed by run_id rather than by counting files, so the
+  // user's twice-daily scheduled run firing mid-test cannot flip this either
+  // way by accident.
+  assert.equal(
+    fs.existsSync(path.join(AUTO_DIR, "runs", out.run_id + ".jsonl")),
+    false,
+    "a redirected campaign wrote into the user's REAL jobs/.auto",
+  )
+})
+
+test("an autoDir belonging to another tree is refused, not silently honoured", async (t) => {
+  const s = campaignSandbox(t)
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "aj-other-"))
+  t.after(() => {
+    try {
+      fs.rmSync(other, { recursive: true, force: true })
+    } catch {
+      /* as above */
+    }
+  })
+  await assert.rejects(
+    () =>
+      runCampaign({
+        dbFile: s.dbFile,
+        limits: TREE_LIMITS,
+        mode: "dry_run",
+        jobs: [],
+        jobsDir: s.jobsDir,
+        autoDir: path.join(other, ".auto"),
+      }),
+    /autoDir must be the .auto directory of jobsDir/,
+    "a record split across two trees is a caller bug, and a silent one is how " +
+      "this survived unnoticed for months",
+  )
 })

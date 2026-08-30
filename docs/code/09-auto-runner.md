@@ -390,17 +390,17 @@ stop_reason, paused_boards` — there is no `submitted`, `deferred` or `failed`
 
 **Command-line flags**
 
-| flag               | default                        | meaning                                                                                          |
-| ------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `--limit N`        | 25                             | how many queued jobs this invocation may work                                                    |
-| `--concurrency N`  | 1                              | how many workers run at once; at most one job per origin regardless                              |
-| `--db <file>`      | `jobs/leads.db`                | the SQLite store                                                                                 |
-| `--limits <file>`  | `docs/application-limits.yaml` | your limits document                                                                             |
-| `--jobs-dir <dir>` | `jobs/`                        | the workspace root holding `jobs/<slug>/`                                                        |
-| `--enqueue`        | off                            | select eligible jobs into `auto_queue` and stop — no browser, no clicks                          |
-| `--fixture`        | off                            | loopback fixture mode: widens the trust gate to plain-http loopback, refuses the real lead store |
-| `--json`           | off                            | print one JSON object instead of prose                                                           |
-| `--help` / `-h`    | off                            | print usage, exit 0                                                                              |
+| flag               | default                        | meaning                                                                                                                                                          |
+| ------------------ | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--limit N`        | 25                             | how many queued jobs this invocation may work                                                                                                                    |
+| `--concurrency N`  | 1                              | how many workers run at once; at most one job per origin regardless                                                                                              |
+| `--db <file>`      | `jobs/leads.db`                | the SQLite store                                                                                                                                                 |
+| `--limits <file>`  | `docs/application-limits.yaml` | your limits document                                                                                                                                             |
+| `--jobs-dir <dir>` | `jobs/`                        | the workspace root holding `jobs/<slug>/` — and its `.auto/` with it, so a redirected run's audit trail and STOP move too (2026-08-30; they used to stay behind) |
+| `--enqueue`        | off                            | select eligible jobs into `auto_queue` and stop — no browser, no clicks                                                                                          |
+| `--fixture`        | off                            | loopback fixture mode: widens the trust gate to plain-http loopback, refuses the real lead store                                                                 |
+| `--json`           | off                            | print one JSON object instead of prose                                                                                                                           |
+| `--help` / `-h`    | off                            | print usage, exit 0                                                                                                                                              |
 
 A numeric flag that is not a positive integer throws immediately:
 `--limit 0` or `--limit abc` produces

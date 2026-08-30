@@ -536,12 +536,50 @@ export async function runCampaign({
   classify = null,
   documentsFor = null,
   profileApproved = false,
-  autoDir = undefined,
-  stopPath = undefined,
+  autoDir = null,
+  stopPath = null,
   onResult = null,
   staleClaimMs = 30 * 60 * 1000,
   now = () => new Date(),
 } = {}) {
+  // ONE TREE, NOT TWO. `jobsDir` is the workspace root; `autoDir` is that
+  // root's control directory and `stopPath` the brake inside it — `AUTO_DIR`
+  // is literally `JOBS_DIR/.auto`, and `STOP_PATH` is `AUTO_DIR/STOP`. Letting
+  // them DEFAULT independently means a caller who redirects the tree keeps
+  // writing the audit trail to the real one, and nothing says so.
+  //
+  // Measured 2026-08-30: 165 of the 234 files in the user's own
+  // jobs/.auto/runs were tests/auto/browser-leg.test.mjs's, which passes a
+  // sandbox `jobsDir` and no `autoDir`. Its run JSONL went to the real tree
+  // while its database rows went to the sandbox — splitting in half the two
+  // copies audit.mjs's header requires to agree. On a clone with no jobs/ at
+  // all the same split surfaced instead as a BoundaryError from
+  // assertInsideJobs, which was right: a write it cannot prove lands inside
+  // the tree is a write it must refuse.
+  //
+  // So the defaults are DERIVED, not a second set of constants: redirect the
+  // tree and everything downstream follows, including startRun's own view
+  // (it reads `path.resolve(autoDir, "..")` back, which is now this jobsDir
+  // exactly). Absence is unchanged — `path.join(VERIFY_JOBS_DIR, ".auto")` IS
+  // `AUTO_DIR` and `join(that, "STOP")` IS `STOP_PATH` — so a caller passing
+  // neither behaves as it always did, and `--jobs-dir` (documented as
+  // "workspace root") now moves the whole tree rather than half of it.
+  //
+  // An explicit `autoDir` belonging to some OTHER tree is a caller bug and
+  // throws, rather than writing the record to two places. Same class as
+  // ec5ebc2 / 30a6697 / bacaeb5: the harness owns every path it writes.
+  const jobsRoot = path.resolve(jobsDir)
+  const auto = autoDir ? path.resolve(autoDir) : path.join(jobsRoot, ".auto")
+  if (path.dirname(auto) !== jobsRoot) {
+    throw new Error(
+      `runCampaign: autoDir must be the .auto directory of jobsDir, and is not.\n` +
+        `  jobsDir: ${jobsRoot}\n  autoDir: ${auto}\n` +
+        `A run whose audit trail lives outside its own workspace writes the ` +
+        `JSONL and the database rows into two different trees.`,
+    )
+  }
+  const stop = stopPath ? path.resolve(stopPath) : path.join(auto, "STOP")
+
   const db = openDb(dbFile)
   let run = null
   try {
@@ -578,8 +616,8 @@ export async function runCampaign({
     run = startRun({
       mode,
       dbFile,
-      ...(autoDir === undefined ? {} : { autoDir }),
-      ...(stopPath === undefined ? {} : { stopPath }),
+      autoDir: auto,
+      stopPath: stop,
       meta: { concurrency, queued: resumable.length },
     })
 
@@ -723,7 +761,7 @@ export async function runCampaign({
           allowLoopbackHttp,
           classify,
           dbFile,
-          ...(stopPath === undefined ? {} : { stopPath }),
+          stopPath: stop,
           now,
         }).then((result) => {
           // The breaker sees every outcome, including the good ones — a success

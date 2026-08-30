@@ -1437,3 +1437,47 @@ not surface it. After adding `*.cmd text eol=crlf` and re-normalizing: same
 exit 2, and stray output lines 2 -> 0. The task's own last run (2026-08-28
 07:05) had already reported Last Result 0 through the shim, so nothing was
 lost; the cost was noise plus a parser operating outside its contract.
+
+### 2026-08-30 - floor 2873 -> 2875 (the harness owns the tree it writes to)
+
+Two consecutive full-gate runs on a quiescent tree, 2875 tests / 2872 pass /
+0 fail / 3 skipped-with-reasons, 254.7s and 255.6s. +2 over the 2873 set,
+both in `tests/auto/auto-apply.test.mjs`, both red on the dev tip before the
+change and green after.
+
+MEASURED, the defect: `runCampaign` took `jobsDir` and `autoDir` as
+INDEPENDENTLY defaulted parameters, so a caller could redirect the workspace
+and go on writing the audit trail to the real one.
+`tests/auto/browser-leg.test.mjs` did exactly that - it passes a sandbox
+`jobsDir` and no `autoDir` - and on 2026-08-30, 165 of the 234 files in the
+user's own `jobs/.auto/runs` were its rehearsals, identifiable by the
+`fixture-analytics-fullstack` slug and a `meta:{concurrency:1,queued:1}` that
+only this test produces. The run JSONL landed in the real tree while the
+database rows it must agree with landed in the sandbox, splitting in half the
+two copies `audit.mjs`'s header requires to be reconcilable; the same call
+also hashed the user's real `profile/` into those records.
+
+The same split surfaced on a clone with no `jobs/` as a BoundaryError from
+`assertInsideJobs` ("refusing to write outside jobs/"), because `jobs/` is
+gitignored and the nearest existing ancestor of the target was then the repo
+root. That read was CORRECT and the guard was not touched: a write it cannot
+prove lands inside the tree is a write it must refuse. Nor was an empty
+`jobs/` added to the checkout - that would have silenced the messenger. The
+defaults are now DERIVED (`autoDir` from `jobsDir`, `stopPath` from
+`autoDir`), which is behaviour-identical where nothing is redirected -
+`path.join(VERIFY_JOBS_DIR, ".auto")` IS `AUTO_DIR` and `join(that, "STOP")`
+IS `STOP_PATH`, both asserted at runtime before the change was written - and
+an `autoDir` from some other tree is now refused outright rather than
+honoured.
+
+VERIFIED both directions. Pristine `git worktree` checkout with no `jobs/`:
+red before (BoundaryError), 2/2 green after, and no `jobs/` created by the
+run. On the owner's tree the browser leg passes with the real ledger
+unchanged at 234 files, and two full `npm test` runs moved it by zero -
+the suite no longer writes into `jobs/` at all. Same class as `ec5ebc2`,
+`30a6697` and `bacaeb5`, and closed the same way: structurally, at the
+parameter, rather than one test at a time.
+
+The 165 polluted records were left in place. They are the user's data and
+`jobs/.auto/runs` is an append-only audit trail; sweeping it is the user's
+call, not the agent's.

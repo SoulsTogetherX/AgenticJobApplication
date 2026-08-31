@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply — Full-Stack Engineer at Fixture Widgets</title>
+  </head>
+  <body>
+    <!--
+      Greenhouse replica, page 2 of 2 — SERVED AT THE SAME URL AS PAGE 1.
+
+      Nothing in the URL distinguishes this page from step 1. A scan taken on
+      step 1 and a plan built from it will name fields (first_name, email) that
+      do not exist here, and urlGuard will happily approve the run because the
+      URL matches. That is the bug fill-plan.mjs's resolveScanPath exists to
+      contain, and this page is what makes it reproducible.
+
+      It also carries the DIFFERENT-SHAPED versions of the same identity
+      questions, so a page-1 plan misapplied here is wrong in a way a human
+      would notice only after submission.
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <div id="app_body">
+      <form
+        id="application_form"
+        method="post"
+        action=""
+        enctype="multipart/form-data"
+      >
+        <input type="hidden" name="step" value="2" />
+
+        <div class="field">
+          <label for="linkedin">LinkedIn Profile</label>
+          <input type="url" id="linkedin" name="job_application[answers][10]" />
+        </div>
+
+        <div class="field">
+          <label for="website">Website</label>
+          <input type="url" id="website" name="job_application[answers][11]" />
+        </div>
+
+        <div class="field">
+          <div id="hear_label" class="label">
+            How did you hear about this job? <span class="required">*</span>
+          </div>
+          <div
+            class="select__control"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-labelledby="hear_label"
+            aria-required="true"
+            tabindex="0"
+          >
+            <div class="select__placeholder">Select...</div>
+          </div>
+          <div class="select__menu" hidden>
+            <div class="select__option">Job Board</div>
+            <div class="select__option">Referral</div>
+            <div class="select__option">Recruiter</div>
+          </div>
+        </div>
+
+        <fieldset class="field" id="eeo">
+          <legend>Voluntary Self-Identification of Disability</legend>
+          <label
+            ><input
+              type="radio"
+              name="job_application[demographic][disability]"
+              value="Yes"
+            />
+            Yes, I have a disability</label
+          >
+          <label
+            ><input
+              type="radio"
+              name="job_application[demographic][disability]"
+              value="No"
+            />
+            No, I do not have a disability</label
+          >
+          <label
+            ><input
+              type="radio"
+              name="job_application[demographic][disability]"
+              value="Decline"
+            />
+            I do not wish to answer</label
+          >
+        </fieldset>
+
+        <div class="field">
+          <label>
+            <input
+              type="checkbox"
+              id="certify"
+              name="job_application[certify]"
+            />
+            I certify that the information provided in this application is true
+            and complete to the best of my knowledge.
+          </label>
+        </div>
+
+        <button type="button" id="back_app">Back</button>
+        <button type="submit" id="submit_app">Submit Application</button>
+      </form>
+    </div>
+  </body>
+</html>

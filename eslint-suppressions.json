@@ -1,0 +1,1178 @@
+{
+  "scripts/profile/save-answer.mjs": {
+    "max-lines": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/applications/applications.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/applications/check-applied.mjs": {
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "src/applications/follow-ups.mjs": {
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "src/applications/update-application.mjs": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/apply/answer-bank.mjs": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 3
+    },
+    "max-params": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 3
+    }
+  },
+  "src/apply/auth-sync.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/apply/automatability.mjs": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines-per-function": {
+      "count": 2
+    },
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/apply/browser.mjs": {
+    "no-empty": {
+      "count": 2
+    },
+    "preserve-caught-error": {
+      "count": 1
+    }
+  },
+  "src/apply/capture-post-submit.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "no-useless-assignment": {
+      "count": 3
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/apply/disclosure.mjs": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/apply/field-cache.mjs": {
+    "complexity": {
+      "count": 3
+    },
+    "no-empty": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/apply/fill-engine.mjs": {
+    "complexity": {
+      "count": 9
+    },
+    "max-depth": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 7
+    },
+    "no-empty": {
+      "count": 20
+    },
+    "no-useless-assignment": {
+      "count": 3
+    },
+    "preserve-caught-error": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 7
+    }
+  },
+  "src/apply/fill-plan.mjs": {
+    "complexity": {
+      "count": 3
+    },
+    "max-depth": {
+      "count": 4
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 3
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 4
+    }
+  },
+  "src/apply/intents.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/apply/pending-questions.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/apply/rebuild-plans.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/apply/scan-engine.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 4
+    },
+    "no-empty": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 3
+    }
+  },
+  "src/auto/advance.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "src/auto/audit.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 2
+    }
+  },
+  "src/auto/authorize.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/auto/auto-apply.mjs": {
+    "complexity": {
+      "count": 4
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 3
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/auto/breaker.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/auto/caps.mjs": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/auto/classify.mjs": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "src/auto/cycle.mjs": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "promise/catch-or-return": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/auto/digest.mjs": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 3
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/auto/guard.mjs": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/auto/job.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-depth": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/auto/multipage.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 2
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/auto/pool.mjs": {
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/auto/preflight.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/auto/reconcile.mjs": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "src/auto/requeue.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/auto/stages.mjs": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/auto/submit.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 2
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/auto/taxonomy.mjs": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/auto/trust.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/dev/audit-submissions.mjs": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "src/dev/bench-apply.mjs": {
+    "complexity": {
+      "count": 8
+    },
+    "max-depth": {
+      "count": 4
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 7
+    },
+    "no-empty": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 8
+    }
+  },
+  "src/dev/bench-green-prevalence.mjs": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 2
+    },
+    "max-params": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/dev/bench-runner.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 3
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "src/dev/flake-rate.mjs": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/dev/scorecard.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/documents/assemble-resume.mjs": {
+    "complexity": {
+      "count": 4
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 3
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 3
+    }
+  },
+  "src/documents/ats-lint.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-empty": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/documents/keyword-plan.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/documents/letter-plan.mjs": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "src/documents/reverify.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/documents/verify-claims.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/hooks/guard-bash.mjs": {
+    "complexity": {
+      "count": 3
+    },
+    "max-depth": {
+      "count": 3
+    },
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 5
+    }
+  },
+  "src/hooks/guard-files.mjs": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "src/hooks/prettify.mjs": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "src/leads/board-yield.mjs": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines-per-function": {
+      "count": 2
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 3
+    }
+  },
+  "src/leads/canonical.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/leads/cc-boards.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-empty": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/leads/cluster.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/leads/discover-boards.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/leads/find-boards.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-empty": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/leads/find-jobs.mjs": {
+    "complexity": {
+      "count": 6
+    },
+    "max-depth": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 2
+    },
+    "no-useless-escape": {
+      "count": 1
+    },
+    "preserve-caught-error": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 5
+    }
+  },
+  "src/leads/fit.mjs": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/leads/gate-audit.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/leads/manage-sources.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "no-empty": {
+      "count": 1
+    },
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "src/leads/prep-queue.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-empty": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/leads/recommend.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    },
+    "no-empty": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "src/leads/risk.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/leads/screen.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 2
+    },
+    "no-empty": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/lib/args.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/lib/db.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/lib/keywords.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/lib/lib.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "preserve-caught-error": {
+      "count": 1
+    }
+  },
+  "src/lib/lock.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/lib/untrusted.mjs": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 2
+    },
+    "max-params": {
+      "count": 1
+    },
+    "no-misleading-character-class": {
+      "count": 2
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 3
+    }
+  },
+  "src/maintenance/archive.mjs": {
+    "complexity": {
+      "count": 3
+    },
+    "max-depth": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/maintenance/migrate.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/maintenance/prune-jobs.mjs": {
+    "no-empty": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/profile/keyword-coverage.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  },
+  "src/profile/profile-gaps.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-depth": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "src/status.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 3
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "tests/applications/applications.test.mjs": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "tests/apply/bench-apply.test.mjs": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "tests/apply/edge-cases.test.mjs": {
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "tests/apply/fill-page.test.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-useless-escape": {
+      "count": 3
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "tests/apply/fill-plan.test.mjs": {
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "tests/apply/scan-page.test.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "tests/apply/upload-import-control.test.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "tests/auto/audit.test.mjs": {
+    "n/no-unsupported-features/node-builtins": {
+      "count": 1
+    }
+  },
+  "tests/auto/authorize.test.mjs": {
+    "no-empty": {
+      "count": 1
+    }
+  },
+  "tests/auto/auto-apply.test.mjs": {
+    "max-params": {
+      "count": 1
+    }
+  },
+  "tests/auto/automatability.test.mjs": {
+    "no-control-regex": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "tests/auto/concurrency.test.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "tests/auto/digest.test.mjs": {
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "max-params": {
+      "count": 1
+    }
+  },
+  "tests/auto/guard.test.mjs": {
+    "no-useless-escape": {
+      "count": 3
+    }
+  },
+  "tests/auto/job.test.mjs": {
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "tests/auto/multipage.test.mjs": {
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "tests/auto/preflight.test.mjs": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "tests/auto/queue.test.mjs": {
+    "n/no-unsupported-features/node-builtins": {
+      "count": 1
+    }
+  },
+  "tests/auto/runner-resume.test.mjs": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "tests/auto/stages-cache.test.mjs": {
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "tests/auto/submissions.test.mjs": {
+    "n/no-unsupported-features/node-builtins": {
+      "count": 1
+    }
+  },
+  "tests/auto/submit.test.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "tests/documents/assemble-purity.test.mjs": {
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "tests/documents/helpers/cp-spy.mjs": {
+    "n/no-unsupported-features/node-builtins": {
+      "count": 1
+    }
+  },
+  "tests/documents/verify-coverage.test.mjs": {
+    "no-empty": {
+      "count": 1
+    }
+  },
+  "tests/fixtures/boards/dom.mjs": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines-per-function": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 3
+    }
+  },
+  "tests/fixtures/boards/server.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines-per-function": {
+      "count": 3
+    },
+    "max-params": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "tests/hooks/guard-hooks.test.mjs": {
+    "no-empty": {
+      "count": 1
+    }
+  },
+  "tests/hooks/guard-profile-shell.test.mjs": {
+    "no-empty": {
+      "count": 1
+    }
+  },
+  "tests/leads/prep-queue.test.mjs": {
+    "max-lines-per-function": {
+      "count": 2
+    }
+  },
+  "tests/leads/query-list.test.mjs": {
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "tests/lib/db.test.mjs": {
+    "n/no-unsupported-features/node-builtins": {
+      "count": 1
+    }
+  },
+  "tests/lib/keywords.test.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "tests/lib/politeness.test.mjs": {
+    "promise/catch-or-return": {
+      "count": 1
+    }
+  },
+  "tests/security/bypass-corpus.test.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "tests/security/engine-double.mjs": {
+    "max-lines-per-function": {
+      "count": 1
+    }
+  },
+  "tests/security/honest-board.test.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "tests/security/hostile-forms.test.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "tests/security/scan-fidelity.test.mjs": {
+    "max-depth": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 1
+    }
+  },
+  "tests/security/source-bytes.test.mjs": {
+    "no-control-regex": {
+      "count": 1
+    }
+  },
+  "tools/ci/perf-gate.mjs": {
+    "complexity": {
+      "count": 1
+    },
+    "sonarjs/cognitive-complexity": {
+      "count": 2
+    }
+  }
+}

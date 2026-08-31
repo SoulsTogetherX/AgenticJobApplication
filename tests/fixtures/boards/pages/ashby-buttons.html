@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Compute — Full-Stack Engineer (button answers)</title>
+  </head>
+  <body>
+    <!--
+      ASHBY, SECOND RENDERING: A YES/NO QUESTION ANSWERED BY TWO <button>s.
+      An HONEST page. It is here because of what the scanner used to do with it.
+
+      THE INCIDENT (2026-08-03). On a live Ashby posting the sponsorship
+      question below was rendered exactly like this. scan-page.js's button loop
+      filed both controls in `btns` with r:"other" — a list fill-plan.mjs never
+      reads — so the plan reported four deferred fields and DID NOT MENTION
+      THIS QUESTION AT ALL. It was found by hand-reading the DOM. A required
+      work-authorisation answer went missing and nothing in the run said so.
+      That is the failure mode scan-page.js's own header calls the worse one:
+      a silence is not a refusal.
+
+      THE TWO TRAITS THAT MADE IT INVISIBLE, both reproduced verbatim:
+
+      1. NO ARIA STATE. The button loop hands a control down to the widget
+         sweep only when it carries aria-checked / aria-pressed /
+         aria-selected. These carry none — which is why the sweep's escape
+         hatch, the thing that catches a consent tick rendered as a toggle
+         button, never fired.
+
+      2. THE SELECTED ONE IS MARKED WITH A BUILD-HASHED CLASS. `_active_1svni_57`
+         is what a real Ashby build emits, and it is a DIFFERENT STRING after
+         the board's next deploy. So there is no honest way to read which
+         answer is currently chosen, and the scanner does not claim to: the
+         group's options carry no `on`. A fixture that used a stable class name
+         here would be asserting a signal the real board does not give.
+
+      3. AN INVISIBLE BACKING CHECKBOX SITS IN THE SAME CONTAINER. This one is
+         here because the first version of the fix passed every fixture in this
+         repo and DID NOTHING ON THE REAL BOARD. The detector stops walking up
+         at a container holding another control, so that it never stamps a
+         neighbouring field's label onto the pair — and Ashby puts
+           <input type="checkbox" tabindex="-1" name="question_..."> at
+           display:none
+         inside each pair's own container as the value it actually submits.
+         An earlier guard exempted `type="hidden"` only, so it treated that
+         checkbox as a second question and refused the whole group. The rule is
+         now "a control this scanner would itself collect", i.e. a VISIBLE one.
+         Reproduced verbatim, because a fixture that leaves it out cannot fail
+         when someone tightens that guard again.
+
+      Note also that neither button has an id, a name or a data-testid: on the
+      real page the only distinguishing attribute is the hashed class. So
+      stableSel() returns nothing for them and the plan falls back to the
+      data-aj stamp, which is the documented fallback and is stated here so a
+      reader does not mistake the missing `sel` for fixture sloppiness.
+
+      "Next" and "Submit Application" are here to be the control: they are real
+      actions, roleOf() names them, and they must keep landing in `btns`
+      untouched. If either ever appears in `fields`, the detector has started
+      eating navigation and this fixture goes red.
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <div id="root">
+      <form id="application-form" method="post" action="">
+        <div class="ashby-application-form-field-entry">
+          <label for="_systemfield_name"
+            >Name<span aria-hidden="true">*</span></label
+          >
+          <input
+            type="text"
+            id="_systemfield_name"
+            name="_systemfield_name"
+            required
+          />
+        </div>
+
+        <div class="ashby-application-form-field-entry">
+          <label for="_systemfield_email"
+            >Email<span aria-hidden="true">*</span></label
+          >
+          <input
+            type="email"
+            id="_systemfield_email"
+            name="_systemfield_email"
+            required
+          />
+        </div>
+
+        <div class="ashby-application-form-field-entry">
+          <label id="_q_sponsorship"
+            >Will you now or in the future require sponsorship for employment
+            visa status?<span aria-hidden="true">*</span></label
+          >
+          <div class="_container_1svni_28 _yesno_1e3gg_148">
+            <input
+              type="checkbox"
+              class="_input_1svni_78"
+              tabindex="-1"
+              name="question_7097054005"
+              style="display: none"
+            />
+            <button type="button" class="_option_1svni_20 _active_1svni_57">
+              Yes
+            </button>
+            <button type="button" class="_option_1svni_20">No</button>
+          </div>
+        </div>
+
+        <div class="ashby-application-form-field-entry">
+          <label id="_q_pronouns">What are your pronouns?</label>
+          <div class="_container_1svni_28">
+            <button type="button" class="_option_1svni_20">She/her</button>
+            <button type="button" class="_option_1svni_20">He/him</button>
+            <button type="button" class="_option_1svni_20">They/them</button>
+          </div>
+        </div>
+
+        <!--
+          THE INSTRUCTION-PHRASED QUESTION (2026-08-21). Ashby's texting
+          consent renders its question as an instruction with no "?" —
+          "Check Yes or No to indicate…" — above a Yes/No pair. questionIn()
+          requires a literal "?", so the pair detector adopted nothing, the
+          buttons fell to the widget sweep, and the scan reported TWO separate
+          fields labelled "Yes" and "No" (measured on the live Quora and Flock
+          Safety forms; jobs/.field-cache.json holds the captures). The fix is
+          the firstSentence fallback the native-group pass already had, gated
+          on the answer set being CLOSED — which this Yes/No pair is, and a
+          Bold/Italic toolbar is not. The question here is deliberately NOT
+          consent-shaped: this fixture pins the detector, and consent policy
+          on this widget shape is pinned by consent-shapes.test.mjs.
+        -->
+        <div class="ashby-application-form-field-entry">
+          <label id="_q_texting">
+            Check Yes or No to indicate whether you have previously worked for
+            Fixture Compute in any role.<span aria-hidden="true">*</span>
+          </label>
+          <div class="_container_1svni_28 _yesno_1e3gg_148">
+            <input
+              type="checkbox"
+              class="_input_1svni_78"
+              tabindex="-1"
+              name="question_7097054006"
+              style="display: none"
+            />
+            <button type="button" class="_option_1svni_20">Yes</button>
+            <button type="button" class="_option_1svni_20">No</button>
+          </div>
+        </div>
+
+        <div class="ashby-toolbar">
+          <button type="button" id="next_app">Next</button>
+          <button type="submit" id="submit_app">Submit Application</button>
+        </div>
+      </form>
+    </div>
+  </body>
+</html>

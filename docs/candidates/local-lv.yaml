@@ -1,0 +1,64 @@
+# Las Vegas metro employers — the highest-value pool for this profile.
+#
+# On-site is IN SCOPE here (docs/application-limits.yaml onsite_allowed), which
+# makes a local board worth more than a remote one: the whole board counts
+# rather than only its remote requisitions, and local employers hire across all
+# levels rather than skewing Senior the way the tech boards do.
+#
+# HONEST WARNING, measured 2026-07-29: find-boards.mjs probed Konami Gaming,
+# Everi, Zappos, Switch, Scientific Games, PlayAGS, Sightline Payments, Southwest
+# Gas and NV Energy against all six no-auth ATS APIs and found NOTHING for any of
+# them. They are on Workday, iCIMS, Taleo or Phenom, whose board URLs contain an
+# opaque tenant host that cannot be derived from a company name.
+#
+# So most of this file will NOT resolve via find-boards.mjs. It is kept as the
+# research list: each one needs its careers URL read once by hand, and then
+# added with the right host/tenant, the way the existing Workday and
+# oracle_cloud entries in job-sources.yaml were. Already-tracked local employers
+# (Caesars, Station Casinos, Boyd, IGT, MGM, Light & Wonder, Aristocrat, AGS,
+# Allegiant, Fanatics) are deliberately not repeated here.
+
+companies:
+  # --- gaming technology (the local software industry) ---
+  - Konami Gaming
+  - Everi Holdings
+  - Sightline Payments
+  - Gaming Arts
+  - Interblock
+  - AGS LLC
+  - Acres Manufacturing
+  - JCM Global
+  - Bally's Corporation
+  - PlayStudios
+  - Scientific Games
+
+  # --- tech / data centre ---
+  - Switch Inc
+  - Zappos
+  - Google Data Center Henderson
+  - Amazon Web Services Las Vegas
+
+  # --- hospitality groups with real engineering orgs ---
+  - Wynn Resorts
+  - Venetian Resort
+  - Golden Entertainment
+  - Red Rock Resorts
+  - Treasure Island
+  - Circa Resort
+
+  # --- utilities, health, public sector adjacent ---
+  - NV Energy
+  - Southwest Gas
+  - Intermountain Health Nevada
+  - Optum Nevada
+  - Clark County Nevada
+  - Las Vegas Sands
+
+  # --- other Las Vegas employers with software roles ---
+  - Allegiant Air
+  - Spring Mobile
+  - Ultimate Fighting Championship
+  - Vegas Golden Knights
+  - Diamond Resorts
+  - Marker Trax
+  - Rimini Street

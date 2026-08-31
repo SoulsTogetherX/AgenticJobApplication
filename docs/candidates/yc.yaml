@@ -1,0 +1,637 @@
+# Y Combinator companies, from the public yc-oss directory API
+#   https://yc-oss.github.io/api  (no auth, refreshed daily)
+#
+# Why the directory and not the job site: workatastartup.com is a login-walled
+# Inertia app. /jobs returns HTML carrying no job payload, an x-inertia request
+# 409s, and /companies/fetch returns rendered fragments with no job links — so
+# sweeping it means defeating a login wall. Most YC companies are on Greenhouse,
+# Lever or Ashby, which the sweep already speaks, so the route in is this
+# directory plus find-boards.mjs.
+#
+# Filter: top companies, plus companies the directory marks isHiring, still
+# Active, US-located, from a 2024-or-later batch. Younger companies are the
+# ones that actually post below Senior, which board-yield shows is the single
+# best predictor of whether a board can yield anything at ~2.5 years.
+companies:
+  - PlanGrid
+  - Gusto
+  - Matterport
+  - Amplitude
+  - Sendwave
+  - Codecademy
+  - Segment
+  - HelloSign
+  - Fivestars
+  - GOAT Group
+  - DrChrono
+  - Presto
+  - FutureAdvisor
+  - PagerDuty
+  - Optimizely
+  - Stripe
+  - WePay
+  - Mixpanel
+  - Airbnb
+  - Machine Zone
+  - Heroku
+  - Dropbox
+  - Weebly
+  - Scribd
+  - OMGPop
+  - Reddit
+  - Twitch
+  - Clever
+  - SmartAsset
+  - Lever
+  - Coinbase
+  - Zapier
+  - Benchling
+  - Instacart
+  - North
+  - Fivetran
+  - Heap
+  - CoreOS
+  - DoorDash
+  - Webflow
+  - Bellabeat
+  - Cruise
+  - Flexport
+  - Weave
+  - Algolia
+  - Checkr
+  - Rigetti Computing
+  - ShipBob
+  - Cognito
+  - Ginkgo Bioworks
+  - Oklo
+  - Notable Labs
+  - GrubMarket
+  - EquipmentShare
+  - GitLab
+  - Razorpay
+  - OpenInvest
+  - Scentbird
+  - Go1
+  - Truebill
+  - Paystack
+  - Podium
+  - Caper
+  - NURX
+  - GitPrime
+  - Rappi
+  - Meesho
+  - The Athletic
+  - Scale AI
+  - Proxy
+  - Bird
+  - Rippling
+  - Clipboard
+  - Faire
+  - Brex
+  - Flock Safety
+  - Newfront
+  - Modern Fertility
+  - Bear Flag Robotics
+  - Sqreen
+  - Groww
+  - Honeylove
+  - Momentus
+  - Wave
+  - Deel
+  - Nowports
+  - Odeko
+  - Whatnot
+  - Pardes Biosciences
+  - Zepto
+  - Moxion Power Co.
+  - MSPilot
+  - Onyx
+  - Event Horizon Labs
+  - Navier AI
+  - DryMerge
+  - Relari
+  - Scritch
+  - ego
+  - Ubicloud
+  - Duckie
+  - Kabilah
+  - Poka Labs
+  - Reducto
+  - Momentic
+  - Tuesday Labs
+  - Newton
+  - Garage
+  - Pivot Robotics
+  - Wavelength
+  - AveryIQ
+  - PointOne
+  - Paradigm
+  - Arini
+  - FurtherAI
+  - ROE
+  - Artisan
+  - Greenboard
+  - Trellis AI
+  - atopile
+  - CloudCruise
+  - Meticulate
+  - Zaymo
+  - PromptArmor
+  - Respan
+  - Monumint
+  - Scout
+  - Clarion
+  - Tamarind Bio
+  - GloGlo
+  - Firebender
+  - Centralize
+  - Open
+  - Dime
+  - Ellipsis
+  - CodeAnt AI
+  - Astro Mechanica
+  - Carma
+  - Whip
+  - Conduit
+  - Shiboleth
+  - Hazel
+  - Andy AI
+  - OffDeal
+  - ProSights
+  - Raindrop
+  - Yondu
+  - JustAI
+  - Circleback
+  - BetterBasket
+  - Artos
+  - Brainbase Labs
+  - Deep24
+  - Openmart
+  - Zep AI
+  - Sonauto
+  - Stacksync
+  - Terrakotta
+  - Rove
+  - Retell AI
+  - Ocular AI
+  - Deepnight
+  - CommodityAI
+  - Powder
+  - Spur
+  - Piramidal
+  - Reform
+  - TrueClaim
+  - Healia
+  - Haplotype Labs
+  - Forge
+  - CrowdVolt
+  - Yarn
+  - InspectMind AI
+  - Reprompt
+  - GetCrux
+  - RetailReady
+  - Coval
+  - Indemni
+  - Ultra
+  - Roger
+  - Apten
+  - Domu Technology Inc.
+  - Superunit
+  - Variant
+  - Mem0
+  - Saphira AI
+  - Theseus
+  - Educato
+  - ProhostAI
+  - Hamming AI
+  - mdhub
+  - Entangl
+  - Codes Health
+  - Unsloth AI
+  - Sage Care
+  - VideoGen
+  - Corgi Insurance
+  - Maitai
+  - Wordware
+  - FirstWork
+  - Stardrift
+  - Azalea Robotics Corporation
+  - RetroFix
+  - Unbound
+  - Silurian
+  - Cloudglue
+  - Willow
+  - Offstream
+  - Elevate
+  - Dodo
+  - Parahelp
+  - Tivara
+  - Tandem
+  - Weave Robotics
+  - Gauge
+  - Dench.com
+  - Pulse
+  - Lighthouz AI
+  - Substrate
+  - TaxGPT
+  - Anthrogen
+  - Kastle
+  - CreativeMode
+  - Clearly AI
+  - FINNY AI
+  - Hestus, Inc.
+  - Anara
+  - Planbase
+  - Dimely
+  - Drillbit
+  - Conductor Quantum
+  - Pax
+  - David AI
+  - Mage Legal
+  - Emergent
+  - Thunder Compute
+  - Intryc
+  - Soff
+  - Mineflow
+  - Brighterway
+  - Zettascale
+  - Cerulion
+  - Guardian RF
+  - Simple AI
+  - Refactor
+  - YouShift
+  - Cartage
+  - Sonatoria
+  - Finosu
+  - Helium
+  - Rescript
+  - Dataleap
+  - Vendra
+  - Kontigo
+  - Assembly HOA
+  - Draft The Record
+  - Elayne
+  - Oway
+  - Bucket Robotics
+  - Usul
+  - Diode Computers, Inc.
+  - No Logo
+  - Anglera
+  - Capitol AI
+  - Overlap
+  - Merlin AI
+  - SimCare
+  - Syntra
+  - Conductor
+  - Outerport
+  - Onlook
+  - Avora
+  - Streamable
+  - Crouton
+  - Moonset Health
+  - Candle
+  - OpenFunnel
+  - Rulebase
+  - Raycaster
+  - Revyl
+  - Cekura
+  - CTGT
+  - Keye
+  - Luthor
+  - Freebuff
+  - Unusual
+  - Abundant
+  - Curo
+  - PermitPortal
+  - Fresco
+  - Origami
+  - CollectWise
+  - Capy
+  - Innate
+  - Alex
+  - Kilvin
+  - ArchiLabs
+  - Ryvn
+  - Ember
+  - Canvas
+  - Careforce
+  - HumanLayer
+  - Apolink
+  - Asha Health
+  - Enhanced Radar
+  - Revise Robotics
+  - Bild AI
+  - Leaping AI
+  - Flowtel
+  - SubImage
+  - Steinmetz
+  - Partcl
+  - Axiom
+  - Splash Inc.
+  - Promptless
+  - Closure
+  - Contrario
+  - Toothy AI
+  - a0.dev
+  - Maritime Fusion
+  - SalesPatriot
+  - Paragon
+  - Adam
+  - ZeroEntropy
+  - Mosaic
+  - Osmosis
+  - HealthKey
+  - 10x
+  - HUD
+  - Olive
+  - PAX Markets
+  - Pave Robotics
+  - Asteroid
+  - Lucid
+  - AthenaHQ
+  - Pluto
+  - Candor
+  - Trata
+  - Solidroad
+  - Confident AI
+  - Karsa
+  - Nitrode
+  - Calltree
+  - Harper
+  - Mesh
+  - Orbital Operations
+  - Infinite
+  - Peppr AI
+  - Fuse AI
+  - Misprint
+  - AfterQuery
+  - Archon
+  - Optifye.ai
+  - Reditus Space
+  - Wildcard
+  - Proception Inc
+  - Woz
+  - Rebolt
+  - Dalus
+  - Atlog
+  - Ergo
+  - Browser Use
+  - Dex
+  - Artifact
+  - Ambral
+  - Wayline
+  - Mentra
+  - Blaxel
+  - Chestnut
+  - Aravolta
+  - Avallon AI
+  - Minerva
+  - Cua
+  - Synthio Labs
+  - Auctor
+  - Ralo
+  - Claim Health
+  - Almond
+  - Sim
+  - Mbodi AI
+  - PgDog
+  - Attune
+  - Bluejay
+  - Jeevy Fabrication
+  - VoiceOS
+  - Sixtyfour
+  - Photonium
+  - Labric
+  - Novoflow
+  - Nixo
+  - QualGent
+  - Alkali
+  - Besimple AI
+  - Third Chair
+  - Sygaldry Technologies
+  - MorphoAI
+  - Eloquent AI
+  - Hemut
+  - Naïve
+  - chrt
+  - MindFort
+  - Pelica
+  - Lumari
+  - Code Four
+  - Text.ai
+  - Theorem
+  - Airweave
+  - Bond
+  - Cascade Space
+  - Godela
+  - Fifth Door
+  - Pingo
+  - Autonomous Technologies Group
+  - Prox
+  - Adaptional
+  - GETASAP
+  - Parametric
+  - Dedalus Labs
+  - The Prompting Company
+  - MangoDesk
+  - Halluminate
+  - TraceRoot.AI
+  - AgentMail
+  - truthsystems
+  - Blank Bio
+  - Lanesurf
+  - Liva AI
+  - Verne Robotics
+  - Galactic Resource Utilization Space, Inc. (GRU Space)
+  - EffiGov
+  - Overdrive Health
+  - Orange Slice
+  - Panels
+  - Humwork
+  - Imprezia
+  - DeepGrove
+  - Proliferate
+  - DeepAware AI (Robotics Center of Silicon Valley)
+  - Tesora
+  - Pangolin
+  - CareSwift
+  - Slashy
+  - BootLoop
+  - Kalinda
+  - Parachute
+  - IronLedger.ai
+  - Interface
+  - b12 Labs
+  - Flai
+  - Nozomio
+  - Solva
+  - Perseus Defense
+  - Novaflow
+  - Manufact
+  - Relling
+  - ProcIndex
+  - Miso Labs
+  - Socratix AI
+  - OS3
+  - Floot
+  - Idler
+  - Nautilus
+  - Convexia
+  - Locata
+  - Reacher
+  - Juxta
+  - Fleetline
+  - Magnetic
+  - Perspectives Health
+  - Interfere
+  - Vulcan Technologies
+  - NOSO LABS
+  - Veritus
+  - Avent
+  - burnt
+  - Freya
+  - Luminal
+  - Uplift AI
+  - Digipals
+  - Nox Metals
+  - F2
+  - AirCaps
+  - Uplane
+  - Structured AI
+  - Parrot
+  - Hyperspell
+  - Aspect
+  - Deeptrace
+  - Soren
+  - Trelium
+  - Cranston AI
+  - Hypercubic
+  - Nessie
+  - Wardstone
+  - AtlasGrid
+  - hillclimb
+  - Flick
+  - Semble AI
+  - AnswerThis
+  - Unsiloed AI
+  - Allus AI
+  - Multifactor
+  - Sunflower
+  - Thesis
+  - Leadbay
+  - Imagine AI
+  - Scott AI
+  - Aside
+  - Sourcebot
+  - Kalpa Labs
+  - Sava
+  - Icarus
+  - Exonic
+  - Jarmin
+  - General Astronautics
+  - Rovi Health
+  - Telemetron
+  - The Hog
+  - Lightberry
+  - DiligenceSquared
+  - Velvet
+  - Antigen
+  - Vector Legal
+  - Clicks
+  - Moss
+  - item
+  - Mantis
+  - CatchBack Cards
+  - Ploy
+  - Clara
+  - Payna
+  - Imperfect
+  - Didit
+  - One Robot
+  - Ruma Care
+  - RunAnywhere
+  - Lance
+  - Asimov
+  - 10x Science
+  - CellType
+  - Piris Labs
+  - Cumulus Labs
+  - Aemon
+  - RamAIn
+  - Salus
+  - Sparkles
+  - Ventura
+  - Terranox AI
+  - Proximitty
+  - Hex Security
+  - Pax Historia
+  - Rhizome AI
+  - Cardboard
+  - Fenrock AI
+  - Maywood
+  - Revion
+  - 9 Mothers
+  - Human Archive
+  - Pocket
+  - Polymath
+  - Superset
+  - Chasi
+  - Fort
+  - Booko
+  - Vela
+  - MochaCare
+  - VOYGR
+  - Aurorin CAD
+  - Dispatch
+  - Wayco
+  - Cardinal
+  - Hedge
+  - primitive
+  - PerfectBit, Inc.
+  - Replicas
+  - Rudus
+  - Lightsprint
+  - Nine Fives
+  - The Company Company
+  - Hub
+  - Kinro
+  - Juno
+  - KelAI
+  - Standout
+  - Andco
+  - Callab AI
+  - Gojiberry AI
+  - Adialante
+  - Lumius
+  - Prototyping.io
+  - Complir
+  - River Markets
+  - Minicor
+  - Aseon Labs
+  - Tasklet
+  - Kuli
+  - Ardent
+  - BioStack Platforms
+  - ANORIA
+  - Eden Robotics
+  - OpenWork
+  - Arzana
+  - CharacterQuilt
+  - Runtime
+  - Asendia AI
+  - Manicule
+  - Astraea
+  - Arlo Industries
+  - KugelAudio
+  - Intelligence Factory
+  - Huscarl
+  - Torus
+  - Parasma
+  - Gutgutgoose
+  - Rise Reforming
+  - screenpipe
+  - Traceforce
+  - Bloomy
+  - Operon
+  - 83 Sciences
+  - Locke

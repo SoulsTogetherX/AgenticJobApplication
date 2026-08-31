@@ -1,0 +1,45 @@
+node_modules/
+package-lock.json
+profile/
+jobs/*/*.pdf
+.playwright-mcp/
+# Loaded and eval'd as bare function expressions, not modules — prettier's
+# leading-semicolon guard would make them unparseable.
+.claude/skills/apply-job/scan.driver.mjs
+.claude/skills/apply-job/scan-page.js
+
+# manage-sources.mjs edits this file LINE BY LINE, to preserve the explanatory
+# comments a full yaml round-trip would delete. That only works while every
+# board is one flow-style entry on one line, which the file's own FORMAT RULE
+# states. Prettier reflows the longer workday and oracle_cloud entries into
+# multi-line block style, which silently breaks that contract.
+docs/job-sources.yaml
+
+# The classifier's evidence corpus: captured real post-submit pages. Their
+# BYTES are the evidence — a reformat would rewrite what a rule was justified
+# by. Same for staged candidates under jobs/.auto/ awaiting review.
+tests/fixtures/post-submit/captures/
+jobs/.auto/
+
+# Hostile-form fixtures are deliberate attack shapes; several are
+# byte-precise on purpose (hidden text, invisible characters, misnested
+# markup). Formatting them would defuse what they test.
+tests/fixtures/hostile/
+
+# Other sessions' checkouts, not this tree's files.
+.claude/worktrees/
+
+# Machine-written data, not prose. corpus.json is the capture manifest
+# (capture-post-submit.mjs); docs/candidates/ holds board-candidate exports
+# (cc-boards.mjs) and hand-fed input lists. Formatting them starts a churn
+# war with the scripts that rewrite them.
+tests/fixtures/post-submit/corpus.json
+docs/candidates/
+
+# Same rule, newest instance: eslint writes this file itself, on every
+# `--suppress-all` and every `--prune-suppressions`, in ITS formatting. Running
+# prettier over it means the next regeneration reverts the formatting and the
+# format gate goes red on a file nobody edited. It is a machine-maintained
+# ledger of frozen violations, not source. Its CONTENTS are asserted by
+# tests/quality/lint.test.mjs, which is the check that actually matters here.
+eslint-suppressions.json

@@ -1,0 +1,146 @@
+# Fortune 500 and large-cap employers, as board CANDIDATES.
+#
+# Read the expectation before running this. Measured 2026-07-29, the 41 boards
+# already swept carried 8,622 live postings and yielded 19 reachable ones —
+# 0.22% — and 27 of the 41 yielded nothing at all. Large enterprises are the
+# worst part of that distribution twice over:
+#
+#   1. Most are on Workday, Taleo, iCIMS, SuccessFactors or Phenom, whose board
+#      URLs need an opaque tenant host. find-boards.mjs cannot guess those, so
+#      many entries here will simply not resolve.
+#   2. The ones that DO resolve skew heavily Senior. discover-boards.mjs reports
+#      whether a board ever posts below Senior, and that flag is the single best
+#      predictor of whether it can yield anything at ~2.5 years of experience.
+#
+# This list exists because the user asked for Fortune 500 coverage and it is
+# worth measuring rather than assuming. Run it, read the numbers
+# discover-boards.mjs reports, and add only what clears the bar. Nothing here
+# enters the sweep without going through that gate and then manage-sources.
+#
+# Companies already tracked in job-sources.yaml (CVS, MGM, Caesars, IGT, ...)
+# are deliberately omitted.
+
+companies:
+  # --- tech, most likely to be on a probe-able ATS ---
+  - Salesforce
+  - Adobe
+  - Intuit
+  - Workday
+  - ServiceNow
+  - Snowflake
+  - Databricks
+  - Atlassian
+  - HubSpot
+  - Zoom Video Communications
+  - DocuSign
+  - Okta
+  - Twilio Segment
+  - Elastic
+  - HashiCorp
+  - Confluent
+  - Datadog
+  - Splunk
+  - Autodesk
+  - Unity Technologies
+  - Roblox
+  - Electronic Arts
+  - Activision Blizzard
+  - Epic Games
+  - Riot Games
+  - Zynga
+  - Airbnb
+  - DoorDash
+  - Lyft
+  - Uber
+  - Robinhood
+  - Block
+  - PayPal
+  - Plaid
+  - Chime
+  - Brex
+  - Toast
+  - Shopify
+  - Etsy
+  - Wayfair
+  - Chewy
+  - Peloton
+  - Spotify
+  - Pandora Media
+  - Warner Bros Discovery
+  - Paramount
+  - Netflix
+
+  # --- finance and insurance ---
+  - Capital One
+  - American Express
+  - Charles Schwab
+  - Fidelity Investments
+  - Vanguard
+  - BlackRock
+  - Goldman Sachs
+  - Morgan Stanley
+  - JPMorgan Chase
+  - Wells Fargo
+  - USAA
+  - Progressive
+  - Allstate
+  - State Farm
+  - Nationwide
+  - Liberty Mutual
+  - Travelers
+
+  # --- retail, logistics, industrials ---
+  - Target
+  - Walmart
+  - Costco
+  - Home Depot
+  - Lowes
+  - Best Buy
+  - Nordstrom
+  - Kroger
+  - Albertsons
+  - FedEx
+  - UPS
+  - Delta Air Lines
+  - United Airlines
+  - Southwest Airlines
+  - American Airlines
+  - Boeing
+  - Lockheed Martin
+  - Raytheon
+  - Honeywell
+  - General Electric
+  - Caterpillar
+  - John Deere
+  - Ford Motor Company
+  - General Motors
+  - Rivian
+  - Lucid Motors
+  - Tesla
+
+  # --- healthcare and pharma ---
+  - UnitedHealth Group
+  - Elevance Health
+  - Cigna
+  - Humana
+  - Centene
+  - HCA Healthcare
+  - Johnson and Johnson
+  - Pfizer
+  - Merck
+  - AbbVie
+  - Eli Lilly
+  - Moderna
+
+  # --- telecom, media, hospitality ---
+  - Verizon
+  - AT and T
+  - T-Mobile
+  - Comcast
+  - Charter Communications
+  - Marriott International
+  - Hilton
+  - Hyatt
+  - Expedia Group
+  - Booking Holdings
+  - TripAdvisor

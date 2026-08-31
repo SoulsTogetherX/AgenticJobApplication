@@ -1,0 +1,15 @@
+{
+  "slug": "graphql-api",
+  "company": "Lantern Health",
+  "title": "API Engineer",
+  "description": "Lantern Health exposes one API to a dozen clinical clients. Contracts and caching are the job.",
+  "requirements": [
+    "GraphQL schema design",
+    "OpenAPI contracts",
+    "Redis caching strategies",
+    "Express service ownership"
+  ],
+  "source_url": "https://boards.example.test/graphql-api",
+  "captured_at": "2026-08-02",
+  "questions": []
+}

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Casinos — Software Engineer II</title>
+  </head>
+  <body>
+    <!--
+      Oracle Recruiting Cloud replica. Reduced from Caesars job/87550 as scanned
+      on 2026-08-04, keeping only what the defect turns on.
+
+      WHAT THIS PAGE IS FOR. Oracle renders THREE input[type=file] controls and
+      only two of them are attachment slots. The first one is an ACTION: it
+      feeds the board's own résumé PARSER, which answers "Profile successfully
+      imported.", writes Experience and Education from the PDF's text, and
+      remounts the form. adapter.fileFields matches `resume|\bcv\b`, and on the
+      live page that pattern hit "Import your profile from resume" as well as
+      "Upload Resume" — so the runner fired the parser, injected
+      parser-derived text the fact base never approved, and invalidated every
+      data-aj stamp mid-run.
+
+      FIDELITY NOTES — each of these is load-bearing, not decoration:
+
+      * THE IMPORT CONTROL COMES FIRST, in document order, exactly as Oracle
+        renders it. That ordering is what makes the bug more than a spurious
+        upload: adapter.fileOrder's document-order fallback assigns slot 0
+        (résumé) to whichever file input it reaches first, so an import control
+        that consumes a fileIndex pushes the REAL "Upload Resume" field onto
+        slot 1 and attaches the COVER LETTER to it.
+      * THE IMPORT CONTROL HAS NO id AND NO name. That is what the live scan
+        showed (key f5), and it means the field's identity cannot be used to
+        tell it apart — its visible label is the only signal there is.
+      * The two real slots ARE labelled informatively, so this page exercises
+        the fileFields label match rather than the doc-order fallback for them.
+
+      NOT AN ATTACK FIXTURE. Nothing here is adversarial: this is an honest
+      board doing something reasonable, and the pipeline still had to be told
+      that a file input can be a verb.
+    -->
+    <h1>Software Engineer II</h1>
+    <form id="apply" method="post" action="" enctype="multipart/form-data">
+      <section class="oracle-quick-apply">
+        <h2>Get started</h2>
+        <label class="file-drop">
+          Import your profile from resume
+          <input type="file" accept=".pdf,.doc,.docx" />
+        </label>
+      </section>
+
+      <section class="oracle-basic-info">
+        <h2>My information</h2>
+        <div class="field">
+          <label for="first">First Name<span class="req">*</span></label>
+          <input type="text" id="first" name="first" required />
+        </div>
+
+        <div class="field">
+          <label for="last">Last Name<span class="req">*</span></label>
+          <input type="text" id="last" name="last" required />
+        </div>
+
+        <div class="field">
+          <label for="email">Email<span class="req">*</span></label>
+          <input type="email" id="email" name="email" required />
+        </div>
+
+        <div class="field">
+          <label for="phone">Phone</label>
+          <input type="tel" id="phone" name="phone" />
+        </div>
+      </section>
+
+      <section class="oracle-attachments">
+        <h2>Attachments</h2>
+        <div class="field">
+          <label for="resume-file"
+            >Upload Resume<span class="req">*</span></label
+          >
+          <input
+            type="file"
+            id="resume-file"
+            name="resumeAttachment"
+            accept=".pdf,.doc,.docx"
+            required
+          />
+        </div>
+
+        <div class="field">
+          <label for="cover-file">Upload Cover Letter</label>
+          <input
+            type="file"
+            id="cover-file"
+            name="coverLetterAttachment"
+            accept=".pdf,.doc,.docx"
+          />
+        </div>
+      </section>
+
+      <button type="submit" id="btn-submit">Submit</button>
+    </form>
+  </body>
+</html>

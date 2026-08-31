@@ -1,0 +1,50 @@
+# Fake answers bank for answer-bank-rewording.test.mjs (the real one is
+# gitignored). Every entry here is deliberately UNTYPED by intents.mjs, so each
+# test exercises the plain token tier rather than the typed-intent path — which
+# is where the reworded-label bug of 2026-08-19 lived.
+answers:
+  # The bug itself: this is the phrasing the user banked; Torc Robotics'
+  # Greenhouse form asks the same question with "availability" for "available".
+  - id: a-001
+    question: What is your earliest available start date / notice period?
+    answer: Available immediately; two weeks notice if required
+    added: 2026-08-19
+  # A BARE boolean, which is the only answer shape the polarity guard covers:
+  # it carries a truth value and nothing else, so a negated rewording of the
+  # question inverts it.
+  - id: a-002
+    question: Will you be able to commute to our office?
+    answer: "Yes"
+    added: 2026-08-19
+  # A SUBSTANTIVE answer. Means the same thing however the question is worded,
+  # so an incidental "not" in a long label must NOT demote it.
+  - id: a-003
+    question: What is your highest level of education?
+    answer: Bachelor's degree
+    added: 2026-08-19
+  # Shares exactly one token with the label "State", and only after folding
+  # ("States" -> "state"). Its answer is nonsense for a state field, which is
+  # the point.
+  - id: a-004
+    question: Do you hold a security clearance issued by the United States government?
+    answer: "No"
+    added: 2026-08-19
+  # Shares exactly one token with "Discipline / Field of Study", LITERALLY.
+  - id: a-005
+    question: Discipline
+    answer: Computer Science
+    added: 2026-08-19
+  # A LONG question sharing exactly one token with a one-word label. Containment
+  # divides by the shorter side, so without the far-coverage floor this answer
+  # lands on any field labelled "Office" — measured on the real fact base.
+  - id: a-006
+    question: Are you able to work from our San Francisco office three days per week?
+    answer: "No"
+    added: 2026-08-19
+  # A self-ID answer the user actually GAVE. The EEO tier's fallback is an
+  # auto-decline rather than a defer, so a match lost there does not ask the
+  # user — it overwrites them.
+  - id: a-007
+    question: "EEO self-identification: race/ethnicity"
+    answer: Hispanic or Latino
+    added: 2026-08-19

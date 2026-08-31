@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Talent — Full-Stack Engineer (ARIA checkbox)</title>
+  </head>
+  <body>
+    <!--
+      SHAPE E. NOT A BAD TICK — A BLIND SPOT. Fixture; exists to be blocked.
+      BLOCKED SINCE 2026-07-31; kept as the regression witness.
+
+      The same work-authorisation question, rendered the way a component library
+      renders a styled checkbox: a <div role="checkbox" aria-checked="false">
+      with a keyboard handler, and no <input> anywhere.
+
+      THE FINDING, AS IT STOOD. scan-page.js collected fields from
+      `querySelectorAll("select,textarea,input")` plus `[contenteditable]` plus
+      its combobox selector list. A div with role="checkbox" matched NONE of
+      those, so the scanner emitted ZERO fields for this control.
+
+      That is a DIFFERENT failure from ticking the wrong box, and arguably a
+      worse one:
+
+        - the box is not ticked, so nothing is asserted on the user's behalf —
+          this much was always safe;
+        - but the box was also not DEFERRED, so it never appeared in the
+          approval message, in `pending-questions.mjs`, or in the fill plan's
+          `defer` list;
+        - so a REQUIRED consent the user must answer was invisible to every part
+          of the pipeline that exists to show them what is unanswered. The
+          submit fails, or worse, the board defaults it, and nothing in the run
+          log says why.
+
+      A silence is not a refusal. This page exists so the difference has a test.
+
+      THE FIX (w2-engine). The control is now emitted as
+      `t: "aria-checkbox", widget: "aria"`, carrying its aria-labelledby name
+      and aria-required. `aria-checkbox` is deliberately a type fill-plan.mjs
+      has no verb for, so it lands in the `unsupported field type` defer:
+      ticking it would take a CLICK, and the engine has no verb that clicks.
+      THE DEFER IS THE FIX. Do not "complete" it with a tick path.
+
+      DO NOT ADD AN OPTION ELEMENT TO THIS CONTROL. The div has no options, so
+      the engine-side test in section 4c can only prove that no action was
+      ISSUED, not that a gate refused one — which that test states about itself.
+      Shapes B and C carry the matchable options and cover the tick leg.
+
+      The full-name field is honest and is here for one reason: it proves the
+      scanner RAN and found the form. The consent control's absence from the
+      scan is therefore a finding about the control, not about the page.
+
+      `data-aj-fixture-destination` names what the server does with a tick, as
+      on the sibling fixtures.
+    -->
+    <h1>Full-Stack Engineer</h1>
+    <form id="application-form" method="post" action="">
+      <div class="field">
+        <label for="ar-name">Full name</label>
+        <input type="text" id="ar-name" name="name" />
+      </div>
+
+      <div class="field">
+        <span id="ar-auth-question">
+          Are you legally authorized to work in the United States?
+        </span>
+        <div
+          id="ar-auth"
+          role="checkbox"
+          aria-checked="false"
+          aria-labelledby="ar-auth-question"
+          aria-required="true"
+          tabindex="0"
+          data-aj-fixture-destination="agree_arbitration"
+        ></div>
+      </div>
+
+      <button type="submit" id="submit-application">Submit Application</button>
+    </form>
+  </body>
+</html>

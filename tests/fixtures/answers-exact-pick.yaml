@@ -1,0 +1,14 @@
+# Fake answers bank for the exact-question short-circuit tests (the real one is
+# gitignored). Every entry here deliberately collides with a rule that fires
+# BEFORE the fuzzy bank lookup — that collision is the thing under test.
+answers:
+  - id: a-001
+    question: Degree
+    answer: Undergraduate (BS/BA)
+    source: model
+    added: 2026-07-29
+  - id: a-002
+    question: Gender
+    answer: Female
+    source: user
+    added: 2026-07-29

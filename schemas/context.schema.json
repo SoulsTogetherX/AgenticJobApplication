@@ -1,0 +1,69 @@
+{
+  "$comment": "Shape of jobs/<slug>/context.json — SHARED tailoring context. Both skills read/write it so resume and cover letter stay consistent. Validated by validateContext() in src/lib/lib.mjs.",
+  "type": "object",
+  "required": ["slug", "analysis", "resume", "cover_letter"],
+  "properties": {
+    "slug": { "type": "string" },
+    "analysis": {
+      "type": "object",
+      "required": ["key_requirements", "matched_fact_ids"],
+      "properties": {
+        "key_requirements": { "type": "array", "items": { "type": "string" } },
+        "matched_fact_ids": { "type": "array", "items": { "type": "string" } },
+        "gaps": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "requirements the profile cannot truthfully cover"
+        },
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "posting vocabulary to mirror where truthful"
+        },
+        "tone": { "type": ["string", "null"] }
+      }
+    },
+    "consistency": {
+      "type": "object",
+      "properties": {
+        "emphasized_skills": { "type": "array", "items": { "type": "string" } },
+        "lead_experience": {
+          "type": ["string", "null"],
+          "description": "fact id of the experience both documents lead with"
+        },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "resume": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": ["pending", "drafted", "verified", "approved", "rendered"]
+        },
+        "facts_used": { "type": "array", "items": { "type": "string" } },
+        "dropped": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "fact ids intentionally omitted + why"
+        }
+      }
+    },
+    "cover_letter": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": ["pending", "drafted", "verified", "approved", "rendered"]
+        },
+        "facts_used": { "type": "array", "items": { "type": "string" } },
+        "key_points": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "pending_questions": {
+      "type": "array",
+      "description": "questions awaiting a user answer (mirror of ask-user flow)",
+      "items": { "type": "string" }
+    }
+  }
+}

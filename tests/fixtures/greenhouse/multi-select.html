@@ -1,0 +1,355 @@
+<!doctype html>
+<!--
+  A MULTI-SELECT PAGE IN BOTH RENDERINGS, plus the hazards that make multi
+  different from single. Markup follows Greenhouse's react-select rendering
+  (classNamePrefix "select"): select__control / select__value-container--is-multi
+  / select__multi-value__label — the exact class shapes the scanner detects and
+  the engine reads back.
+
+    #skills   token picker. Committing an option appends a TOKEN and a hidden
+              store input, clears the search box, and HIDES the option row
+              (hideSelectedOptions) — so the committed store is the token
+              list, never the input. Every token carries a live × REMOVE
+              control: a click landing on it DELETES a committed choice,
+              which is why the engine's multi opener targets the inner input
+              and never the control's centre.
+
+    #stack    the same widget with one token ALREADY committed at load — the
+              replay shape. A filler that re-drives values it already holds
+              would double or delete them; the correct move is to skip what
+              is present and add only what is missing.
+
+    #dept     a SINGLE-select rendering of the same component (no --is-multi
+              modifier, no tokens). Pins that multi detection has no false
+              positive on the ordinary case.
+
+    #colors   a native <select multiple> — the other rendering, driven by
+              selectOption rather than menus.
+
+  The decoy list is combo-commit.html's lesson kept: a hidden listbox whose
+  rows shadow real option text, so a page-wide row search that forgets the
+  visibility bound answers one widget from another's rows.
+-->
+<html>
+  <head>
+    <style>
+      .menu {
+        display: none;
+      }
+      .menu[data-open="1"] {
+        display: block;
+      }
+      #decoy-list {
+        display: none;
+      }
+      .select__control {
+        border: 1px solid #888;
+        padding: 4px;
+        width: 340px;
+      }
+      .select__value-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .select__multi-value {
+        border: 1px solid #55f;
+        padding: 2px;
+        display: inline-flex;
+      }
+      .select__input {
+        min-width: 40px;
+        border: 0;
+        outline: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <form>
+      <div class="field">
+        <label for="skills-input">Programming languages</label>
+        <div id="skills" class="select__control">
+          <div
+            class="select__value-container select__value-container--is-multi"
+          >
+            <div class="select__input-container">
+              <input
+                id="skills-input"
+                class="select__input"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded="false"
+              />
+            </div>
+          </div>
+        </div>
+        <div class="stores" id="skills-stores"></div>
+        <div class="menu" id="skills-menu" role="listbox">
+          <div role="option">JavaScript</div>
+          <div role="option">TypeScript</div>
+          <div role="option">Python</div>
+          <div role="option">Go</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="stack-input">Frameworks you have shipped with</label>
+        <div id="stack" class="select__control">
+          <div
+            class="select__value-container select__value-container--is-multi"
+          >
+            <div class="select__input-container">
+              <input
+                id="stack-input"
+                class="select__input"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded="false"
+              />
+            </div>
+          </div>
+        </div>
+        <div class="stores" id="stack-stores"></div>
+        <div class="menu" id="stack-menu" role="listbox">
+          <div role="option">React</div>
+          <div role="option">Node</div>
+          <div role="option">Django</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="dept-input">Department</label>
+        <div id="dept" class="select__control">
+          <div class="select__value-container">
+            <div class="select__input-container">
+              <input
+                id="dept-input"
+                class="select__input"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded="false"
+              />
+            </div>
+          </div>
+        </div>
+        <div class="menu" id="dept-menu" role="listbox">
+          <div role="option">Engineering</div>
+          <div role="option">Design</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="colors">Favourite colours</label>
+        <select id="colors" name="colors" multiple size="4">
+          <option>Red</option>
+          <option>Green</option>
+          <option>Blue</option>
+          <option>Yellow</option>
+        </select>
+      </div>
+
+      <!-- hidden decoy: rows shadowing real option text; a page-wide row
+           search without the visibility bound would hit these first -->
+      <ul id="decoy-list" role="listbox">
+        <li role="option">JavaScript</li>
+        <li role="option">Node</li>
+        <li role="option">Red</li>
+      </ul>
+    </form>
+
+    <script>
+      const norm = (s) =>
+        String(s || "")
+          .replace(/\s+/g, " ")
+          .trim()
+
+      const pickers = {}
+      for (const id of ["skills", "stack"]) {
+        const picker = document.getElementById(id)
+        const input = document.getElementById(id + "-input")
+        const menu = document.getElementById(id + "-menu")
+        const stores = document.getElementById(id + "-stores")
+        const p = {}
+        pickers[id] = p
+
+        const selectedTexts = () =>
+          [...picker.querySelectorAll(".select__multi-value__label")].map((n) =>
+            norm(n.textContent),
+          )
+
+        p.syncMenu = () => {
+          const chosen = selectedTexts().map((t) => t.toLowerCase())
+          for (const row of menu.querySelectorAll("[role=option]")) {
+            row.style.display = chosen.includes(
+              norm(row.textContent).toLowerCase(),
+            )
+              ? "none"
+              : ""
+          }
+        }
+
+        const syncStores = () => {
+          stores.textContent = ""
+          for (const t of selectedTexts()) {
+            const h = document.createElement("input")
+            h.type = "hidden"
+            h.name = id + "[]"
+            h.value = t
+            stores.append(h)
+          }
+        }
+
+        p.commit = (text) => {
+          const t = norm(text)
+          if (!t) return
+          if (selectedTexts().some((s) => s.toLowerCase() === t.toLowerCase()))
+            return
+          const token = document.createElement("div")
+          token.className = "select__multi-value"
+          const label = document.createElement("div")
+          label.className = "select__multi-value__label"
+          label.textContent = t
+          const remove = document.createElement("button")
+          remove.type = "button"
+          remove.className = "select__multi-value__remove"
+          remove.textContent = "×"
+          remove.addEventListener("click", (e) => {
+            e.stopPropagation()
+            token.remove()
+            syncStores()
+            p.syncMenu()
+          })
+          token.append(label, remove)
+          picker
+            .querySelector(".select__value-container")
+            .insertBefore(
+              token,
+              picker.querySelector(".select__input-container"),
+            )
+          input.value = ""
+          syncStores()
+          p.syncMenu()
+        }
+
+        // THE FOCUSED ROW, as react-select renders it: while the menu is open
+        // the first row matching the search text carries
+        // `select__option--is-focused` and the input's aria-activedescendant
+        // names it. That is the page's own statement that Enter would commit
+        // a row rather than submit the form, and it is what fill-engine's
+        // type-enter now reads before it presses Enter (2026-08-18).
+        const rows = [...menu.querySelectorAll("[role=option]")]
+        rows.forEach((r, i) => {
+          if (!r.id) r.id = id + "-option-" + i
+        })
+        const refocus = () => {
+          const typed = norm(input.value).toLowerCase()
+          const visible = rows.filter((r) => r.style.display !== "none")
+          const row =
+            visible.find((r) =>
+              norm(r.textContent).toLowerCase().startsWith(typed),
+            ) || null
+          for (const r of rows) r.classList.remove("select__option--is-focused")
+          if (row) {
+            row.classList.add("select__option--is-focused")
+            input.setAttribute("aria-activedescendant", row.id)
+          } else {
+            input.removeAttribute("aria-activedescendant")
+          }
+        }
+        const open = () => {
+          menu.setAttribute("data-open", "1")
+          input.setAttribute("aria-expanded", "true")
+          refocus()
+        }
+        const close = () => {
+          menu.removeAttribute("data-open")
+          input.setAttribute("aria-expanded", "false")
+          input.removeAttribute("aria-activedescendant")
+          for (const r of rows) r.classList.remove("select__option--is-focused")
+          // react-select drops the search text when the menu closes.
+          input.value = ""
+        }
+
+        picker.addEventListener("click", open)
+        input.addEventListener("input", open)
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Escape") return close()
+          if (e.key !== "Enter") return
+          e.preventDefault()
+          const typed = norm(input.value).toLowerCase()
+          if (!typed) return
+          const rows = [...menu.querySelectorAll("[role=option]")].filter(
+            (r) => r.style.display !== "none",
+          )
+          const row = rows.find((r) =>
+            norm(r.textContent).toLowerCase().startsWith(typed),
+          )
+          if (row) p.commit(row.textContent)
+        })
+
+        for (const row of menu.querySelectorAll("[role=option]")) {
+          row.addEventListener("click", () => p.commit(row.textContent))
+        }
+      }
+
+      // #dept: the single-select cousin — commits into a single-value node.
+      {
+        const input = document.getElementById("dept-input")
+        const menu = document.getElementById("dept-menu")
+        const wrap = document.querySelector("#dept .select__value-container")
+        const commit = (text) => {
+          let sv = wrap.querySelector(".select__single-value")
+          if (!sv) {
+            sv = document.createElement("div")
+            sv.className = "select__single-value"
+            wrap.prepend(sv)
+          }
+          sv.textContent = norm(text)
+          input.value = ""
+        }
+        // Same focused-row statement as the token pickers above.
+        const deptRows = [...menu.querySelectorAll("[role=option]")]
+        deptRows.forEach((r, i) => {
+          if (!r.id) r.id = "dept-option-" + i
+        })
+        const deptRefocus = () => {
+          const typed = norm(input.value).toLowerCase()
+          const row =
+            deptRows.find((r) =>
+              norm(r.textContent).toLowerCase().startsWith(typed),
+            ) || null
+          for (const r of deptRows)
+            r.classList.remove("select__option--is-focused")
+          if (row) {
+            row.classList.add("select__option--is-focused")
+            input.setAttribute("aria-activedescendant", row.id)
+          } else input.removeAttribute("aria-activedescendant")
+        }
+        document.getElementById("dept").addEventListener("click", () => {
+          menu.setAttribute("data-open", "1")
+          deptRefocus()
+        })
+        input.addEventListener("input", deptRefocus)
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Escape") {
+            input.removeAttribute("aria-activedescendant")
+            return menu.removeAttribute("data-open")
+          }
+          if (e.key !== "Enter") return
+          e.preventDefault()
+          const typed = norm(input.value).toLowerCase()
+          const row = [...menu.querySelectorAll("[role=option]")].find((r) =>
+            norm(r.textContent).toLowerCase().startsWith(typed),
+          )
+          if (row) commit(row.textContent)
+        })
+        for (const row of menu.querySelectorAll("[role=option]")) {
+          row.addEventListener("click", () => commit(row.textContent))
+        }
+      }
+
+      // #stack starts with one committed choice — the replay shape.
+      pickers.stack.commit("React")
+    </script>
+  </body>
+</html>

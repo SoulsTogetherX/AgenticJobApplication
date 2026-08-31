@@ -1,0 +1,220 @@
+<!doctype html>
+<!--
+  GREENHOUSE'S EMBED FORM RE-RENDERS ITSELF AFTER LOAD, reproduced from
+  job-boards.greenhouse.io/embed/job_app (Attentive token 4363395009 and Torc
+  8677422002), measured 2026-08-18. The board is a Remix app hydrating over a
+  server-rendered form, and on this host the client render REPLACES THE WHOLE
+  DOCUMENT ROOT roughly 200ms after `load` — with or without a scanner on the
+  page (verified with none installed). Measured timeline on Attentive:
+
+    goto (domcontentloaded)                 ~430ms
+    first control attached                  ~670ms
+    structure scan done, 24 stamps          ~730ms
+    document.documentElement REPLACED       ~860ms
+    [data-aj] elements on the page               0
+
+  Every data-aj stamp the structure scan wrote was on a node that no longer
+  existed, so each probe click waited its full 6s for `[data-aj="fN"]` and
+  every combo — Country*, sponsorship, EEO, all of them — came back
+    probe_error: "locator.click: Timeout 6000ms exceeded"
+  A 4s scan took 61s and reported every dropdown as unreadable, on a form whose
+  dropdowns are perfectly readable. That, not the aria/portal defects of
+  2026-08-07, is why "13 of 19 required combos failed to probe" persisted on
+  the embed host.
+
+  WHAT THIS FIXTURE DOES. RERENDER_MS after `load` it clones the whole
+  <html> element and swaps it in with document.replaceChild — the same node
+  identity change as the live board (document.documentElement !== the one the
+  scan saw), the same stamp loss, and a form that is structurally identical
+  before and after, so a re-scan assigns the same keys. Click handling is
+  delegated from `document`, which survives the swap, as React's does.
+
+  THREE THINGS ARE LOAD-BEARING:
+    * THE SWAP LANDS AFTER THE STRUCTURE SCAN AND DURING THE PROBE. The probe
+      opens the first control at ~load+100ms and reads it ~300ms later; the
+      swap at RERENDER_MS=250 lands between the click and the read, exactly as
+      it did live. A swap before the scan is invisible; a swap after the probe
+      is caught by the end-of-pass check but does not exercise the mid-probe
+      path.
+    * THE MENUS MOUNT ON OPEN INTO A PORTAL, as in portal-menu-combo.html, so
+      a read taken against dead stamps finds nothing rather than something.
+    * "School" IS AN ASYNC LIST: its menu mounts at once with a single
+      `select__menu-notice--loading` "Loading..." row and fills in LOAD_MS
+      later. The live field cache held ["Loading..."] as that field's complete
+      option list, recorded off Torc's and Cloudflare's forms.
+
+  RERENDER_MS = 0 disables the swap; the test uses that as its control.
+-->
+<html>
+  <head>
+    <style>
+      .select__input {
+        border: 0;
+        width: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <form>
+      <div class="field">
+        <label for="first_name">First Name</label>
+        <input id="first_name" type="text" aria-required="true" />
+      </div>
+
+      <div class="field">
+        <label id="country-label" for="country">Country*</label>
+        <div class="select__control" data-menu="country-menu">
+          <div class="select__value-container">
+            <div class="select__placeholder"></div>
+            <input
+              id="country"
+              class="select__input"
+              role="combobox"
+              aria-expanded="false"
+              aria-labelledby="country-label"
+              aria-required="true"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label id="sponsor-label" for="sponsor"
+          >Will you now or in the future require sponsorship?*</label
+        >
+        <div class="select__control" data-menu="sponsor-menu">
+          <div class="select__value-container">
+            <div class="select__placeholder"></div>
+            <input
+              id="sponsor"
+              class="select__input"
+              role="combobox"
+              aria-expanded="false"
+              aria-labelledby="sponsor-label"
+              aria-required="true"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label id="school-label" for="school">School</label>
+        <div class="select__control" data-menu="school-menu" data-async="1">
+          <div class="select__value-container">
+            <div class="select__placeholder"></div>
+            <input
+              id="school"
+              class="select__input"
+              role="combobox"
+              aria-expanded="false"
+              aria-labelledby="school-label"
+            />
+          </div>
+        </div>
+      </div>
+
+      <button type="submit">Submit application</button>
+    </form>
+
+    <div id="portal-root"></div>
+
+    <script>
+      // Knobs the test can rewrite before setContent.
+      const RERENDER_MS = 250
+      const LOAD_MS = 300
+
+      const MENUS = {
+        "country-menu": ["United States +1", "Canada +1", "Germany +49"],
+        "sponsor-menu": ["Yes", "No"],
+        "school-menu": ["College of Southern Nevada", "UNLV", "Other"],
+      }
+      const portal = () => document.getElementById("portal-root")
+      const mount = (id, rows) => {
+        const menu = document.createElement("div")
+        menu.className = "select__menu"
+        menu.id = id
+        const list = document.createElement("div")
+        list.className = "select__menu-list"
+        list.setAttribute("role", "listbox")
+        for (const label of rows) {
+          const row = document.createElement("div")
+          row.className = "select__option"
+          row.setAttribute("role", "option")
+          row.textContent = label
+          list.appendChild(row)
+        }
+        menu.appendChild(list)
+        portal().appendChild(menu)
+        return list
+      }
+      const shut = () => {
+        portal().replaceChildren()
+        for (const i of document.querySelectorAll(".select__input")) {
+          i.setAttribute("aria-expanded", "false")
+        }
+      }
+      // DELEGATED from `document`, which survives the root swap.
+      document.addEventListener("click", (e) => {
+        const ctl = e.target.closest && e.target.closest(".select__control")
+        if (!ctl) return
+        const id = ctl.dataset.menu
+        const already = !!document.getElementById(id)
+        shut()
+        if (already) return
+        ctl
+          .querySelector(".select__input")
+          .setAttribute("aria-expanded", "true")
+        setTimeout(() => {
+          const input = ctl.querySelector(".select__input")
+          if (!input || input.getAttribute("aria-expanded") !== "true") return
+          if (ctl.dataset.async) {
+            // react-select's loading state: the menu exists, the rows do not.
+            const list = mount(id, [])
+            const notice = document.createElement("div")
+            notice.className =
+              "select__menu-notice select__menu-notice--loading"
+            notice.textContent = "Loading..."
+            list.appendChild(notice)
+            setTimeout(() => {
+              if (!document.getElementById(id)) return
+              notice.remove()
+              for (const label of MENUS[id]) {
+                const row = document.createElement("div")
+                row.className = "select__option"
+                row.setAttribute("role", "option")
+                row.textContent = label
+                list.appendChild(row)
+              }
+            }, LOAD_MS)
+            return
+          }
+          mount(id, MENUS[id])
+        }, 120)
+      })
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") shut()
+      })
+
+      // THE SWAP. Same node-identity change as the live board.
+      window.__rerenders = 0
+      if (RERENDER_MS > 0) {
+        window.addEventListener("load", () => {
+          setTimeout(() => {
+            const fresh = document.documentElement.cloneNode(true)
+            // React renders NEW nodes from its own tree, which carry nothing
+            // the scanner wrote; a clone would copy the stamps across, so they
+            // are stripped to reproduce the live loss.
+            for (const n of fresh.querySelectorAll(
+              "[data-aj],[data-aj-toggle]",
+            )) {
+              n.removeAttribute("data-aj")
+              n.removeAttribute("data-aj-toggle")
+            }
+            document.replaceChild(fresh, document.documentElement)
+            window.__rerenders++
+          }, RERENDER_MS)
+        })
+      }
+    </script>
+  </body>
+</html>

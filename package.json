@@ -1,0 +1,77 @@
+{
+  "name": "agentic-job-application",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#lib/*": "./src/lib/*"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "description": "Claude Code-driven job application pipeline: tailor resume & cover letter from an approved fact profile, verify truthfulness, render PDFs.",
+  "scripts": {
+    "test": "node tools/ci/test-gate.mjs full",
+    "test:raw": "node --test",
+    "test:security": "node tools/ci/test-gate.mjs security",
+    "reap": "node tools/ci/scaffolding-reaper.mjs",
+    "browser:install": "node node_modules/playwright-core/cli.js install chromium",
+    "verify": "node src/documents/verify-claims.mjs",
+    "lint": "node node_modules/eslint/bin/eslint.js . --pass-on-unpruned-suppressions",
+    "lint:fix": "node node_modules/eslint/bin/eslint.js . --pass-on-unpruned-suppressions --fix",
+    "lint:md": "node node_modules/markdownlint-cli2/markdownlint-cli2-bin.mjs",
+    "format:check": "node node_modules/prettier/bin/prettier.cjs --check ."
+  },
+  "phases": {
+    "order": [
+      "phase-1",
+      "phase-2",
+      "phase-3",
+      "phase-4"
+    ],
+    "current": "phase-5"
+  },
+  "testGate": {
+    "full": {
+      "floor": 2875,
+      "maxTodo": 0,
+      "requireDirs": [
+        "tests",
+        "tests/security",
+        "tests/quality"
+      ],
+      "paths": [
+        "tests"
+      ],
+      "measured": "Ledger moved to docs/measurements.md ('Test-floor ledger', 2026-08-27). The rule stands: raise a floor only to a number two consecutive honest gate runs produced on a quiescent tree, record the runs there, and never lower one to make a change green."
+    },
+    "security": {
+      "floor": 296,
+      "maxTodo": 0,
+      "requireDirs": [
+        "tests/security"
+      ],
+      "paths": [
+        "tests/security/",
+        "tests/lib/untrusted.test.mjs",
+        "tests/documents/verify-claims.test.mjs"
+      ],
+      "measured": "Ledger moved to docs/measurements.md ('Test-floor ledger', 2026-08-27). Same rule as the full gate; this path set is fully tracked, so its counts never depend on uncommitted work."
+    }
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "marked": "^12.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "eslint-plugin-import-x": "^4.17.1",
+    "eslint-plugin-n": "^18.3.0",
+    "eslint-plugin-promise": "^7.3.0",
+    "eslint-plugin-sonarjs": "^4.2.0",
+    "markdownlint-cli2": "^0.23.2",
+    "playwright-core": "^1.62.1",
+    "prettier": "^3.9.6"
+  }
+}

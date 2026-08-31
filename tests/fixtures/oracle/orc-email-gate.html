@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply — verify your email</title>
+  </head>
+  <body>
+    <!--
+      ORACLE RECRUITING CLOUD, PAGE 1: THE EMAIL GATE.
+
+      DEFECT 1 (2026-08-04, live ORC application). The required consent
+      checkbox below was reported by scan-page.js as NOTHING AT ALL. Not a
+      field, not a widget, not a button — it existed in the scan only as a
+      substring of the page body text. fill-plan.mjs therefore returned
+      ready=false naming two decorative widgets, while being blind to the one
+      control that actually blocked the form.
+
+      THE TWO HALVES THAT MADE IT INVISIBLE, and neither alone was enough:
+
+      1. THE CONTROL IS NOT PAINTED. Oracle JET renders the tick itself with
+         CSS on the <label> and parks the real <input type="checkbox"> at
+         opacity: 0. scan-page.js's field loop drops any non-`file` control
+         that fails vis(), and opacity "0" is one of vis()'s four tests. That
+         rule is correct and is NOT what is being relaxed: Ashby's
+         display:none backing checkbox (pages/ashby-buttons.html) must still be
+         dropped. What separates them is that THIS one is presented to the user
+         — a visible <label for> renders its words, and it is a tab stop —
+         while Ashby's carries tabindex="-1" and no label at all.
+
+      2. THE WRAPPER IS NOT A LEAF. <oj-checkboxset> carries the id and the
+         aria-required, and it would be picked up by the widget sweep if the
+         sweep looked at it — but the sweep skips any focusable node that
+         CONTAINS a control ("a scroll region or a focus wrapper, not a
+         control"), and this one contains the input. So the wrapper deferred to
+         the input and the input was invisible: the hand-off went nowhere,
+         which is the same shape as the stateful-<button> hole the sweep block
+         already carries a measurement for.
+
+      REQUIRED-NESS LIVES ON THE WRAPPER TOO. `aria-required="true"` is on the
+      oj-checkboxset, never on the input, so a scanner reading only the
+      control's own attributes reports req: undefined for a field the form will
+      not submit without. Reproduced deliberately.
+
+      The two decorative widgets fill-plan.mjs named instead are here as the
+      control: they are the real page's progress dots, they are genuinely
+      unfillable, and they must keep being reported (a silence is not a
+      refusal) WITHOUT being the only thing reported.
+    -->
+    <h1>Apply to this job</h1>
+
+    <div class="oj-applyflow-progress" aria-label="Application progress">
+      <div class="oj-progress-step" tabindex="0">Email verification</div>
+      <div class="oj-progress-step" tabindex="0">Application</div>
+    </div>
+
+    <form id="email-gate">
+      <div class="oj-flex oj-form-control">
+        <label class="oj-label" for="email-input">Email address</label>
+        <input
+          type="email"
+          id="email-input"
+          name="candidateEmail"
+          class="oj-inputtext-input"
+          required
+        />
+      </div>
+
+      <div class="candidate-legal-disclaimer">
+        <p>
+          By continuing you acknowledge that the information you provide will be
+          processed in accordance with the Candidate Privacy Notice, and that it
+          may be shared with the hiring team for this requisition.
+        </p>
+      </div>
+
+      <oj-checkboxset
+        id="legal-disclaimer-checkbox"
+        class="oj-checkboxset oj-complete"
+        role="group"
+        aria-required="true"
+      >
+        <span class="oj-choice-item">
+          <input
+            type="checkbox"
+            id="legal-disclaimer-cb"
+            name="legalDisclaimerAccepted"
+            class="oj-checkbox"
+            style="opacity: 0"
+          />
+          <label class="oj-label" for="legal-disclaimer-cb"
+            >I have read and agree to the Candidate Privacy Notice.</label
+          >
+        </span>
+      </oj-checkboxset>
+
+      <button type="submit" id="continue-btn" class="oj-button">
+        Continue
+      </button>
+    </form>
+  </body>
+</html>

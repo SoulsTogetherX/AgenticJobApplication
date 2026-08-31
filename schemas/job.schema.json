@@ -1,0 +1,49 @@
+{
+  "$comment": "Shape of jobs/<slug>/job.json — the captured job posting. Validated by validateJob() in src/lib/lib.mjs.",
+  "type": "object",
+  "required": ["slug", "company", "title"],
+  "properties": {
+    "slug": {
+      "type": "string",
+      "description": "kebab-case folder name, e.g. acme-senior-fullstack"
+    },
+    "company": { "type": "string" },
+    "title": { "type": "string" },
+    "source_url": { "type": ["string", "null"] },
+    "location": { "type": ["string", "null"] },
+    "captured_at": { "type": ["string", "null"], "description": "YYYY-MM-DD" },
+    "description": {
+      "type": ["string", "null"],
+      "description": "posting text after src/lib/untrusted.mjs has stripped the known injection carriers — NOT verbatim. It is still third-party data, never instructions (hard rule 0)."
+    },
+    "untrusted_findings": {
+      "type": "array",
+      "description": "What the posting TRIED. Omitted entirely when clean, so an honest posting's job.json is byte-for-byte what it was before this field existed. It NEVER carries the payload text: an earlier version had a `sample` field that re-emitted 120 raw characters of the attack into the very file the tailoring model reads.",
+      "items": {
+        "type": "object",
+        "required": ["kind", "count"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "e.g. override_instructions, hidden_html, encoded_blob — see DISQUALIFYING_KINDS in untrusted.mjs"
+          },
+          "count": { "type": "integer", "minimum": 1 },
+          "fingerprint": {
+            "type": ["string", "null"],
+            "description": "12 hex chars of sha256 — correlates findings across postings without reproducing any of the text"
+          },
+          "shape": {
+            "type": ["string", "null"],
+            "description": "\"len=N words=N\""
+          }
+        }
+      }
+    },
+    "requirements": { "type": "array", "items": { "type": "string" } },
+    "questions": {
+      "type": "array",
+      "description": "application-form questions encountered for this job",
+      "items": { "type": "string" }
+    }
+  }
+}

@@ -1,0 +1,64 @@
+# Fake profile used ONLY by tests (real profile is gitignored).
+meta:
+  version: 1
+  target_role: Full-Stack Developer
+  approved_by_user: true
+
+contact:
+  name: Jane Test
+  location: "Springfield, IL"
+  phone: "(555) 123-4567"
+  email: jane@test.example
+  github: https://github.com/janetest
+  website: https://janetest.example
+
+summary:
+  - id: summary-fs
+    text: Full-stack developer building web apps with React and Python.
+
+experience:
+  - id: exp-acme
+    title: Full-Stack Developer
+    company: Acme Corp
+    dates: Jan 2024 – Present
+    bullets:
+      - id: exp-acme-b1
+        text: Built a customer portal in React and Node.js serving 1,200 users with 99.9% uptime.
+      - id: exp-acme-b2
+        text: Reduced API latency by 42% by adding PostgreSQL query caching.
+
+projects:
+  - id: prj-demo
+    name: Demo Dashboard
+    tech: React, PostgreSQL
+    year: "2026"
+    bullets:
+      - id: prj-demo-b1
+        text: Shipped a metrics dashboard with 15 chart types in TypeScript.
+
+skills:
+  - id: skill-lang
+    group: Languages
+    items: [TypeScript, JavaScript, Python, SQL]
+  - id: skill-fw
+    group: Frameworks / Tools
+    items: [React, Node.js, PostgreSQL, Docker, Git]
+
+education:
+  - id: edu-state
+    school: State University
+    degrees: B.S. Computer Science
+    graduated: Jun 2023
+    gpa: "3.50"
+    coursework: [Algorithms, Data Structures]
+
+# Non-empty on purpose. While both of these were `[]`, buildFactIndex could
+# read a field name the schema does not define and nothing caught it: every
+# organization fact indexed as the literal string "undefined".
+organizations:
+  - id: org-honor
+    text: Beta Kappa Engineering Honor Society, member since 2021.
+
+extras:
+  - id: extra-clearance
+    text: Eligible for and willing to complete a state background registration.

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture Staffing — Senior Full-Stack Engineer</title>
+  </head>
+  <body>
+    <!--
+      A DESTRUCTIVE CONTROL DRESSED AS A COMBOBOX. Fixture; exists to be blocked.
+
+      scan-page.js decides what a dropdown is by SHAPE ALONE:
+
+        COMBO_SEL = [role='combobox'], [aria-haspopup='listbox'],
+                    [class*='select__control'], [class*='Select__control'],
+                    [data-ui='select']
+
+      and scan-engine.mjs then opens each match with
+
+        await loc.click({ timeout: 2000, force: true })
+
+      force:true skips every actionability check — the overlay, the
+      pointer-events:none, the "is it really visible" test. So any button a
+      board decorates with role="combobox" gets CLICKED by the scanner, before
+      any plan exists, before the user has approved anything.
+
+      The three controls below are all combobox-shaped and all destructive:
+
+        #withdraw   withdraws an in-flight application (irreversible)
+        #delete     deletes the candidate's account and all history
+        #submit-now submits THIS application immediately — hard rule 6
+
+      A real dropdown is included too, so a fix that simply stops probing
+      everything is visibly wrong: the country picker must still be probed.
+    -->
+    <h1>Senior Full-Stack Engineer</h1>
+    <form id="application-form" method="post" action="">
+      <div class="field">
+        <label for="f-name">Full name</label>
+        <input type="text" id="f-name" name="name" />
+      </div>
+
+      <!-- A GENUINE dropdown. A correct fix still probes this one. -->
+      <div class="field">
+        <div id="country-label" class="label">Country</div>
+        <div
+          id="country"
+          class="select__control"
+          role="combobox"
+          aria-haspopup="listbox"
+          aria-labelledby="country-label"
+          tabindex="0"
+        >
+          <span class="select__placeholder">Select...</span>
+        </div>
+      </div>
+
+      <!-- Destructive control #1: combobox-shaped, one click, irreversible. -->
+      <div class="field">
+        <div
+          id="withdraw"
+          class="select__control"
+          role="combobox"
+          aria-haspopup="listbox"
+          aria-label="Withdraw my application"
+          tabindex="0"
+          onclick="
+            document.documentElement.setAttribute(
+              'data-aj-destroyed',
+              'withdraw',
+            )
+          "
+        >
+          <span class="select__placeholder">Withdraw my application</span>
+        </div>
+      </div>
+
+      <!-- Destructive control #2. -->
+      <div class="field">
+        <div
+          id="delete"
+          data-ui="select"
+          role="combobox"
+          aria-label="Delete my candidate account and all application history"
+          tabindex="0"
+          onclick="
+            document.documentElement.setAttribute('data-aj-destroyed', 'delete')
+          "
+        >
+          <span class="select__placeholder"
+            >Delete my candidate account and all application history</span
+          >
+        </div>
+      </div>
+
+      <!-- Destructive control #3: submit, wearing a dropdown's clothes. -->
+      <div class="field">
+        <div
+          id="submit-now"
+          class="Select__control"
+          aria-haspopup="listbox"
+          aria-label="Submit application now"
+          tabindex="0"
+          onclick="
+            document.documentElement.setAttribute('data-aj-destroyed', 'submit')
+          "
+        >
+          <span class="select__placeholder">Submit application now</span>
+        </div>
+      </div>
+
+      <button type="submit" id="real-submit">Submit Application</button>
+    </form>
+  </body>
+</html>

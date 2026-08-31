@@ -1,0 +1,396 @@
+{
+  "samples": [
+    {
+      "id": "ashby-2eb1b029f99d",
+      "kind": "confirmation",
+      "file": "captures/ashby-2eb1b029f99d.html",
+      "url": "https://jobs.ashbyhq.com/openai/e961c9df-caa0-4b29-b37c-a3e02c564615/application",
+      "hosts": [
+        "jobs.ashbyhq.com"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-09T00:44:55.555Z",
+      "board": "ashby",
+      "redactions": [
+        {
+          "kind": "uuid",
+          "count": 29
+        },
+        {
+          "kind": "hex-token",
+          "count": 16
+        },
+        {
+          "kind": "phone-like",
+          "count": 93
+        },
+        {
+          "kind": "digit-run",
+          "count": 7
+        }
+      ]
+    },
+    {
+      "id": "ashby-bca2995fb1cd",
+      "kind": "confirmation",
+      "file": "captures/ashby-bca2995fb1cd.html",
+      "url": "https://jobs.ashbyhq.com/render/f4883b3d-ada1-4859-931b-61881f7f9c00/application",
+      "hosts": [
+        "jobs.ashbyhq.com"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-04T05:44:54.419Z",
+      "board": "ashby",
+      "redactions": [
+        {
+          "kind": "uuid",
+          "count": 29
+        },
+        {
+          "kind": "hex-token",
+          "count": 16
+        },
+        {
+          "kind": "phone-like",
+          "count": 83
+        },
+        {
+          "kind": "digit-run",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "id": "ashby-dfd533f3acb6",
+      "kind": "confirmation",
+      "file": "captures/ashby-dfd533f3acb6.html",
+      "url": "https://jobs.ashbyhq.com/tailor/08796053-4fa8-48db-9a73-a977ae2c5434/application",
+      "hosts": [
+        "jobs.ashbyhq.com"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-07T17:46:24.102Z",
+      "board": "ashby",
+      "redactions": [
+        {
+          "kind": "uuid",
+          "count": 28
+        },
+        {
+          "kind": "hex-token",
+          "count": 16
+        },
+        {
+          "kind": "phone-like",
+          "count": 83
+        },
+        {
+          "kind": "digit-run",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "greenhouse-250b54c4a7f1",
+      "kind": "confirmation",
+      "file": "captures/greenhouse-250b54c4a7f1.html",
+      "url": "https://job-boards.greenhouse.io/reddit/jobs/8093021/confirmation",
+      "hosts": [
+        "job-boards.greenhouse.io"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-04T05:35:55.782Z",
+      "board": "greenhouse",
+      "redactions": [
+        {
+          "kind": "hex-token",
+          "count": 2
+        },
+        {
+          "kind": "phone-like",
+          "count": 31
+        },
+        {
+          "kind": "digit-run",
+          "count": 6
+        }
+      ]
+    },
+    {
+      "id": "greenhouse-2c457b41f353",
+      "kind": "confirmation",
+      "file": "captures/greenhouse-2c457b41f353.html",
+      "url": "https://job-boards.greenhouse.io/affirm/jobs/7799631003/confirmation",
+      "hosts": [
+        "job-boards.greenhouse.io"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-04T05:27:11.104Z",
+      "board": "greenhouse",
+      "redactions": [
+        {
+          "kind": "hex-token",
+          "count": 2
+        },
+        {
+          "kind": "phone-like",
+          "count": 32
+        },
+        {
+          "kind": "digit-run",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "id": "greenhouse-3d6249906bcc",
+      "kind": "confirmation",
+      "file": "captures/greenhouse-3d6249906bcc.html",
+      "url": "https://job-boards.greenhouse.io/cloudflare/jobs/8088751/confirmation",
+      "hosts": [
+        "job-boards.greenhouse.io"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-09T00:33:49.935Z",
+      "board": "greenhouse",
+      "redactions": [
+        {
+          "kind": "hex-token",
+          "count": 2
+        },
+        {
+          "kind": "phone-like",
+          "count": 30
+        },
+        {
+          "kind": "digit-run",
+          "count": 8
+        }
+      ]
+    },
+    {
+      "id": "greenhouse-496f1e2ffe51",
+      "kind": "confirmation",
+      "file": "captures/greenhouse-496f1e2ffe51.html",
+      "url": "https://job-boards.greenhouse.io/gitlab/jobs/8644569002/confirmation",
+      "hosts": [
+        "job-boards.greenhouse.io"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-04T05:22:25.571Z",
+      "board": "greenhouse",
+      "redactions": [
+        {
+          "kind": "hex-token",
+          "count": 2
+        },
+        {
+          "kind": "phone-like",
+          "count": 32
+        },
+        {
+          "kind": "digit-run",
+          "count": 5
+        }
+      ]
+    },
+    {
+      "id": "greenhouse-526858411c5a",
+      "kind": "confirmation",
+      "file": "captures/greenhouse-526858411c5a.html",
+      "url": "https://job-boards.greenhouse.io/embed/job_app/confirmation",
+      "hosts": [
+        "job-boards.greenhouse.io"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-07T17:42:08.069Z",
+      "board": "greenhouse",
+      "redactions": [
+        {
+          "kind": "uuid",
+          "count": 3
+        },
+        {
+          "kind": "hex-token",
+          "count": 5
+        },
+        {
+          "kind": "phone-like",
+          "count": 14
+        },
+        {
+          "kind": "digit-run",
+          "count": 18
+        }
+      ]
+    },
+    {
+      "id": "greenhouse-6e653ac54297",
+      "kind": "confirmation",
+      "file": "captures/greenhouse-6e653ac54297.html",
+      "url": "https://job-boards.greenhouse.io/twilio/jobs/8026207/confirmation",
+      "hosts": [
+        "job-boards.greenhouse.io"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-07T17:20:10.126Z",
+      "board": "greenhouse",
+      "redactions": [
+        {
+          "kind": "hex-token",
+          "count": 2
+        },
+        {
+          "kind": "phone-like",
+          "count": 34
+        },
+        {
+          "kind": "digit-run",
+          "count": 6
+        }
+      ]
+    },
+    {
+      "id": "greenhouse-90dde7222080",
+      "kind": "confirmation",
+      "file": "captures/greenhouse-90dde7222080.html",
+      "url": "https://job-boards.greenhouse.io/affirm/jobs/7808384003/confirmation",
+      "hosts": [
+        "job-boards.greenhouse.io"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-05T01:17:30.671Z",
+      "board": "greenhouse",
+      "redactions": [
+        {
+          "kind": "hex-token",
+          "count": 2
+        },
+        {
+          "kind": "phone-like",
+          "count": 32
+        },
+        {
+          "kind": "digit-run",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "id": "greenhouse-b399e76c43bc",
+      "kind": "confirmation",
+      "file": "captures/greenhouse-b399e76c43bc.html",
+      "url": "https://job-boards.greenhouse.io/twilio/jobs/8026203/confirmation",
+      "hosts": [
+        "job-boards.greenhouse.io"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-07T16:21:20.220Z",
+      "board": "greenhouse",
+      "redactions": [
+        {
+          "kind": "hex-token",
+          "count": 2
+        },
+        {
+          "kind": "phone-like",
+          "count": 34
+        },
+        {
+          "kind": "digit-run",
+          "count": 6
+        }
+      ]
+    },
+    {
+      "id": "greenhouse-c894c4c48db0",
+      "kind": "email-code-challenge",
+      "file": "captures/greenhouse-c894c4c48db0.html",
+      "url": "https://job-boards.greenhouse.io/reddit/jobs/8093021",
+      "hosts": [
+        "job-boards.greenhouse.io"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-04T05:33:22.213Z",
+      "board": "greenhouse",
+      "redactions": [
+        {
+          "kind": "profile:contact.linkedin",
+          "count": 1
+        },
+        {
+          "kind": "profile:contact.email",
+          "count": 2
+        },
+        {
+          "kind": "profile:contact.name",
+          "count": 1
+        },
+        {
+          "kind": "profile:contact.name",
+          "count": 2
+        },
+        {
+          "kind": "hex-token",
+          "count": 2
+        },
+        {
+          "kind": "phone-like",
+          "count": 806
+        },
+        {
+          "kind": "digit-run",
+          "count": 11
+        }
+      ]
+    },
+    {
+      "id": "greenhouse-cba054edde62",
+      "kind": "confirmation",
+      "file": "captures/greenhouse-cba054edde62.html",
+      "url": "https://job-boards.greenhouse.io/embed/job_app/confirmation",
+      "hosts": [
+        "job-boards.greenhouse.io"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-10T18:20:57.484Z",
+      "board": "greenhouse",
+      "redactions": [
+        {
+          "kind": "phone-like",
+          "count": 1
+        },
+        {
+          "kind": "digit-run",
+          "count": 5
+        }
+      ]
+    },
+    {
+      "id": "greenhouse-e089eb86d7c5",
+      "kind": "confirmation",
+      "file": "captures/greenhouse-e089eb86d7c5.html",
+      "url": "https://job-boards.greenhouse.io/affirm/jobs/7808384003/confirmation",
+      "hosts": [
+        "job-boards.greenhouse.io"
+      ],
+      "source": "capture",
+      "captured_at": "2026-08-05T01:17:45.065Z",
+      "board": "greenhouse",
+      "redactions": [
+        {
+          "kind": "hex-token",
+          "count": 2
+        },
+        {
+          "kind": "phone-like",
+          "count": 32
+        },
+        {
+          "kind": "digit-run",
+          "count": 3
+        }
+      ]
+    }
+  ]
+}

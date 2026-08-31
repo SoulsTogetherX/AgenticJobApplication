@@ -1,0 +1,53 @@
+# Sanitized template showing the shape of profile/profile.yaml (the real file is
+# gitignored). Every fact carries a stable `id` that tailored documents cite.
+meta:
+  version: 1
+  target_role: Full-Stack Developer
+  approved_by_user: false
+
+contact:
+  name: Jane Developer
+  location: Springfield, USA
+  phone: "(555) 555-5555"
+  email: jane@example.com
+  linkedin: https://www.linkedin.com/in/jane-developer
+  github: https://github.com/jane-developer
+  website: null
+
+summary:
+  - id: summary-fs
+    text: Full-stack developer with experience building production web apps.
+
+experience:
+  - id: exp-acme
+    title: Full-Stack Developer
+    company: Acme Corp
+    dates: Jan 2024 – Present
+    bullets:
+      - id: exp-acme-b1
+        text: Built and deployed a customer portal using React and Node.js.
+
+projects:
+  - id: prj-demo
+    name: Demo Project
+    tech: React, PostgreSQL
+    year: "2026"
+    bullets:
+      - id: prj-demo-b1
+        text: Built a demo application serving 100+ users.
+
+skills:
+  - id: skill-lang
+    group: Languages
+    items: [TypeScript, Python]
+
+education:
+  - id: edu-state
+    school: State University
+    degrees: B.S. Computer Science
+    graduated: Jun 2023
+    gpa: "3.50"
+    coursework: [Algorithms, Data Structures]
+
+organizations: []
+extras: []

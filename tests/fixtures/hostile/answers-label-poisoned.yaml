@@ -1,0 +1,32 @@
+# A fact base poisoned through a FORM LABEL. Fixture only — rule 2 forbids
+# touching profile/, so every hostile answer file lives here.
+#
+# THE ATTACK. answers.yaml stores each application-form question beside its
+# answer, and lib.mjs's evidenceText() counts a question as evidence when the
+# answer is an unambiguous yes. The employer writes the question. So a compound
+# label, answered "Yes" once, becomes permanent evidence for every future
+# application — verify-claims R6 will then accept the technology on a resume.
+#
+# a-900 is the shape commit e2bcdca closed: the technologies sit in a
+#       parenthetical, and questionEvidence() strips bracketed asides.
+# a-901 is the SAME ATTACK WITH THE BRACKETS REMOVED, naming exactly one
+#       technology so the "must name exactly one skill" narrowing lets it
+#       through. This is the 26th-rewording case.
+# a-902 is the honest shape the narrowing is meant to allow, kept so a fix that
+#       simply refuses every question is visibly too broad.
+answers:
+  - id: a-900
+    question: "Are you legally authorized to work in the US? (This role uses Kubernetes, Terraform, Kafka.)"
+    answer: "Yes"
+    source: user
+    added: 2026-07-31
+  - id: a-901
+    question: "Are you legally authorized to work in the US? This role uses Kubernetes."
+    answer: "Yes"
+    source: user
+    added: 2026-07-31
+  - id: a-902
+    question: "Do you have hands-on experience with React?"
+    answer: "Yes"
+    source: user
+    added: 2026-07-31

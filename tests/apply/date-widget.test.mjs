@@ -28,14 +28,30 @@
 // "THE DATE PICKER WEARING AN <input type=text>".
 import test from "node:test"
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { runScannerOnDom } from "../fixtures/boards/dom.mjs"
-import {
+import scanPage, {
   dateWidgetMarks,
   DATE_WIDGET_MARKERS,
 } from "../../src/apply/scan-engine.mjs"
 import fillPage from "../../src/apply/fill-engine.mjs"
 import { launchBrowser } from "../../src/apply/browser.mjs"
+import {
+  buildPlan,
+  resolveFields,
+  submitReadiness,
+} from "../../src/apply/fill-plan.mjs"
+import ashby from "../../src/apply/ats/ashby.mjs"
+
+const FIXTURES = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "fixtures",
+)
 
 const page = (body) => `<html><body><form>${body}</form></body></html>`
 
@@ -296,4 +312,212 @@ test("THE FIX: a marked picker is blurred, so the control below is reachable", a
   // And the blur COMMITS the date rather than discarding it — the direction
   // this fix must not be wrong in.
   assert.deepEqual(report.verify.landed, ["f1", "g1"])
+})
+
+// ---------------------------------------------------------------------------
+// END TO END — the production failure, reproduced and then cleared
+//
+// Everything above tests one link. This runs the whole chain the unattended
+// runner runs — the REAL scanner over the REAL markup, resolveFields against a
+// fact base holding the user's prose availability answer, buildPlan, fillPage
+// in a browser, and finally submitReadiness, which is the function that
+// actually emitted the deferral in run 2026-09-02T19-28-11-322Z-cec481.
+//
+// The page below models the widget from its own measured props rather than
+// from a guess about it: focus opens the panel (preventOpenOnFocus false),
+// blur closes it, blur parses with MM/dd/yyyy first (dateFormat), falls back
+// to `new Date(v)` (strictParsing false — this is what shifted ISO by a day on
+// 2026-08-21), and CLEARS what neither can read. That last clause is the whole
+// bug: it is why prose came back "".
+// ---------------------------------------------------------------------------
+
+const PICKER_SCRIPT = [
+  "const d = document.querySelector('.react-datepicker__input-container input')",
+  "const cal = document.getElementById('cal')",
+  "d.addEventListener('focus', () => { cal.style.display = 'block' })",
+  "d.addEventListener('blur', () => {",
+  "  cal.style.display = 'none'",
+  "  const v = String(d.value || '').trim()",
+  "  if (!v) return",
+  // dateFormat "MM/dd/yyyy" — the widget's own format, parsed as LOCAL.
+  "  const m = /^(\\d{2})\\/(\\d{2})\\/(\\d{4})$/.exec(v)",
+  "  if (m) { d.value = m[1] + '/' + m[2] + '/' + m[3]; return }",
+  // strictParsing false -> Date-constructor fallback. An ISO string is UTC
+  // midnight there, which renders a day early west of Greenwich.
+  "  const t = new Date(v)",
+  "  if (!isNaN(t.getTime())) {",
+  "    d.value = String(t.getMonth() + 1).padStart(2, '0') + '/' +",
+  "              String(t.getDate()).padStart(2, '0') + '/' + t.getFullYear()",
+  "    return",
+  "  }",
+  // Unparseable: the widget keeps nothing. THIS is the production failure.
+  "  d.value = ''",
+  "})",
+].join("\n")
+
+const ASHBY_FORM = `<!doctype html>
+<html><body style="margin:0">
+<form>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry">
+    <label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title"
+           for="_systemfield_name">Legal Name</label>
+    <input id="_systemfield_name" name="_systemfield_name" type="text"
+           class="_input_gc9ve_28 ashby-application-form-input" required>
+  </div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry">
+    <label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title"
+           for="_systemfield_email">Email</label>
+    <input id="_systemfield_email" name="_systemfield_email" type="email"
+           class="_input_gc9ve_28 ashby-application-form-input" required>
+  </div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry"
+       data-field-path="3f4e05d4-dd62-48ef-96ca-d9f293ae18d4">
+    <label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title"
+           for="3f4e05d4-dd62-48ef-96ca-d9f293ae18d4">When can you start a new role?</label>
+    <div class="react-datepicker-wrapper">
+      <div class="react-datepicker__input-container">
+        <input type="text" placeholder="Pick date..."
+               class="_input_gc9ve_28  _greedy_gc9ve_61 ashby-application-form-input-date"
+               required value="">
+      </div>
+    </div>
+  </div>
+  <button type="submit">Submit Application</button>
+</form>
+<div id="cal" class="ashby-application-form-input-date-popup"
+     style="display:none;position:absolute;top:0;left:0;width:100%;height:200px;background:#eee;z-index:99"></div>
+<script>${PICKER_SCRIPT}</script>
+</body></html>`
+
+// The user's own banked availability answer, in the wording that was live when
+// the four jobs deferred on 2026-09-02.
+const PROSE_BANK = [
+  "answers:",
+  "  - id: a-128",
+  '    question: "When can you start a new role?"',
+  '    answer: "Available immediately."',
+  "",
+].join("\n")
+
+const usDateUTC = (d) =>
+  String(d.getUTCMonth() + 1).padStart(2, "0") +
+  "/" +
+  String(d.getUTCDate()).padStart(2, "0") +
+  "/" +
+  d.getUTCFullYear()
+
+const endToEnd = async ({ stripMarker }) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-datewidget-"))
+  const answersFile = path.join(dir, "answers.yaml")
+  fs.writeFileSync(answersFile, PROSE_BANK)
+  const s = await launchBrowser({ headless: true })
+  try {
+    await s.page.setContent(ASHBY_FORM)
+    const { scan } = await scanPage(s.page)
+    // The plan's own urlGuard compares against the live page, and setContent
+    // leaves that at about:blank — so the plan is built for the page it will
+    // actually be filled on. Nothing here turns on the URL: the adapter is
+    // passed explicitly rather than detected from it.
+    const url = s.page.url()
+    scan.url = url
+    const marked = (scan.fields || []).filter((f) => f.dateWidget)
+    // The pre-fix world, produced by removing exactly the one thing the fix
+    // adds — so the two runs differ in nothing else.
+    if (stripMarker) for (const f of scan.fields || []) delete f.dateWidget
+    const resolved = resolveFields(scan.fields ?? [], {
+      profile: path.join(FIXTURES, "profile.yaml"),
+      answers: answersFile,
+    })
+    const plan = buildPlan({
+      scan,
+      resolved,
+      adapter: ashby,
+      url,
+      files: {},
+    })
+    const report = await fillPage(s.page, plan)
+    const shown = await s.page.evaluate(
+      () =>
+        document.querySelector(".react-datepicker__input-container input")
+          .value,
+    )
+    return {
+      marked,
+      plan,
+      report,
+      shown,
+      readiness: submitReadiness(plan, report),
+    }
+  } finally {
+    await s.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+const startItem = (plan) =>
+  plan.items.find((i) => /start a new role/i.test(i.label ?? ""))
+
+test("END TO END, PRE-FIX: the prose is typed, the widget eats it, the gate refuses", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  const { plan, shown, readiness } = await endToEnd({ stripMarker: true })
+  assert.equal(
+    startItem(plan).value,
+    "Available immediately.",
+    "the banked prose went in",
+  )
+  assert.equal(shown, "", "and the widget kept nothing")
+  assert.equal(readiness.ready, false)
+  // The production line, in its distinctive parts.
+  assert.match(readiness.reason, /did not hold the value that was typed/)
+  assert.match(readiness.reason, /When can you start a new role\?/)
+  assert.match(
+    readiness.reason,
+    /wanted "Available immediately\.", the page shows ""/,
+  )
+})
+
+test("END TO END, FIXED: the scan marks it, a date goes in, the gate passes", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  const { marked, plan, report, shown, readiness } = await endToEnd({
+    stripMarker: false,
+  })
+  assert.equal(marked.length, 1, "the real scanner + scanPage marked one field")
+  assert.equal(marked[0].dateWidget, "react-datepicker")
+
+  const item = startItem(plan)
+  assert.equal(item.dateWidget, "react-datepicker")
+  // Today, in the widget's own format, computed — never a banked string.
+  assert.equal(item.value, usDateUTC(new Date()))
+  // The widget round-tripped it UNSHIFTED — the 2026-08-21 off-by-one cannot
+  // happen because the Date-constructor fallback is never reached.
+  assert.equal(shown, usDateUTC(new Date()))
+  assert.equal(report.failed, 0, JSON.stringify(report.failures))
+  assert.deepEqual(report.verify.mismatch, [])
+  assert.equal(readiness.ready, true, readiness.reason ?? "")
+})
+
+test("END TO END: ISO into this widget is a day early — why the FORMAT is the fix", async (t) => {
+  if (NO_BROWSER) return t.skip(NO_BROWSER)
+  // Not a test of our code: a test of the CLAIM our code rests on, run against
+  // the widget's own measured parsing rules. Typing ISO is what the pipeline
+  // did on 2026-08-21, and "08/17/2026" is what came back. If this ever stops
+  // shifting, the reasoning in answer-bank.mjs's startDateFor() has changed
+  // underneath us and should be re-read rather than trusted.
+  const s = await launchBrowser({ headless: true })
+  try {
+    await s.page.setContent(ASHBY_FORM)
+    const shown = await s.page.evaluate(() => {
+      const d = document.querySelector(
+        ".react-datepicker__input-container input",
+      )
+      d.focus()
+      d.value = "2026-08-18"
+      d.blur()
+      return d.value
+    })
+    assert.notEqual(shown, "08/18/2026", "ISO does NOT round-trip here")
+    assert.match(shown, /^08\/1[78]\/2026$/, `got ${shown}`)
+  } finally {
+    await s.close()
+  }
 })

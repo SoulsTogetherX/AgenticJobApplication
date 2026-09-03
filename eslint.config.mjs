@@ -166,6 +166,7 @@ const PAGE_SIDE_FILES = [
   "tests/apply/bench-apply.test.mjs",
   "tests/apply/choice-group-verify.test.mjs",
   "tests/apply/combo-commit.test.mjs",
+  "tests/apply/date-widget.test.mjs",
   "tests/apply/fill-page.test.mjs",
   "tests/apply/greenhouse-embed-rerender.test.mjs",
   "tests/apply/multi-select.test.mjs",

@@ -399,12 +399,17 @@ const PROSE_BANK = [
   "",
 ].join("\n")
 
-const usDateUTC = (d) =>
-  String(d.getUTCMonth() + 1).padStart(2, "0") +
+// The LOCAL calendar day, matching answer-bank.mjs's own reading of "now" —
+// see the TZ block in tests/apply/answer-bank.test.mjs for why a wall-clock
+// "today" is local while a profile date stays UTC. Computing this in UTC here
+// made the assertion below fail on any evening west of Greenwich, which is
+// how this comment came to exist.
+const usDateLocal = (d) =>
+  String(d.getMonth() + 1).padStart(2, "0") +
   "/" +
-  String(d.getUTCDate()).padStart(2, "0") +
+  String(d.getDate()).padStart(2, "0") +
   "/" +
-  d.getUTCFullYear()
+  d.getFullYear()
 
 const endToEnd = async ({ stripMarker }) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aj-datewidget-"))
@@ -487,10 +492,10 @@ test("END TO END, FIXED: the scan marks it, a date goes in, the gate passes", as
   const item = startItem(plan)
   assert.equal(item.dateWidget, "react-datepicker")
   // Today, in the widget's own format, computed — never a banked string.
-  assert.equal(item.value, usDateUTC(new Date()))
+  assert.equal(item.value, usDateLocal(new Date()))
   // The widget round-tripped it UNSHIFTED — the 2026-08-21 off-by-one cannot
   // happen because the Date-constructor fallback is never reached.
-  assert.equal(shown, usDateUTC(new Date()))
+  assert.equal(shown, usDateLocal(new Date()))
   assert.equal(report.failed, 0, JSON.stringify(report.failures))
   assert.deepEqual(report.verify.mismatch, [])
   assert.equal(readiness.ready, true, readiness.reason ?? "")

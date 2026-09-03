@@ -1219,15 +1219,36 @@ export function createResolver(profile = {}, answersDoc = {}, { now } = {}) {
   // this also closes that off-by-one rather than teaching the readback to
   // accept a wrong day. (fill-engine's readback accepts either format on
   // either side, so nothing downstream cares which one goes out — only the
-  // widget does.) Both spellings name the same UTC calendar day, deliberately:
-  // two renderings of one answer must never disagree about which day it is.
+  // widget does.) Both spellings name the same calendar day, deliberately: two
+  // renderings of one answer must never disagree about which day it is.
+  //
+  // "TODAY" IS THE LOCAL CALENDAR DAY, NOT THE UTC ONE, and the difference is
+  // not academic. These used to read `toISOString()` and `getUTC*`, so between
+  // local evening and midnight — west of Greenwich — "today" was already
+  // TOMORROW. The run this whole fix came from started at 19:28 local on
+  // 2026-09-02, which is 02:28 UTC on the 3rd: it would have told the employer
+  // the earliest start date was a day later than the user's own banked answer
+  // says. East of Greenwich the same code errs the other way and can emit a
+  // date in the PAST, which a form is entitled to reject outright. The 07:00
+  // scheduled cycle happens to sit in the window where the two agree, which is
+  // exactly why this could sit here unnoticed.
+  //
+  // THE RULE, because the file does BOTH and the two look alike: a wall-clock
+  // "now" is read with the LOCAL getters (this pipeline runs on the user's own
+  // machine, so local IS the user's day, and "when can you start" is a
+  // wall-clock question). A date that came out of profile.yaml is a DATE-ONLY
+  // string parsed as UTC midnight, and is read back with getUTC* — see the
+  // month/year rules below, which must stay as they are. Reading a date-only
+  // profile value with local getters would shift it by a day for exactly the
+  // same reason this one had to stop being UTC.
   const DATE_LITERAL = /^(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4})$/
   const START_DATE_Q =
     /\bwhen can you start\b|\bstart date\b|\bearliest (?:available )?start\b|\bdate (?:you are |you're )?available\b|\bavailability date\b/i
-  const isoDate = (d) => d.toISOString().slice(0, 10)
+  const pad2 = (n) => String(n).padStart(2, "0")
+  const isoDate = (d) =>
+    `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
   const usDate = (d) =>
-    `${String(d.getUTCMonth() + 1).padStart(2, "0")}/` +
-    `${String(d.getUTCDate()).padStart(2, "0")}/${d.getUTCFullYear()}`
+    `${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}/${d.getFullYear()}`
   // Null when this control is not one a date belongs in; otherwise today,
   // spelled the way this control renders dates.
   const startDateFor = (f) =>

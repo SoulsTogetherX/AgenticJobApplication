@@ -2,7 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { matchOption, createResolver } from "../../src/apply/answer-bank.mjs"
 
 const ROOT = path.resolve(
@@ -1946,5 +1946,97 @@ test("COUNTRY: the vetoed shapes never fire the rule", () => {
   for (const k of ["f1", "f2", "f3"]) {
     assert.notEqual(r.get(k).value, "United States of America", k)
     assert.notEqual(r.get(k).value, "United States", k)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// "TODAY" IS A WALL-CLOCK DAY (2026-09-02)
+//
+// The start-date rule used to read toISOString()/getUTC*, so between local
+// evening and midnight, west of Greenwich, "today" was already TOMORROW. The
+// run that produced this whole fix started at 19:28 local on 2026-09-02 —
+// 02:28 UTC on the 3rd — so it sat squarely in that window. East of Greenwich
+// the same code errs the other way and can put a date in the PAST on a form.
+//
+// TIMEZONE IS SET FOR A CHILD PROCESS, not for this one. Node reads TZ at
+// startup and V8 caches it; a test that assigned process.env.TZ would be
+// asserting against whichever zone the runner happened to start in, which is
+// how a test like this passes on a developer's machine and means nothing in
+// CI. Each case below gets its own process with TZ in the environment, so the
+// answer is the same wherever the suite runs.
+// ---------------------------------------------------------------------------
+
+const inTz = (tz, nowIso, field) => {
+  const src = `
+    import { createResolver } from ${JSON.stringify(
+      pathToFileURL(path.join(ROOT, "src", "apply", "answer-bank.mjs")).href,
+    )}
+    const { results } = createResolver(
+      { contact: { name: "Jane Test" } },
+      { answers: [] },
+      { now: new Date(${JSON.stringify(nowIso)}) },
+    ).resolveAll([${JSON.stringify(field)}])
+    process.stdout.write(JSON.stringify(results[0]))
+  `
+  const res = spawnSync(process.execPath, ["--input-type=module", "-e", src], {
+    encoding: "utf8",
+    env: { ...process.env, TZ: tz },
+  })
+  assert.equal(res.status, 0, res.stderr)
+  return JSON.parse(res.stdout)
+}
+
+const PICKER = {
+  k: "f8",
+  t: "text",
+  req: true,
+  l: "When can you start a new role?",
+  dateWidget: "react-datepicker",
+}
+const NATIVE = {
+  k: "f8",
+  t: "date",
+  req: true,
+  l: "When can you start a new role?",
+}
+
+test("TZ: the evening of the failing run resolves to that evening's date, not tomorrow's", () => {
+  // 2026-09-02T19:28 America/Los_Angeles === 2026-09-03T02:28Z. The UTC
+  // reading of this instant is the 3rd; the user's day is the 2nd.
+  const r = inTz("America/Los_Angeles", "2026-09-03T02:28:11.322Z", PICKER)
+  assert.equal(r.status, "OK")
+  assert.equal(r.value, "09/02/2026")
+})
+
+test("TZ: east of Greenwich the same instant is the NEXT day, and is reported as such", () => {
+  // 2026-09-03T02:28Z is already 11:28 on the 3rd in Tokyo. A rule that had
+  // been "fixed" by subtracting a fixed offset would get this one wrong; the
+  // answer is whatever the local calendar says, in both directions.
+  const r = inTz("Asia/Tokyo", "2026-09-03T02:28:11.322Z", PICKER)
+  assert.equal(r.value, "09/03/2026")
+})
+
+test("TZ: a past date can no longer be emitted from the other side of midnight", () => {
+  // 2026-09-02T23:30Z is 08:30 on the 3rd in Tokyo. Under the UTC reading this
+  // answered "the 2nd" — a start date already in the past for the person
+  // filling the form, which a board is entitled to refuse.
+  const r = inTz("Asia/Tokyo", "2026-09-02T23:30:00.000Z", PICKER)
+  assert.equal(r.value, "09/03/2026")
+})
+
+test("TZ: both spellings of the same answer always name the same day", () => {
+  // The invariant the two renderings exist under. If ISO and US ever disagree
+  // about which day it is, one of the two boards gets a different answer to
+  // the same question from the same fact base.
+  for (const [tz, now] of [
+    ["America/Los_Angeles", "2026-09-03T02:28:11.322Z"],
+    ["Asia/Tokyo", "2026-09-02T23:30:00.000Z"],
+    ["UTC", "2026-09-02T12:00:00.000Z"],
+    ["Pacific/Kiritimati", "2026-09-02T12:00:00.000Z"],
+  ]) {
+    const us = inTz(tz, now, PICKER).value
+    const iso = inTz(tz, now, NATIVE).value
+    const [m, d, y] = us.split("/")
+    assert.equal(iso, `${y}-${m}-${d}`, `${tz} @ ${now}: ${iso} vs ${us}`)
   }
 })

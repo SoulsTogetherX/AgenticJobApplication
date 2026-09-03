@@ -2304,6 +2304,14 @@ export function buildPlan({
       // free to ignore this and walk its normal strategy order; it is a
       // hint, not a guarantee the field still works the same way.
       ...(verb === "combo" && f.via ? { via: f.via } : {}),
+      // A calendar widget wearing an <input type="text"> — scan-engine.mjs's
+      // dateWidgetMarks() stamped this off the live DOM. It rides on the item
+      // because the ENGINE has to act differently: the widget opens a popper
+      // on focus, and a fill focuses. Carried only for the typing verbs;
+      // there is no such thing as a date picker that is checked or uploaded.
+      ...((verb === "fill" || verb === "type") && f.dateWidget
+        ? { dateWidget: String(f.dateWidget) }
+        : {}),
       // A consent-shaped select/combo the consent branch handed on under
       // `required_widgets` ("Please confirm receipt of the privacy notice" as
       // a Yes/No dropdown, answered from the bank): filled like any value, but

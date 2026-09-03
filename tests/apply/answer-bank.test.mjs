@@ -1756,6 +1756,116 @@ test("TIME: 'when can you start' resolves to NOW's date, not the banked dead lit
   }
 })
 
+// ---------------------------------------------------------------------------
+// THE DATE PICKER WEARING AN <input type="text"> (2026-09-02)
+//
+// THE FAILURE, verbatim from jobs/.auto/runs, seven OpenAI applications
+// between 2026-08-25 and 2026-09-02:
+//
+//   unknown-field: submit_readiness: 1 field(s) did not hold the value that
+//   was typed after the fill: When can you start a new role? (f8)
+//   (wanted "Available immediately.", the page shows "")
+//
+// Not a readback trap — the readback was right. Ashby renders that required
+// field as react-datepicker over an `<input type="text">`, so it scans as
+// `t: "text"`, the banked PROSE availability answer was chosen for it, and
+// the widget cleared what it could not parse as a date. The fill was never
+// wrong about the fact, only about the form the control accepts.
+//
+// The rule that should have caught it keyed on the ANSWER's shape ("is the
+// banked answer a bare date literal") rather than the CONTROL's, so re-banking
+// the same fact as prose silently switched the recognition off. `dateWidget`
+// is the control-side signal; these four tests are what stop the guard
+// drifting back onto the answer.
+// ---------------------------------------------------------------------------
+
+test("THE BUG: a start-date question on a date PICKER gets a date, not the banked prose", () => {
+  const bank = {
+    answers: [
+      {
+        id: "a166",
+        question: "When can you start a new role?",
+        answer: "Available immediately.",
+      },
+    ],
+  }
+  const r = timeResolve(
+    [
+      {
+        k: "f8",
+        t: "text",
+        req: true,
+        l: "When can you start a new role?",
+        dateWidget: "react-datepicker",
+      },
+    ],
+    { bank },
+  )
+  const got = r.get("f8")
+  assert.equal(got.status, "OK", `deferred: ${got.note ?? got.source}`)
+  // The widget's OWN rendering. ISO went in on 2026-08-21 and came back
+  // "08/17/2026" — a day early, because `new Date("2026-08-18")` is UTC
+  // midnight read in a negative-offset timezone. MM/DD/YYYY parses local and
+  // round-trips unshifted.
+  assert.equal(got.value, "08/21/2026")
+  assert.match(String(got.source), /computed\.today/)
+})
+
+test("BOUNDARY: the same question on a plain text box still keeps the user's prose", () => {
+  // The other half of the same rule, and the direction it must NOT drift: a
+  // free-text availability box is the case tests/apply/answer-bank-rewording
+  // .test.mjs pins, and nothing about the picker fix may reach it. Without
+  // this, "always answer a start-date question with a date" would pass the
+  // test above.
+  const bank = {
+    answers: [
+      {
+        id: "a166",
+        question: "When can you start a new role?",
+        answer: "Available immediately.",
+      },
+    ],
+  }
+  const r = timeResolve(
+    [{ k: "f8", t: "text", req: true, l: "When can you start a new role?" }],
+    { bank },
+  )
+  assert.equal(r.get("f8").value, "Available immediately.")
+})
+
+test("BOUNDARY: a native <input type=date> still gets ISO, which is the only thing it takes", () => {
+  // Two renderings of one answer, and they must never disagree about WHICH
+  // DAY — so both are asserted against the same frozen clock.
+  const r = timeResolve([
+    { k: "f1", t: "date", l: "When can you start a new role?" },
+    {
+      k: "f2",
+      t: "date",
+      l: "When can you start a new role?",
+      dateWidget: "react-datepicker",
+    },
+  ])
+  assert.equal(r.get("f1").value, "2026-08-21")
+  // dateWidget wins over `t` when a board carries both: the marker is read off
+  // the live DOM, `t` is the attribute the widget happens to wear.
+  assert.equal(r.get("f2").value, "08/21/2026")
+})
+
+test("BOUNDARY: the picker marker answers start-date questions ONLY", () => {
+  // The marker says what the control accepts; it never decides what a field
+  // is asking. A picker on some other question must not be handed today's
+  // date just for being a picker.
+  const r = timeResolve([
+    {
+      k: "f1",
+      t: "text",
+      l: "What is your preferred name?",
+      dateWidget: "react-datepicker",
+    },
+  ])
+  assert.notEqual(r.get("f1").value, "08/21/2026")
+})
+
 test("TIME: notice-period prose questions stay with the bank — no date is forced on them", () => {
   const bank = {
     answers: [

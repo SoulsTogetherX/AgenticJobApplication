@@ -3389,3 +3389,63 @@ test("actuated is an empty array on a form with no widgets at all", () => {
   })
   assert.deepEqual(plan.actuated, [])
 })
+
+// --- the date-widget marker rides to the engine ----------------------------
+//
+// scan-engine.mjs stamps `dateWidget` on the scan field; fill-engine.mjs blurs
+// a marked control after typing into it, because the picker opens a calendar
+// over the next controls on the form (the measurement is in
+// tests/apply/date-widget.test.mjs). Between the two sits this file, and a
+// marker that stops here is a fix that does nothing.
+
+test("a scanned dateWidget reaches the plan item the engine reads", () => {
+  const plan = buildPlan({
+    scan: scanOf([
+      {
+        k: "f1",
+        t: "text",
+        l: "When can you start a new role?",
+        req: true,
+        dateWidget: "react-datepicker",
+      },
+      { k: "f2", t: "text", l: "Preferred Name", req: true },
+    ]),
+    resolved: [ok("f1", "09/02/2026"), ok("f2", "Jane")],
+    adapter: greenhouse,
+    files,
+  })
+  const byKey = new Map(plan.items.map((i) => [i.k, i]))
+  assert.equal(byKey.get("f1").dateWidget, "react-datepicker")
+  assert.equal(
+    "dateWidget" in byKey.get("f2"),
+    false,
+    "an unmarked field carries no key at all, so an old plan is a no-op",
+  )
+})
+
+test("the marker rides only on the verbs that TYPE into a control", () => {
+  // There is no such thing as a date picker that is ticked or uploaded, and a
+  // marker on one of those verbs could only ever be a scan asserting something
+  // about a control it does not describe. `fill` and `type` are the whole set.
+  const plan = buildPlan({
+    scan: scanOf([
+      {
+        k: "f1",
+        t: "checkbox",
+        l: "I agree to the terms",
+        req: true,
+        dateWidget: "react-datepicker",
+      },
+    ]),
+    resolved: [ok("f1", "true")],
+    adapter: greenhouse,
+    files,
+  })
+  for (const i of [...plan.items, ...(plan.defer ?? [])]) {
+    assert.equal(
+      "dateWidget" in i,
+      false,
+      `${i.k} carried the marker on ${i.how}`,
+    )
+  }
+})

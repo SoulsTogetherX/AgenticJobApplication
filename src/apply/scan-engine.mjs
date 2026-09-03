@@ -159,6 +159,52 @@ export function scannerExpression(src = readScannerSource()) {
   return (end < 0 ? rest : rest.slice(0, end)).trim()
 }
 
+// The two markers dateWidgetMarks() can produce, and the allowlist the scan is
+// annotated through. Anything else coming back from the page is not a marker
+// this pass emitted and is dropped.
+export const DATE_WIDGET_MARKERS = new Set([
+  "react-datepicker",
+  "ashby-application-form-input-date",
+])
+
+/**
+ * Which stamped `<input type="text">` elements are really a date picker's
+ * visible box — see the long note at the call site in scanPage() for the
+ * measurement and for why this is a safe widening. Returns
+ * `{ [data-aj key]: marker }`.
+ *
+ * RUNS IN THE PAGE. It is handed to page.evaluate by reference, so it may not
+ * reference anything from this module; `doc` arrives undefined there and it
+ * uses the page's own `document`. Tests pass a document in.
+ */
+export function dateWidgetMarks(doc) {
+  const d = doc || document
+  const out = {}
+  for (const el of d.querySelectorAll("input[data-aj]")) {
+    const k = el.getAttribute("data-aj")
+    if (!k) continue
+    // Only a control claiming to be free text can be MIS-read as free text; a
+    // native <input type="date"> already reports itself, and a checkbox or a
+    // file input is not a thing a date belongs in whatever wraps it.
+    const type = String(el.getAttribute("type") || "text").toLowerCase()
+    if (type !== "text") continue
+    if (
+      el.closest(
+        ".react-datepicker__input-container, .react-datepicker-wrapper",
+      )
+    ) {
+      out[k] = "react-datepicker"
+    } else if (
+      /(^|\s)ashby-application-form-input-date(\s|$)/.test(
+        String(el.className || ""),
+      )
+    ) {
+      out[k] = "ashby-application-form-input-date"
+    }
+  }
+  return out
+}
+
 export default async function scanPage(page, opts = {}) {
   const scannerPath = opts.scannerPath || SCANNER_PATH
   const scannerSrc =
@@ -947,6 +993,82 @@ export default async function scanPage(page, opts = {}) {
   scan.probe = {
     ...(stats ?? { probed: 0, cached: 0, skipped: 0, capped: 0, refused: 0 }),
     rescans,
+  }
+
+  // --- A DATE PICKER WEARING AN <input type="text"> --------------------------
+  //
+  // scan-page.js reports `t` as the element's OWN `type` attribute, which is
+  // the right thing for it to do — it reports what the page wrote. But a
+  // calendar widget's visible box is an `<input type="text">`, so a control
+  // that accepts NOTHING BUT A DATE scans identically to a free-text box, and
+  // every consumer downstream that asks "is a date the answer here" (today:
+  // answer-bank.mjs's start-date rule) gets "no".
+  //
+  // MEASURED on OpenAI's Ashby form (jobs.ashbyhq.com/openai/*/application),
+  // 2026-09-02, on the required field "When can you start a new role?":
+  //
+  //   <div class="react-datepicker-wrapper">
+  //     <div class="react-datepicker__input-container">
+  //       <input type="text" placeholder="Pick date..."
+  //              class="_input_gc9ve_28 _greedy_gc9ve_61
+  //                     ashby-application-form-input-date" required value="">
+  //
+  // That field cost SEVEN OpenAI applications across 2026-08-25..09-02, all
+  // deferred at submit_readiness with the same line: wanted "Available
+  // immediately.", the page shows "". The prose is the user's own banked
+  // availability answer and is perfectly true; the widget simply parses what
+  // is typed as a date and clears what it cannot parse. The fill was never
+  // wrong about the FACT, only about the FORM the control accepts — and
+  // nothing on the page said which form that was, because `t` said "text".
+  //
+  // TWO MARKERS, BOTH UNHASHED AND BOTH OWNED BY SOMEONE OTHER THAN US:
+  //   1. an ancestor `.react-datepicker-wrapper` / `__input-container` —
+  //      react-datepicker's own public class names, so this recognises the
+  //      widget on ANY board that uses it, not just this one;
+  //   2. `ashby-application-form-input-date` — Ashby's own stable hook, from
+  //      the same `ashby-application-form-*` family as the classes on the
+  //      label and the field wrapper. The hashed siblings (`_input_gc9ve_28`)
+  //      are build output and are deliberately not matched.
+  // A board that swaps the picker library keeps (2); a board that keeps
+  // react-datepicker under different app classes keeps (1).
+  //
+  // THIS IS A WIDENING, AND IT FAILS IN THE SAFE DIRECTION. Missing the marker
+  // gives exactly today's behaviour — a deferral. Claiming it wrongly on a
+  // genuinely free-text control puts a real calendar date into a box that
+  // asked when the user can start, which is still an answer the fact base
+  // backs (see answer-bank.mjs's `computed.today`): no invented fact, no
+  // assent, nothing from the fact base exposed. That asymmetry is why this is
+  // NOT wired through the `vouchedLabels` trust boundary above: unlike
+  // `labelExact`, a board asserting this attribute buys nothing.
+  //
+  // STATED LIMIT: the annotation is added HERE, so the two other producers of
+  // a scan (scan.driver.mjs, and the bare `window.__ajScan(false)` re-scan
+  // that apply-job/SKILL.md documents for page 2 onward) do not carry it. Both
+  // then behave as they do today. The fix belongs in scan-page.js itself, and
+  // that file is the user's to change.
+  try {
+    // Playwright serializes this function's SOURCE into the page, so it must
+    // close over nothing from this module — `doc` is undefined there and it
+    // falls back to the page's own `document`. Passing a document explicitly
+    // is what lets tests/apply/date-widget.test.mjs run the identical function
+    // over the measured markup with no browser.
+    const marked = await page.evaluate(dateWidgetMarks)
+    // A page.evaluate return is DATA FROM THE PAGE: its shape is never assumed
+    // and its values are never carried through uninspected. Only the two
+    // markers this pass can itself produce are accepted, and only onto a key
+    // the scan already knows about.
+    if (marked && typeof marked === "object" && !Array.isArray(marked)) {
+      for (const f of scan.fields ?? []) {
+        if (!f || !f.k || Array.isArray(f.o)) continue
+        const m = marked[f.k]
+        if (typeof m === "string" && DATE_WIDGET_MARKERS.has(m)) {
+          f.dateWidget = m
+        }
+      }
+    }
+  } catch {
+    // A page that refuses to be read here is not a page this pass has an
+    // opinion about. Every field keeps the type the scanner reported.
   }
 
   // --- THE VOUCH LEAVES OUT OF BAND -----------------------------------------

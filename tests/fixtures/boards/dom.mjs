@@ -451,7 +451,17 @@ const styleOf = (el) => {
  * Run the real .claude/skills/apply-job/scan-page.js over `html`.
  * Returns its output object. PROBE is always false — see the header.
  */
-export async function runScanner(
+export async function runScanner(html, opts = {}) {
+  return (await runScannerOnDom(html, opts)).scan
+}
+
+/**
+ * The same run, plus the DOM it ran over — kept for the passes that happen
+ * PLAYWRIGHT-SIDE rather than inside scan-page.js and therefore need to look
+ * at the stamped document afterwards (scan-engine.mjs's dateWidgetMarks is the
+ * first). runScanner() is the common case and stays a bare scan.
+ */
+export async function runScannerOnDom(
   html,
   { url = "https://board.test/apply" } = {},
 ) {
@@ -492,5 +502,5 @@ export async function runScanner(
   }
   const fn = new Function(...Object.keys(globals), src)
   fn(...Object.values(globals))
-  return await win.__ajScan(false)
+  return { scan: await win.__ajScan(false), doc, window: win }
 }

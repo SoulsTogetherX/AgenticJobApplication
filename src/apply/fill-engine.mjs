@@ -1493,6 +1493,53 @@ export default async function fillPage(page, plan, opts = {}) {
   // no value here — the year typed is the fact base's year either way, and
   // the worst a lying label earns is a date-shaped rendering of the same
   // year). A "…year" label without "date" keeps the bare year.
+  // A DATE PICKER OPENS A CALENDAR OVER THE REST OF THE FORM, AND A FILL IS
+  // WHAT OPENS IT.
+  //
+  // MEASURED off the live widget's own React props (jobs.ashbyhq.com, the
+  // start-date field, 2026-09-02): `preventOpenOnFocus: false`,
+  // `withPortal: false`, `popperClassName: "…ashby-application-form-input-
+  // date-popup"`, and no portal node anywhere in the document. So the calendar
+  // renders INLINE, absolutely positioned by popper — and `loc.fill()` focuses
+  // before it types, which is precisely the event that opens it.
+  //
+  // WHAT IS UNDERNEATH IT on that form, in DOM order, is the next three
+  // controls this engine acts on: the work-authorisation, sponsorship and
+  // in-office Yes/No pairs. A popper covering one of those does not cause a
+  // WRONG click — Playwright's actionability check requires the target to be
+  // the element at the click point, so it would wait out its timeout and the
+  // item would reach fail(), which blocks the submit. That is the safe
+  // direction and it is why this was never seen: it costs an application, in
+  // a way that reads as a mysterious timeout rather than as a covered field.
+  //
+  // Blur is the widget's OWN close path (react-datepicker's handleBlur calls
+  // setOpen(false)) and it is also its own COMMIT path, so this does two
+  // things at once: the calendar goes away, and the value we typed is parsed
+  // and re-rendered by the widget before anything reads it back. Escape would
+  // also close it, but a synthetic key on a live application form is a bigger
+  // claim than taking focus off a field — and fillPage already treats a key
+  // press on a form as a thing to be careful with.
+  //
+  // SCOPED TO MARKED CONTROLS. Blurring after EVERY fill would be a change to
+  // the behaviour of every text field on every board — boards validate on
+  // blur, and `verify.errors` is a submit-gate input — for the benefit of one
+  // widget shape. A field with no `dateWidget` is untouched, and a plan built
+  // before this existed carries no such key, so it is a no-op there too.
+  //
+  // FAILURE HERE IS NOT THE ITEM'S FAILURE. The value is already typed; a
+  // detached element or a page that refuses the call means the calendar may
+  // still be open, which is the situation this had before. Throwing would
+  // turn a landed fill into a reported failure, which is the one outcome
+  // worse than the problem.
+  const closeDatePicker = async (loc, item) => {
+    if (!item || !item.dateWidget) return
+    try {
+      await loc.evaluate((el) => el.blur())
+    } catch {
+      /* see above: the fill stands whatever the blur did */
+    }
+  }
+
   const expandBareYearForDateField = (item) => {
     const v = String(item.value)
     return /^\d{4}$/.test(v) && /\bdate\b/i.test(String(item.label ?? ""))
@@ -1687,6 +1734,7 @@ export default async function fillPage(page, plan, opts = {}) {
     await loc.scrollIntoViewIfNeeded({ timeout: 2500 })
     if (item.how === "fill") {
       await loc.fill(expandBareYearForDateField(item), { timeout: 2500 })
+      await closeDatePicker(loc, item)
     } else if (item.how === "select") {
       // A plan item carrying `values` targets a <select multiple>. Playwright
       // replaces the whole selection with exactly this set, so a stale-retry
@@ -1703,6 +1751,7 @@ export default async function fillPage(page, plan, opts = {}) {
       else await loc.uncheck({ timeout: 2500 })
     } else if (item.how === "type") {
       await typeInto(loc, expandBareYearForDateField(item))
+      await closeDatePicker(loc, item)
     } else if (item.how === "combo") {
       const r =
         Array.isArray(item.values) && item.values.length

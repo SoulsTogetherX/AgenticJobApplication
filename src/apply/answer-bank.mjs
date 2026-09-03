@@ -1185,17 +1185,53 @@ export function createResolver(profile = {}, answersDoc = {}, { now } = {}) {
   // "When can you start" -> today, the one start date that can never be
   // stale — but only where a DATE is actually the answer: a date-shaped
   // control, or a text control whose exact-banked answer is itself a bare
-  // date literal (the live shape that failed: Ashby's react date widget over
-  // an <input type=text>, with the exact-bank tier replaying a-053's dead
-  // "2026-08-18"; the widget's MM/DD/YYYY re-rendering is handled by the
-  // date-equivalence in fill-engine's readback). A PROSE availability answer
-  // ("Available immediately; two weeks notice if required") never decays and
-  // is the user's own wording — it always survives, which
+  // date literal. A PROSE availability answer ("Available immediately; two
+  // weeks notice if required") never decays and is the user's own wording —
+  // on a control that accepts prose it always survives, which
   // tests/apply/answer-bank-rewording.test.mjs pins.
+  //
+  // WHAT "DATE-SHAPED" MEANS, AND WHY IT IS NO LONGER JUST `t === "date"`.
+  // It used to be `t === "date"` OR "the banked answer happens to look like a
+  // date". The live shape that motivated the rule was never either of those:
+  // Ashby renders "When can you start a new role?" as react-datepicker over an
+  // `<input type="text">`, so `t` is "text", and the rule only ever recognised
+  // it by accident — through the exact-bank tier replaying a-053's dead
+  // literal "2026-08-18". The moment that answer was re-banked as prose the
+  // recognition vanished with it, and SEVEN applications to one employer's
+  // Ashby board deferred between 2026-08-25 and 2026-09-02 with the same
+  // submit_readiness line:
+  //   wanted "Available immediately.", the page shows ""
+  // — the widget parsing prose, failing, and clearing the box. The guard was
+  // keyed on the ANSWER's shape, which the user can change at any time by
+  // banking a different wording, instead of on the CONTROL's shape, which the
+  // board owns. `f.dateWidget` (stamped Playwright-side by scan-engine.mjs
+  // from react-datepicker's / Ashby's own unhashed class names) is that
+  // control-side signal, and it is what this now keys on.
+  //
+  // THE FORMAT IS PART OF THE ANSWER, not a detail. A native
+  // `<input type=date>` takes ISO and only ISO — that is the HTML platform,
+  // not a preference. A date picker over a text input takes what it RENDERS,
+  // and this one renders MM/DD/YYYY: measured 2026-08-21 on the same field,
+  // where typing the ISO "2026-08-18" came back as "08/17/2026" — a day
+  // EARLY, which is `new Date("2026-08-18")` parsed as UTC midnight and then
+  // displayed in the user's own negative-offset timezone. Typing the widget's
+  // own format instead parses as LOCAL midnight and round-trips unshifted, so
+  // this also closes that off-by-one rather than teaching the readback to
+  // accept a wrong day. (fill-engine's readback accepts either format on
+  // either side, so nothing downstream cares which one goes out — only the
+  // widget does.) Both spellings name the same UTC calendar day, deliberately:
+  // two renderings of one answer must never disagree about which day it is.
   const DATE_LITERAL = /^(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4})$/
   const START_DATE_Q =
     /\bwhen can you start\b|\bstart date\b|\bearliest (?:available )?start\b|\bdate (?:you are |you're )?available\b|\bavailability date\b/i
   const isoDate = (d) => d.toISOString().slice(0, 10)
+  const usDate = (d) =>
+    `${String(d.getUTCMonth() + 1).padStart(2, "0")}/` +
+    `${String(d.getUTCDate()).padStart(2, "0")}/${d.getUTCFullYear()}`
+  // Null when this control is not one a date belongs in; otherwise today,
+  // spelled the way this control renders dates.
+  const startDateFor = (f) =>
+    f?.dateWidget ? usDate(NOW) : f?.t === "date" ? isoDate(NOW) : null
 
   const education = profile.education?.[0] ?? {}
   const degreesText = String(education.degrees ?? "")
@@ -1760,8 +1796,13 @@ export function createResolver(profile = {}, answersDoc = {}, { now } = {}) {
         m.values,
       )
     }
-    if (f.t === "date" && START_DATE_Q.test(label)) {
-      return push("OK", "computed.today", isoDate(NOW))
+    // Ahead of the exact bank on purpose: on a control that only accepts a
+    // date, a banked PROSE availability answer is not a better answer, it is
+    // an unfillable one — the widget clears it and the field ends up empty.
+    // On every other control the bank still wins, unchanged.
+    const startDate = startDateFor(f)
+    if (startDate && START_DATE_Q.test(label)) {
+      return push("OK", "computed.today", startDate)
     }
 
     const exact = ownJobBankSilenced
@@ -1777,7 +1818,10 @@ export function createResolver(profile = {}, answersDoc = {}, { now } = {}) {
         START_DATE_Q.test(label) &&
         DATE_LITERAL.test(String(exact.answer ?? "").trim())
       ) {
-        return push("OK", "computed.today", isoDate(NOW))
+        // ISO on a control that told us nothing about itself, exactly as
+        // before; a control that DID tell us gets its own rendering, and
+        // never reaches here anyway — startDateFor() answered above.
+        return push("OK", "computed.today", startDateFor(f) ?? isoDate(NOW))
       }
       // The same decline-shape recognition the EEO branch below uses, and for
       // the same reason (see its comment) — an exact question match is if
